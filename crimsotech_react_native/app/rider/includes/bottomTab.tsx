@@ -11,10 +11,10 @@ export default function RiderBottomTab() {
 
   const tabs = [
     { name: 'Home', icon: 'home', route: '/rider/home' },
-    { name: 'Orders', icon: 'history', route: '/rider/orders' },
+    { name: 'Orders', icon: 'assignment', route: '/rider/active-orders' },
+    { name: 'History', icon: 'history', route: '/rider/history' },
     { name: 'Schedule', icon: 'calendar-today', route: '/rider/schedule' },
     { name: 'Earnings', icon: 'attach-money', route: '/rider/earnings' },
-    { name: 'Messages', icon: 'message', route: '/rider/message' },
   ] as const;
 
   return (

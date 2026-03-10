@@ -1,56 +1,23 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
-  StyleSheet,
-  TouchableOpacity,
-  FlatList,
-  StatusBar,
   ScrollView,
+  TouchableOpacity,
+  RefreshControl,
   Alert,
   Modal,
   ActivityIndicator,
   Switch,
-  TextInput,
-  RefreshControl,
-} from "react-native";
-import { Picker } from "@react-native-picker/picker";
-import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
-import { useAuth } from "../../contexts/AuthContext";
-import { router } from "expo-router";
-import AxiosInstance from "../../contexts/axios";
-
-// --- Theme Colors (Minimalist) ---
-const COLORS = {
-  primary: "#111827",
-  secondary: "#6B7280",
-  muted: "#9CA3AF",
-  bg: "#FFFFFF",
-  cardBg: "#FFFFFF",
-  border: "#E5E7EB",
-  lightGray: "#F9FAFB",
-};
-
-// --- Types ---
-interface DaySchedule {
-  value: number;
-  label: string;
-  is_available: boolean;
-  start_time: string;
-  end_time: string;
-  id?: string;
-}
-
-interface UpcomingShift {
-  id: string;
-  date: string;
-  startTime: string;
-  endTime: string;
-  duration: number;
-  earnings?: number;
-  status: "upcoming" | "completed";
-}
+  Dimensions,
+  Platform
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../../contexts/AuthContext';
+import { router } from 'expo-router';
+import AxiosInstance from '../../contexts/axios';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 interface RiderAvailabilityData {
   id: string;
@@ -58,154 +25,447 @@ interface RiderAvailabilityData {
   availability_status: 'offline' | 'available' | 'busy' | 'break' | 'unavailable';
   is_accepting_deliveries: boolean;
   last_status_update: string;
+  custom_schedule?: any;
+  created_at: string;
+  updated_at: string;
 }
 
-interface ScheduleMetrics {
-  total_deliveries?: number;
-  upcoming_deliveries?: number;
-  in_progress_deliveries?: number;
-  completed_deliveries?: number;
-  avg_delivery_time?: number;
-  total_distance_km?: number;
-  average_rating?: number;
-  today_deliveries?: number;
-  peak_day?: string;
-  availability_percentage?: number;
-  avg_deliveries_per_day?: number;
-}
-
-export default function SchedulePage() {
-  const { userRole, user } = useAuth();
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+interface ScheduledDelivery {
+  id: string;
+  order: string;
+  order_number: string;
+  status: 'scheduled' | 'pending' | 'picked_up' | 'in_progress' | 'delivered' | 'cancelled';
+  scheduled_pickup_time: string | null;
+  scheduled_delivery_time: string | null;
+  is_scheduled: boolean;
+  estimated_minutes: number | null;
+  actual_minutes: number | null;
+  distance_km: number | null;
+  delivery_rating: number | null;
+  notes: string | null;
   
-  // Data states
-  const [riderData, setRiderData] = useState<RiderAvailabilityData | null>(null);
-  const [schedule, setSchedule] = useState<DaySchedule[]>([]);
-  const [scheduleMetrics, setScheduleMetrics] = useState<ScheduleMetrics>({});
+  order_details?: {
+    user: {
+      username: string;
+      email: string;
+      contact_number: string;
+    };
+    shipping_address?: {
+      recipient_name: string;
+      street: string;
+      barangay: string;
+      city: string;
+      province: string;
+      recipient_phone: string;
+    };
+    total_amount: string;
+    payment_method: string;
+  };
+  
+  customer_name: string;
+  customer_contact: string;
+  shop_name: string | null;
+  created_at: string;
+  picked_at: string | null;
+  delivered_at: string | null;
+}
+
+interface CustomSchedule {
+  id?: string;
+  day_of_week: number;
+  day_name: string;
+  start_time: string;
+  end_time: string;
+  is_available: boolean;
+}
+
+interface ScheduleDataResponse {
+  success: boolean;
+  rider: RiderAvailabilityData;
+  schedule: CustomSchedule[];
+  scheduled_deliveries?: ScheduledDelivery[];
+}
+
+const DAYS_OF_WEEK = [
+  'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
+];
+
+// Status badge configurations
+const STATUS_CONFIG: Record<string, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  scheduled: { label: 'Scheduled', color: '#E0E7FF', icon: 'calendar-outline' },
+  pending: { label: 'Pending', color: '#FEF3C7', icon: 'time-outline' },
+  picked_up: { label: 'Picked Up', color: '#DBEAFE', icon: 'cube-outline' },
+  in_progress: { label: 'In Progress', color: '#DBEAFE', icon: 'car-outline' },
+  delivered: { label: 'Delivered', color: '#D1FAE5', icon: 'checkmark-circle-outline' },
+  cancelled: { label: 'Cancelled', color: '#FEE2E2', icon: 'close-circle-outline' },
+  default: { label: 'Unknown', color: '#F3F4F6', icon: 'help-circle-outline' }
+};
+
+// Availability status config
+const AVAILABILITY_CONFIG: Record<string, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  available: { label: 'Available', color: '#D1FAE5', icon: 'wifi-outline' },
+  busy: { label: 'Busy', color: '#FEF3C7', icon: 'bicycle-outline' },
+  break: { label: 'On Break', color: '#DBEAFE', icon: 'cafe-outline' },
+  unavailable: { label: 'Unavailable', color: '#FEE2E2', icon: 'close-circle-outline' },
+  offline: { label: 'Offline', color: '#F3F4F6', icon: 'wifi-outline' }
+};
+
+// Time Picker Component
+const TimePickerModal = ({ 
+  visible, 
+  onClose, 
+  onConfirm, 
+  initialTime = '09:00',
+  mode = 'start'
+}: { 
+  visible: boolean; 
+  onClose: () => void; 
+  onConfirm: (time: string) => void; 
+  initialTime?: string;
+  mode?: 'start' | 'end';
+}) => {
+  const [selectedHour, setSelectedHour] = useState(9);
+  const [selectedMinute, setSelectedMinute] = useState(0);
+  const [selectedPeriod, setSelectedPeriod] = useState<'AM' | 'PM'>('AM');
+
+  useEffect(() => {
+    if (initialTime) {
+      const [hours, minutes] = initialTime.split(':').map(Number);
+      const hour = hours % 12 || 12;
+      setSelectedHour(hour);
+      setSelectedMinute(minutes);
+      setSelectedPeriod(hours >= 12 ? 'PM' : 'AM');
+    }
+  }, [initialTime]);
+
+  const handleConfirm = () => {
+    let hour24 = selectedPeriod === 'PM' 
+      ? (selectedHour === 12 ? 12 : selectedHour + 12)
+      : (selectedHour === 12 ? 0 : selectedHour);
+    
+    const timeString = `${hour24.toString().padStart(2, '0')}:${selectedMinute.toString().padStart(2, '0')}`;
+    onConfirm(timeString);
+    onClose();
+  };
+
+  const hours = Array.from({ length: 12 }, (_, i) => i + 1);
+  const minutes = Array.from({ length: 12 }, (_, i) => i * 5); // 0, 5, 10, ... 55
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+        <View style={{ backgroundColor: 'white', borderRadius: 20, width: '90%', maxWidth: 400, padding: 20 }}>
+          <View style={{ alignItems: 'center', marginBottom: 20 }}>
+            <View style={{ backgroundColor: mode === 'start' ? '#EFF6FF' : '#FEF3C7', padding: 12, borderRadius: 50, marginBottom: 12 }}>
+              <Ionicons 
+                name={mode === 'start' ? 'play' : 'stop'} 
+                size={24} 
+                color={mode === 'start' ? '#2563EB' : '#D97706'} 
+              />
+            </View>
+            <Text style={{ fontSize: 18, fontWeight: '600' }}>
+              Set {mode === 'start' ? 'Start' : 'End'} Time
+            </Text>
+          </View>
+
+          {/* Alarm Clock Style Time Picker */}
+          <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 20 }}>
+            {/* Hours */}
+            <View style={{ alignItems: 'center' }}>
+              <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 8 }}>Hour</Text>
+              <ScrollView 
+                showsVerticalScrollIndicator={false}
+                style={{ height: 150 }}
+                contentContainerStyle={{ paddingVertical: 50 }}
+              >
+                {hours.map((hour) => (
+                  <TouchableOpacity
+                    key={hour}
+                    onPress={() => setSelectedHour(hour)}
+                    style={{
+                      paddingVertical: 8,
+                      paddingHorizontal: 16,
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    <Text style={{
+                      fontSize: selectedHour === hour ? 28 : 20,
+                      fontWeight: selectedHour === hour ? '600' : '400',
+                      color: selectedHour === hour ? '#2563EB' : '#6B7280'
+                    }}>
+                      {hour.toString().padStart(2, '0')}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            <Text style={{ fontSize: 32, fontWeight: '200', marginHorizontal: 8, color: '#9CA3AF' }}>:</Text>
+
+            {/* Minutes */}
+            <View style={{ alignItems: 'center' }}>
+              <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 8 }}>Min</Text>
+              <ScrollView 
+                showsVerticalScrollIndicator={false}
+                style={{ height: 150 }}
+                contentContainerStyle={{ paddingVertical: 50 }}
+              >
+                {minutes.map((minute) => (
+                  <TouchableOpacity
+                    key={minute}
+                    onPress={() => setSelectedMinute(minute)}
+                    style={{
+                      paddingVertical: 8,
+                      paddingHorizontal: 16,
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    <Text style={{
+                      fontSize: selectedMinute === minute ? 28 : 20,
+                      fontWeight: selectedMinute === minute ? '600' : '400',
+                      color: selectedMinute === minute ? '#2563EB' : '#6B7280'
+                    }}>
+                      {minute.toString().padStart(2, '0')}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            {/* AM/PM */}
+            <View style={{ marginLeft: 8 }}>
+              <View>
+                <TouchableOpacity
+                  onPress={() => setSelectedPeriod('AM')}
+                  style={{
+                    paddingVertical: 12,
+                    paddingHorizontal: 8,
+                    backgroundColor: selectedPeriod === 'AM' ? '#EFF6FF' : '#F9FAFB',
+                    borderTopLeftRadius: 8,
+                    borderTopRightRadius: 8,
+                    borderWidth: 1,
+                    borderColor: selectedPeriod === 'AM' ? '#2563EB' : '#E5E7EB'
+                  }}
+                >
+                  <Text style={{
+                    fontSize: 14,
+                    fontWeight: '500',
+                    color: selectedPeriod === 'AM' ? '#2563EB' : '#6B7280'
+                  }}>AM</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setSelectedPeriod('PM')}
+                  style={{
+                    paddingVertical: 12,
+                    paddingHorizontal: 8,
+                    backgroundColor: selectedPeriod === 'PM' ? '#EFF6FF' : '#F9FAFB',
+                    borderBottomLeftRadius: 8,
+                    borderBottomRightRadius: 8,
+                    borderWidth: 1,
+                    borderColor: selectedPeriod === 'PM' ? '#2563EB' : '#E5E7EB',
+                    borderTopWidth: 0
+                  }}
+                >
+                  <Text style={{
+                    fontSize: 14,
+                    fontWeight: '500',
+                    color: selectedPeriod === 'PM' ? '#2563EB' : '#6B7280'
+                  }}>PM</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+
+          {/* Selected Time Display */}
+          <View style={{ alignItems: 'center', marginBottom: 20 }}>
+            <View style={{ 
+              backgroundColor: '#F3F4F6', 
+              paddingVertical: 12, 
+              paddingHorizontal: 24, 
+              borderRadius: 30,
+              flexDirection: 'row',
+              alignItems: 'center'
+            }}>
+              <Ionicons name="time-outline" size={18} color="#2563EB" />
+              <Text style={{ fontSize: 24, fontWeight: '600', marginLeft: 8, color: '#1F2937' }}>
+                {selectedHour.toString().padStart(2, '0')}:{selectedMinute.toString().padStart(2, '0')} {selectedPeriod}
+              </Text>
+            </View>
+          </View>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <TouchableOpacity
+              onPress={onClose}
+              style={{ flex: 1, marginRight: 8, padding: 14, backgroundColor: '#F3F4F6', borderRadius: 10, alignItems: 'center' }}
+            >
+              <Text style={{ fontSize: 15, color: '#6B7280' }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleConfirm}
+              style={{ flex: 1, marginLeft: 8, padding: 14, backgroundColor: '#2563EB', borderRadius: 10, alignItems: 'center' }}
+            >
+              <Text style={{ fontSize: 15, color: 'white', fontWeight: '600' }}>Confirm</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+export default function RiderSchedule() {
+  const { user } = useAuth();
+  const { width } = Dimensions.get('window');
+  
+  // State for data
+  const [scheduleData, setScheduleData] = useState<ScheduleDataResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  
+  // UI States
   const [online, setOnline] = useState(true);
+  const [expandedDays, setExpandedDays] = useState<Set<number>>(new Set());
   
   // Modal states
   const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
-  const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [editingDay, setEditingDay] = useState<DaySchedule | null>(null);
+  const [showTimePicker, setShowTimePicker] = useState<{ 
+    visible: boolean; 
+    dayIndex: number; 
+    field: 'start_time' | 'end_time';
+    initialTime: string;
+  } | null>(null);
   
   // Form states
   const [availabilityForm, setAvailabilityForm] = useState({
     availability_status: 'available' as RiderAvailabilityData['availability_status'],
     is_accepting_deliveries: true
   });
-  
-  const [scheduleForm, setScheduleForm] = useState<Partial<DaySchedule>>({
-    value: 0,
-    label: 'Monday',
-    start_time: '09:00',
-    end_time: '17:00',
-    is_available: true
-  });
 
+  // Schedule state
+  const [schedule, setSchedule] = useState<CustomSchedule[]>([]);
+
+  // Get user ID
   const userId = user?.user_id || user?.id;
 
-  // Fetch all schedule data
-  const fetchAllData = useCallback(async (showToast = false) => {
+  // Update online status based on rider data
+  useEffect(() => {
+    if (scheduleData?.rider) {
+      setOnline(scheduleData.rider.availability_status === 'available');
+      setAvailabilityForm({
+        availability_status: scheduleData.rider.availability_status,
+        is_accepting_deliveries: scheduleData.rider.is_accepting_deliveries
+      });
+    }
+  }, [scheduleData]);
+
+  // Initialize schedule from API data
+  useEffect(() => {
+    if (scheduleData?.schedule) {
+      setSchedule(scheduleData.schedule);
+    }
+  }, [scheduleData]);
+
+  // Fetch all data
+  const fetchAllData = useCallback(async () => {
     try {
-      setIsRefreshing(true);
+      setIsLoading(true);
       
       const response = await AxiosInstance.get('/rider-schedule/get_schedule_data/', {
         headers: { 'X-User-Id': userId }
       });
-
-      if (response.data && response.data.success) {
-        // Set rider data
-        setRiderData(response.data.rider);
-        setAvailabilityForm({
-          availability_status: response.data.rider.availability_status,
-          is_accepting_deliveries: response.data.rider.is_accepting_deliveries
-        });
-        
-        // Format schedule data
-        if (response.data.schedule && Array.isArray(response.data.schedule)) {
-          const formattedSchedule = response.data.schedule.map((day: any) => ({
-            value: day.day_of_week,
-            label: day.day_name,
-            is_available: day.is_available,
-            start_time: day.start_time,
-            end_time: day.end_time,
-            id: day.id
-          }));
-          setSchedule(formattedSchedule);
-        }
-
-        // Store metrics
-        if (response.data.metrics) {
-          setScheduleMetrics(response.data.metrics);
-        }
-        
-        setOnline(response.data.rider.availability_status === 'available');
+      
+      if (response.data.success) {
+        setScheduleData(response.data);
       }
-    } catch (err: any) {
-      console.log('Schedule fetch error:', err);
-      setError(err.message || 'Failed to load schedule data');
+    } catch (error: any) {
+      console.error('Error fetching schedule data:', error);
+      Alert.alert('Error', 'Failed to load schedule data');
     } finally {
       setIsLoading(false);
-      setIsRefreshing(false);
+      setRefreshing(false);
     }
   }, [userId]);
 
   // Initial load
   useEffect(() => {
-    if (userId) {
-      fetchAllData();
-    }
-  }, [userId, fetchAllData]);
+    fetchAllData();
+  }, [fetchAllData]);
+
+  // Refresh control
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchAllData();
+  };
 
   // Handle toggle day availability
-  const handleToggle = (index: number) => {
+  const handleToggleDay = async (index: number) => {
     const updated = [...schedule];
     updated[index].is_available = !updated[index].is_available;
     setSchedule(updated);
-    saveSchedulePayload(updated);
+    await saveSchedule(updated);
   };
 
   // Handle time change
-  const handleTimeChange = (index: number, field: 'start_time' | 'end_time', value: string) => {
+  const handleTimeChange = async (index: number, field: 'start_time' | 'end_time', value: string) => {
     const updated = [...schedule];
     updated[index][field] = value;
     setSchedule(updated);
-    saveSchedulePayload(updated);
+    await saveSchedule(updated);
   };
 
-  // Save schedule payload
-  const saveSchedulePayload = async (scheduleArray: DaySchedule[]) => {
+  // Save schedule to API
+  const saveSchedule = async (scheduleArray: CustomSchedule[]) => {
     try {
       const schedulePayload = scheduleArray.map(day => ({
-        day_of_week: day.value,
+        day_of_week: day.day_of_week,
         start_time: day.start_time,
         end_time: day.end_time,
         is_available: day.is_available
       }));
 
-      const response = await AxiosInstance.post('/rider-schedule/update_schedule/',
+      await AxiosInstance.post('/rider-schedule/update_schedule/',
         { schedule: schedulePayload },
         { headers: { 'X-User-Id': userId } }
       );
-
-      if (response.data.success) {
-        await fetchAllData(false);
-      }
+      
+      // Refresh data
+      await fetchAllData();
     } catch (error: any) {
       console.error('Error saving schedule:', error);
       Alert.alert('Error', 'Failed to update schedule');
     }
   };
 
-  // Handle save schedule
-  const handleSave = async () => {
-    await saveSchedulePayload(schedule);
+  // Handle online status toggle
+  const handleOnlineToggle = async (value: boolean) => {
+    setOnline(value);
+    
+    try {
+      const newStatus = value ? 'available' : 'offline';
+      await AxiosInstance.post('/rider-schedule/update_availability/', 
+        {
+          availability_status: newStatus,
+          is_accepting_deliveries: value
+        },
+        { headers: { 'X-User-Id': userId } }
+      );
+      
+      await fetchAllData();
+    } catch (error) {
+      console.error('Error updating online status:', error);
+      setOnline(!value); // Revert on error
+      Alert.alert('Error', 'Failed to update online status');
+    }
   };
 
-  // Handle updating availability status
+  // Handle update availability
   const handleUpdateAvailability = async () => {
     try {
       setIsLoading(true);
@@ -216,7 +476,7 @@ export default function SchedulePage() {
       );
 
       if (response.data.success) {
-        await fetchAllData(false);
+        await fetchAllData();
         setShowAvailabilityModal(false);
         Alert.alert('Success', 'Availability updated successfully');
       }
@@ -228,349 +488,248 @@ export default function SchedulePage() {
     }
   };
 
-  // Handle saving a specific day's schedule
-  const handleSaveDaySchedule = async () => {
-    try {
-      setIsLoading(true);
-      
-      if (scheduleForm.value === undefined) return;
-      
-      const updatedSchedule = [...schedule];
-      const index = updatedSchedule.findIndex(d => d.value === scheduleForm.value);
-      
-      if (index !== -1) {
-        updatedSchedule[index] = {
-          ...updatedSchedule[index],
-          start_time: scheduleForm.start_time || '09:00',
-          end_time: scheduleForm.end_time || '17:00',
-          is_available: scheduleForm.is_available || false
-        };
-        setSchedule(updatedSchedule);
-      }
-      
-      const schedulePayload = updatedSchedule.map(day => ({
-        day_of_week: day.value,
-        start_time: day.start_time,
-        end_time: day.end_time,
-        is_available: day.is_available
-      }));
-      
-      const response = await AxiosInstance.post('/rider-schedule/update_schedule/', 
-        { schedule: schedulePayload },
-        { headers: { 'X-User-Id': userId } }
-      );
+  // Format time for display with AM/PM
+  const formatTimeWithAMPM = (timeString: string) => {
+    const [hours, minutes] = timeString.split(':').map(Number);
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const hour12 = hours % 12 || 12;
+    return `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+  };
 
-      if (response.data.success) {
-        await fetchAllData(false);
-        setShowScheduleModal(false);
-        setEditingDay(null);
-        setScheduleForm({
-          value: 0,
-          label: 'Monday',
-          start_time: '09:00',
-          end_time: '17:00',
-          is_available: true
-        });
-        Alert.alert('Success', 'Schedule updated successfully');
-      }
-    } catch (error: any) {
-      console.error('Error saving schedule:', error);
-      Alert.alert('Error', 'Failed to save schedule');
-    } finally {
-      setIsLoading(false);
+  // Toggle day expansion
+  const toggleDayExpansion = (dayIndex: number) => {
+    const newExpanded = new Set(expandedDays);
+    if (newExpanded.has(dayIndex)) {
+      newExpanded.delete(dayIndex);
+    } else {
+      newExpanded.add(dayIndex);
     }
+    setExpandedDays(newExpanded);
   };
 
-  // Handle editing a day
-  const handleEditDay = (day: DaySchedule) => {
-    setEditingDay(day);
-    setScheduleForm({
-      value: day.value,
-      label: day.label,
-      start_time: day.start_time,
-      end_time: day.end_time,
-      is_available: day.is_available
-    });
-    setShowScheduleModal(true);
-  };
-
-  // Handle deleting a day
-  const handleDeleteDay = async (dayOfWeek: number) => {
-    Alert.alert('Reset Schedule', 'Reset this day to default schedule?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Reset',
-        onPress: async () => {
-          try {
-            setIsLoading(true);
-            
-            const updatedSchedule = [...schedule];
-            const index = updatedSchedule.findIndex(d => d.value === dayOfWeek);
-            
-            if (index !== -1) {
-              updatedSchedule[index] = {
-                ...updatedSchedule[index],
-                start_time: '09:00',
-                end_time: '17:00',
-                is_available: dayOfWeek < 5
-              };
-              setSchedule(updatedSchedule);
-            }
-            
-            const schedulePayload = updatedSchedule.map(day => ({
-              day_of_week: day.value,
-              start_time: day.start_time,
-              end_time: day.end_time,
-              is_available: day.is_available
-            }));
-            
-            await AxiosInstance.post('/rider-schedule/update_schedule/', 
-              { schedule: schedulePayload },
-              { headers: { 'X-User-Id': userId } }
-            );
-            
-            await fetchAllData(false);
-            Alert.alert('Success', 'Schedule reset to default');
-          } catch (error) {
-            console.error('Error resetting schedule:', error);
-            Alert.alert('Error', 'Failed to reset schedule');
-          } finally {
-            setIsLoading(false);
-          }
-        }
-      }
-    ]);
-  };
-
-  // Handle online toggle
-  const handleOnlineToggle = async (checked: boolean) => {
-    setOnline(checked);
-    
-    try {
-      const newStatus = checked ? 'available' : 'offline';
-      await AxiosInstance.post('/rider-schedule/update_availability/', 
-        {
-          availability_status: newStatus,
-          is_accepting_deliveries: checked
-        },
-        { headers: { 'X-User-Id': userId } }
-      );
-      
-      await fetchAllData(false);
-      Alert.alert('Success', `You are now ${checked ? 'online' : 'offline'}`);
-    } catch (error) {
-      console.error('Error updating online status:', error);
-      setOnline(!checked);
-      Alert.alert('Error', 'Failed to update online status');
-    }
-  };
-
-  // Format time string
-  const formatTime = (timeString: string) => {
-    try {
-      const [hours, minutes] = timeString.split(':');
-      const h = parseInt(hours);
-      const m = parseInt(minutes);
-      const ampm = h >= 12 ? 'PM' : 'AM';
-      const displayHours = h % 12 || 12;
-      return `${displayHours}:${String(m).padStart(2, '0')} ${ampm}`;
-    } catch {
-      return timeString;
-    }
-  };
-
-  // Get status badge colors
-  const getStatusColors = (status: string) => {
-    switch (status) {
-      case 'available':
-        return { bg: '#D1FAE5', text: '#065F46' };
-      case 'offline':
-        return { bg: '#E5E7EB', text: '#374151' };
-      case 'busy':
-        return { bg: '#FEF3C7', text: '#92400E' };
-      case 'break':
-        return { bg: '#DBEAFE', text: '#0C4A6E' };
-      case 'unavailable':
-        return { bg: '#FEE2E2', text: '#7F1D1D' };
-      default:
-        return { bg: '#E5E7EB', text: '#6B7280' };
-    }
-  };
-
-  // If loading, show loader
-  if (isLoading) {
-    return (
-      <SafeAreaView style={styles.center}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.messageTitle}>Loading schedule...</Text>
-      </SafeAreaView>
-    );
-  }
-
-  if (userRole && userRole !== "rider") {
-    return (
-      <SafeAreaView style={styles.center}>
-        <MaterialCommunityIcons
-          name="shield-alert-outline"
-          size={48}
-          color={COLORS.muted}
-        />
-        <Text style={styles.messageTitle}>Access Restricted</Text>
-        <Text style={styles.messageSub}>
-          Only verified riders can access the schedule.
-        </Text>
-      </SafeAreaView>
-    );
-  }
-
-  // Handle Cancel Shift
-  const handleCancelShift = (id: string) => {
-    Alert.alert("Cancel Shift", "Are you sure you want to cancel this shift?", [
-      { text: "No", style: "cancel" },
-      { text: "Yes", onPress: () => handleDeleteDay(parseInt(id)) },
-    ]);
-  };
-
-  // Handle Edit Shift
-  const handleEditShift = (dayValue: number) => {
-    const day = schedule.find(d => d.value === dayValue);
-    if (day) {
-      handleEditDay(day);
-    }
-  };
-
-  // Get status badge style
-  const getStatusBadgeStyle = (status: string) => {
-    switch (status) {
-      case "scheduled":
-        return {
-          bg: COLORS.lightGray,
-          text: COLORS.primary,
-          label: "Scheduled",
-        };
-      case "completed":
-        return {
-          bg: COLORS.lightGray,
-          text: COLORS.secondary,
-          label: "Completed",
-        };
-      case "off":
-        return { bg: COLORS.lightGray, text: COLORS.muted, label: "Off" };
-      default:
-        return { bg: COLORS.lightGray, text: COLORS.muted, label: "N/A" };
-    }
-  };
-
-  // Render Day Schedule Card
-  const renderDaySchedule = ({ item }: { item: DaySchedule }) => {
-    const badgeStyle = getStatusBadgeStyle(item.is_available ? "scheduled" : "off");
-
-    return (
-      <TouchableOpacity 
-        style={styles.dayCard}
-        onPress={() => handleEditDay(item)}
-      >
-        <Text style={styles.dayName}>{item.label.substring(0, 3)}</Text>
-
-        {item.is_available ? (
-          <View style={styles.dayTimeContainer}>
-            <Text style={styles.dayTime}>{formatTime(item.start_time)}</Text>
-            <Text style={styles.dayTimeSeparator}>-</Text>
-            <Text style={styles.dayTime}>{formatTime(item.end_time)}</Text>
-          </View>
-        ) : (
-          <Text style={styles.dayOff}>Off</Text>
-        )}
-
-        <View style={[styles.dayBadge, { backgroundColor: badgeStyle.bg }]}>
-          <Text style={[styles.dayBadgeText, { color: badgeStyle.text }]}>
-            {item.is_available ? 'Available' : 'Off'}
-          </Text>
-        </View>
-      </TouchableOpacity>
-    );
-  };
+  // Loading skeleton
+  const LoadingSkeleton = () => (
+    <View style={{ padding: 16 }}>
+      <View style={{ backgroundColor: '#F3F4F6', padding: 16, borderRadius: 8, marginBottom: 12 }}>
+        <View style={{ height: 20, backgroundColor: '#E5E7EB', borderRadius: 4, width: '60%', marginBottom: 12 }} />
+        <View style={{ height: 40, backgroundColor: '#E5E7EB', borderRadius: 4, width: '100%', marginBottom: 8 }} />
+        <View style={{ height: 40, backgroundColor: '#E5E7EB', borderRadius: 4, width: '100%' }} />
+      </View>
+    </View>
+  );
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
-
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>My Schedule</Text>
-          <Text style={styles.headerSubtitle}>Manage your availability</Text>
-        </View>
-      </View>
-
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
       <ScrollView
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={() => fetchAllData(true)}
-            tintColor={COLORS.primary}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* Metrics Cards */}
-        {scheduleMetrics && (
-          <View style={styles.metricsContainer}>
-            <View style={styles.metricCard}>
-              <View style={styles.metricIcon}>
-                <Feather name="calendar" size={20} color={COLORS.primary} />
-              </View>
-              <Text style={styles.metricLabel}>Today Deliveries</Text>
-              <Text style={styles.metricValue}>
-                {scheduleMetrics.today_deliveries || 0}
-              </Text>
+        <View style={{ padding: 16 }}>
+          {/* Header */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <View>
+              <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#111827' }}>Schedule</Text>
+              <Text style={{ fontSize: 14, color: '#6B7280', marginTop: 2 }}>Manage your working hours</Text>
             </View>
-
-            <View style={styles.metricCard}>
-              <View style={styles.metricIcon}>
-                <Feather name="star" size={20} color={COLORS.primary} />
+            
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ 
+                backgroundColor: online ? '#D1FAE5' : '#F3F4F6', 
+                paddingHorizontal: 12, 
+                paddingVertical: 6, 
+                borderRadius: 20,
+                marginRight: 8
+              }}>
+                <Text style={{ fontSize: 13, fontWeight: '500', color: online ? '#059669' : '#6B7280' }}>
+                  {online ? 'Online' : 'Offline'}
+                </Text>
               </View>
-              <Text style={styles.metricLabel}>Rating</Text>
-              <Text style={styles.metricValue}>
-                {scheduleMetrics.average_rating || 0}
-              </Text>
-            </View>
-
-            <View style={styles.metricCard}>
-              <View style={styles.metricIcon}>
-                <Feather name="trending-up" size={20} color={COLORS.primary} />
-              </View>
-              <Text style={styles.metricLabel}>Availability</Text>
-              <Text style={styles.metricValue}>
-                {scheduleMetrics.availability_percentage || 0}%
-              </Text>
+              <Switch
+                value={online}
+                onValueChange={handleOnlineToggle}
+                trackColor={{ false: '#D1D5DB', true: '#34D399' }}
+                thumbColor={online ? '#059669' : '#9CA3AF'}
+              />
             </View>
           </View>
-        )}
 
-        {/* Working Hours Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Working Hours</Text>
-            <TouchableOpacity
-              style={styles.editAllBtn}
-              onPress={() => Alert.alert('Info', 'Tap a day to edit or toggle availability')}
-            >
-              <Feather name="info" size={16} color={COLORS.muted} />
-            </TouchableOpacity>
-          </View>
+          {isLoading && !scheduleData ? (
+            <LoadingSkeleton />
+          ) : (
+            <View style={{ backgroundColor: 'white', borderRadius: 16, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 3 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ backgroundColor: '#EFF6FF', padding: 8, borderRadius: 10 }}>
+                    <Ionicons name="time-outline" size={20} color="#2563EB" />
+                  </View>
+                  <Text style={{ fontSize: 18, fontWeight: '600', marginLeft: 12, color: '#111827' }}>Working Hours</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowAvailabilityModal(true)}
+                  style={{ padding: 8, backgroundColor: '#F3F4F6', borderRadius: 8 }}
+                >
+                  <Ionicons name="settings-outline" size={20} color="#4B5563" />
+                </TouchableOpacity>
+              </View>
 
-          <FlatList
-            data={schedule}
-            renderItem={renderDaySchedule}
-            keyExtractor={(item) => item.value.toString()}
-            scrollEnabled={false}
-            contentContainerStyle={styles.scheduleList}
-          />
+              <Text style={{ fontSize: 13, color: '#6B7280', marginBottom: 20, paddingHorizontal: 4 }}>
+                Set your availability and working hours for each day
+              </Text>
+
+              {/* Schedule List */}
+              <View style={{ gap: 8 }}>
+                {schedule.map((day, index) => (
+                  <View key={day.day_of_week} style={{ 
+                    backgroundColor: '#F9FAFB', 
+                    borderRadius: 12, 
+                    borderWidth: 1, 
+                    borderColor: '#F3F4F6',
+                    overflow: 'hidden'
+                  }}>
+                    {/* Day Header - Always Visible */}
+                    <TouchableOpacity
+                      onPress={() => toggleDayExpansion(day.day_of_week)}
+                      style={{ 
+                        flexDirection: 'row', 
+                        alignItems: 'center', 
+                        justifyContent: 'space-between',
+                        padding: 14,
+                      }}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <View style={{ 
+                            width: 8, 
+                            height: 8, 
+                            borderRadius: 4, 
+                            backgroundColor: day.is_available ? '#10B981' : '#EF4444',
+                            marginRight: 8
+                          }} />
+                          <Text style={{ fontSize: 15, fontWeight: '600', color: '#1F2937' }}>
+                            {day.day_name}
+                          </Text>
+                        </View>
+                        {day.is_available ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginLeft: 16 }}>
+                            <Ionicons name="time-outline" size={12} color="#059669" />
+                            <Text style={{ fontSize: 12, color: '#059669', marginLeft: 4 }}>
+                              {formatTimeWithAMPM(day.start_time)} - {formatTimeWithAMPM(day.end_time)}
+                            </Text>
+                          </View>
+                        ) : (
+                          <Text style={{ fontSize: 12, color: '#EF4444', marginTop: 4, marginLeft: 16 }}>Unavailable</Text>
+                        )}
+                      </View>
+                      
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Switch
+                          value={day.is_available}
+                          onValueChange={() => handleToggleDay(index)}
+                          trackColor={{ false: '#D1D5DB', true: '#34D399' }}
+                          thumbColor={day.is_available ? '#059669' : '#9CA3AF'}
+                          style={{ marginRight: 8 }}
+                        />
+                        <Ionicons 
+                          name={expandedDays.has(day.day_of_week) ? 'chevron-up' : 'chevron-down'} 
+                          size={20} 
+                          color="#9CA3AF" 
+                        />
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Expanded Time Selection - Only visible when expanded */}
+                    {expandedDays.has(day.day_of_week) && day.is_available && (
+                      <View style={{ 
+                        padding: 16, 
+                        backgroundColor: '#F3F4F6',
+                        borderTopWidth: 1,
+                        borderTopColor: '#E5E7EB'
+                      }}>
+                        <Text style={{ fontSize: 13, fontWeight: '500', color: '#374151', marginBottom: 12 }}>
+                          Set Working Hours
+                        </Text>
+                        
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                          {/* Start Time */}
+                          <TouchableOpacity
+                            onPress={() => setShowTimePicker({
+                              visible: true,
+                              dayIndex: index,
+                              field: 'start_time',
+                              initialTime: day.start_time
+                            })}
+                            style={{ flex: 1, marginRight: 8 }}
+                          >
+                            <Text style={{ fontSize: 11, color: '#6B7280', marginBottom: 4 }}>START TIME</Text>
+                            <View style={{ 
+                              backgroundColor: 'white',
+                              padding: 12,
+                              borderRadius: 10,
+                              borderWidth: 1,
+                              borderColor: '#E5E7EB',
+                              flexDirection: 'row',
+                              alignItems: 'center'
+                            }}>
+                              <Ionicons name="play" size={16} color="#2563EB" />
+                              <Text style={{ fontSize: 13, fontWeight: '500', marginLeft: 8, color: '#1F2937' }}>
+                                {formatTimeWithAMPM(day.start_time)}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+
+                          {/* End Time */}
+                          <TouchableOpacity
+                            onPress={() => setShowTimePicker({
+                              visible: true,
+                              dayIndex: index,
+                              field: 'end_time',
+                              initialTime: day.end_time
+                            })}
+                            style={{ flex: 1, marginLeft: 8 }}
+                          >
+                            <Text style={{ fontSize: 11, color: '#6B7280', marginBottom: 4 }}>END TIME</Text>
+                            <View style={{ 
+                              backgroundColor: 'white',
+                              padding: 12,
+                              borderRadius: 10,
+                              borderWidth: 1,
+                              borderColor: '#E5E7EB',
+                              flexDirection: 'row',
+                              alignItems: 'center'
+                            }}>
+                              <Ionicons name="stop" size={16} color="#D97706" />
+                              <Text style={{ fontSize: 13, fontWeight: '500', marginLeft: 8, color: '#1F2937' }}>
+                                {formatTimeWithAMPM(day.end_time)}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
         </View>
-
       </ScrollView>
+
+      {/* Time Picker Modal */}
+      {showTimePicker && (
+        <TimePickerModal
+          visible={showTimePicker.visible}
+          onClose={() => setShowTimePicker(null)}
+          onConfirm={(time) => {
+            handleTimeChange(showTimePicker.dayIndex, showTimePicker.field, time);
+            setShowTimePicker(null);
+          }}
+          initialTime={showTimePicker.initialTime}
+          mode={showTimePicker.field === 'start_time' ? 'start' : 'end'}
+        />
+      )}
 
       {/* Availability Modal */}
       <Modal
@@ -579,209 +738,78 @@ export default function SchedulePage() {
         animationType="slide"
         onRequestClose={() => setShowAvailabilityModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Update Availability Status</Text>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: 'white', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <Text style={{ fontSize: 20, fontWeight: '600' }}>Update Availability</Text>
               <TouchableOpacity onPress={() => setShowAvailabilityModal(false)}>
-                <Feather name="x" size={24} color={COLORS.primary} />
+                <Ionicons name="close" size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody}>
-              <Text style={styles.formLabel}>Status</Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={availabilityForm.availability_status}
-                  onValueChange={(value) =>
-                    setAvailabilityForm({
-                      ...availabilityForm,
-                      availability_status: value as any
-                    })
-                  }
-                  mode="dropdown"
-                >
-                  <Picker.Item label="Available" value="available" />
-                  <Picker.Item label="Busy" value="busy" />
-                  <Picker.Item label="On Break" value="break" />
-                  <Picker.Item label="Unavailable" value="unavailable" />
-                  <Picker.Item label="Offline" value="offline" />
-                </Picker>
-              </View>
+            <Text style={{ fontSize: 14, color: '#6B7280', marginBottom: 20 }}>
+              Set your current availability status for deliveries.
+            </Text>
 
-              <View style={styles.switchContainer}>
-                <Text style={styles.formLabel}>Accept new deliveries</Text>
-                <Switch
-                  value={availabilityForm.is_accepting_deliveries}
-                  onValueChange={(value) =>
-                    setAvailabilityForm({
+            <View style={{ marginBottom: 20 }}>
+              <Text style={{ fontSize: 14, fontWeight: '500', color: '#374151', marginBottom: 12 }}>Status</Text>
+              <View style={{ backgroundColor: '#F9FAFB', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', overflow: 'hidden' }}>
+                {Object.entries(AVAILABILITY_CONFIG).map(([key, config]) => (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => setAvailabilityForm({
                       ...availabilityForm,
-                      is_accepting_deliveries: value
-                    })
-                  }
-                />
+                      availability_status: key as RiderAvailabilityData['availability_status']
+                    })}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      padding: 14,
+                      borderBottomWidth: key !== 'offline' ? 1 : 0,
+                      borderBottomColor: '#E5E7EB',
+                      backgroundColor: availabilityForm.availability_status === key ? '#EFF6FF' : 'transparent'
+                    }}
+                  >
+                    <View style={{ backgroundColor: config.color, padding: 8, borderRadius: 20, marginRight: 12 }}>
+                      <Ionicons name={config.icon} size={18} color="#4B5563" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '500', color: '#1F2937' }}>{config.label}</Text>
+                    </View>
+                    {availabilityForm.availability_status === key && (
+                      <Ionicons name="checkmark-circle" size={22} color="#2563EB" />
+                    )}
+                  </TouchableOpacity>
+                ))}
               </View>
-            </ScrollView>
+            </View>
 
-            <View style={styles.modalFooter}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+              <Text style={{ fontSize: 14, fontWeight: '500', color: '#374151' }}>Accept new deliveries</Text>
+              <Switch
+                value={availabilityForm.is_accepting_deliveries}
+                onValueChange={(value) => setAvailabilityForm({...availabilityForm, is_accepting_deliveries: value})}
+                trackColor={{ false: '#D1D5DB', true: '#34D399' }}
+                thumbColor={availabilityForm.is_accepting_deliveries ? '#059669' : '#9CA3AF'}
+              />
+            </View>
+
+            <View style={{ flexDirection: 'row' }}>
               <TouchableOpacity
-                style={[styles.btn, styles.btnSecondary]}
                 onPress={() => setShowAvailabilityModal(false)}
-                disabled={isLoading}
+                style={{ flex: 1, marginRight: 8, padding: 14, backgroundColor: '#F3F4F6', borderRadius: 10, alignItems: 'center' }}
               >
-                <Text style={styles.btnSecondaryText}>Cancel</Text>
+                <Text style={{ fontSize: 15, color: '#6B7280' }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.btn, styles.btnPrimary]}
                 onPress={handleUpdateAvailability}
                 disabled={isLoading}
+                style={{ flex: 1, marginLeft: 8, padding: 14, backgroundColor: '#2563EB', borderRadius: 10, alignItems: 'center' }}
               >
                 {isLoading ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <ActivityIndicator size="small" color="white" />
                 ) : (
-                  <Text style={styles.btnPrimaryText}>Update Status</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Schedule Edit Modal */}
-      <Modal
-        visible={showScheduleModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowScheduleModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {editingDay ? 'Edit Schedule' : 'Add Schedule'}
-              </Text>
-              <TouchableOpacity onPress={() => setShowScheduleModal(false)}>
-                <Feather name="x" size={24} color={COLORS.primary} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.modalBody}>
-              <Text style={styles.formLabel}>Day</Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={scheduleForm.value?.toString()}
-                  onValueChange={(value) => {
-                    const dayNum = parseInt(value);
-                    const days = [
-                      'Monday',
-                      'Tuesday',
-                      'Wednesday',
-                      'Thursday',
-                      'Friday',
-                      'Saturday',
-                      'Sunday'
-                    ];
-                    setScheduleForm({
-                      ...scheduleForm,
-                      value: dayNum,
-                      label: days[dayNum]
-                    });
-                  }}
-                  enabled={!editingDay}
-                >
-                  {[
-                    'Monday',
-                    'Tuesday',
-                    'Wednesday',
-                    'Thursday',
-                    'Friday',
-                    'Saturday',
-                    'Sunday'
-                  ].map((day, index) => (
-                    <Picker.Item
-                      key={index}
-                      label={day}
-                      value={index.toString()}
-                    />
-                  ))}
-                </Picker>
-              </View>
-
-              <Text style={styles.formLabel}>Start Time</Text>
-              <TextInput
-                style={styles.timeInput}
-                placeholder="09:00"
-                value={scheduleForm.start_time}
-                onChangeText={(text) =>
-                  setScheduleForm({ ...scheduleForm, start_time: text })
-                }
-              />
-
-              <Text style={styles.formLabel}>End Time</Text>
-              <TextInput
-                style={styles.timeInput}
-                placeholder="17:00"
-                value={scheduleForm.end_time}
-                onChangeText={(text) =>
-                  setScheduleForm({ ...scheduleForm, end_time: text })
-                }
-              />
-
-              <View style={styles.switchContainer}>
-                <Text style={styles.formLabel}>
-                  Available for deliveries
-                </Text>
-                <Switch
-                  value={scheduleForm.is_available}
-                  onValueChange={(value) =>
-                    setScheduleForm({ ...scheduleForm, is_available: value })
-                  }
-                />
-              </View>
-
-              {editingDay && (
-                <TouchableOpacity
-                  style={[styles.btn, styles.btnDanger]}
-                  onPress={() => {
-                    if (editingDay.value !== undefined) {
-                      handleDeleteDay(editingDay.value);
-                      setShowScheduleModal(false);
-                    }
-                  }}
-                >
-                  <Feather name="trash-2" size={16} color="#fff" />
-                  <Text style={styles.btnDangerText}>Reset to Default</Text>
-                </TouchableOpacity>
-              )}
-            </ScrollView>
-
-            <View style={styles.modalFooter}>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnSecondary]}
-                onPress={() => {
-                  setShowScheduleModal(false);
-                  setEditingDay(null);
-                  setScheduleForm({
-                    value: 0,
-                    label: 'Monday',
-                    start_time: '09:00',
-                    end_time: '17:00',
-                    is_available: true
-                  });
-                }}
-                disabled={isLoading}
-              >
-                <Text style={styles.btnSecondaryText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.btn, styles.btnPrimary]}
-                onPress={handleSaveDaySchedule}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={styles.btnPrimaryText}>Save Schedule</Text>
+                  <Text style={{ fontSize: 15, color: 'white', fontWeight: '600' }}>Update</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -791,330 +819,3 @@ export default function SchedulePage() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 16,
-  },
-  messageTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: COLORS.secondary,
-    marginTop: 12,
-  },
-  messageSub: {
-    fontSize: 12,
-    color: COLORS.muted,
-    textAlign: "center",
-    marginTop: 4,
-  },
-  scrollContent: {
-    paddingBottom: 20,
-  },
-
-  // Header
-  header: {
-    padding: 14,
-    backgroundColor: COLORS.cardBg,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  headerSubtitle: {
-    fontSize: 11,
-    color: COLORS.muted,
-    marginTop: 2,
-  },
-  statusContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: "600",
-  },
-
-  // Metrics
-  metricsContainer: {
-    marginHorizontal: 12,
-    marginBottom: 16,
-    flexDirection: "row",
-    gap: 8,
-  },
-  metricCard: {
-    flex: 1,
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    alignItems: "center",
-  },
-  metricIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.lightGray,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  metricLabel: {
-    fontSize: 10,
-    color: COLORS.muted,
-    marginBottom: 4,
-  },
-  metricValue: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-
-  // Section
-  section: {
-    marginHorizontal: 12,
-    marginBottom: 16,
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  editAllBtn: {
-    padding: 6,
-  },
-
-  // Schedule List
-  scheduleList: {
-    gap: 8,
-  },
-  dayCard: {
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  dayName: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: COLORS.primary,
-    minWidth: 50,
-  },
-  dayTimeContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    flex: 1,
-    justifyContent: "center",
-  },
-  dayTime: {
-    fontSize: 12,
-    color: COLORS.secondary,
-    fontWeight: "500",
-  },
-  dayTimeSeparator: {
-    fontSize: 12,
-    color: COLORS.muted,
-  },
-  dayOff: {
-    fontSize: 12,
-    color: COLORS.muted,
-    fontWeight: "500",
-  },
-  dayBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  dayBadgeText: {
-    fontSize: 10,
-    fontWeight: "600",
-  },
-
-  // Availability Card
-  availabilityCard: {
-    marginHorizontal: 12,
-    marginBottom: 20,
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  availabilityHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  availabilityLabel: {
-    fontSize: 11,
-    color: COLORS.muted,
-    marginBottom: 4,
-  },
-  availabilityValue: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  statusIndicator: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  statusIndicatorText: {
-    fontSize: 24,
-    fontWeight: "700",
-  },
-  availabilityDesc: {
-    fontSize: 12,
-    color: COLORS.muted,
-  },
-
-  // Modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "flex-end",
-  },
-  modalContent: {
-    backgroundColor: COLORS.bg,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: "85%",
-    paddingBottom: 20,
-  },
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  modalBody: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-
-  // Form
-  formLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: COLORS.primary,
-    marginBottom: 8,
-  },
-  pickerContainer: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
-    marginBottom: 16,
-    overflow: "hidden",
-    backgroundColor: COLORS.lightGray,
-  },
-  timeInput: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
-    color: COLORS.primary,
-    marginBottom: 14,
-    backgroundColor: COLORS.lightGray,
-  },
-  switchContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-
-  // Buttons
-  modalFooter: {
-    flexDirection: "row",
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  btn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 6,
-  },
-  btnPrimary: {
-    backgroundColor: COLORS.primary,
-  },
-  btnPrimaryText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  btnSecondary: {
-    backgroundColor: COLORS.lightGray,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  btnSecondaryText: {
-    color: COLORS.primary,
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  btnDanger: {
-    backgroundColor: "#EF4444",
-    marginTop: 8,
-  },
-  btnDangerText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "600",
-  },
-});
