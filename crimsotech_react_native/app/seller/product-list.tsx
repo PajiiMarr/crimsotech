@@ -1,6 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { 
-  SafeAreaView, 
   View, 
   Text, 
   StyleSheet, 
@@ -11,6 +10,7 @@ import {
   TextInput,
   ActivityIndicator
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { Search, Plus, Edit3, X, Eye, Package, AlertCircle } from 'lucide-react-native';
 import AxiosInstance from '../../contexts/axios';
@@ -326,3 +326,4 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 }
   },
 });
+

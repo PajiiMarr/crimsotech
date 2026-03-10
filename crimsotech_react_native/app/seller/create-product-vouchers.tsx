@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { 
-  SafeAreaView, View, Text, StyleSheet, TextInput, ScrollView, 
+  View, Text, StyleSheet, TextInput, ScrollView, 
   TouchableOpacity 
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Package, ChevronRight, CircleDollarSign, Percent } from 'lucide-react-native';
 
@@ -128,3 +129,4 @@ const styles = StyleSheet.create({
   submitBtn: { backgroundColor: '#0F172A', height: 60, borderRadius: 18, justifyContent: 'center', alignItems: 'center', elevation: 2 },
   submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' }
 });
+

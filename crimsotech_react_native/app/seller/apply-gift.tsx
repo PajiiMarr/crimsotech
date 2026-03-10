@@ -292,3 +292,4 @@ const styles = StyleSheet.create({
   submitBtnDisabled: { opacity: 0.5 },
   submitText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 });
+

@@ -268,3 +268,4 @@ const styles = StyleSheet.create({
   cancelBtn: { marginTop: 10, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F1F5F9' },
   cancelText: { color: '#334155', fontWeight: '700' },
 });
+

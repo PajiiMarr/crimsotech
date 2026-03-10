@@ -252,3 +252,4 @@ const styles = StyleSheet.create({
   proceedBtnDisabled: { opacity: 0.5 },
   proceedText: { fontSize: 15, fontWeight: '700', color: '#fff' },
 });
+

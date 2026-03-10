@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { 
-  SafeAreaView, View, Text, StyleSheet, FlatList, 
+  View, Text, StyleSheet, FlatList, 
   TouchableOpacity, Alert, useWindowDimensions, ActivityIndicator 
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MapPin, Phone, User, Plus, Trash2, Edit3 } from 'lucide-react-native';
 import { Stack, useRouter, useFocusEffect } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
@@ -269,3 +270,4 @@ const styles = StyleSheet.create({
   emptyState: { padding: 32, alignItems: 'center' },
   emptyText: { color: '#94A3B8', fontWeight: '600', marginTop: 8 }
 });
+

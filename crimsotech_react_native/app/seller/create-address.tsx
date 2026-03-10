@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { 
-  SafeAreaView, View, Text, StyleSheet, TextInput, 
+  View, Text, StyleSheet, TextInput, 
   ScrollView, TouchableOpacity 
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { CheckCircle2 } from 'lucide-react-native';
 import AxiosInstance from '../../contexts/axios';
@@ -221,3 +222,4 @@ const styles = StyleSheet.create({
   },
   submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' }
 });
+

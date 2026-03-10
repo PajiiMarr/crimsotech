@@ -1,5 +1,6 @@
 import React from 'react';
-import { SafeAreaView, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
 import CreateProductFormMobile from '../customer/create/add-selling-product-form';
 
@@ -23,3 +24,5 @@ const styles = StyleSheet.create({
 		backgroundColor: '#fff',
 	},
 });
+
+

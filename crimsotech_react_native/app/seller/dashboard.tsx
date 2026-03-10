@@ -1,6 +1,7 @@
 // app/seller/dashboard.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { TrendingUp, Wallet, Eye, Bell } from 'lucide-react-native';
 import { router, Stack } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
@@ -103,3 +104,4 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
 });
+

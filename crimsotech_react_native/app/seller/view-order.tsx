@@ -135,3 +135,4 @@ const styles = StyleSheet.create({
   backBtn: { height: 44, borderRadius: 10, backgroundColor: '#EE4D2D', alignItems: 'center', justifyContent: 'center' },
   backText: { color: '#FFFFFF', fontWeight: '800' },
 });
+

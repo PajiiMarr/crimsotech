@@ -8,12 +8,12 @@ import {
   Image,
   Modal,
   FlatList,
-  SafeAreaView,
   ActivityIndicator,
   RefreshControl,
   StyleSheet,
   Alert,
 } from "react-native";
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from "react-native-vector-icons/Feather";
 import { useAuth } from "../../contexts/AuthContext";
 import AxiosInstance from "../../contexts/axios";
@@ -750,3 +750,5 @@ const Comgift = () => {
 };
 
 export default Comgift;
+
+

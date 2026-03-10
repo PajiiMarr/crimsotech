@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { 
-  SafeAreaView, View, Text, StyleSheet, FlatList, 
+  View, Text, StyleSheet, FlatList, 
   TouchableOpacity, Image, TextInput, ScrollView, ActivityIndicator 
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Package, Truck, Search, Copy, Clock, AlertCircle } from 'lucide-react-native';
 // 1. Import Stack for the centered header fix
 import { Stack, useFocusEffect, router } from 'expo-router';
@@ -327,3 +328,4 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', marginTop: 100 },
   emptyText: { color: '#94A3B8', fontSize: 14, fontWeight: '600', marginTop: 10 }
 });
+

@@ -399,3 +399,4 @@ const styles = StyleSheet.create({
   modalConfirm: { flex: 1, backgroundColor: '#EE4D2D', paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
   modalConfirmText: { fontSize: 14, fontWeight: '600', color: '#fff' },
 });
+

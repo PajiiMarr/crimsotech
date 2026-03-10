@@ -111,3 +111,4 @@ const styles = StyleSheet.create({
   reason: { color: '#475569', fontSize: 12, marginTop: 6 },
   empty: { textAlign: 'center', marginTop: 40, color: '#94A3B8' },
 });
+

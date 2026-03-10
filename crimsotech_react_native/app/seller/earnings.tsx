@@ -116,3 +116,4 @@ const styles = StyleSheet.create({
   label: { color: '#64748B', fontSize: 12, fontWeight: '600' },
   value: { color: '#0F172A', fontSize: 20, fontWeight: '800', marginTop: 6 },
 });
+

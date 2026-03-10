@@ -1,7 +1,8 @@
 import React from 'react';
 import { 
-  View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity, SafeAreaView 
+  View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity 
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Calendar } from 'lucide-react-native';
 
@@ -88,3 +89,4 @@ const styles = StyleSheet.create({
   publishBtn: { backgroundColor: '#0F172A', height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', elevation: 2 },
   publishBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' }
 });
+

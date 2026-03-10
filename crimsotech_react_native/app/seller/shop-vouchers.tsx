@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { 
-  SafeAreaView, View, Text, StyleSheet, FlatList, 
+  View, Text, StyleSheet, FlatList, 
   TouchableOpacity, Dimensions 
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router'; // 1. Import useRouter
 import { Plus, Users, Tag, Info } from 'lucide-react-native';
 
@@ -159,3 +160,4 @@ const styles = StyleSheet.create({
   usageText: { fontSize: 10, color: '#64748B', marginLeft: 4, fontWeight: '700' },
   expiryText: { fontSize: 10, color: '#94A3B8', marginLeft: 4 },
 });
+
