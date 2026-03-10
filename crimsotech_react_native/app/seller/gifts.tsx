@@ -404,7 +404,7 @@ const Comgift = () => {
 
             <TouchableOpacity
               onPress={() =>
-                router.push("/customer/create/add-selling-product-form")
+                router.push("/seller/create-gift")
               }
               style={{
                 flex: 1,
@@ -677,8 +677,32 @@ const Comgift = () => {
 
                 {/* Actions list simplified */}
                 <TouchableOpacity
+                  onPress={() => {
+                    router.push(`/seller/apply-gift?giftId=${selectedGift.id}` as any);
+                    setActionModalVisible(false);
+                  }}
+                  style={{
+                    paddingVertical: 12,
+                    alignItems: "center",
+                    backgroundColor: "#dbeafe",
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      color: "#0284c7",
+                      fontWeight: "600",
+                    }}
+                  >
+                    Apply Gift Promotion
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
                   onPress={() => handleDeleteGift(selectedGift.id)}
                   style={{
+                    marginTop: 8,
                     paddingVertical: 12,
                     alignItems: "center",
                     backgroundColor: "#fee2e2",

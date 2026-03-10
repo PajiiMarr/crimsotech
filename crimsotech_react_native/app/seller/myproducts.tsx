@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, TextInput, ActivityIndicator, SafeAreaView } from 'react-native';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Stack, useFocusEffect } from 'expo-router'; // Import Stack to control the header
 import AxiosInstance from '../../contexts/axios';
@@ -110,7 +110,7 @@ export default function MyProducts() {
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* This block forces the header to be centered and capitalized */}
       <Stack.Screen 
         options={{ 
@@ -168,7 +168,7 @@ export default function MyProducts() {
           </View>
         }
       />
-    </View>
+    </SafeAreaView>
   );
 }
 

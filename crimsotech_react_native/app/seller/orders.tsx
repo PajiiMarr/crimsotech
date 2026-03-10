@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Package, Truck, Search, Copy, Clock, AlertCircle } from 'lucide-react-native';
 // 1. Import Stack for the centered header fix
-import { Stack, useFocusEffect } from 'expo-router';
+import { Stack, useFocusEffect, router } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -173,7 +173,10 @@ export default function SellerOrdersPage() {
 
         {/* ACTIONS */}
         <View style={styles.actionRow}>
-          <TouchableOpacity style={styles.secondaryBtn}>
+          <TouchableOpacity
+            style={styles.secondaryBtn}
+            onPress={() => router.push(`/seller/view-order?id=${item.id}` as any)}
+          >
             <Text style={styles.secondaryBtnText}>Details</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[
