@@ -71,6 +71,8 @@ router.register(r'reviews', Reviews, basename='reviews')
 router.register(r'rider-dashboard', RiderDashboardViewSet, basename='rider-dashboard')
 router.register(r'rider-history', RiderOrderHistoryViewSet, basename='rider-history')
 router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedule')
+router.register(r'rider-deivery', RiderDeliveryViewSet, basename='rider-delivery')
+
 router.register(r'proof-management', ProofManagementViewSet, basename='proof-management')
 router.register(r'rider-proof', RiderProofViewSet, basename='rider-proof')
 router.register(r'rider-profile', RiderProfileViewSet, basename='rider-profile')

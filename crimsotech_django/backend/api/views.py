@@ -6308,9 +6308,65 @@ class AdminOrders(viewsets.ViewSet):
         
         return start_date, end_date
     
+    def _get_product_media(self, product):
+        """
+        Helper method to get product media URLs with S3 conversion
+        """
+        media_files = []
+        try:
+            # Get all media for this product
+            product_media = ProductMedia.objects.filter(product=product).order_by('created_at')
+            
+            for media in product_media:
+                if media.file_data:
+                    # Convert S3 URL to public URL
+                    file_url = convert_s3_to_public_url(media.file_data.url)
+                    media_files.append({
+                        "id": str(media.id),
+                        "url": file_url,
+                        "file_type": media.file_type
+                    })
+        except Exception as e:
+            print(f"Error getting product media: {e}")
+        
+        return media_files
+    
+    def _get_variant_media(self, variant):
+        """
+        Helper method to get variant image URL with S3 conversion
+        """
+        if variant and variant.image:
+            return convert_s3_to_public_url(variant.image.url)
+        return None
+    
+    def _get_product_price(self, product, variant=None):
+        """
+        Helper method to safely get product price from variant
+        """
+        # Try to get price from variant first (since Product model no longer has price field)
+        if variant and hasattr(variant, 'price') and variant.price:
+            return float(variant.price)
+        
+        # Try to get price from product's variants
+        if product and hasattr(product, 'variants'):
+            first_variant = product.variants.filter(is_active=True).first()
+            if first_variant and first_variant.price:
+                return float(first_variant.price)
+        
+        # Fallback to 0
+        return 0
+    
+    def _get_order_receipt(self, order):
+        """
+        Helper method to get order receipt URL with S3 conversion
+        """
+        if order.receipt and hasattr(order.receipt, 'url'):
+            return convert_s3_to_public_url(order.receipt.url)
+        return None
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
-        """Get order metrics and analytics data for admin dashboard with date range support"""
+        """Get order metrics data for admin dashboard with date range support"""
         try:
             # FIX: Accept both parameter names for compatibility
             start_date_str = request.GET.get('start_date') or request.GET.get('start')
@@ -6327,13 +6383,22 @@ class AdminOrders(viewsets.ViewSet):
             
             # DEBUG: Print date range for troubleshooting
             print(f"Order metrics date range filter: {start_date} to {end_date}")
+            print(f"Start date string: {start_date_str}, End date string: {end_date_str}")
             
-            # Base queryset with date filter applied
+            # Base queryset with date filter applied - ONLY if dates are provided
             date_filtered_orders_qs = Order.objects.all()
-            if start_date and end_date:
+            filter_applied = bool(start_date_str and end_date_str)
+            
+            if filter_applied and start_date and end_date:
+                # Set end_date to end of day to include all orders on the end date
+                end_of_day = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
                 date_filtered_orders_qs = date_filtered_orders_qs.filter(
-                    created_at__range=[start_date, end_date]
+                    created_at__gte=start_date,
+                    created_at__lte=end_of_day
                 )
+                print(f"Applied date filter: {date_filtered_orders_qs.count()} orders in range")
+            else:
+                print(f"No date filter applied, showing all {date_filtered_orders_qs.count()} orders")
             
             # All metrics should be calculated within the date range for consistency
             total_orders_in_period = date_filtered_orders_qs.count()
@@ -6348,36 +6413,51 @@ class AdminOrders(viewsets.ViewSet):
             total_revenue_in_period = revenue_data_in_period['total_revenue'] or Decimal('0')
             
             # Today's orders within the date range (not necessarily actual today)
-            today_in_range = False
             today_orders_in_period = 0
             
-            # Check if "today" is within the date range
+            # Check if "today" is within the date range or if no date filter
             today = timezone.now().date()
-            start_date_date = start_date.date() if start_date else None
-            end_date_date = end_date.date() if end_date else None
             
-            if start_date_date and end_date_date and start_date_date <= today <= end_date_date:
-                # Today is within the date range, calculate today's orders
+            if filter_applied and start_date and end_date:
+                start_date_date = start_date.date()
+                end_date_date = end_date.date()
+                
+                if start_date_date <= today <= end_date_date:
+                    # Today is within the date range, calculate today's orders
+                    today_start = timezone.make_aware(datetime.combine(today, datetime.min.time()))
+                    today_end = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+                    today_orders_in_period = Order.objects.filter(
+                        created_at__gte=max(start_date, today_start),
+                        created_at__lte=min(end_date, today_end)
+                    ).count()
+            else:
+                # No date filter, show actual today's orders
                 today_orders_in_period = Order.objects.filter(
-                    created_at__date=today,
-                    created_at__gte=start_date,
-                    created_at__lte=end_date
+                    created_at__date=today
                 ).count()
             
             # Monthly orders within the date range
-            # Calculate the start and end of the current month within the date range
-            current_month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             monthly_orders_in_period = 0
             
-            if start_date and end_date:
+            if filter_applied and start_date and end_date:
+                # Calculate the start and end of the current month within the date range
+                current_month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                
                 # Determine the overlapping period between the date range and current month
                 month_range_start = max(start_date, current_month_start)
                 month_range_end = min(end_date, timezone.now())
                 
                 if month_range_start <= month_range_end:
                     monthly_orders_in_period = Order.objects.filter(
-                        created_at__range=[month_range_start, month_range_end]
+                        created_at__gte=month_range_start,
+                        created_at__lte=month_range_end
                     ).count()
+            else:
+                # No date filter, show current month's orders
+                current_month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                monthly_orders_in_period = Order.objects.filter(
+                    created_at__gte=current_month_start
+                ).count()
             
             # Average order value for the period
             avg_order_value_in_period = Decimal('0')
@@ -6398,13 +6478,13 @@ class AdminOrders(viewsets.ViewSet):
             
             # Compile metrics - use date-filtered values for consistency
             order_metrics = {
-                'total_orders': total_orders_in_period,  # Use date-filtered total
+                'total_orders': total_orders_in_period,
                 'pending_orders': pending_orders_in_period,
                 'completed_orders': completed_orders_in_period,
                 'cancelled_orders': cancelled_orders_in_period,
                 'total_revenue': float(total_revenue_in_period),
-                'today_orders': today_orders_in_period,  # Today's orders within date range
-                'monthly_orders': monthly_orders_in_period,  # Monthly orders within date range
+                'today_orders': today_orders_in_period,
+                'monthly_orders': monthly_orders_in_period,
                 'avg_order_value': float(avg_order_value_in_period),
                 'success_rate': float(success_rate_in_period),
                 # Include all-time stats for reference if needed
@@ -6412,148 +6492,60 @@ class AdminOrders(viewsets.ViewSet):
                 'all_time_revenue': float(all_time_revenue)
             }
             
-            # Get analytics data with date range
-            analytics_data = self._get_analytics_data(start_date, end_date)
-            
-            # Get recent orders with related data within date range
-            recent_orders = self._get_recent_orders(start_date, end_date)
+            # Get recent orders with related data - pass None if no dates to get all orders
+            recent_orders = self._get_recent_orders()
             
             response_data = {
                 'success': True,
                 'metrics': order_metrics,
-                'analytics': analytics_data,
                 'orders': recent_orders,
                 'date_range': {
-                    'start_date': start_date_str or start_date.isoformat(),
-                    'end_date': end_date_str or end_date.isoformat(),
+                    'start_date': start_date_str or 'all',
+                    'end_date': end_date_str or 'all',
                     'actual_start': start_date.isoformat() if start_date else None,
-                    'actual_end': end_date.isoformat() if end_date else None
+                    'actual_end': end_date.isoformat() if end_date else None,
+                    'filter_applied': filter_applied
                 }
             }
             
             return Response(response_data)
             
         except Exception as e:
+            import traceback
+            print(f"Error in get_metrics: {str(e)}")
+            print(traceback.format_exc())
             return Response({
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _get_analytics_data(self, start_date=None, end_date=None):
-        """Generate analytics data for charts with date range support"""
-        # If no date range provided, use last 7 days
-        if not start_date or not end_date:
-            end_date = timezone.now()
-            start_date = end_date - timedelta(days=7)
-        
-        # Calculate number of days in the range
-        days_diff = (end_date - start_date).days
-        if days_diff > 365:  # For large ranges, use monthly data
-            return self._get_monthly_analytics_data(start_date, end_date)
-        else:
-            return self._get_daily_analytics_data(start_date, end_date)
-    
-    def _get_daily_analytics_data(self, start_date, end_date):
-        """Generate daily analytics data"""
-        daily_orders = []
-        current_date = start_date.date()
-        end_date_date = end_date.date()
-        
-        while current_date <= end_date_date:
-            day_data = Order.objects.filter(
-                created_at__date=current_date
-            ).aggregate(
-                count=Count('order'),
-                revenue=Sum('total_amount')
-            )
-            
-            daily_orders.append({
-                'date': current_date.strftime('%b %d'),
-                'count': day_data['count'] or 0,
-                'revenue': float(day_data['revenue'] or 0)
-            })
-            
-            current_date += timedelta(days=1)
-        
-        # Status distribution within date range
-        status_distribution = []
-        status_counts = Order.objects.filter(
-            created_at__range=[start_date, end_date]
-        ).values('status').annotate(count=Count('order'))
-        
-        for status_data in status_counts:
-            status_distribution.append({
-                'name': status_data['status'].capitalize(),
-                'value': status_data['count']
-            })
-        
-        # Payment method distribution within date range
-        payment_method_distribution = []
-        payment_counts = Order.objects.filter(
-            created_at__range=[start_date, end_date]
-        ).values('payment_method').annotate(count=Count('order'))
-        
-        for payment_data in payment_counts:
-            if payment_data['payment_method']:
-                payment_method_distribution.append({
-                    'name': payment_data['payment_method'],
-                    'value': payment_data['count']
-                })
-        
-        return {
-            'daily_orders': daily_orders,
-            'status_distribution': status_distribution,
-            'payment_method_distribution': payment_method_distribution,
-            'period_type': 'daily'
-        }
-    
-    def _get_monthly_analytics_data(self, start_date, end_date):
-        """Generate monthly analytics data for large date ranges"""
-        monthly_orders = []
-        
-        # Get all months in the range
-        current_month = start_date.replace(day=1)
-        while current_month <= end_date:
-            next_month = current_month + relativedelta(months=1)
-            
-            month_data = Order.objects.filter(
-                created_at__gte=current_month,
-                created_at__lt=next_month
-            ).aggregate(
-                count=Count('order'),
-                revenue=Sum('total_amount')
-            )
-            
-            monthly_orders.append({
-                'date': current_month.strftime('%b %Y'),
-                'count': month_data['count'] or 0,
-                'revenue': float(month_data['revenue'] or 0)
-            })
-            
-            current_month = next_month
-        
-        return {
-            'daily_orders': monthly_orders,
-            'period_type': 'monthly'
-        }
-    
     def _get_recent_orders(self, start_date=None, end_date=None):
         """Get recent orders with all related data with date range support"""
         orders_qs = Order.objects.select_related(
-            'user'
+            'user',
+            'shipping_address'
         ).prefetch_related(
             'checkout_set',
             'checkout_set__cart_item',
             'checkout_set__cart_item__product',
+            'checkout_set__cart_item__variant',
             'checkout_set__cart_item__product__shop',
             'checkout_set__voucher'
         ).order_by('-created_at')
         
-        # Apply date filter if provided
+        # Apply date filter only if both dates are provided
         if start_date and end_date:
-            orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+            # Set end_date to end of day to include all orders on the end date
+            end_of_day = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+            orders_qs = orders_qs.filter(
+                created_at__gte=start_date,
+                created_at__lte=end_of_day
+            )
         
-        orders = orders_qs[:]
+        # Get ALL orders (removed any limit)
+        orders = orders_qs.all()
+        
+        print(f"Retrieved {orders.count()} orders from database")
         
         order_list = []
         
@@ -6562,6 +6554,7 @@ class AdminOrders(viewsets.ViewSet):
             order_checkouts = order.checkout_set.select_related(
                 'cart_item',
                 'cart_item__product',
+                'cart_item__variant',
                 'cart_item__product__shop',
                 'cart_item__user',
                 'voucher'
@@ -6572,8 +6565,18 @@ class AdminOrders(viewsets.ViewSet):
             for checkout in order_checkouts:
                 cart_item = checkout.cart_item
                 product = cart_item.product if cart_item else None
+                variant = cart_item.variant if cart_item else None
                 shop = product.shop if product else None
                 user = cart_item.user if cart_item else None
+                
+                # Get price safely using helper method
+                price = self._get_product_price(product, variant)
+                
+                # Get product media with S3 conversion
+                product_media = self._get_product_media(product) if product else []
+                
+                # Get variant image with S3 conversion
+                variant_image_url = self._get_variant_media(variant) if variant else None
                 
                 item_data = {
                     'id': str(checkout.id),
@@ -6582,25 +6585,59 @@ class AdminOrders(viewsets.ViewSet):
                         'product': {
                             'id': str(product.id) if product else None,
                             'name': product.name if product else 'Unknown Product',
-                            'price': float(product.price) if product else 0,
+                            'description': product.description if product else '',
+                            'price': price,
+                            'condition': product.condition if product else '',
+                            'is_refundable': product.is_refundable if product else None,
+                            'refund_days': product.refund_days if product else 0,
+                            'upload_status': product.upload_status if product else '',
+                            'created_at': product.created_at.isoformat() if product and product.created_at else None,
+                            'updated_at': product.updated_at.isoformat() if product and product.updated_at else None,
                             'shop': {
                                 'id': str(shop.id) if shop else None,
-                                'name': shop.name if shop else 'Unknown Shop'
-                            }
+                                'name': shop.name if shop else 'Unknown Shop',
+                                'contact_number': shop.contact_number if shop else '',
+                                'verified': shop.verified if shop else False,
+                                'status': shop.status if shop else ''
+                            },
+                            'media': product_media,
+                            'primary_image': product_media[0] if product_media else None
                         },
+                        'variant': {
+                            'id': str(variant.id) if variant else None,
+                            'title': variant.title if variant else None,
+                            'sku_code': variant.sku_code if variant else None,
+                            'price': float(variant.price) if variant and variant.price else None,
+                            'compare_price': float(variant.compare_price) if variant and variant.compare_price else None,
+                            'quantity': variant.quantity if variant else 0,
+                            'weight': float(variant.weight) if variant and variant.weight else None,
+                            'weight_unit': variant.weight_unit if variant else 'g',
+                            'is_active': variant.is_active if variant else False,
+                            'is_refundable': variant.is_refundable if variant else False,
+                            'refund_days': variant.refund_days if variant else 0,
+                            'allow_swap': variant.allow_swap if variant else False,
+                            'swap_type': variant.swap_type if variant else None,
+                            'image_url': variant_image_url,
+                            'created_at': variant.created_at.isoformat() if variant and variant.created_at else None,
+                            'updated_at': variant.updated_at.isoformat() if variant and variant.updated_at else None
+                        } if variant else None,
                         'quantity': cart_item.quantity if cart_item else 0,
+                        'is_ordered': cart_item.is_ordered if cart_item else False,
+                        'added_at': cart_item.added_at.isoformat() if cart_item and cart_item.added_at else None,
                         'user': {
                             'id': str(user.id) if user else None,
                             'username': user.username if user else 'Unknown User',
                             'email': user.email if user else '',
                             'first_name': user.first_name if user else '',
-                            'last_name': user.last_name if user else ''
+                            'last_name': user.last_name if user else '',
+                            'contact_number': user.contact_number if user else ''
                         }
                     },
                     'quantity': checkout.quantity,
                     'total_amount': float(checkout.total_amount),
                     'status': checkout.status,
                     'remarks': checkout.remarks or '',
+                    'created_at': checkout.created_at.isoformat() if checkout.created_at else None,
                 }
                 
                 # Add voucher data if exists
@@ -6609,13 +6646,16 @@ class AdminOrders(viewsets.ViewSet):
                         'id': str(checkout.voucher.id),
                         'name': checkout.voucher.name,
                         'code': checkout.voucher.code,
-                        'value': float(checkout.voucher.value)
+                        'discount_type': checkout.voucher.discount_type,
+                        'value': float(checkout.voucher.value),
+                        'minimum_spend': float(checkout.voucher.minimum_spend) if checkout.voucher.minimum_spend else 0,
+                        'valid_until': checkout.voucher.valid_until.isoformat() if checkout.voucher.valid_until else None,
+                        'is_active': checkout.voucher.is_active
                     }
                 
                 items.append(item_data)
             
-            # FIX: Use delivery_address_text instead of delivery_address
-            # Also include shipping address info if available
+            # Get delivery address
             delivery_address = order.delivery_address_text or ''
             shipping_address_info = {}
             
@@ -6624,9 +6664,33 @@ class AdminOrders(viewsets.ViewSet):
                     'id': str(order.shipping_address.id),
                     'recipient_name': order.shipping_address.recipient_name,
                     'recipient_phone': order.shipping_address.recipient_phone,
+                    'street': order.shipping_address.street,
+                    'barangay': order.shipping_address.barangay,
+                    'city': order.shipping_address.city,
+                    'province': order.shipping_address.province,
+                    'zip_code': order.shipping_address.zip_code,
+                    'country': order.shipping_address.country,
                     'full_address': order.shipping_address.get_full_address(),
-                    'address_type': order.shipping_address.address_type
+                    'address_type': order.shipping_address.address_type,
+                    'is_default': order.shipping_address.is_default,
+                    'building_name': order.shipping_address.building_name,
+                    'floor_number': order.shipping_address.floor_number,
+                    'unit_number': order.shipping_address.unit_number,
+                    'landmark': order.shipping_address.landmark,
+                    'instructions': order.shipping_address.instructions
                 }
+            
+            # Get receipt URL with S3 conversion
+            receipt_url = None
+            receipt_file_name = None
+            receipt_file_type = None
+            if order.receipt and hasattr(order.receipt, 'url'):
+                receipt_url = convert_s3_to_public_url(order.receipt.url)
+                receipt_file_name = order.receipt.name.split('/')[-1] if order.receipt.name else None
+                # Determine file type from extension
+                if receipt_file_name:
+                    ext = receipt_file_name.split('.')[-1].lower() if '.' in receipt_file_name else ''
+                    receipt_file_type = ext
             
             order_data = {
                 'order_id': str(order.order),
@@ -6635,15 +6699,29 @@ class AdminOrders(viewsets.ViewSet):
                     'username': order.user.username,
                     'email': order.user.email,
                     'first_name': order.user.first_name,
-                    'last_name': order.user.last_name
+                    'last_name': order.user.last_name,
+                    'contact_number': order.user.contact_number,
+                    'is_admin': order.user.is_admin,
+                    'is_customer': order.user.is_customer,
+                    'is_moderator': order.user.is_moderator,
+                    'is_rider': order.user.is_rider
                 },
+                'approval': order.approval,
                 'status': order.status,
                 'total_amount': float(order.total_amount),
                 'payment_method': order.payment_method,
-                'delivery_address': delivery_address,  # Use the correct field name
-                'shipping_address': shipping_address_info,  # Add structured shipping address data
+                'delivery_method': order.delivery_method,
+                'delivery_address': delivery_address,
+                'shipping_address': shipping_address_info,
+                'receipt': {
+                    'url': receipt_url,
+                    'file_name': receipt_file_name,
+                    'file_type': receipt_file_type,
+                    'uploaded_at': order.updated_at.isoformat() if order.updated_at else None
+                } if receipt_url else None,
                 'created_at': order.created_at.isoformat() if order.created_at else None,
                 'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                'completed_at': order.completed_at.isoformat() if order.completed_at else None,
                 'items': items
             }
             
@@ -6664,11 +6742,13 @@ class AdminOrders(viewsets.ViewSet):
         
         try:
             order = Order.objects.select_related(
-                'user'
+                'user',
+                'shipping_address'
             ).prefetch_related(
                 'checkout_set',
                 'checkout_set__cart_item',
                 'checkout_set__cart_item__product',
+                'checkout_set__cart_item__variant',
                 'checkout_set__cart_item__product__shop',
                 'checkout_set__voucher'
             ).get(order=order_id)
@@ -6678,8 +6758,18 @@ class AdminOrders(viewsets.ViewSet):
             for checkout in order.checkout_set.all():
                 cart_item = checkout.cart_item
                 product = cart_item.product if cart_item else None
+                variant = cart_item.variant if cart_item else None
                 shop = product.shop if product else None
                 user = cart_item.user if cart_item else None
+                
+                # Get price safely using helper method
+                price = self._get_product_price(product, variant)
+                
+                # Get product media with S3 conversion
+                product_media = self._get_product_media(product) if product else []
+                
+                # Get variant image with S3 conversion
+                variant_image_url = self._get_variant_media(variant) if variant else None
                 
                 item_data = {
                     'id': str(checkout.id),
@@ -6689,16 +6779,52 @@ class AdminOrders(viewsets.ViewSet):
                             'id': str(product.id) if product else None,
                             'name': product.name if product else 'Unknown Product',
                             'description': product.description if product else '',
-                            'price': float(product.price) if product else 0,
-                            'quantity': product.quantity if product else 0,
+                            'price': price,
                             'condition': product.condition if product else '',
+                            'is_refundable': product.is_refundable if product else None,
+                            'refund_days': product.refund_days if product else 0,
+                            'upload_status': product.upload_status if product else '',
+                            'created_at': product.created_at.isoformat() if product and product.created_at else None,
+                            'updated_at': product.updated_at.isoformat() if product and product.updated_at else None,
                             'shop': {
                                 'id': str(shop.id) if shop else None,
                                 'name': shop.name if shop else 'Unknown Shop',
-                                'contact_number': shop.contact_number if shop else ''
-                            }
+                                'contact_number': shop.contact_number if shop else '',
+                                'verified': shop.verified if shop else False,
+                                'status': shop.status if shop else ''
+                            },
+                            'media': product_media,
+                            'primary_image': product_media[0] if product_media else None
                         },
+                        'variant': {
+                            'id': str(variant.id) if variant else None,
+                            'title': variant.title if variant else None,
+                            'sku_code': variant.sku_code if variant else None,
+                            'price': float(variant.price) if variant and variant.price else None,
+                            'compare_price': float(variant.compare_price) if variant and variant.compare_price else None,
+                            'quantity': variant.quantity if variant else 0,
+                            'weight': float(variant.weight) if variant and variant.weight else None,
+                            'weight_unit': variant.weight_unit if variant else 'g',
+                            'is_active': variant.is_active if variant else False,
+                            'is_refundable': variant.is_refundable if variant else False,
+                            'refund_days': variant.refund_days if variant else 0,
+                            'allow_swap': variant.allow_swap if variant else False,
+                            'swap_type': variant.swap_type if variant else None,
+                            'swap_description': variant.swap_description if variant else None,
+                            'original_price': float(variant.original_price) if variant and variant.original_price else None,
+                            'usage_period': float(variant.usage_period) if variant and variant.usage_period else None,
+                            'usage_unit': variant.usage_unit if variant else None,
+                            'depreciation_rate': float(variant.depreciation_rate) if variant and variant.depreciation_rate else None,
+                            'minimum_additional_payment': float(variant.minimum_additional_payment) if variant and variant.minimum_additional_payment else 0,
+                            'maximum_additional_payment': float(variant.maximum_additional_payment) if variant and variant.maximum_additional_payment else 0,
+                            'image_url': variant_image_url,
+                            'critical_stock': variant.critical_stock if variant else None,
+                            'created_at': variant.created_at.isoformat() if variant and variant.created_at else None,
+                            'updated_at': variant.updated_at.isoformat() if variant and variant.updated_at else None
+                        } if variant else None,
                         'quantity': cart_item.quantity if cart_item else 0,
+                        'is_ordered': cart_item.is_ordered if cart_item else False,
+                        'added_at': cart_item.added_at.isoformat() if cart_item and cart_item.added_at else None,
                         'user': {
                             'id': str(user.id) if user else None,
                             'username': user.username if user else 'Unknown User',
@@ -6712,6 +6838,7 @@ class AdminOrders(viewsets.ViewSet):
                     'total_amount': float(checkout.total_amount),
                     'status': checkout.status,
                     'remarks': checkout.remarks or '',
+                    'created_at': checkout.created_at.isoformat() if checkout.created_at else None,
                 }
                 
                 if checkout.voucher:
@@ -6719,13 +6846,18 @@ class AdminOrders(viewsets.ViewSet):
                         'id': str(checkout.voucher.id),
                         'name': checkout.voucher.name,
                         'code': checkout.voucher.code,
+                        'discount_type': checkout.voucher.discount_type,
                         'value': float(checkout.voucher.value),
-                        'discount_type': checkout.voucher.discount_type
+                        'minimum_spend': float(checkout.voucher.minimum_spend) if checkout.voucher.minimum_spend else 0,
+                        'maximum_usage': checkout.voucher.maximum_usage,
+                        'valid_until': checkout.voucher.valid_until.isoformat() if checkout.voucher.valid_until else None,
+                        'is_active': checkout.voucher.is_active,
+                        'added_at': checkout.voucher.added_at.isoformat() if checkout.voucher.added_at else None
                     }
                 
                 items.append(item_data)
             
-            # FIX: Use delivery_address_text instead of delivery_address
+            # Get delivery address
             delivery_address = order.delivery_address_text or ''
             
             # Include shipping address info if available
@@ -6739,16 +6871,32 @@ class AdminOrders(viewsets.ViewSet):
                     'barangay': order.shipping_address.barangay,
                     'city': order.shipping_address.city,
                     'province': order.shipping_address.province,
+                    'state': order.shipping_address.state,
                     'zip_code': order.shipping_address.zip_code,
                     'country': order.shipping_address.country,
                     'full_address': order.shipping_address.get_full_address(),
                     'address_type': order.shipping_address.address_type,
+                    'is_default': order.shipping_address.is_default,
                     'building_name': order.shipping_address.building_name,
                     'floor_number': order.shipping_address.floor_number,
                     'unit_number': order.shipping_address.unit_number,
                     'landmark': order.shipping_address.landmark,
-                    'instructions': order.shipping_address.instructions
+                    'instructions': order.shipping_address.instructions,
+                    'created_at': order.shipping_address.created_at.isoformat() if order.shipping_address.created_at else None,
+                    'updated_at': order.shipping_address.updated_at.isoformat() if order.shipping_address.updated_at else None
                 }
+            
+            # Get receipt URL with S3 conversion
+            receipt_url = None
+            receipt_file_name = None
+            receipt_file_type = None
+            if order.receipt and hasattr(order.receipt, 'url'):
+                receipt_url = convert_s3_to_public_url(order.receipt.url)
+                receipt_file_name = order.receipt.name.split('/')[-1] if order.receipt.name else None
+                # Determine file type from extension
+                if receipt_file_name:
+                    ext = receipt_file_name.split('.')[-1].lower() if '.' in receipt_file_name else ''
+                    receipt_file_type = ext
             
             order_data = {
                 'order_id': str(order.order),
@@ -6758,15 +6906,29 @@ class AdminOrders(viewsets.ViewSet):
                     'email': order.user.email,
                     'first_name': order.user.first_name,
                     'last_name': order.user.last_name,
-                    'contact_number': order.user.contact_number
+                    'contact_number': order.user.contact_number,
+                    'is_admin': order.user.is_admin,
+                    'is_customer': order.user.is_customer,
+                    'is_moderator': order.user.is_moderator,
+                    'is_rider': order.user.is_rider,
+                    'created_at': order.user.created_at.isoformat() if order.user.created_at else None
                 },
+                'approval': order.approval,
                 'status': order.status,
                 'total_amount': float(order.total_amount),
                 'payment_method': order.payment_method,
-                'delivery_address': delivery_address,  # Use the correct field name
-                'shipping_address': shipping_address_info,  # Add structured shipping address
+                'delivery_method': order.delivery_method,
+                'delivery_address': delivery_address,
+                'shipping_address': shipping_address_info,
+                'receipt': {
+                    'url': receipt_url,
+                    'file_name': receipt_file_name,
+                    'file_type': receipt_file_type,
+                    'uploaded_at': order.updated_at.isoformat() if order.updated_at else None
+                } if receipt_url else None,
                 'created_at': order.created_at.isoformat(),
                 'updated_at': order.updated_at.isoformat(),
+                'completed_at': order.completed_at.isoformat() if order.completed_at else None,
                 'items': items
             }
             
@@ -6819,6 +6981,46 @@ class AdminOrders(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['post'])
+    def update_order_approval(self, request):
+        """Update order approval status (pending/accepted/rejected)"""
+        order_id = request.data.get('order_id')
+        new_approval = request.data.get('approval')
+        
+        if not order_id or not new_approval:
+            return Response({
+                'success': False,
+                'error': 'Order ID and approval status are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        valid_approvals = ['pending', 'accepted', 'rejected']
+        if new_approval not in valid_approvals:
+            return Response({
+                'success': False,
+                'error': f'Invalid approval status. Must be one of: {", ".join(valid_approvals)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            order = Order.objects.get(order=order_id)
+            order.approval = new_approval
+            order.save()
+            
+            return Response({
+                'success': True,
+                'message': f'Order approval updated to {new_approval}'
+            })
+            
+        except Order.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Order not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @action(detail=False, methods=['get'])
     def get_order_stats(self, request):
         """Get additional order statistics with date range support"""
@@ -6835,10 +7037,15 @@ class AdminOrders(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            filter_applied = bool(start_date_str and end_date_str)
+            
             # Base queryset with date filter
             orders_qs = Order.objects.filter(status='completed')
-            if start_date and end_date:
-                orders_qs = orders_qs.filter(created_at__range=[start_date, end_date])
+            if filter_applied and start_date and end_date:
+                orders_qs = orders_qs.filter(
+                    created_at__gte=start_date,
+                    created_at__lte=end_date
+                )
             
             # Revenue statistics for the period
             revenue_data = orders_qs.aggregate(
@@ -6865,8 +7072,11 @@ class AdminOrders(viewsets.ViewSet):
             
             # Top products by order count in the period (through checkouts)
             checkouts_qs = Checkout.objects.filter(order__isnull=False, cart_item__product__isnull=False)
-            if start_date and end_date:
-                checkouts_qs = checkouts_qs.filter(created_at__range=[start_date, end_date])
+            if filter_applied and start_date and end_date:
+                checkouts_qs = checkouts_qs.filter(
+                    created_at__gte=start_date,
+                    created_at__lte=end_date
+                )
             
             top_products = checkouts_qs.values(
                 'cart_item__product__name'
@@ -6918,6 +7128,15 @@ class AdminOrders(viewsets.ViewSet):
                 'error': 'Order ID is required'
             }, status=400)
         
+        # Validate UUID format
+        try:
+            uuid.UUID(str(order_id))
+        except (ValueError, AttributeError):
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid order ID format'
+            }, status=400)
+        
         try:
             with transaction.atomic():
                 # Get the order with related data
@@ -6927,12 +7146,24 @@ class AdminOrders(viewsets.ViewSet):
                         'shipping_address'
                     ).prefetch_related(
                         'checkout_set__cart_item__product__shop',
+                        'checkout_set__cart_item__variant',
                         'checkout_set__cart_item__product__category',
                         'checkout_set__cart_item__user',
                         'checkout_set__voucher'
                     ),
                     order=order_id
                 )
+                
+                # Get receipt URL with S3 conversion
+                receipt_url = None
+                receipt_file_name = None
+                receipt_file_type = None
+                if order.receipt and hasattr(order.receipt, 'url'):
+                    receipt_url = convert_s3_to_public_url(order.receipt.url)
+                    receipt_file_name = order.receipt.name.split('/')[-1] if order.receipt.name else None
+                    if receipt_file_name:
+                        ext = receipt_file_name.split('.')[-1].lower() if '.' in receipt_file_name else ''
+                        receipt_file_type = ext
                 
                 # Serialize order data
                 order_data = {
@@ -6943,23 +7174,32 @@ class AdminOrders(viewsets.ViewSet):
                         'email': order.user.email,
                         'first_name': order.user.first_name,
                         'last_name': order.user.last_name,
+                        'contact_number': order.user.contact_number
                     },
                     'approval': order.approval, 
                     'status': order.status,
                     'total_amount': str(order.total_amount),
                     'payment_method': order.payment_method,
+                    'delivery_method': order.delivery_method,
                     'delivery_address': order.delivery_address_text or 
                                        (order.shipping_address.get_full_address() 
                                         if order.shipping_address else ''),
-                    'receipt': order.receipt.url if order.receipt else None,
+                    'receipt': {
+                        'url': receipt_url,
+                        'file_name': receipt_file_name,
+                        'file_type': receipt_file_type,
+                        'uploaded_at': order.updated_at.isoformat()
+                    } if receipt_url else None,
                     'created_at': order.created_at.isoformat(),
                     'updated_at': order.updated_at.isoformat(),
+                    'completed_at': order.completed_at.isoformat() if order.completed_at else None,
                     'items': []
                 }
                 
                 # Get all checkout items for this order
                 checkouts = order.checkout_set.select_related(
                     'cart_item__product__shop',
+                    'cart_item__variant',
                     'cart_item__product__category',
                     'cart_item__user',
                     'voucher'
@@ -6968,6 +7208,16 @@ class AdminOrders(viewsets.ViewSet):
                 for checkout in checkouts:
                     cart_item = checkout.cart_item
                     product = cart_item.product
+                    variant = cart_item.variant
+                    
+                    # Get price safely using helper method
+                    price = self._get_product_price(product, variant)
+                    
+                    # Get product media with S3 conversion
+                    product_media = self._get_product_media(product) if product else []
+                    
+                    # Get variant image with S3 conversion
+                    variant_image_url = self._get_variant_media(variant) if variant else None
                     
                     item_data = {
                         'id': str(checkout.id),
@@ -6976,32 +7226,78 @@ class AdminOrders(viewsets.ViewSet):
                             'product': {
                                 'id': str(product.id),
                                 'name': product.name,
-                                'price': str(product.price),
+                                'description': product.description,
+                                'price': str(price),
+                                'condition': product.condition,
+                                'is_refundable': product.is_refundable,
+                                'refund_days': product.refund_days,
+                                'upload_status': product.upload_status,
+                                'created_at': product.created_at.isoformat() if product.created_at else None,
+                                'updated_at': product.updated_at.isoformat() if product.updated_at else None,
                                 'shop': {
                                     'id': str(product.shop.id) if product.shop else None,
                                     'name': product.shop.name if product.shop else None,
+                                    'contact_number': product.shop.contact_number if product.shop else None,
+                                    'verified': product.shop.verified if product.shop else False
                                 } if product.shop else None,
                                 'category': {
                                     'id': str(product.category.id) if product.category else None,
                                     'name': product.category.name if product.category else None,
                                 } if product.category else None,
+                                'media': product_media,
+                                'primary_image': product_media[0] if product_media else None
                             },
+                            'variant': {
+                                'id': str(variant.id) if variant else None,
+                                'title': variant.title if variant else None,
+                                'sku_code': variant.sku_code if variant else None,
+                                'price': str(variant.price) if variant and variant.price else None,
+                                'compare_price': str(variant.compare_price) if variant and variant.compare_price else None,
+                                'quantity': variant.quantity if variant else 0,
+                                'weight': str(variant.weight) if variant and variant.weight else None,
+                                'weight_unit': variant.weight_unit if variant else 'g',
+                                'is_active': variant.is_active if variant else False,
+                                'is_refundable': variant.is_refundable if variant else False,
+                                'refund_days': variant.refund_days if variant else 0,
+                                'allow_swap': variant.allow_swap if variant else False,
+                                'swap_type': variant.swap_type if variant else None,
+                                'swap_description': variant.swap_description if variant else None,
+                                'original_price': str(variant.original_price) if variant and variant.original_price else None,
+                                'usage_period': float(variant.usage_period) if variant and variant.usage_period else None,
+                                'usage_unit': variant.usage_unit if variant else None,
+                                'depreciation_rate': float(variant.depreciation_rate) if variant and variant.depreciation_rate else None,
+                                'minimum_additional_payment': str(variant.minimum_additional_payment) if variant and variant.minimum_additional_payment else '0.00',
+                                'maximum_additional_payment': str(variant.maximum_additional_payment) if variant and variant.maximum_additional_payment else '0.00',
+                                'image_url': variant_image_url,
+                                'critical_stock': variant.critical_stock if variant else None,
+                                'created_at': variant.created_at.isoformat() if variant and variant.created_at else None,
+                                'updated_at': variant.updated_at.isoformat() if variant and variant.updated_at else None
+                            } if variant else None,
+                            'quantity': cart_item.quantity,
+                            'is_ordered': cart_item.is_ordered,
+                            'added_at': cart_item.added_at.isoformat() if cart_item.added_at else None,
                             'user': {
                                 'id': str(cart_item.user.id) if cart_item.user else None,
                                 'username': cart_item.user.username if cart_item.user else None,
                                 'email': cart_item.user.email if cart_item.user else None,
                                 'first_name': cart_item.user.first_name if cart_item.user else None,
                                 'last_name': cart_item.user.last_name if cart_item.user else None,
+                                'contact_number': cart_item.user.contact_number if cart_item.user else None
                             } if cart_item.user else None,
                         },
                         'voucher': {
                             'id': str(checkout.voucher.id),
                             'name': checkout.voucher.name,
                             'code': checkout.voucher.code,
+                            'discount_type': checkout.voucher.discount_type,
                             'value': str(checkout.voucher.value),
+                            'minimum_spend': str(checkout.voucher.minimum_spend) if checkout.voucher.minimum_spend else '0.00',
+                            'valid_until': checkout.voucher.valid_until.isoformat() if checkout.voucher.valid_until else None,
+                            'is_active': checkout.voucher.is_active
                         } if checkout.voucher else None,
                         'total_amount': str(checkout.total_amount),
                         'status': checkout.status,
+                        'remarks': checkout.remarks or '',
                         'created_at': checkout.created_at.isoformat() if checkout.created_at else None,
                     }
                     order_data['items'].append(item_data)
@@ -7026,9 +7322,7 @@ class AdminOrders(viewsets.ViewSet):
             return JsonResponse({
                 'success': False,
                 'error': 'Internal server error'
-            }, status=500)
-
-
+            }, status=500) 
 
 class AdminRiders(viewsets.ViewSet):
     def parse_date(self, date_str):
@@ -20307,7 +20601,188 @@ class CustomerFavoritesView(APIView):
             'updated_at': product.updated_at
         }
 
+# backend/api/views/rider_views.py (add this to your rider views)
+class RiderDeliveryViewSet(viewsets.ViewSet):
+    
+    @action(detail=False, methods=['get'])
+    def pending_offers(self, request):
+        """Get all pending delivery offers for the authenticated rider"""
+        rider = request.user.rider
+        
+        pending_deliveries = Delivery.objects.filter(
+            rider=rider,
+            status='pending_offer'
+        ).select_related('order', 'order__user').order_by('-created_at')
+        
+        data = []
+        for delivery in pending_deliveries:
+            order = delivery.order
+            data.append({
+                'delivery_id': str(delivery.id),
+                'order_id': str(order.order),
+                'customer_name': f"{order.user.first_name} {order.user.last_name}",
+                'customer_phone': order.user.contact_number,
+                'pickup_address': self._get_pickup_address(order),
+                'delivery_address': order.delivery_address_text,
+                'estimated_distance': delivery.distance_km,
+                'estimated_time': delivery.estimated_minutes,
+                'delivery_fee': delivery.delivery_fee,
+                'expires_at': (delivery.created_at + timedelta(minutes=10)).isoformat(),
+                'created_at': delivery.created_at.isoformat()
+            })
+        
+        return Response({
+            'success': True,
+            'data': data
+        })
+    
+    def _get_pickup_address(self, order):
+        """Get the pickup address (shop address) from the order"""
+        checkout = order.checkout_set.first()
+        if checkout and checkout.cart_item and checkout.cart_item.product:
+            shop = checkout.cart_item.product.shop
+            if shop:
+                return f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+        return "Pickup location not specified"
+    
+    @action(detail=True, methods=['post'])
+    def respond_to_offer(self, request, pk=None):
+        """Rider responds to a delivery offer"""
+        try:
+            delivery = Delivery.objects.get(id=pk, rider=request.user.rider, status='pending_offer')
+        except Delivery.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Delivery offer not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        response = request.data.get('response')
+        if response not in ['accept', 'reject']:
+            return Response({
+                'success': False,
+                'message': 'Response must be accept or reject'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if response == 'accept':
+            delivery.status = 'accepted'
+            delivery.save()
+            
+            # Update rider availability
+            rider = request.user.rider
+            rider.availability_status = 'busy'
+            rider.is_accepting_deliveries = False
+            rider.save()
+            
+            message = 'Delivery offer accepted'
+        else:
+            delivery.status = 'rejected'
+            delivery.save()
+            message = 'Delivery offer rejected'
+        
+        return Response({
+            'success': True,
+            'message': message
+        })
+
 class SellerOrderList(viewsets.ViewSet):
+    @action(detail=True, methods=['post'])
+    def rider_response(self, request, pk=None):
+        """
+        Handle rider response to delivery offer
+        POST /seller-order-list/{order_id}/rider_response/?shop_id={shop_id}
+        {
+            "rider_id": "uuid",
+            "response": "accept" or "reject"
+        }
+        """
+        try:
+            # Get order
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get rider
+            rider_id = request.data.get('rider_id')
+            if not rider_id:
+                return Response({
+                    "success": False,
+                    "message": "Rider ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            try:
+                rider = Rider.objects.get(id=rider_id)
+            except Rider.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Rider not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            response_type = request.data.get('response')
+            if response_type not in ['accept', 'reject']:
+                return Response({
+                    "success": False,
+                    "message": "Response must be 'accept' or 'reject'"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the pending delivery for this order and rider
+            delivery = Delivery.objects.filter(
+                order=order,
+                rider=rider,
+                status='pending_offer'
+            ).first()
+
+            if not delivery:
+                return Response({
+                    "success": False,
+                    "message": "No pending delivery found for this rider"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Update delivery status based on response
+            if response_type == 'accept':
+                delivery.status = 'accepted'
+                delivery.save()
+                
+                # Update rider availability
+                rider.availability_status = 'busy'
+                rider.is_accepting_deliveries = False
+                rider.save()
+                
+                message = "Delivery accepted successfully"
+                
+                # Notify seller
+                shop = order.checkout_set.first().cart_item.product.shop
+                Notification.objects.create(
+                    user=shop.customer.customer,
+                    title='Delivery Accepted',
+                    type='delivery',
+                    message=f'Rider {rider.rider.username} has accepted delivery for order #{str(order.order)[:8]}',
+                    is_read=False
+                )
+                
+            else:  # reject
+                delivery.status = 'rejected'
+                delivery.save()
+                message = "Delivery rejected"
+
+            return Response({
+                "success": True,
+                "message": message,
+                "data": {
+                    "delivery_id": str(delivery.id),
+                    "status": delivery.status
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({
+                "success": False,
+                "message": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     
     def _get_product_media(self, product):
         """
@@ -20493,6 +20968,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "last_name": order.user.last_name,
                 "phone": order.user.contact_number or None
             },
+            "approval": order.approval,  # Add approval field
             "status": shipping_status,
             "total_amount": total_amount,
             "payment_method": order.payment_method,
@@ -20681,7 +21157,7 @@ class SellerOrderList(viewsets.ViewSet):
 
             # Determine if it's a pickup order
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
-                                                     for keyword in ['pickup', 'store', 'collect'])
+                                                    for keyword in ['pickup', 'store', 'collect'])
             
             # Get current shipping status
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
@@ -20690,14 +21166,30 @@ class SellerOrderList(viewsets.ViewSet):
                 latest_delivery.status if latest_delivery else None
             )
             
-            # Get available actions based on current shipping status
+            # Check if order has a receipt file (safely check without accessing file attribute)
+            has_receipt = False
+            try:
+                if order.receipt and hasattr(order.receipt, 'name') and order.receipt.name:
+                    has_receipt = True
+            except (ValueError, AttributeError):
+                # If there's an error accessing the receipt, treat as no receipt
+                has_receipt = False
+            
+            # Check if order is pending approval (has receipt but approval not accepted)
+            is_pending_approval = has_receipt and order.approval != 'accepted'
+            
+            # Get available actions based on current shipping status and approval status
             available_actions = []
             
             if current_shipping_status == 'pending_shipment':
                 if is_pickup:
-                    available_actions = ['confirm']
+                    # For pickup orders, only show confirm if not pending approval
+                    if not is_pending_approval:
+                        available_actions = ['confirm']
                 else:
-                    available_actions = ['confirm', 'prepare_shipment']
+                    # For delivery orders, show confirm if not pending approval
+                    if not is_pending_approval:
+                        available_actions = ['confirm', 'prepare_shipment']
             
             elif current_shipping_status == 'to_ship':
                 if is_pickup:
@@ -20726,8 +21218,8 @@ class SellerOrderList(viewsets.ViewSet):
             elif current_shipping_status == 'in_transit':
                 available_actions = ['complete']
             
-            # Always allow cancellation if not completed or cancelled
-            if current_shipping_status not in ['completed', 'cancelled', 'picked_up']:
+            # Always allow cancellation if not completed or cancelled and not pending approval
+            if current_shipping_status not in ['completed', 'cancelled', 'picked_up'] and not is_pending_approval:
                 available_actions.append('cancel')
             
             # Always allow view details
@@ -20740,6 +21232,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "current_status": current_shipping_status,
                     "is_pickup": is_pickup,
                     "has_pending_offer": has_pending_offer,
+                    "is_pending_approval": is_pending_approval,
                     "available_actions": available_actions
                 }
             }, status=status.HTTP_200_OK)
@@ -20749,7 +21242,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "success": False,
                 "message": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
     @action(detail=True, methods=['patch'])
     def update_status(self, request, pk=None):
         """
@@ -20802,6 +21295,16 @@ class SellerOrderList(viewsets.ViewSet):
                     "success": False,
                     "message": "Order does not contain items from your shop"
                 }, status=status.HTTP_403_FORBIDDEN)
+
+            # Check if order is pending approval (has receipt but approval not accepted)
+            is_pending_approval = order.receipt and order.approval != 'accepted'
+            
+            # Prevent confirmation if order is pending approval
+            if action_type == 'confirm' and is_pending_approval:
+                return Response({
+                    "success": False,
+                    "message": "Cannot confirm order while payment approval is pending"
+                }, status=status.HTTP_400_BAD_REQUEST)
 
             # Determine if it's a pickup order
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
@@ -20904,14 +21407,19 @@ class SellerOrderList(viewsets.ViewSet):
                 status='pending_offer'
             ).exists()
             
+            # Check if order is pending approval after update
+            is_pending_approval = order.receipt and order.approval != 'accepted'
+            
             # Get updated available actions
             updated_available_actions = []
             
             if current_shipping_status == 'pending_shipment':
                 if is_pickup:
-                    updated_available_actions = ['confirm']
+                    if not is_pending_approval:
+                        updated_available_actions = ['confirm']
                 else:
-                    updated_available_actions = ['confirm', 'prepare_shipment']
+                    if not is_pending_approval:
+                        updated_available_actions = ['confirm', 'prepare_shipment']
             
             elif current_shipping_status == 'to_ship':
                 if is_pickup:
@@ -20939,7 +21447,7 @@ class SellerOrderList(viewsets.ViewSet):
             elif current_shipping_status == 'in_transit':
                 updated_available_actions = ['complete']
             
-            if current_shipping_status not in ['completed', 'cancelled', 'picked_up']:
+            if current_shipping_status not in ['completed', 'cancelled', 'picked_up'] and not is_pending_approval:
                 updated_available_actions.append('cancel')
             
             updated_available_actions.append('view_details')
@@ -21024,6 +21532,14 @@ class SellerOrderList(viewsets.ViewSet):
                 return Response({
                     "success": False,
                     "message": "This order is for pickup, not delivery"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check if order is pending approval
+            is_pending_approval = order.receipt and order.approval != 'accepted'
+            if is_pending_approval:
+                return Response({
+                    "success": False,
+                    "message": "Cannot prepare shipment while payment approval is pending"
                 }, status=status.HTTP_400_BAD_REQUEST)
 
             # Update order status to 'to_ship' (ready for shipping arrangements)
@@ -21210,6 +21726,7 @@ class SellerOrderList(viewsets.ViewSet):
                         'last_name': order.user.last_name,
                         'phone': order.user.contact_number,
                     },
+                    'approval': order.approval,  # Add approval field
                     'status': shipping_status,
                     'total_amount': total_amount,
                     'payment_method': order.payment_method,
@@ -21240,6 +21757,7 @@ class SellerOrderList(viewsets.ViewSet):
                 'success': False,
                 'message': f'Error retrieving order: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 class CheckoutOrder(viewsets.ViewSet):
     @action(detail=False, methods=['GET'])
     def get_checkout_items(self, request):

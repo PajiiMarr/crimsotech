@@ -36,11 +36,13 @@ import {
   MessageCircle,
   Handshake,
   Receipt,
-  Clock as ClockIcon
+  Clock as ClockIcon,
+  CheckCheck,
+  UserRoundCheck
 } from 'lucide-react';
 import AxiosInstance from '~/components/axios/Axios';
 import { useIsMobile } from '~/hooks/use-mobile';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from '~/components/ui/sheet';
+import { Sheet, SheetTrigger, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from '~/components/ui/sheet';
 import {
   Dialog,
   DialogContent,
@@ -122,6 +124,7 @@ interface Order {
     last_name: string;
     phone?: string;
   };
+  approval: string;
   status: string;
   total_amount: number;
   payment_method: string | null;
@@ -150,6 +153,7 @@ interface AvailableActionsResponse {
     current_status: string;
     is_pickup: boolean;
     has_pending_offer: boolean;
+    is_pending_approval: boolean;
     available_actions: string[];
   };
 }
@@ -259,6 +263,11 @@ const STATUS_CONFIG = {
     color: 'bg-purple-100 text-purple-800',
     icon: ClockIcon
   },
+  approved: { 
+    label: 'Approved', 
+    color: 'bg-green-100 text-green-800',
+    icon: CheckCheck
+  },
   default: { 
     label: 'Unknown', 
     color: 'bg-gray-100 text-gray-800',
@@ -266,14 +275,15 @@ const STATUS_CONFIG = {
   }
 };
 
-// Tabs configuration
+// Tabs configuration - Updated with Waiting for Rider tab
 const STATUS_TABS = [
   { id: 'all', label: 'All', icon: List },
-  { id: 'pending', label: 'Pending', icon: Clock },
-  { id: 'to_process', label: 'To Process', icon: Loader2 },
+  { id: 'pending_shipment', label: 'Pending', icon: Clock },
+  { id: 'to_ship', label: 'To Process', icon: Loader2 },
+  { id: 'waiting_rider', label: 'Waiting for Rider', icon: UserRoundCheck },
   { id: 'shipped', label: 'Shipped', icon: Ship },
-  { id: 'returns', label: 'Returns', icon: AlertCircle },
-  { id: 'reviews', label: 'Reviews', icon: MessageCircle }
+  { id: 'completed', label: 'Completed', icon: CheckCircle },
+  { id: 'cancelled', label: 'Cancelled', icon: XCircle }
 ];
 
 // Confirmation Modal/Sheet Component
@@ -347,6 +357,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
   const [availableActions, setAvailableActions] = useState<Record<string, string[]>>({});
   const [loadingActions, setLoadingActions] = useState<Record<string, boolean>>({});
   const [deliveryStatuses, setDeliveryStatuses] = useState<Record<string, DeliveryInfo>>({});
+  const [pendingApprovalStatus, setPendingApprovalStatus] = useState<Record<string, boolean>>({});
   const [confirmationState, setConfirmationState] = useState<{
     open: boolean;
     type: 'confirm' | 'cancel' | 'prepare' | null;
@@ -376,12 +387,27 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     return !(method?.toLowerCase().includes('pickup') || method?.toLowerCase().includes('store'));
   };
 
-  // Check if order is pending approval (has receipt_url but still in pending_shipment)
+  // Check if order is pending approval (has receipt_url and approval is pending)
   const isPendingApproval = (order: Order): boolean => {
-    return order.status?.toLowerCase() === 'pending_shipment' && 
-           order.payment_method !== 'Cash on Pickup' && 
-           order.payment_method !== 'Cash on Delivery' &&
+    return order.approval?.toLowerCase() === 'pending' && 
            order.receipt_url !== null;
+  };
+
+  // Check if order is approved
+  const isApproved = (order: Order): boolean => {
+    return order.approval?.toLowerCase() === 'accepted';
+  };
+
+  // Check if order is waiting for rider approval
+  const isWaitingForRider = (order: Order): boolean => {
+    return order.status?.toLowerCase() === 'to_ship' && 
+           order.delivery_info?.status === 'pending_offer' &&
+           !!order.delivery_info?.rider_name;
+  };
+
+  // Check if order is ready for pickup
+  const isReadyForPickup = (order: Order): boolean => {
+    return order.status?.toLowerCase() === 'ready_for_pickup';
   };
 
   // Refresh orders function
@@ -401,6 +427,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         // Clear cached actions when orders refresh
         setAvailableActions({});
         setDeliveryStatuses({});
+        setPendingApprovalStatus({});
         toast.success("Orders refreshed", {
           description: "Order list has been updated."
         });
@@ -430,32 +457,14 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       );
       
       if (response.data.success) {
-        let actions = response.data.data.available_actions || [];
+        const actions = response.data.data.available_actions || [];
+        const isPendingApprovalFromBackend = response.data.data.is_pending_approval || false;
         
-        // Check if order exists in current state
-        const order = orders.find(o => o.order_id === orderId);
-        
-        // If order is in pending_shipment status and is pending approval, remove confirm action
-        if (order && order.status === 'pending_shipment' && isPendingApproval(order)) {
-          actions = actions.filter(action => action !== 'confirm');
-        }
-        // If order is in pending_shipment status, ensure 'confirm' action is available (for COD/cash orders)
-        else if (order && order.status === 'pending_shipment') {
-          // If confirm is not in actions, add it
-          if (!actions.includes('confirm')) {
-            actions = ['confirm', ...actions];
-          }
-          
-          // Only add 'prepare_shipment' for delivery orders
-          if (isDeliveryOrder(order) && !actions.includes('prepare_shipment')) {
-            actions = [...actions, 'prepare_shipment'];
-          }
-          
-          // Always ensure cancel is available for pending orders
-          if (!actions.includes('cancel')) {
-            actions = [...actions, 'cancel'];
-          }
-        }
+        // Store pending approval status
+        setPendingApprovalStatus(prev => ({
+          ...prev,
+          [orderId]: isPendingApprovalFromBackend
+        }));
         
         setAvailableActions(prev => ({
           ...prev,
@@ -559,7 +568,8 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     const isPickup = isPickupOrder(order);
     const hasPendingOffer = hasPendingDeliveryOffer(order);
     const hasActiveDelivery = order.delivery_info?.status === 'pending';
-    const pendingApproval = isPendingApproval(order);
+    const pendingApproval = pendingApprovalStatus[order.order_id] || isPendingApproval(order);
+    const approved = isApproved(order);
 
     let statusKey = (status || 'default').toLowerCase();
 
@@ -568,6 +578,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     else if (hasActiveDelivery && statusKey === 'arrange_shipment') statusKey = 'pending_offer';
     else if (isPickup && statusKey === 'pending_shipment') statusKey = 'ready_for_pickup';
     else if (pendingApproval) statusKey = 'pending_approval';
+    else if (approved) statusKey = 'approved';
 
     const config = STATUS_CONFIG[statusKey as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.default;
     const Icon = config.icon;
@@ -616,32 +627,40 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
 
     if (activeTab !== 'all') {
       switch (activeTab) {
-        case 'pending':
-          // Pending tab shows orders with status 'pending_shipment' (which is what backend returns for pending orders)
+        case 'pending_shipment':
+          // Pending tab shows orders with status 'pending_shipment'
           filtered = filtered.filter(order => 
             order.status?.toLowerCase() === 'pending_shipment'
           );
           break;
-        case 'to_process':
-          // To Process tab shows orders with status 'to_ship' (which is what backend returns for processing orders)
+        case 'to_ship':
+          // To Process tab shows orders with status 'to_ship' but NOT waiting for rider
           filtered = filtered.filter(order => 
-            order.status?.toLowerCase() === 'to_ship'
+            order.status?.toLowerCase() === 'to_ship' && !isWaitingForRider(order)
           );
           break;
+        case 'waiting_rider':
+          // Waiting for Rider tab shows orders waiting for rider approval
+          filtered = filtered.filter(order => isWaitingForRider(order));
+          break;
         case 'shipped':
+          // Shipped tab shows orders with status 'shipped' or 'in_transit' or 'out_for_delivery'
           filtered = filtered.filter(order => {
             const s = order.status?.toLowerCase();
-            return ['shipped', 'in_transit', 'out_for_delivery', 'picked_up'].includes(s || '');
+            return ['shipped', 'in_transit', 'out_for_delivery'].includes(s || '');
           });
           break;
-        case 'returns':
-          filtered = filtered.filter(order => {
-            const s = order.status?.toLowerCase();
-            return ['refunded', 'cancelled'].includes(s || '');
-          });
+        case 'completed':
+          // Completed tab shows orders with status 'completed'
+          filtered = filtered.filter(order => 
+            order.status?.toLowerCase() === 'completed'
+          );
           break;
-        case 'reviews':
-          filtered = filtered.filter(order => order.items.some(i => (i as any).reviewed));
+        case 'cancelled':
+          // Cancelled tab shows orders with status 'cancelled'
+          filtered = filtered.filter(order => 
+            order.status?.toLowerCase() === 'cancelled'
+          );
           break;
         default:
           filtered = filtered.filter(order => order.status?.toLowerCase() === activeTab.toLowerCase());
@@ -655,18 +674,16 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
 
   const counts = {
     all: orders.length,
-    pending: orders.filter(o => o.status?.toLowerCase() === 'pending_shipment').length,
-    to_process: orders.filter(o => o.status?.toLowerCase() === 'to_ship').length,
+    pending_shipment: orders.filter(o => o.status?.toLowerCase() === 'pending_shipment').length,
+    to_ship: orders.filter(o => o.status?.toLowerCase() === 'to_ship' && !isWaitingForRider(o)).length,
+    waiting_rider: orders.filter(o => isWaitingForRider(o)).length,
     shipped: orders.filter(o => {
       const s = o.status?.toLowerCase();
-      return ['shipped', 'in_transit', 'out_for_delivery', 'picked_up'].includes(s || '');
+      return ['shipped', 'in_transit', 'out_for_delivery'].includes(s || '');
     }).length,
-    returns: orders.filter(o => {
-      const s = o.status?.toLowerCase();
-      return ['refunded', 'cancelled'].includes(s || '');
-    }).length,
-    reviews: orders.filter(o => o.items.some(i => (i as any).reviewed)).length,
-    pending_approval: orders.filter(o => isPendingApproval(o)).length
+    completed: orders.filter(o => o.status?.toLowerCase() === 'completed').length,
+    cancelled: orders.filter(o => o.status?.toLowerCase() === 'cancelled').length,
+    pending_approval: orders.filter(o => pendingApprovalStatus[o.order_id] || isPendingApproval(o)).length
   };
 
   const handleUpdateStatus = async (orderId: string, actionType: string) => {
@@ -708,7 +725,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
           const updatedOrderStatus = String((updated_order as any)?.status || '').toLowerCase();
           const movedToProcessing = backendStatus === 'processing' || updatedOrderStatus === 'to_ship';
           if (actionType === 'confirm' && movedToProcessing) {
-            setActiveTab('to_process');
+            setActiveTab('to_ship');
           }
         } catch (e) {
           /* ignore */
@@ -766,11 +783,12 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
   const getTabCount = (tabId: string) => {
     switch (tabId) {
       case 'all': return counts.all;
-      case 'pending': return counts.pending;
-      case 'to_process': return counts.to_process;
+      case 'pending_shipment': return counts.pending_shipment;
+      case 'to_ship': return counts.to_ship;
+      case 'waiting_rider': return counts.waiting_rider;
       case 'shipped': return counts.shipped;
-      case 'returns': return counts.returns;
-      case 'reviews': return counts.reviews;
+      case 'completed': return counts.completed;
+      case 'cancelled': return counts.cancelled;
       default: return 0;
     }
   };
@@ -780,9 +798,12 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     const isPickup = isPickupOrder(order);
     const actions = availableActions[order.order_id] || [];
     const isLoading = loadingActions[order.order_id];
-    const pendingApproval = isPendingApproval(order);
+    const pendingApproval = pendingApprovalStatus[order.order_id] || isPendingApproval(order);
+    const approved = isApproved(order);
+    const waitingForRider = isWaitingForRider(order);
+    const readyForPickup = isReadyForPickup(order);
 
-    // Check if order is pending_shipment (show confirm button only if not pending approval)
+    // Check if order is pending_shipment (show confirm button if not pending approval, including when approved)
     const isPending = order.status?.toLowerCase() === 'pending_shipment' && !pendingApproval;
     const canCancel = !isCancelled && !['cancelled', 'completed', 'refunded'].includes(order.status?.toLowerCase() || '');
     
@@ -794,7 +815,51 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       );
     }
 
-    // For pending orders that are not pending approval, show Confirm + Cancel quick-actions side-by-side
+    // For ready for pickup orders, show Picked Up + Cancel
+    if (readyForPickup) {
+      return (
+        <div className="flex gap-1 items-center">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[10px]"
+            onClick={(e) => { 
+              e.stopPropagation(); 
+              handleUpdateStatus(order.order_id, 'picked_up');
+            }}
+            title="Mark as picked up"
+          >
+            <CheckCircle className="mr-1 w-3 h-3 text-blue-600" /> Picked Up
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-6 px-2 text-[10px] ${canCancel ? '' : 'opacity-50 cursor-not-allowed text-gray-400'}`}
+            disabled={!canCancel}
+            onClick={(e) => { 
+              e.stopPropagation(); 
+              if (!canCancel) {
+                toast.error("Cannot cancel", {
+                  description: "This order cannot be cancelled at this stage."
+                });
+                return;
+              }
+              setConfirmationState({
+                open: true,
+                type: 'cancel',
+                orderId: order.order_id
+              });
+            }}
+            title={canCancel ? 'Cancel order' : 'Cannot cancel this order'}
+          >
+            <Ban className="mr-1 w-3 h-3 text-red-600" /> Cancel
+          </Button>
+        </div>
+      );
+    }
+
+    // For pending orders that are not pending approval (including approved orders), show Confirm + Cancel quick-actions side-by-side
     if (isPending) {
       return (
         <div className="flex gap-1 items-center">
@@ -866,14 +931,14 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       className="h-8 text-sm"
                       onClick={(e) => {
                         e.stopPropagation();
-                        window.open(order.receipt_url, '_blank');
+                        window.open(order.receipt_url || undefined, '_blank');
                       }}
                     >
                       <Receipt className="mr-2 h-4 w-4 text-purple-600" /> View Receipt
                     </Button>
                   )}
 
-                  {actions.includes('prepare_shipment') && !pendingApproval && (
+                  {actions.includes('prepare_shipment') && !pendingApproval && !waitingForRider && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -891,7 +956,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     </Button>
                   )}
 
-                  {canCancel && !pendingApproval && (
+                  {canCancel && !pendingApproval && !waitingForRider && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -921,7 +986,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                 className="h-6 px-2 text-[10px]"
                 onClick={(e) => {
                   e.stopPropagation();
-                  window.open(order.receipt_url, '_blank');
+                  window.open(order.receipt_url || undefined, '_blank');
                 }}
                 title="View Receipt"
               >
@@ -929,7 +994,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
               </Button>
             )}
 
-            {actions.includes('prepare_shipment') && !pendingApproval && (
+            {actions.includes('prepare_shipment') && !pendingApproval && !waitingForRider && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -948,7 +1013,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
               </Button>
             )}
 
-            {canCancel && !pendingApproval && (
+            {canCancel && !pendingApproval && !waitingForRider && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -1017,14 +1082,20 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
           </Card>
           <Card>
             <CardContent className="p-3">
-              <div className="text-xl font-bold text-yellow-600">{counts.pending}</div>
+              <div className="text-xl font-bold text-yellow-600">{counts.pending_shipment}</div>
               <div className="text-xs text-muted-foreground">Pending</div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-3">
-              <div className="text-xl font-bold text-amber-600">{counts.to_process}</div>
+              <div className="text-xl font-bold text-amber-600">{counts.to_ship}</div>
               <div className="text-xs text-muted-foreground">To Process</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3">
+              <div className="text-xl font-bold text-orange-600">{counts.waiting_rider}</div>
+              <div className="text-xs text-muted-foreground">Waiting for Rider</div>
             </CardContent>
           </Card>
           <Card>
@@ -1035,9 +1106,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
           </Card>
           <Card>
             <CardContent className="p-3">
-              <div className="text-xl font-bold text-green-600">
-                {orders.filter(o => o.status === 'completed').length}
-              </div>
+              <div className="text-xl font-bold text-green-600">{counts.completed}</div>
               <div className="text-xs text-muted-foreground">Completed</div>
             </CardContent>
           </Card>
@@ -1111,11 +1180,12 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       <ShoppingCart className="mx-auto h-6 w-6 text-gray-300 mb-2" />
                       <p className="text-gray-500 text-xs">
                         {activeTab === 'all' ? 'No orders found' :
-                         activeTab === 'pending' ? 'No pending orders' :
-                         activeTab === 'to_process' ? 'No orders to process' :
+                         activeTab === 'pending_shipment' ? 'No pending orders' :
+                         activeTab === 'to_ship' ? 'No orders to process' :
+                         activeTab === 'waiting_rider' ? 'No orders waiting for rider' :
                          activeTab === 'shipped' ? 'No shipped orders' :
-                         activeTab === 'returns' ? 'No returns' :
-                         'No orders with reviews'}
+                         activeTab === 'completed' ? 'No completed orders' :
+                         'No cancelled orders'}
                       </p>
                     </div>
                   ) : (
@@ -1123,7 +1193,10 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       const isExpanded = expandedOrders.has(order.order_id);
                       const primaryItem = order.items[0];
                       const customerName = formatCustomerName(order.user);
-                      const pendingApproval = isPendingApproval(order);
+                      const pendingApproval = pendingApprovalStatus[order.order_id] || isPendingApproval(order);
+                      const approved = isApproved(order);
+                      const waitingForRider = isWaitingForRider(order);
+                      const readyForPickup = isReadyForPickup(order);
 
                       // Determine DB/UI processing state (backend returns `order_status` when available)
                       const dbOrderStatus = String((order as any).order_status || '').toLowerCase();
@@ -1138,8 +1211,18 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                             {/* Top Section - Header */}
                             <div className="flex items-start justify-between mb-2">
                               <div className="flex-1 min-w-0">
+                                {/* Status note: show when order is waiting for rider */}
+                                {waitingForRider && (
+                                  <div className="bg-orange-50 p-2 rounded text-[10px] text-orange-700 mb-1">
+                                    <div className="font-medium flex items-center gap-1">
+                                      <UserRoundCheck className="w-3 h-3" />
+                                      Waiting for rider {order.delivery_info?.rider_name} to accept the order
+                                    </div>
+                                  </div>
+                                )}
+
                                 {/* Status note: show when order is processing and a rider is already assigned but delivery is still pending */}
-                                {activeTab === 'to_process' && isProcessingState && order.delivery_info?.status === 'pending' && order.delivery_info?.rider_name && (
+                                {activeTab === 'to_ship' && isProcessingState && order.delivery_info?.status === 'pending' && order.delivery_info?.rider_name && !waitingForRider && (
                                   <div className="bg-amber-50 p-2 rounded text-[10px] text-amber-700 mb-1">
                                     <div className="font-medium">Waiting for rider to accept the order {order.delivery_info.rider_name}</div>
                                   </div>
@@ -1147,7 +1230,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
 
                                 {/* Show pickup note when delivery has been accepted (DB order.status = processing).
                                     Fallback: if `order.order_status` is missing, treat UI `status: 'to_ship'` as processing so note still appears. */}
-                                {activeTab === 'to_process' && String(order.delivery_info?.status || '').toLowerCase() === 'accepted' && (
+                                {activeTab === 'to_ship' && String(order.delivery_info?.status || '').toLowerCase() === 'accepted' && (
                                   (dbOrderStatus === 'processing' || (!dbOrderStatus && uiStatus === 'to_ship')) && (
                                     <div className="bg-amber-50 p-2 rounded text-[10px] text-amber-700 mb-1">
                                       <div className="font-medium">Rider will pick up the order</div>
@@ -1161,6 +1244,16 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                                     <div className="font-medium flex items-center gap-1">
                                       <Receipt className="w-3 h-3" />
                                       Pending admin approval for payment verification
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Show approved note */}
+                                {approved && (
+                                  <div className="bg-green-50 p-2 rounded text-[10px] text-green-700 mb-1">
+                                    <div className="font-medium flex items-center gap-1">
+                                      <CheckCheck className="w-3 h-3" />
+                                      Payment approved by admin
                                     </div>
                                   </div>
                                 )}
@@ -1301,7 +1394,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                                       variant="link"
                                       size="sm"
                                       className="h-auto p-0 text-[10px] text-purple-700"
-                                      onClick={() => window.open(order.receipt_url, '_blank')}
+                                      onClick={() => window.open(order.receipt_url || undefined, '_blank')}
                                     >
                                       View receipt
                                     </Button>

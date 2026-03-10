@@ -108,23 +108,6 @@ interface ShopMetrics {
   };
 }
 
-interface AnalyticsData {
-  top_shops_by_rating: Array<{
-    name: string;
-    rating: number;
-    followers: number;
-  }>;
-  top_shops_by_followers: Array<{
-    name: string;
-    followers: number;
-    rating: number;
-  }>;
-  shops_by_location: Array<{
-    name: string;
-    value: number;
-  }>;
-}
-
 interface LoaderData {
   user: any;
 }
@@ -268,13 +251,7 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
     suspended_shops: 0,
     pending_shops: 0
   });
-  const [analytics, setAnalytics] = useState<AnalyticsData>({
-    top_shops_by_rating: [],
-    top_shops_by_followers: [],
-    shops_by_location: []
-  });
-  
-  // State for loading and date range
+
   const [isLoading, setIsLoading] = useState(true);
   const [dateRange, setDateRange] = useState({
     start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
@@ -311,58 +288,6 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
         setShops(normalizedShops);
       }
 
-      // Try to fetch analytics data if endpoint exists
-      try {
-        const analyticsResponse = await AxiosInstance.get(`/admin-shops/get_analytics/?${params.toString()}`);
-        if (analyticsResponse.data.success) {
-          setAnalytics(analyticsResponse.data.analytics);
-        }
-      } catch (analyticsError) {
-        console.log('Analytics endpoint not available, using fallback');
-        // Generate fallback analytics from shops data
-        if (shopsResponse.data.success) {
-          const shopsData = shopsResponse.data.shops;
-          
-          // Top shops by rating (top 10)
-          const topByRating = [...shopsData]
-            .sort((a, b) => b.rating - a.rating)
-            .slice(0, 10)
-            .map(shop => ({
-              name: shop.name,
-              rating: shop.rating,
-              followers: shop.followers
-            }));
-          
-          // Top shops by followers (top 10)
-          const topByFollowers = [...shopsData]
-            .sort((a, b) => b.followers - a.followers)
-            .slice(0, 10)
-            .map(shop => ({
-              name: shop.name,
-              followers: shop.followers,
-              rating: shop.rating
-            }));
-          
-          // Shops by location
-          const locationCounts: Record<string, number> = {};
-          shopsData.forEach((shop: Shop) => {
-            const location = shop.location || 'Unknown';
-            locationCounts[location] = (locationCounts[location] || 0) + 1;
-          });
-          
-          const shopsByLocation = Object.entries(locationCounts)
-            .map(([name, value]) => ({ name, value }))
-            .sort((a, b) => b.value - a.value)
-            .slice(0, 10);
-          
-          setAnalytics({
-            top_shops_by_rating: topByRating,
-            top_shops_by_followers: topByFollowers,
-            shops_by_location: shopsByLocation
-          });
-        }
-      }
-
     } catch (error) {
       console.error('Error fetching shop data:', error);
       // Use fallback empty data
@@ -375,11 +300,6 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
         active_shops: 0,
         suspended_shops: 0,
         pending_shops: 0
-      });
-      setAnalytics({
-        top_shops_by_rating: [],
-        top_shops_by_followers: [],
-        shops_by_location: []
       });
       setShops([]);
     } finally {

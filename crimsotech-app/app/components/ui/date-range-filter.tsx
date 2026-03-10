@@ -27,7 +27,7 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
   const [dateRange, setDateRange] = useState<{
     start: Date;
     end: Date;
-    rangeType: 'daily' | 'weekly' | 'monthly' | 'yearly' | 'specific_month' | 'specific_year' | 'custom';
+    rangeType: 'all' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'specific_month' | 'specific_year' | 'custom';
   }>({
     start: subMonths(new Date(), 1), // Changed from subDays(new Date(), 7)
     end: new Date(),
@@ -41,6 +41,22 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
   useEffect(() => {
     onDateRangeChange(dateRange);
   }, []);
+
+  const handleAllSelect = () => {
+    // For "All" data, we need to fetch from the beginning of time
+    // We'll use a very old date (e.g., 2000-01-01) as the start date
+    const start = new Date('2000-01-01');
+    const now = new Date();
+    
+    const newRange = {
+      start,
+      end: now,
+      rangeType: 'all' as const,
+    };
+    
+    setDateRange(newRange);
+    onDateRangeChange(newRange);
+  };
 
   const handleQuickSelect = (rangeType: 'daily' | 'weekly' | 'monthly' | 'yearly') => {
     const now = new Date();
@@ -145,11 +161,27 @@ export default function DateRangeFilter({ onDateRangeChange, isLoading = false }
         <div className="text-sm">
           <span className="text-muted-foreground">Showing: </span>
           <span className="font-medium">
-            {format(dateRange.start, 'MMM dd')} - {format(dateRange.end, 'MMM dd, yyyy')}
+            {dateRange.rangeType === 'all' ? (
+              'All Time'
+            ) : (
+              `${format(dateRange.start, 'MMM dd')} - ${format(dateRange.end, 'MMM dd, yyyy')}`
+            )}
           </span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* All Time Button */}
+          <Button
+            type="button"
+            variant={dateRange.rangeType === 'all' ? 'default' : 'outline'}
+            size="sm"
+            onClick={handleAllSelect}
+            disabled={isLoading}
+            className="text-xs"
+          >
+            All
+          </Button>
+
           {/* Quick Select Buttons */}
           <div className="flex gap-2">
             <Button
