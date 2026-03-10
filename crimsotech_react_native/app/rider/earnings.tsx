@@ -1,1149 +1,365 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  StyleSheet,
-  TouchableOpacity,
-  StatusBar,
   ScrollView,
-  FlatList,
+  RefreshControl,
   ActivityIndicator,
-  Alert,
-} from "react-native";
-import {
-  Feather,
-  MaterialCommunityIcons,
-  Ionicons,
-  FontAwesome5,
-} from "@expo/vector-icons";
-import { useAuth } from "../../contexts/AuthContext";
-import { router } from "expo-router";
-import AxiosInstance from "../../contexts/axios";
+  Dimensions
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../../contexts/AuthContext';
+import { router } from 'expo-router';
+import AxiosInstance from '../../contexts/axios';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-// --- Color Palette (Minimalist Theme) ---
-const COLORS = {
-  primary: "#111827",
-  secondary: "#374151",
-  muted: "#9CA3AF",
-  bg: "#F9FAFB",
-  cardBg: "#FFFFFF",
-  accent: "#F3F4F6",
-  green: "#10B981",
-  greenLight: "#D1FAE5",
-  red: "#EF4444",
-  redLight: "#FEE2E2",
-  orange: "#F59E0B",
-  blue: "#3B82F6",
-};
-
-// --- Types ---
-interface DeliveryEarnings {
-  id: string;
-  orderId: string;
-  pickup: string;
-  dropoff: string;
-  dateTime: string;
-  amount: number;
-  status: "Completed" | "Cancelled" | "Refunded";
+interface EarningsMetrics {
+  total_deliveries?: number;
+  total_earnings?: number;
 }
 
-interface EarningsBreakdown {
-  deliveryFee: number;
-  distanceBonus: number;
-  heavyItemBonus: number;
-  tips: number;
-  incentives: number;
-  penalties: number;
+interface DeliveryData {
+  order_amount: number;
 }
 
-interface PerformanceStats {
-  totalDeliveries: number;
-  acceptanceRate: number;
-  completionRate: number;
-  averageRating: number;
-  onlineHours: number;
-}
-
-// --- Dummy Data ---
-const DUMMY_EARNINGS = {
-  today: 1250.5,
-  thisWeek: 8340.75,
-  thisMonth: 32450.0,
-  availableBalance: 28350.0,
-  pendingBalance: 4100.0,
-};
-
-const DUMMY_BREAKDOWN: EarningsBreakdown = {
-  deliveryFee: 7200.0,
-  distanceBonus: 850.0,
-  heavyItemBonus: 450.0,
-  tips: 620.0,
-  incentives: 1500.0,
-  penalties: -280.0,
-};
-
-const DUMMY_STATS: PerformanceStats = {
-  totalDeliveries: 47,
-  acceptanceRate: 94,
-  completionRate: 98,
-  averageRating: 4.8,
-  onlineHours: 8.5,
-};
-
-const DUMMY_DELIVERIES: DeliveryEarnings[] = [
-  {
-    id: "1",
-    orderId: "ORD-2024-5431",
-    pickup: "Tech Hub Store",
-    dropoff: "Makati City, Manila",
-    dateTime: "2024-02-17 14:30",
-    amount: 180.0,
-    status: "Completed",
-  },
-  {
-    id: "2",
-    orderId: "ORD-2024-5428",
-    pickup: "Mobile Shop",
-    dropoff: "Quezon City",
-    dateTime: "2024-02-17 12:15",
-    amount: 150.0,
-    status: "Completed",
-  },
-  {
-    id: "3",
-    orderId: "ORD-2024-5420",
-    pickup: "Electronics Store",
-    dropoff: "Pasig City",
-    dateTime: "2024-02-17 10:45",
-    amount: 200.0,
-    status: "Completed",
-  },
-  {
-    id: "4",
-    orderId: "ORD-2024-5415",
-    pickup: "Gadget World",
-    dropoff: "Mandaluyong City",
-    dateTime: "2024-02-17 09:20",
-    amount: 120.0,
-    status: "Completed",
-  },
-  {
-    id: "5",
-    orderId: "ORD-2024-5410",
-    pickup: "Smart Devices",
-    dropoff: "Taguig City",
-    dateTime: "2024-02-16 16:50",
-    amount: 0.0,
-    status: "Cancelled",
-  },
-];
-
-export default function EarningsPage() {
-  const { userRole, user } = useAuth();
-  const [showBreakdown, setShowBreakdown] = useState(false);
+export default function Earnings() {
+  const { user } = useAuth();
+  const { width } = Dimensions.get('window');
+  
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [dateRange, setDateRange] = useState({
-    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
-    end: new Date(),
-  });
+  const [refreshing, setRefreshing] = useState(false);
+  const [metrics, setMetrics] = useState<EarningsMetrics | null>(null);
+  const [totalCollected, setTotalCollected] = useState<number>(0);
 
-  // Initialize with dummy data as fallback
-  const [earnings, setEarnings] = useState(DUMMY_EARNINGS);
-  const [breakdown, setBreakdown] = useState(DUMMY_BREAKDOWN);
-  const [stats, setStats] = useState(DUMMY_STATS);
-  const [deliveries, setDeliveries] = useState(DUMMY_DELIVERIES);
+  // Deductions (riders with no issues should see zero)
+  const deductions = 0;
 
-  // Fetch earnings data from API
-  useEffect(() => {
-    const fetchEarningsData = async () => {
-      try {
-        setIsLoading(true);
-        setError(null);
+  // Format currency
+  const formatCurrency = (amount: number) => {
+    return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
 
-        const userId = user?.id || user?.user_id;
-        if (!userId) {
-          setError('User ID not found');
-          setIsLoading(false);
-          return;
-        }
+  // Fetch earnings data
+  const fetchEarningsData = async () => {
+    try {
+      setIsLoading(true);
+      
+      const res = await AxiosInstance.get('/rider-history/order_history/', {
+        headers: { 'X-User-Id': user?.user_id || user?.id }
+      });
 
-        // Fetch from rider-dashboard to get metrics and deliveries
-        const dashboardRes = await AxiosInstance.get('/rider-dashboard/rider_dashboard/', {
-          headers: { 'X-User-Id': userId }
-        });
-
-        // Also fetch full history for all deliveries with earnings
-        const historyRes = await AxiosInstance.get('/rider-history/order_history/', {
-          headers: { 'X-User-Id': userId }
-        });
-
-        if (dashboardRes.data?.metrics && historyRes.data?.deliveries) {
-          const metrics = dashboardRes.data.metrics;
-          const allDeliveries = historyRes.data.deliveries || [];
-
-          // Calculate period-based earnings
-          const now = new Date();
-          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-          const weekStart = new Date(today);
-          weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-          const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-          let todayEarnings = 0;
-          let weekEarnings = 0;
-          let monthEarnings = 0;
-
-          // Filter and sum deliveries by period
-          const formattedDeliveries = allDeliveries.map((d: any) => {
-            const deliveryAmount = Number(d.delivery_fee || 0);
-            const deliveryDate = new Date(d.created_at || d.delivered_at || '');
-
-            // Only count delivered orders for earnings
-            if (d.status === 'delivered') {
-              if (deliveryDate >= today) {
-                todayEarnings += deliveryAmount;
-              }
-              if (deliveryDate >= weekStart) {
-                weekEarnings += deliveryAmount;
-              }
-              if (deliveryDate >= monthStart) {
-                monthEarnings += deliveryAmount;
-              }
-            }
-
-            return {
-              id: d.id,
-              orderId: `ORD-${d.id?.slice(0, 8).toUpperCase() || 'UNKNOWN'}`,
-              pickup: d.shop_name || d.pickup_address || 'Unknown',
-              dropoff: d.delivery_address || d.dropoff_address || 'Delivery Location',
-              dateTime: d.created_at ? new Date(d.created_at).toLocaleString() : 'N/A',
-              amount: deliveryAmount,
-              status: d.status === 'delivered' ? 'Completed' : d.status === 'cancelled' ? 'Cancelled' : 'Pending',
-            };
-          });
-
-          setEarnings({
-            today: todayEarnings,
-            thisWeek: weekEarnings,
-            thisMonth: monthEarnings,
-            availableBalance: monthEarnings,
-            pendingBalance: 0,
-          });
-
-          setDeliveries(formattedDeliveries.slice(0, 20)); // Show recent 20
-
-          // Update stats from metrics
-          setStats({
-            totalDeliveries: Number(metrics.total_deliveries || 0),
-            acceptanceRate: Number(metrics.completion_rate || 0),
-            completionRate: Number(metrics.completion_rate || 0),
-            averageRating: Number(metrics.avg_rating || 0),
-            onlineHours: Number(metrics.total_earnings || 0) > 0 ? 8.5 : 0,
-          });
-        }
-      } catch (err: any) {
-        console.log('Earnings fetch error:', err);
-        setError(err.message || 'Failed to load earnings data');
-        // Keep using dummy data on error
-      } finally {
-        setIsLoading(false);
+      if (res.data && res.data.success) {
+        setMetrics(res.data.metrics || null);
+        
+        const deliveries = res.data.deliveries || [];
+        const collected = deliveries.reduce((sum: number, d: DeliveryData) => sum + (d.order_amount || 0), 0);
+        setTotalCollected(Number(collected));
+      } else {
+        setMetrics(null);
+        setTotalCollected(0);
       }
-    };
-
-    if (user?.id || user?.user_id) {
-      fetchEarningsData();
-    }
-  }, [user]);
-
-  // If loading, show loader
-  if (isLoading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.message}>Loading earnings data...</Text>
-      </View>
-    );
-  }
-
-  // Get status badge color
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "Completed":
-        return { bg: COLORS.greenLight, text: COLORS.green };
-      case "Cancelled":
-        return { bg: COLORS.redLight, text: COLORS.red };
-      case "Refunded":
-        return { bg: COLORS.accent, text: COLORS.muted };
-      default:
-        return { bg: COLORS.accent, text: COLORS.muted };
+    } catch (err) {
+      console.error('Failed to load earnings metrics', err);
+      setMetrics(null);
+      setTotalCollected(0);
+    } finally {
+      setIsLoading(false);
+      setRefreshing(false);
     }
   };
 
-  // Calculate total from breakdown
-  const totalBreakdown =
-    breakdown.deliveryFee +
-    breakdown.distanceBonus +
-    breakdown.heavyItemBonus +
-    breakdown.tips +
-    breakdown.incentives +
-    breakdown.penalties;
+  // Initial load
+  useEffect(() => {
+    fetchEarningsData();
+  }, []);
 
-  if (userRole && userRole !== "rider") {
-    return (
-      <View style={styles.center}>
-        <Text style={styles.message}>Not authorized to view this page</Text>
-      </View>
-    );
-  }
-
-  // Render Delivery Item
-  const renderDeliveryItem = ({ item }: { item: DeliveryEarnings }) => {
-    const statusColors = getStatusColor(item.status);
-    return (
-      <View style={styles.deliveryCard}>
-        <View style={styles.deliveryHeader}>
-          <View style={styles.deliveryIconContainer}>
-            <MaterialCommunityIcons
-              name="package-variant"
-              size={20}
-              color={COLORS.primary}
-            />
-          </View>
-          <View style={styles.deliveryInfo}>
-            <Text style={styles.orderId}>{item.orderId}</Text>
-            <View style={styles.routeContainer}>
-              <Ionicons name="location" size={10} color={COLORS.green} />
-              <Text style={styles.routeText}>{item.pickup}</Text>
-            </View>
-            <View style={styles.routeContainer}>
-              <Ionicons name="location" size={10} color={COLORS.red} />
-              <Text style={styles.routeText}>{item.dropoff}</Text>
-            </View>
-          </View>
-          <View style={styles.deliveryRight}>
-            <Text
-              style={[
-                styles.deliveryAmount,
-                item.status !== "Completed" && { color: COLORS.muted },
-              ]}
-            >
-              ₱{item.amount.toFixed(2)}
-            </Text>
-            <View
-              style={[styles.statusBadge, { backgroundColor: statusColors.bg }]}
-            >
-              <Text style={[styles.statusText, { color: statusColors.text }]}>
-                {item.status}
-              </Text>
-            </View>
-          </View>
-        </View>
-        <View style={styles.deliveryFooter}>
-          <Feather name="clock" size={10} color={COLORS.muted} />
-          <Text style={styles.deliveryTime}>{item.dateTime}</Text>
-        </View>
-      </View>
-    );
+  // Refresh control
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchEarningsData();
   };
 
-  // Render Performance Stat Card
-  const renderStatCard = (
-    icon: string,
-    iconLib: string,
-    label: string,
-    value: string | number,
-    color: string,
-  ) => (
-    <View style={styles.statCard}>
-      <View
-        style={[styles.statIconContainer, { backgroundColor: color + "20" }]}
-      >
-        {iconLib === "feather" && (
-          <Feather name={icon as any} size={18} color={color} />
-        )}
-        {iconLib === "ionicons" && (
-          <Ionicons name={icon as any} size={18} color={color} />
-        )}
-        {iconLib === "material" && (
-          <MaterialCommunityIcons name={icon as any} size={18} color={color} />
-        )}
-        {iconLib === "fa5" && (
-          <FontAwesome5 name={icon as any} size={16} color={color} />
-        )}
+  // Metric Card Component
+  const MetricCard = ({ 
+    title, 
+    value, 
+    icon, 
+    iconBgColor, 
+    iconColor,
+    isLoading 
+  }: { 
+    title: string; 
+    value: string; 
+    icon: keyof typeof Ionicons.glyphMap; 
+    iconBgColor: string; 
+    iconColor: string;
+    isLoading?: boolean;
+  }) => (
+    <View style={{ 
+      backgroundColor: 'white', 
+      borderRadius: 12, 
+      padding: 16, 
+      marginBottom: 12,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 2,
+      elevation: 2
+    }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 13, color: '#6B7280', marginBottom: 4 }}>{title}</Text>
+          {isLoading ? (
+            <View style={{ height: 24, width: 100, backgroundColor: '#E5E7EB', borderRadius: 4 }} />
+          ) : (
+            <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#111827' }}>{value}</Text>
+          )}
+        </View>
+        <View style={{ backgroundColor: iconBgColor, padding: 10, borderRadius: 999 }}>
+          <Ionicons name={icon} size={22} color={iconColor} />
+        </View>
       </View>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
+
+  // Loading skeleton for metrics
+  const LoadingSkeleton = () => (
+    <View style={{ padding: 16 }}>
+      {[1, 2, 3, 4].map((item) => (
+        <View key={item} style={{ 
+          backgroundColor: 'white', 
+          borderRadius: 12, 
+          padding: 16, 
+          marginBottom: 12 
+        }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={{ flex: 1 }}>
+              <View style={{ height: 13, width: 100, backgroundColor: '#E5E7EB', borderRadius: 4, marginBottom: 4 }} />
+              <View style={{ height: 24, width: 120, backgroundColor: '#E5E7EB', borderRadius: 4 }} />
+            </View>
+            <View style={{ width: 42, height: 42, backgroundColor: '#E5E7EB', borderRadius: 999 }} />
+          </View>
+        </View>
+      ))}
     </View>
   );
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
-
-      {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>My Earnings</Text>
-          <Text style={styles.headerSubtitle}>Electronics Delivery</Text>
-        </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={() => router.push("/rider/notification")}
-          >
-            <Feather name="bell" size={20} color={COLORS.primary} />
-            <View style={styles.notifBadge} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={() => router.push("/rider/settings")}
-          >
-            <Feather name="settings" size={20} color={COLORS.primary} />
-          </TouchableOpacity>
-        </View>
-      </View>
-
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
       <ScrollView
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
       >
-        {/* Date Filter Button */}
-        <View style={styles.dateFilterWrapper}>
-          <TouchableOpacity
-            style={styles.dateFilterButton}
-            onPress={() => {
-              const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-              const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-              Alert.alert(
-                "Filter by Date",
-                "",
-                [
-                  {
-                    text: "Last 7 Days",
-                    onPress: () =>
-                      setDateRange({
-                        start: oneWeekAgo,
-                        end: new Date(),
-                      }),
-                  },
-                  {
-                    text: "Last 30 Days",
-                    onPress: () =>
-                      setDateRange({
-                        start: thirtyDaysAgo,
-                        end: new Date(),
-                      }),
-                  },
-                  {
-                    text: "All Time",
-                    onPress: () =>
-                      setDateRange({
-                        start: new Date(0),
-                        end: new Date(),
-                      }),
-                  },
-                  { text: "Cancel", style: "cancel" },
-                ]
-              );
-            }}
-          >
-            <Feather name="calendar" size={14} color={COLORS.primary} />
-            <Text style={styles.dateFilterText}>Filter by Date</Text>
-          </TouchableOpacity>
-        </View>
+        <View style={{ padding: 16 }}>
+          {/* Header */}
+          <View style={{ marginBottom: 20 }}>
+            <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#111827' }}>Earnings</Text>
+            <Text style={{ fontSize: 14, color: '#6B7280', marginTop: 4 }}>
+              Quick summary of your delivery performance
+            </Text>
+          </View>
 
-        {/* 1️⃣ Earnings Summary Section */}
-        <View style={styles.summaryCard}>
-          <View style={styles.mainEarning}>
-            <MaterialCommunityIcons
-              name="wallet"
-              size={24}
-              color={COLORS.primary}
-            />
-            <View style={styles.mainEarningText}>
-              <Text style={styles.mainEarningLabel}>
-                This Week&apos;s Earnings
+          {/* Earnings Summary Card */}
+          <View style={{ 
+            backgroundColor: '#2563EB', 
+            borderRadius: 16, 
+            padding: 20, 
+            marginBottom: 20,
+            shadowColor: '#2563EB',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.2,
+            shadowRadius: 8,
+            elevation: 5
+          }}>
+            <Text style={{ fontSize: 14, color: '#BFDBFE', marginBottom: 8 }}>Total Balance</Text>
+            {isLoading ? (
+              <View style={{ height: 36, width: 150, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 6 }} />
+            ) : (
+              <Text style={{ fontSize: 32, fontWeight: 'bold', color: 'white' }}>
+                {formatCurrency(Number(metrics?.total_earnings || 0))}
               </Text>
-              <Text style={styles.mainEarningAmount}>
-                ₱{earnings.thisWeek.toFixed(2)}
+            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
+              <Ionicons name="calendar-outline" size={14} color="#BFDBFE" />
+              <Text style={{ fontSize: 12, color: '#BFDBFE', marginLeft: 4 }}>
+                Last updated {new Date().toLocaleDateString()}
               </Text>
             </View>
           </View>
 
-          <View style={styles.summaryDivider} />
-
-          <View style={styles.balanceRow}>
-            <View style={styles.balanceItem}>
-              <Text style={styles.balanceLabel}>Available Balance</Text>
-              <Text style={[styles.balanceAmount, { color: COLORS.primary }]}>
-                ₱{earnings.availableBalance.toFixed(2)}
-              </Text>
-            </View>
-            <View style={styles.balanceDivider} />
-            <View style={styles.balanceItem}>
-              <Text style={styles.balanceLabel}>Pending</Text>
-              <Text style={[styles.balanceAmount, { color: COLORS.primary }]}>
-                ₱{earnings.pendingBalance.toFixed(2)}
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.quickStatsRow}>
-            <View style={styles.quickStat}>
-              <Text style={styles.quickStatLabel}>Today</Text>
-              <Text style={styles.quickStatValue}>
-                ₱{earnings.today.toFixed(2)}
-              </Text>
-            </View>
-            <View style={styles.quickStat}>
-              <Text style={styles.quickStatLabel}>This Week</Text>
-              <Text style={styles.quickStatValue}>
-                ₱{earnings.thisWeek.toFixed(2)}
-              </Text>
-            </View>
-            <View style={styles.quickStat}>
-              <Text style={styles.quickStatLabel}>This Month</Text>
-              <Text style={styles.quickStatValue}>
-                ₱{earnings.thisMonth.toFixed(2)}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* 2️⃣ Earnings Breakdown Section */}
-        <View style={styles.sectionContainer}>
-          <TouchableOpacity
-            style={styles.sectionHeader}
-            onPress={() => setShowBreakdown(!showBreakdown)}
-          >
-            <View style={styles.sectionTitleRow}>
-              <MaterialCommunityIcons
-                name="chart-bar"
-                size={18}
-                color={COLORS.primary}
+          {/* Metrics Cards */}
+          {isLoading ? (
+            <LoadingSkeleton />
+          ) : (
+            <View>
+              <MetricCard
+                title="Total Deliveries"
+                value={(metrics?.total_deliveries ?? 0).toString()}
+                icon="cube-outline"
+                iconBgColor="#EFF6FF"
+                iconColor="#2563EB"
               />
-              <Text style={styles.sectionTitle}>Earnings Breakdown</Text>
-            </View>
-            <Feather
-              name={showBreakdown ? "chevron-up" : "chevron-down"}
-              size={18}
-              color={COLORS.muted}
-            />
-          </TouchableOpacity>
 
-          {showBreakdown && (
-            <View style={styles.breakdownCard}>
-              <View style={styles.breakdownRow}>
-                <View style={styles.breakdownLeft}>
-                  <Feather name="truck" size={14} color={COLORS.primary} />
-                  <Text style={styles.breakdownLabel}>Delivery Fee</Text>
-                </View>
-                <Text style={styles.breakdownAmount}>
-                  ₱{breakdown.deliveryFee.toFixed(2)}
-                </Text>
-              </View>
+              <MetricCard
+                title="Total Money Collected"
+                value={formatCurrency(totalCollected)}
+                icon="cash-outline"
+                iconBgColor="#D1FAE5"
+                iconColor="#059669"
+              />
 
-              <View style={styles.breakdownRow}>
-                <View style={styles.breakdownLeft}>
-                  <MaterialCommunityIcons
-                    name="map-marker-distance"
-                    size={14}
-                    color={COLORS.blue}
-                  />
-                  <Text style={styles.breakdownLabel}>Distance Bonus</Text>
-                </View>
-                <Text style={styles.breakdownAmount}>
-                  ₱{breakdown.distanceBonus.toFixed(2)}
-                </Text>
-              </View>
+              <MetricCard
+                title="Total Earnings (Delivery Fees)"
+                value={formatCurrency(Number(metrics?.total_earnings || 0))}
+                icon="wallet-outline"
+                iconBgColor="#FEF3C7"
+                iconColor="#D97706"
+              />
 
-              <View style={styles.breakdownRow}>
-                <View style={styles.breakdownLeft}>
-                  <MaterialCommunityIcons
-                    name="weight-kilogram"
-                    size={14}
-                    color={COLORS.orange}
-                  />
-                  <Text style={styles.breakdownLabel}>Heavy Item Bonus</Text>
-                </View>
-                <Text style={styles.breakdownAmount}>
-                  ₱{breakdown.heavyItemBonus.toFixed(2)}
-                </Text>
-              </View>
-
-              <View style={styles.breakdownRow}>
-                <View style={styles.breakdownLeft}>
-                  <MaterialCommunityIcons
-                    name="hand-coin"
-                    size={14}
-                    color={COLORS.green}
-                  />
-                  <Text style={styles.breakdownLabel}>Tips</Text>
-                </View>
-                <Text style={styles.breakdownAmount}>
-                  ₱{breakdown.tips.toFixed(2)}
-                </Text>
-              </View>
-
-              <View style={styles.breakdownRow}>
-                <View style={styles.breakdownLeft}>
-                  <MaterialCommunityIcons
-                    name="trophy"
-                    size={14}
-                    color={COLORS.orange}
-                  />
-                  <Text style={styles.breakdownLabel}>Incentives</Text>
-                </View>
-                <Text style={styles.breakdownAmount}>
-                  ₱{breakdown.incentives.toFixed(2)}
-                </Text>
-              </View>
-
-              <View style={styles.breakdownRow}>
-                <View style={styles.breakdownLeft}>
-                  <MaterialCommunityIcons
-                    name="alert-circle"
-                    size={14}
-                    color={COLORS.red}
-                  />
-                  <Text style={[styles.breakdownLabel, { color: COLORS.red }]}>
-                    Penalties
-                  </Text>
-                </View>
-                <Text style={[styles.breakdownAmount, { color: COLORS.red }]}>
-                  ₱{breakdown.penalties.toFixed(2)}
-                </Text>
-              </View>
-
-              <View style={styles.breakdownDivider} />
-
-              <View style={styles.breakdownRow}>
-                <Text style={styles.breakdownTotalLabel}>Total Breakdown</Text>
-                <Text style={styles.breakdownTotalAmount}>
-                  ₱{totalBreakdown.toFixed(2)}
-                </Text>
-              </View>
+              <MetricCard
+                title="Deductions"
+                value={formatCurrency(deductions)}
+                icon="remove-circle-outline"
+                iconBgColor="#FEE2E2"
+                iconColor="#DC2626"
+              />
             </View>
           )}
-        </View>
 
-        {/* 4️⃣ Performance Stats Section */}
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleRow}>
-              <Ionicons name="stats-chart" size={18} color={COLORS.primary} />
-              <Text style={styles.sectionTitle}>Performance Stats</Text>
+          {/* Info Note */}
+          <View style={{ 
+            backgroundColor: '#F3F4F6', 
+            borderRadius: 8, 
+            padding: 12, 
+            marginTop: 8,
+            flexDirection: 'row',
+            alignItems: 'center'
+          }}>
+            <Ionicons name="information-circle-outline" size={18} color="#6B7280" />
+            <Text style={{ fontSize: 12, color: '#6B7280', marginLeft: 8, flex: 1 }}>
+              Earnings are based on completed deliveries. Deductions may apply for late deliveries or disputes.
+            </Text>
+          </View>
+
+          {/* Earnings Breakdown Section */}
+          <View style={{ marginTop: 24 }}>
+            <Text style={{ fontSize: 18, fontWeight: '600', color: '#111827', marginBottom: 12 }}>
+              Earnings Breakdown
+            </Text>
+
+            <View style={{ backgroundColor: 'white', borderRadius: 12, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
+              {/* Delivery Fee Breakdown */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ backgroundColor: '#EFF6FF', padding: 6, borderRadius: 8, marginRight: 12 }}>
+                    <Ionicons name="bicycle-outline" size={16} color="#2563EB" />
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 14, fontWeight: '500', color: '#111827' }}>Delivery Fees</Text>
+                    <Text style={{ fontSize: 12, color: '#6B7280' }}>From {metrics?.total_deliveries || 0} deliveries</Text>
+                  </View>
+                </View>
+                <Text style={{ fontSize: 16, fontWeight: '600', color: '#059669' }}>
+                  {formatCurrency(Number(metrics?.total_earnings || 0))}
+                </Text>
+              </View>
+
+              {/* Collected Amount Breakdown */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ backgroundColor: '#D1FAE5', padding: 6, borderRadius: 8, marginRight: 12 }}>
+                    <Ionicons name="cart-outline" size={16} color="#059669" />
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 14, fontWeight: '500', color: '#111827' }}>Collected Amount</Text>
+                    <Text style={{ fontSize: 12, color: '#6B7280' }}>Total order value</Text>
+                  </View>
+                </View>
+                <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827' }}>
+                  {formatCurrency(totalCollected)}
+                </Text>
+              </View>
+
+              {/* Deductions Breakdown */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ backgroundColor: '#FEE2E2', padding: 6, borderRadius: 8, marginRight: 12 }}>
+                    <Ionicons name="remove-circle-outline" size={16} color="#DC2626" />
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 14, fontWeight: '500', color: '#111827' }}>Deductions</Text>
+                    <Text style={{ fontSize: 12, color: '#6B7280' }}>Penalties & adjustments</Text>
+                  </View>
+                </View>
+                <Text style={{ fontSize: 16, fontWeight: '600', color: '#DC2626' }}>
+                  {formatCurrency(deductions)}
+                </Text>
+              </View>
+
+              {/* Divider */}
+              <View style={{ height: 1, backgroundColor: '#E5E7EB', marginVertical: 16 }} />
+
+              {/* Net Earnings */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: 16, fontWeight: '600', color: '#111827' }}>Net Earnings</Text>
+                <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#059669' }}>
+                  {formatCurrency(Number(metrics?.total_earnings || 0) - deductions)}
+                </Text>
+              </View>
             </View>
           </View>
 
-          <View style={styles.statsGrid}>
-            {renderStatCard(
-              "package",
-              "feather",
-              "Deliveries",
-              stats.totalDeliveries,
-              COLORS.primary,
-            )}
-            {renderStatCard(
-              "checkmark-done-circle",
-              "ionicons",
-              "Accept Rate",
-              `${stats.acceptanceRate}%`,
-              COLORS.primary,
-            )}
-            {renderStatCard(
-              "checkmark-circle",
-              "ionicons",
-              "Complete Rate",
-              `${stats.completionRate}%`,
-              COLORS.primary,
-            )}
-            {renderStatCard(
-              "star",
-              "fa5",
-              "Rating",
-              `${stats.averageRating}★`,
-              COLORS.primary,
-            )}
-            {renderStatCard(
-              "timer-outline",
-              "ionicons",
-              "Online Hours",
-              `${stats.onlineHours}h`,
-              COLORS.primary,
-            )}
-            {renderStatCard(
-              "trending-up",
-              "feather",
-              "Efficiency",
-              "High",
-              COLORS.primary,
-            )}
-          </View>
-        </View>
+          {/* Quick Stats */}
+          <View style={{ marginTop: 24, marginBottom: 16 }}>
+            <Text style={{ fontSize: 18, fontWeight: '600', color: '#111827', marginBottom: 12 }}>
+              Quick Stats
+            </Text>
 
-        {/* 3️⃣ Completed Deliveries Section */}
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleRow}>
-              <MaterialCommunityIcons
-                name="clipboard-list"
-                size={18}
-                color={COLORS.primary}
-              />
-              <Text style={styles.sectionTitle}>Recent Deliveries</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <View style={{ 
+                backgroundColor: 'white', 
+                borderRadius: 12, 
+                padding: 16, 
+                flex: 1,
+                marginRight: 8,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 0.05,
+                shadowRadius: 2,
+                elevation: 2
+              }}>
+                <Ionicons name="trending-up" size={20} color="#2563EB" />
+                <Text style={{ fontSize: 18, fontWeight: 'bold', marginTop: 8, color: '#111827' }}>
+                  ₱{(Number(metrics?.total_earnings || 0) / Math.max(metrics?.total_deliveries || 1, 1)).toFixed(2)}
+                </Text>
+                <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 4 }}>Avg per delivery</Text>
+              </View>
+
+              <View style={{ 
+                backgroundColor: 'white', 
+                borderRadius: 12, 
+                padding: 16, 
+                flex: 1,
+                marginLeft: 8,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 0.05,
+                shadowRadius: 2,
+                elevation: 2
+              }}>
+                <Ionicons name="calendar" size={20} color="#8B5CF6" />
+                <Text style={{ fontSize: 18, fontWeight: 'bold', marginTop: 8, color: '#111827' }}>
+                  {(metrics?.total_deliveries || 0) > 0 ? Math.ceil((metrics?.total_deliveries || 0) / 7) : 0}
+                </Text>
+                <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 4 }}>This week</Text>
+              </View>
             </View>
-            <Text style={styles.deliveryCount}>{deliveries.length} items</Text>
           </View>
-
-          <FlatList
-            data={deliveries}
-            renderItem={renderDeliveryItem}
-            keyExtractor={(item) => item.id}
-            scrollEnabled={false}
-            contentContainerStyle={styles.deliveriesList}
-          />
         </View>
       </ScrollView>
-
-      {/* 5️⃣ Withdrawal Section (Fixed at Bottom) */}
-      <View style={styles.withdrawalFooter}>
-        <View style={styles.withdrawalInfo}>
-          <Text style={styles.withdrawalLabel}>Available to Withdraw</Text>
-          <Text style={styles.withdrawalAmount}>
-            ₱{earnings.availableBalance.toFixed(2)}
-          </Text>
-          <Text style={styles.lastWithdrawal}>
-            Last withdrawal: ₱2,500 on Feb 10
-          </Text>
-        </View>
-        <TouchableOpacity
-          style={[
-            styles.withdrawBtn,
-            earnings.availableBalance < 500 && styles.withdrawBtnDisabled,
-          ]}
-          disabled={earnings.availableBalance < 500}
-          onPress={() => router.push("/rider/withdraw")}
-        >
-          <Feather name="download" size={18} color="#FFF" />
-          <Text style={styles.withdrawBtnText}>Withdraw Now</Text>
-        </TouchableOpacity>
-        {earnings.availableBalance < 500 && (
-          <Text style={styles.minBalanceText}>Minimum withdrawal: ₱500</Text>
-        )}
-      </View>
-    </View>
+    </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  message: {
-    fontSize: 14,
-    color: COLORS.muted,
-  },
-  scrollContent: {
-    paddingBottom: 110,
-  },
-
-  // Date Filter
-  dateFilterWrapper: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  dateFilterButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-    backgroundColor: "#F3F4F6",
-    gap: 6,
-  },
-  dateFilterText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: COLORS.primary,
-  },
-
-  // Header
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 10,
-    backgroundColor: COLORS.cardBg,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.accent,
-  },
-  headerTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  headerSubtitle: {
-    fontSize: 9,
-    color: COLORS.muted,
-    marginTop: 0,
-  },
-  headerActions: {
-    flexDirection: "row",
-    gap: 5,
-  },
-  iconBtn: {
-    padding: 5,
-    backgroundColor: COLORS.accent,
-    borderRadius: 6,
-    position: "relative",
-  },
-  notifBadge: {
-    position: "absolute",
-    top: 4,
-    right: 4,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: COLORS.red,
-    borderWidth: 1,
-    borderColor: "#FFFFFF",
-  },
-
-  // 1️⃣ Summary Card
-  summaryCard: {
-    margin: 8,
-    padding: 10,
-    borderRadius: 10,
-    backgroundColor: COLORS.cardBg,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  mainEarning: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 8,
-  },
-  mainEarningText: {
-    flex: 1,
-  },
-  mainEarningLabel: {
-    fontSize: 10,
-    color: COLORS.muted,
-    marginBottom: 1,
-  },
-  mainEarningAmount: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  summaryDivider: {
-    height: 1,
-    backgroundColor: COLORS.accent,
-    marginVertical: 6,
-  },
-  balanceRow: {
-    flexDirection: "row",
-    marginBottom: 6,
-  },
-  balanceItem: {
-    flex: 1,
-    alignItems: "center",
-  },
-  balanceDivider: {
-    width: 1,
-    backgroundColor: COLORS.accent,
-  },
-  balanceLabel: {
-    fontSize: 8,
-    color: COLORS.muted,
-    marginBottom: 1,
-  },
-  balanceAmount: {
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  quickStatsRow: {
-    flexDirection: "row",
-    gap: 4,
-    marginTop: 4,
-  },
-  quickStat: {
-    flex: 1,
-    backgroundColor: COLORS.accent,
-    padding: 6,
-    borderRadius: 6,
-    alignItems: "center",
-  },
-  quickStatLabel: {
-    fontSize: 7,
-    color: COLORS.muted,
-    marginBottom: 1,
-  },
-  quickStatValue: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-
-  // Section Container
-  sectionContainer: {
-    marginHorizontal: 8,
-    marginBottom: 10,
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  sectionTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  deliveryCount: {
-    fontSize: 10,
-    color: COLORS.muted,
-  },
-
-  // 2️⃣ Breakdown Card
-  breakdownCard: {
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 10,
-    padding: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  breakdownRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 6,
-  },
-  breakdownLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flex: 1,
-  },
-  breakdownLabel: {
-    fontSize: 11,
-    color: COLORS.secondary,
-  },
-  breakdownAmount: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: COLORS.primary,
-  },
-  breakdownDivider: {
-    height: 1,
-    backgroundColor: COLORS.accent,
-    marginVertical: 4,
-  },
-  breakdownTotalLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  breakdownTotalAmount: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-
-  // 3️⃣ Delivery Card
-  deliveriesList: {
-    gap: 6,
-  },
-  deliveryCard: {
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 10,
-    padding: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  deliveryHeader: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 6,
-  },
-  deliveryIconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
-    backgroundColor: COLORS.accent,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  deliveryInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  orderId: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: COLORS.primary,
-    marginBottom: 0,
-  },
-  routeContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-  },
-  routeText: {
-    fontSize: 9,
-    color: COLORS.secondary,
-    flex: 1,
-  },
-  deliveryRight: {
-    alignItems: "flex-end",
-    gap: 4,
-  },
-  deliveryAmount: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  statusBadge: {
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 3,
-  },
-  statusText: {
-    fontSize: 8,
-    fontWeight: "600",
-  },
-  deliveryFooter: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.accent,
-  },
-  deliveryTime: {
-    fontSize: 9,
-    color: COLORS.muted,
-  },
-
-  // 4️⃣ Stats Grid
-  statsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  statCard: {
-    flex: 1,
-    minWidth: "30%",
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 8,
-    padding: 8,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  statIconContainer: {
-    width: 30,
-    height: 30,
-    borderRadius: 6,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  statValue: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: COLORS.primary,
-    marginBottom: 1,
-  },
-  statLabel: {
-    fontSize: 8,
-    color: COLORS.muted,
-    textAlign: "center",
-  },
-
-  // 5️⃣ Withdrawal Footer
-  withdrawalFooter: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: COLORS.cardBg,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.accent,
-    padding: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 8,
-  },
-  withdrawalInfo: {
-    marginBottom: 6,
-  },
-  withdrawalLabel: {
-    fontSize: 9,
-    color: COLORS.muted,
-    marginBottom: 1,
-  },
-  withdrawalAmount: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: COLORS.primary,
-    marginBottom: 1,
-  },
-  lastWithdrawal: {
-    fontSize: 8,
-    color: COLORS.muted,
-  },
-  withdrawBtn: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 8,
-    borderRadius: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-  },
-  withdrawBtnDisabled: {
-    backgroundColor: COLORS.muted,
-  },
-  withdrawBtnText: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  minBalanceText: {
-    fontSize: 9,
-    color: COLORS.red,
-    textAlign: "center",
-    marginTop: 4,
-  },
-});
