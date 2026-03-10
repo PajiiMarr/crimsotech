@@ -34,7 +34,9 @@ import {
   Ban,
   AlertCircle,
   MessageCircle,
-  Handshake
+  Handshake,
+  Receipt,
+  Clock as ClockIcon
 } from 'lucide-react';
 import AxiosInstance from '~/components/axios/Axios';
 import { useIsMobile } from '~/hooks/use-mobile';
@@ -57,6 +59,12 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
+interface MediaItem {
+  id: string;
+  url: string;
+  file_type: string;
+}
+
 interface DeliveryInfo {
   delivery_id?: string;
   rider_name?: string;
@@ -64,24 +72,33 @@ interface DeliveryInfo {
   tracking_number?: string;
   estimated_delivery?: string;
   submitted_at?: string;
+  is_pending_offer?: boolean;
+}
+
+interface OrderItemProduct {
+  id: string;
+  name: string;
+  price: number;
+  variant: string;
+  shop: {
+    id: string;
+    name: string;
+  };
+  media?: MediaItem[];
+  primary_image?: MediaItem | null;
+  variant_image?: string | null;
+}
+
+interface OrderItemCartItem {
+  id: string;
+  product: OrderItemProduct;
+  quantity: number;
+  variant_id?: string | null;
 }
 
 interface OrderItem {
   id: string;
-  cart_item: {
-    id: string;
-    product: {
-      id: string;
-      name: string;
-      price: number;
-      variant: string;
-      shop: {
-        id: string;
-        name: string;
-      };
-    };
-    quantity: number;
-  };
+  cart_item: OrderItemCartItem;
   quantity: number;
   total_amount: number;
   status: string;
@@ -114,7 +131,9 @@ interface Order {
   created_at: string;
   updated_at: string;
   items: OrderItem[];
+  is_pickup?: boolean;
   delivery_info?: DeliveryInfo;
+  receipt_url?: string | null;
 }
 
 interface ApiResponse {
@@ -130,19 +149,8 @@ interface AvailableActionsResponse {
     order_id: string;
     current_status: string;
     is_pickup: boolean;
+    has_pending_offer: boolean;
     available_actions: string[];
-  };
-}
-
-interface DeliveryStatusResponse {
-  success: boolean;
-  message: string;
-  data: {
-    delivery_id: string;
-    rider_name: string;
-    status: string;
-    submitted_at: string;
-    order_id: string;
   };
 }
 
@@ -245,6 +253,11 @@ const STATUS_CONFIG = {
     label: 'Pending Offer', 
     color: 'bg-amber-100 text-amber-800',
     icon: MessageCircle
+  },
+  pending_approval: { 
+    label: 'Pending Approval', 
+    color: 'bg-purple-100 text-purple-800',
+    icon: ClockIcon
   },
   default: { 
     label: 'Unknown', 
@@ -360,7 +373,15 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
   // Check if order is for delivery (not pickup)
   const isDeliveryOrder = (order: Order): boolean => {
     const method = order.delivery_method || order.shipping_method || '';
-    return !(method.toLowerCase().includes('pickup') || method.toLowerCase().includes('store'));
+    return !(method?.toLowerCase().includes('pickup') || method?.toLowerCase().includes('store'));
+  };
+
+  // Check if order is pending approval (has receipt_url but still in pending_shipment)
+  const isPendingApproval = (order: Order): boolean => {
+    return order.status?.toLowerCase() === 'pending_shipment' && 
+           order.payment_method !== 'Cash on Pickup' && 
+           order.payment_method !== 'Cash on Delivery' &&
+           order.receipt_url !== null;
   };
 
   // Refresh orders function
@@ -414,8 +435,12 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         // Check if order exists in current state
         const order = orders.find(o => o.order_id === orderId);
         
-        // If order is in pending_shipment status, ensure 'confirm' action is available
-        if (order && order.status === 'pending_shipment') {
+        // If order is in pending_shipment status and is pending approval, remove confirm action
+        if (order && order.status === 'pending_shipment' && isPendingApproval(order)) {
+          actions = actions.filter(action => action !== 'confirm');
+        }
+        // If order is in pending_shipment status, ensure 'confirm' action is available (for COD/cash orders)
+        else if (order && order.status === 'pending_shipment') {
           // If confirm is not in actions, add it
           if (!actions.includes('confirm')) {
             actions = ['confirm', ...actions];
@@ -445,55 +470,6 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     } finally {
       setLoadingActions(prev => ({ ...prev, [orderId]: false }));
     }
-  };
-
-  // Check delivery status for orders with arrange_shipment action
-  const checkDeliveryStatus = async (orderId: string) => {
-    if (!shopId) return;
-    
-    try {
-      const response = await AxiosInstance.get<DeliveryStatusResponse>(
-        `/arrange-shipment/${orderId}/check_delivery_status/`,
-        {
-          params: { shop_id: shopId }
-        }
-      );
-      
-      if (response.data.success) {
-        setDeliveryStatuses(prev => ({
-          ...prev,
-          [orderId]: response.data.data
-        }));
-        toast.success("Delivery status updated", {
-          description: "Delivery information has been refreshed."
-        });
-      }
-    } catch (error: any) {
-      // If endpoint doesn't exist or fails, check if order has delivery info
-      const order = orders.find(o => o.order_id === orderId);
-      if (order?.delivery_info) {
-        setDeliveryStatuses(prev => ({
-          ...prev,
-          [orderId]: order.delivery_info!
-        }));
-      } else {
-        toast.error("Failed to check delivery status", {
-          description: "Could not retrieve delivery information."
-        });
-      }
-    }
-  };
-
-  // Handle arrange shipment navigation
-  const handleArrangeShipment = (orderId: string) => {
-    if (!shopId) {
-      toast.error("Shop ID missing", {
-        description: "Please refresh the page and try again."
-      });
-      return;
-    }
-    
-    navigate(`/arrange-shipment?orderId=${orderId}&shopId=${shopId}`);
   };
 
   const handlePrepareShipment = async (orderId: string) => {
@@ -542,7 +518,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     }
   };
 
-  // Load actions and delivery status when component mounts or orders change
+  // Load actions when component mounts or orders change
   useEffect(() => {
     if (shopId && orders.length > 0) {
       // Load actions for first few orders to start
@@ -550,11 +526,6 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       ordersToLoad.forEach(order => {
         if (!availableActions[order.order_id]) {
           loadAvailableActions(order.order_id);
-        }
-        
-        // Check delivery status for orders that might have pending offers
-        if (hasPendingDeliveryOffer(order) || order.status === 'arrange_shipment') {
-          checkDeliveryStatus(order.order_id);
         }
       });
     }
@@ -581,14 +552,14 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
 
   // Check if order is for pickup
   const isPickupOrder = (order: Order) => {
-    const method = order.delivery_method || order.shipping_method || '';
-    return method.toLowerCase().includes('pickup') || method.toLowerCase().includes('store');
+    return order.is_pickup === true;
   };
 
   const getStatusBadge = (status: string, order: Order) => {
     const isPickup = isPickupOrder(order);
     const hasPendingOffer = hasPendingDeliveryOffer(order);
     const hasActiveDelivery = order.delivery_info?.status === 'pending';
+    const pendingApproval = isPendingApproval(order);
 
     let statusKey = (status || 'default').toLowerCase();
 
@@ -596,6 +567,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     if (hasPendingOffer) statusKey = 'pending_offer';
     else if (hasActiveDelivery && statusKey === 'arrange_shipment') statusKey = 'pending_offer';
     else if (isPickup && statusKey === 'pending_shipment') statusKey = 'ready_for_pickup';
+    else if (pendingApproval) statusKey = 'pending_approval';
 
     const config = STATUS_CONFIG[statusKey as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.default;
     const Icon = config.icon;
@@ -693,7 +665,8 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       const s = o.status?.toLowerCase();
       return ['refunded', 'cancelled'].includes(s || '');
     }).length,
-    reviews: orders.filter(o => o.items.some(i => (i as any).reviewed)).length
+    reviews: orders.filter(o => o.items.some(i => (i as any).reviewed)).length,
+    pending_approval: orders.filter(o => isPendingApproval(o)).length
   };
 
   const handleUpdateStatus = async (orderId: string, actionType: string) => {
@@ -729,7 +702,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         }
 
         // If the action was 'confirm' and backend moved order -> processing / to_ship,
-        // switch user to the To Process tab so Arrange Shipping appears immediately.
+        // switch user to the To Process tab
         try {
           const backendStatus = String(response.data.data?.status || '').toLowerCase();
           const updatedOrderStatus = String((updated_order as any)?.status || '').toLowerCase();
@@ -807,19 +780,12 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     const isPickup = isPickupOrder(order);
     const actions = availableActions[order.order_id] || [];
     const isLoading = loadingActions[order.order_id];
+    const pendingApproval = isPendingApproval(order);
 
-    // Check if order is pending_shipment (show confirm button)
-    const isPending = order.status?.toLowerCase() === 'pending_shipment';
+    // Check if order is pending_shipment (show confirm button only if not pending approval)
+    const isPending = order.status?.toLowerCase() === 'pending_shipment' && !pendingApproval;
     const canCancel = !isCancelled && !['cancelled', 'completed', 'refunded'].includes(order.status?.toLowerCase() || '');
-    // True when a rider is already assigned but delivery is still pending acceptance
-    const riderAssignedPending = Boolean(order.delivery_info?.rider_name && String(order.delivery_info?.status || '').toLowerCase() === 'pending');
-
-    // Derived flags: used to hide Arrange Shipping when a rider already accepted pickup
-    const dbOrderStatus = String((order as any).order_status || '').toLowerCase();
-    const uiStatus = String(order.status || '').toLowerCase();
-    const deliveryAccepted = String(order.delivery_info?.status || '').toLowerCase() === 'accepted';
-    const riderAcceptedProcessing = deliveryAccepted && (dbOrderStatus === 'processing' || (!dbOrderStatus && uiStatus === 'to_ship'));
-
+    
     if (isLoading) {
       return (
         <Button size="sm" variant="ghost" className="h-6 w-6 p-0" disabled>
@@ -828,7 +794,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       );
     }
 
-    // For pending orders, show Confirm + Cancel quick-actions side-by-side
+    // For pending orders that are not pending approval, show Confirm + Cancel quick-actions side-by-side
     if (isPending) {
       return (
         <div className="flex gap-1 items-center">
@@ -876,56 +842,6 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
       );
     }
 
-    // If order is ready for shipping arrangements (backend maps `processing` -> UI `to_ship`),
-    // show Arrange Shipping + Cancel quick-actions so seller can proceed immediately.
-    const isToShip = String(order.status || '').toLowerCase() === 'to_ship';
-    if (isToShip) {
-      // hide Arrange Shipping when rider already assigned & pending OR when rider already accepted pickup for a processing order
-      const showArrange = !riderAssignedPending && !riderAcceptedProcessing;
-      return (
-        <div className="flex gap-1 items-center">
-          {showArrange && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-[10px]"
-              onClick={(e) => { 
-                e.stopPropagation(); 
-                handleArrangeShipment(order.order_id);
-              }}
-              title="Arrange shipping"
-            >
-              <Ship className="mr-1 w-3 h-3 text-blue-600" /> Arrange Shipping
-            </Button>
-          )}
-
-          <Button
-            variant="ghost"
-            size="sm"
-            className={`h-6 px-2 text-[10px] ${canCancel ? '' : 'opacity-50 cursor-not-allowed text-gray-400'}`}
-            disabled={!canCancel}
-            onClick={(e) => { 
-              e.stopPropagation(); 
-              if (!canCancel) {
-                toast.error("Cannot cancel", {
-                  description: "This order cannot be cancelled at this stage."
-                });
-                return;
-              }
-              setConfirmationState({
-                open: true,
-                type: 'cancel',
-                orderId: order.order_id
-              });
-            }}
-            title={canCancel ? 'Cancel order' : 'Cannot cancel this order'}
-          >
-            <Ban className="mr-1 w-3 h-3 text-red-600" /> Cancel
-          </Button>
-        </div>
-      );
-    }
-
     return (
       <>
         {isMobile ? (
@@ -943,7 +859,21 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     <Eye className="mr-2 h-4 w-4" /> View Details
                   </Button>
 
-                  {actions.includes('prepare_shipment') && (
+                  {pendingApproval && order.receipt_url && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.open(order.receipt_url, '_blank');
+                      }}
+                    >
+                      <Receipt className="mr-2 h-4 w-4 text-purple-600" /> View Receipt
+                    </Button>
+                  )}
+
+                  {actions.includes('prepare_shipment') && !pendingApproval && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -961,21 +891,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     </Button>
                   )}
 
-                  {order.status === 'arrange_shipment' && !riderAssignedPending && !riderAcceptedProcessing && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 text-sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleArrangeShipment(order.order_id);
-                      }}
-                    >
-                      <Ship className="mr-2 h-4 w-4 text-blue-600" /> Arrange Shipping
-                    </Button>
-                  )}
-
-                  {canCancel && (
+                  {canCancel && !pendingApproval && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -998,7 +914,22 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
           </Sheet>
         ) : (
           <div className="flex gap-1 items-center">
-            {actions.includes('prepare_shipment') && (
+            {pendingApproval && order.receipt_url && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[10px]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.open(order.receipt_url, '_blank');
+                }}
+                title="View Receipt"
+              >
+                <Receipt className="mr-1 w-3 h-3 text-purple-600" /> Receipt
+              </Button>
+            )}
+
+            {actions.includes('prepare_shipment') && !pendingApproval && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -1017,22 +948,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
               </Button>
             )}
 
-            {order.status === 'arrange_shipment' && !riderAcceptedProcessing && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-[10px]"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleArrangeShipment(order.order_id);
-                }}
-                title="Arrange shipping"
-              >
-                <Ship className="mr-1 w-3 h-3 text-blue-600" /> Arrange
-              </Button>
-            )}
-
-            {canCancel && (
+            {canCancel && !pendingApproval && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -1056,6 +972,27 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     );
   };
 
+  // Function to get product image URL with fallback
+  const getProductImageUrl = (item: OrderItem): string => {
+    // Try to get variant_image first (from the new response structure)
+    if (item.cart_item?.product?.variant_image) {
+      return item.cart_item.product.variant_image;
+    }
+    
+    // Try to get primary_image if available
+    if (item.cart_item?.product?.primary_image?.url) {
+      return item.cart_item.product.primary_image.url;
+    }
+    
+    // Try to get first media image if available
+    if (item.cart_item?.product?.media && item.cart_item.product.media.length > 0) {
+      return item.cart_item.product.media[0].url;
+    }
+    
+    // Return fallback
+    return '/Crimsotech.png';
+  };
+
   return (
     <SidebarLayout>
       <div className="space-y-3 p-3">
@@ -1063,6 +1000,11 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         <div className="mb-2">
           <h1 className="text-lg font-bold">Order Management</h1>
           <p className="text-gray-500 text-xs">Manage customer orders and shipments</p>
+          {counts.pending_approval > 0 && (
+            <p className="text-xs text-purple-600 mt-1">
+              {counts.pending_approval} order(s) pending admin approval
+            </p>
+          )}
         </div>
 
         {/* Stats Cards */}
@@ -1181,6 +1123,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       const isExpanded = expandedOrders.has(order.order_id);
                       const primaryItem = order.items[0];
                       const customerName = formatCustomerName(order.user);
+                      const pendingApproval = isPendingApproval(order);
 
                       // Determine DB/UI processing state (backend returns `order_status` when available)
                       const dbOrderStatus = String((order as any).order_status || '').toLowerCase();
@@ -1210,6 +1153,16 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                                       <div className="font-medium">Rider will pick up the order</div>
                                     </div>
                                   )
+                                )}
+
+                                {/* Show pending approval note */}
+                                {pendingApproval && (
+                                  <div className="bg-purple-50 p-2 rounded text-[10px] text-purple-700 mb-1">
+                                    <div className="font-medium flex items-center gap-1">
+                                      <Receipt className="w-3 h-3" />
+                                      Pending admin approval for payment verification
+                                    </div>
+                                  </div>
                                 )}
 
                                 <div className="flex items-center gap-2 mb-1">
@@ -1276,7 +1229,15 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                             <div className="my-2 flex gap-1">
                               {order.items.slice(0, 3).map((item, idx) => (
                                 <div key={idx} className="h-12 w-12 rounded-md border bg-gray-50 flex items-center justify-center overflow-hidden">
-                                  <Package className="w-6 h-6 text-gray-300" />
+                                  <img 
+                                    src={getProductImageUrl(item)}
+                                    alt={item.cart_item?.product?.name || 'Product'}
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                      const target = e.target as HTMLImageElement;
+                                      target.src = '/Crimsotech.png';
+                                    }}
+                                  />
                                 </div>
                               ))}
                               {order.items.length > 3 && (
@@ -1330,6 +1291,20 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                                   <div className="bg-amber-50 p-2 rounded text-[10px] text-amber-700">
                                     <div className="font-medium">Pending Rider Offer</div>
                                     <div>A rider will soon provide a delivery fee offer.</div>
+                                  </div>
+                                )}
+
+                                {pendingApproval && order.receipt_url && (
+                                  <div className="bg-purple-50 p-2 rounded text-[10px] text-purple-700">
+                                    <div className="font-medium">Payment Receipt</div>
+                                    <Button
+                                      variant="link"
+                                      size="sm"
+                                      className="h-auto p-0 text-[10px] text-purple-700"
+                                      onClick={() => window.open(order.receipt_url, '_blank')}
+                                    >
+                                      View receipt
+                                    </Button>
                                   </div>
                                 )}
                               </div>

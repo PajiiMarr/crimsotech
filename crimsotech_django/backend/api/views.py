@@ -20307,8 +20307,46 @@ class CustomerFavoritesView(APIView):
             'updated_at': product.updated_at
         }
 
-
 class SellerOrderList(viewsets.ViewSet):
+    
+    def _get_product_media(self, product):
+        """
+        Helper method to get product media URLs
+        """
+        media_files = []
+        try:
+            # Get all media for this product
+            product_media = ProductMedia.objects.filter(product=product).order_by('created_at')[:5]
+            
+            for media in product_media:
+                if media.file_data:
+                    # Convert S3 URL to public URL if needed
+                    file_url = convert_s3_to_public_url(media.file_data.url)
+                    media_files.append({
+                        "id": str(media.id),
+                        "url": file_url,
+                        "file_type": media.file_type
+                    })
+        except Exception as e:
+            print(f"Error getting product media: {e}")
+        
+        return media_files
+    
+    def _get_variant_media(self, variant):
+        """
+        Helper method to get variant image URL
+        """
+        if variant and variant.image:
+            return convert_s3_to_public_url(variant.image.url)
+        return None
+    
+    def _get_order_receipt(self, order):
+        """
+        Helper method to get order receipt URL if payment was online
+        """
+        if order.receipt and hasattr(order.receipt, 'url'):
+            return convert_s3_to_public_url(order.receipt.url)
+        return None
     
     def _prepare_order_response(self, order, shop):
         """
@@ -20345,13 +20383,18 @@ class SellerOrderList(viewsets.ViewSet):
         is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
                                                  for keyword in ['pickup', 'store', 'collect'])
         
+        # Get order receipt URL if exists
+        receipt_url = self._get_order_receipt(order)
+        
         # Get shop checkouts for this order
         shop_checkouts = Checkout.objects.filter(
             order=order,
             cart_item__product__shop=shop
         ).select_related(
             'cart_item__product__shop',
-            'cart_item__variant'  # Added to get variant information
+            'cart_item__variant'
+        ).prefetch_related(
+            'cart_item__product__productmedia_set'  # Prefetch media
         )
         
         # Prepare order items
@@ -20364,17 +20407,23 @@ class SellerOrderList(viewsets.ViewSet):
                 continue
             
             product = cart_item.product
-            variant = cart_item.variant  # Get the variant
+            variant = cart_item.variant
             
-            # Get price from variant if available, otherwise use a default or skip
+            # Get price from variant if available
             price = 0
             if variant and variant.price:
                 price = float(variant.price)
-            elif hasattr(product, 'price'):  # Fallback if product had price field
+            elif hasattr(product, 'price'):
                 price = float(product.price)
             
             # Get variant title/condition for display
             variant_title = variant.title if variant else product.condition
+            
+            # Get product media
+            product_media = self._get_product_media(product)
+            
+            # Get variant image URL
+            variant_image_url = self._get_variant_media(variant)
             
             # Get tracking info
             tracking_number = None
@@ -20386,27 +20435,36 @@ class SellerOrderList(viewsets.ViewSet):
                 shipping_method = "Standard Shipping" if not is_pickup else "Store Pickup"
                 estimated_delivery = self._get_estimated_delivery(latest_delivery)
             
+            # Build product data with media
+            product_data = {
+                "id": str(product.id),
+                "name": product.name,
+                "price": price,
+                "variant": variant_title,
+                "shop": {
+                    "id": str(shop.id),
+                    "name": shop.name
+                },
+                "media": product_media,  # Add product media
+                "primary_image": product_media[0] if product_media else None  # First image as primary
+            }
+            
+            # Add variant image if available
+            if variant_image_url:
+                product_data["variant_image"] = variant_image_url
+            
             order_items.append({
                 "id": str(checkout.id),
                 "cart_item": {
                     "id": str(cart_item.id),
-                    "product": {
-                        "id": str(product.id),
-                        "name": product.name,
-                        "price": price,  # Now using price from variant
-                        "variant": variant_title,  # Using variant title or condition
-                        "shop": {
-                            "id": str(shop.id),
-                            "name": shop.name
-                        }
-                    },
+                    "product": product_data,
                     "quantity": cart_item.quantity,
-                    "variant_id": str(variant.id) if variant else None  # Added variant ID for reference
+                    "variant_id": str(variant.id) if variant else None
                 },
                 "quantity": checkout.quantity,
                 "total_amount": float(checkout.total_amount),
                 "status": shipping_status,
-                "created_at": checkout.created_at.isoformat(),
+                "created_at": checkout.created_at.isoformat() if checkout.created_at else None,
                 "shipping_status": shipping_status,
                 "is_shipped": shipping_status in ['shipped', 'in_transit', 'out_for_delivery', 'completed'],
                 "is_processed": shipping_status not in ['pending_shipment'],
@@ -20441,10 +20499,11 @@ class SellerOrderList(viewsets.ViewSet):
             "delivery_method": order.delivery_method,
             "shipping_method": "Standard Shipping" if not is_pickup else "Store Pickup",
             "delivery_address": delivery_address,
-            "created_at": order.created_at.isoformat(),
-            "updated_at": order.updated_at.isoformat(),
+            "created_at": order.created_at.isoformat() if order.created_at else None,
+            "updated_at": order.updated_at.isoformat() if order.updated_at else None,
             "items": order_items,
-            "is_pickup": is_pickup
+            "is_pickup": is_pickup,
+            "receipt_url": receipt_url  # Add receipt URL to order data
         }
         
         # Add delivery info if exists
@@ -20497,7 +20556,9 @@ class SellerOrderList(viewsets.ViewSet):
                         cart_item__product__shop=shop
                     ).select_related(
                         'cart_item__product__shop',
-                        'cart_item__variant'  # Added to prefetch variant
+                        'cart_item__variant'
+                    ).prefetch_related(
+                        'cart_item__product__productmedia_set'
                     )
                 )
             ).distinct().order_by('-created_at')
@@ -21045,13 +21106,18 @@ class SellerOrderList(viewsets.ViewSet):
             # Get the order
             order = Order.objects.select_related('user', 'shipping_address').get(order=order_id)
             
+            # Get receipt URL
+            receipt_url = self._get_order_receipt(order)
+            
             # Get checkouts for this order that belong to the shop
             checkouts = Checkout.objects.filter(
                 order=order,
                 cart_item__product__shop=shop
             ).select_related(
                 'cart_item__product',
-                'cart_item__variant'  # Added to get variant
+                'cart_item__variant'
+            ).prefetch_related(
+                'cart_item__product__productmedia_set'
             )
             
             if not checkouts.exists():
@@ -21070,7 +21136,7 @@ class SellerOrderList(viewsets.ViewSet):
                         'rider_name': f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery.rider else None,
                         'status': delivery.status,
                         'estimated_delivery': self._get_estimated_delivery(delivery),
-                        'submitted_at': delivery.created_at.isoformat()
+                        'submitted_at': delivery.created_at.isoformat() if delivery.created_at else None
                     }
             except Delivery.DoesNotExist:
                 pass
@@ -21091,19 +21157,31 @@ class SellerOrderList(viewsets.ViewSet):
                 price = float(variant.price) if variant and variant.price else 0
                 variant_title = variant.title if variant else product.condition
                 
+                # Get product media
+                product_media = self._get_product_media(product)
+                variant_image_url = self._get_variant_media(variant)
+                
                 item_total = price * checkout.quantity
                 total_amount += item_total
+                
+                # Build product data with media
+                product_data = {
+                    "id": str(product.id),
+                    "name": product.name,
+                    "price": price,
+                    "variant": variant_title,
+                    "media": product_media,
+                    "primary_image": product_media[0] if product_media else None
+                }
+                
+                if variant_image_url:
+                    product_data["variant_image"] = variant_image_url
                 
                 items.append({
                     'id': str(checkout.id),
                     'cart_item': {
                         'id': str(cart_item.id),
-                        'product': {
-                            'id': str(product.id),
-                            'name': product.name,
-                            'price': price,
-                            'variant': variant_title,
-                        },
+                        'product': product_data,
                         'quantity': cart_item.quantity,
                         'variant_id': str(variant.id) if variant else None
                     },
@@ -21137,10 +21215,11 @@ class SellerOrderList(viewsets.ViewSet):
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
-                    'created_at': order.created_at.isoformat(),
-                    'updated_at': order.updated_at.isoformat(),
+                    'created_at': order.created_at.isoformat() if order.created_at else None,
+                    'updated_at': order.updated_at.isoformat() if order.updated_at else None,
                     'items': items,
-                    'delivery_info': delivery_info
+                    'delivery_info': delivery_info,
+                    'receipt_url': receipt_url  # Add receipt URL to response
                 }
             }
 
@@ -21161,8 +21240,6 @@ class SellerOrderList(viewsets.ViewSet):
                 'success': False,
                 'message': f'Error retrieving order: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
 class CheckoutOrder(viewsets.ViewSet):
     @action(detail=False, methods=['GET'])
     def get_checkout_items(self, request):

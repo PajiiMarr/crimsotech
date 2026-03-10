@@ -200,8 +200,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       isRider: false,
       isModerator: false,
       isCustomer: true,
-      username: userId ? `user_${userId}` : "guest",
-      email: userId ? `user_${userId}@example.com` : "guest@example.com",
     },
     headers: { "Set-Cookie": await commitSession(session) },
   };

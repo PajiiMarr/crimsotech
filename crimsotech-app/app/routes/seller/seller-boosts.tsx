@@ -1,7 +1,7 @@
 import SellerSidebarLayout from "~/components/layouts/seller-sidebar";
 import type { Route } from "./+types/seller-boosts";
 import { UserProvider } from '~/components/providers/user-role-provider';
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";  // Fixed: Added useNavigate
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
@@ -328,6 +328,7 @@ function getTimeUnitDisplay(unit: string, duration: number) {
 
 export default function SellerBoosts({ loaderData }: { loaderData: LoaderData }) {
   const { user, userId, shopId } = loaderData;
+  const navigate = useNavigate(); // Now properly imported
   
   const [boosts, setBoosts] = useState<Boost[]>([]);
   const [boostCounts, setBoostCounts] = useState<BoostCounts>({
@@ -654,7 +655,14 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
         return (
           <div className="flex items-center gap-2 px-2 sm:px-4 py-2">
             {product?.image ? (
-              <img src={product.image} alt={product.name} className="w-8 h-8 rounded object-cover" />
+              <img 
+                src={product.image} 
+                alt={product.name} 
+                className="w-8 h-8 rounded object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/Crimsotech.png';
+                }}
+              />
             ) : (
               <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center">
                 <ImageIcon className="w-4 h-4 text-gray-400" />
