@@ -12,15 +12,15 @@ export default function BottomTab({ shopId }: BottomTabProps) {
   const pathname = usePathname();
 
   const tabs = [
-    { name: 'Dashboard', icon: 'speedometer-outline', route: '/seller/dashboard' },
+    { name: 'Dashboard', icon: 'home-outline', route: '/seller/dashboard' },
     { name: 'Products', icon: 'cube-outline', route: '/seller/product-list' },
     { name: 'Orders', icon: 'list-outline', route: '/seller/order' },
-    { name: 'Gifts', icon: 'pricetag-outline', route: '/seller/gifts' },
+    { name: 'Gifts', icon: 'gift-outline', route: '/seller/gifts' },
     { name: 'More', icon: 'menu-outline', route: '/seller/more' },
   ] as const;
 
   const activeIcons: Record<string, string> = {
-    'Dashboard': 'speedometer',
+    'Dashboard': 'home-outline',
     'Products': 'cube',
     'Orders': 'list',
     'Vouchers': 'pricetag',
