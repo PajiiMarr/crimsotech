@@ -681,6 +681,38 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     pending_approval: orders.filter(o => pendingApprovalStatus[o.order_id] || isPendingApproval(o)).length
   };
 
+  // MODIFIED: Function to trigger rider assignment
+  const triggerRiderAssignment = async (orderId: string) => {
+    try {
+      console.log(`Triggering rider assignment for order: ${orderId}`);
+      
+      // Call the assign_deliveries endpoint
+      const response = await AxiosInstance.post('/seller-order-list/assign_deliveries/', {}, {
+        params: { order_id: orderId }
+      });
+      
+      if (response.data.success) {
+        console.log('Rider assignment triggered successfully:', response.data);
+        
+        // Also trigger check_delivery_responses after a short delay
+        setTimeout(async () => {
+          try {
+            await AxiosInstance.post('/seller-order-list/check_delivery_responses/', {}, {
+              params: { order_id: orderId }
+            });
+            console.log('Delivery responses check triggered');
+          } catch (error) {
+            console.error('Error checking delivery responses:', error);
+          }
+        }, 2000); // 2 second delay
+      }
+    } catch (error: any) {
+      console.error('Error triggering rider assignment:', error);
+      // Don't show error toast to user as this is a background process
+    }
+  };
+
+  // MODIFIED: handleUpdateStatus function with rider assignment
   const handleUpdateStatus = async (orderId: string, actionType: string) => {
     try {
       const response = await AxiosInstance.patch(
@@ -721,6 +753,17 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
           const movedToProcessing = backendStatus === 'processing' || updatedOrderStatus === 'to_ship';
           if (actionType === 'confirm' && movedToProcessing) {
             setActiveTab('to_ship');
+            
+            // NEW: Check if order is for delivery (not pickup) and trigger rider assignment
+            const currentOrder = orders.find(o => o.order_id === orderId);
+            if (currentOrder && isDeliveryOrder(currentOrder)) {
+              // Trigger rider assignment automatically
+              await triggerRiderAssignment(orderId);
+              
+              toast.info("Rider assignment initiated", {
+                description: "Looking for available riders for this delivery order."
+              });
+            }
           }
         } catch (e) {
           /* ignore */

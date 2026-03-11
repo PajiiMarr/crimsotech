@@ -20783,6 +20783,180 @@ class SellerOrderList(viewsets.ViewSet):
                 "message": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # NEW: Assign deliveries endpoint
+    @action(detail=False, methods=['post'])
+    def assign_deliveries(self, request):
+        """
+        Trigger rider assignment for an order
+        POST /seller-order-list/assign_deliveries/?order_id={order_id}
+        """
+        try:
+            order_id = request.GET.get('order_id')
+            if not order_id:
+                return Response({
+                    "success": False,
+                    "message": "Order ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the order
+            try:
+                order = Order.objects.get(order=order_id)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Check if order is for delivery (not pickup)
+            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
+                                                     for keyword in ['pickup', 'store', 'collect'])
+            if is_pickup:
+                return Response({
+                    "success": False,
+                    "message": "Order is for pickup, not delivery"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check if there's already a pending delivery
+            existing_delivery = Delivery.objects.filter(
+                order=order,
+                status__in=['pending_offer', 'accepted', 'picked_up', 'in_progress']
+            ).exists()
+            
+            if existing_delivery:
+                return Response({
+                    "success": False,
+                    "message": "Order already has an active or pending delivery"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Find available riders
+            available_riders = Rider.objects.filter(
+                verified=True,
+                availability_status='available',
+                is_accepting_deliveries=True
+            ).select_related('rider')
+
+            if not available_riders.exists():
+                return Response({
+                    "success": False,
+                    "message": "No available riders found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Create delivery offers for available riders
+            deliveries_created = []
+            for rider in available_riders[:5]:  # Limit to 5 riders
+                delivery = Delivery.objects.create(
+                    order=order,
+                    rider=rider,
+                    status='pending_offer',
+                    delivery_fee=50,  # Default delivery fee - you can make this dynamic
+                    distance_km=5.0,  # Default distance - you can calculate this
+                    estimated_minutes=30  # Default estimate - you can calculate this
+                )
+                deliveries_created.append(str(delivery.id))
+
+                # Create notification for rider
+                Notification.objects.create(
+                    user=rider.rider,
+                    title='New Delivery Assignment',
+                    type='delivery',
+                    message=f'You have a new delivery assignment for order #{str(order.order)[:8]}',
+                    is_read=False
+                )
+
+            return Response({
+                "success": True,
+                "message": f"Delivery assignments created for {len(deliveries_created)} riders",
+                "data": {
+                    "order_id": str(order_id),
+                    "deliveries_created": deliveries_created,
+                    "rider_count": len(deliveries_created)
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({
+                "success": False,
+                "message": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # NEW: Check delivery responses endpoint
+    @action(detail=False, methods=['post'])
+    def check_delivery_responses(self, request):
+        """
+        Check and process delivery responses for an order
+        POST /seller-order-list/check_delivery_responses/?order_id={order_id}
+        """
+        try:
+            order_id = request.GET.get('order_id')
+            if not order_id:
+                return Response({
+                    "success": False,
+                    "message": "Order ID is required"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get the order
+            try:
+                order = Order.objects.get(order=order_id)
+            except Order.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Order not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get all pending offers for this order
+            pending_deliveries = Delivery.objects.filter(
+                order=order,
+                status='pending_offer'
+            ).select_related('rider__rider')
+
+            responses = []
+            accepted_delivery = None
+
+            for delivery in pending_deliveries:
+                # Here you would check if the rider has responded
+                # This is a simplified version - you might have a separate mechanism
+                # where riders respond via the rider_response endpoint
+                
+                # For now, we'll just return the status
+                response_info = {
+                    "delivery_id": str(delivery.id),
+                    "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery.rider else None,
+                    "status": delivery.status,
+                    "has_responded": delivery.status != 'pending_offer'
+                }
+                
+                # If delivery is accepted, mark it
+                if delivery.status == 'accepted':
+                    accepted_delivery = delivery
+                    
+                responses.append(response_info)
+
+            # If there's an accepted delivery, update order status
+            if accepted_delivery:
+                order.status = 'processing'
+                order.save()
+                
+                # Update other pending deliveries to cancelled
+                Delivery.objects.filter(
+                    order=order,
+                    status='pending_offer'
+                ).exclude(id=accepted_delivery.id).update(status='cancelled')
+
+            return Response({
+                "success": True,
+                "message": "Delivery responses checked",
+                "data": {
+                    "order_id": str(order_id),
+                    "accepted_delivery": str(accepted_delivery.id) if accepted_delivery else None,
+                    "responses": responses
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({
+                "success": False,
+                "message": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _get_product_media(self, product):
         """
