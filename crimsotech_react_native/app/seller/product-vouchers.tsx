@@ -7,47 +7,23 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Tag, Plus, Search, ChevronRight } from 'lucide-react-native';
 
-const INITIAL_PRODUCT_VOUCHERS = [
-  { 
-    id: 'pv1', 
-    productName: 'MacBook Air M2', 
-    productImage: 'https://images.unsplash.com/photo-1611186871348-b1ce696e52c9?w=200',
-    code: 'MACM2SAVE', 
-    value: 1500, 
-    type: 'FIXED', 
-    claimed: 3, 
-    total: 5,
-    status: 'ACTIVE'
-  },
-  { 
-    id: 'pv2', 
-    productName: 'Keychron K2 Keyboard', 
-    productImage: 'https://images.unsplash.com/photo-1595225476474-87563907a212?w=200',
-    code: 'CLICKY10', 
-    value: 10, 
-    type: 'PERCENTAGE', 
-    claimed: 12, 
-    total: 20,
-    status: 'ACTIVE'
-  },
-  { 
-    id: 'pv3', 
-    productName: 'Sony WH-1000XM4', 
-    productImage: 'https://images.unsplash.com/photo-1613040809024-b4ef7ba99bc3?w=200',
-    code: 'SONYOFF', 
-    value: 500, 
-    type: 'FIXED', 
-    claimed: 10, 
-    total: 10,
-    status: 'FULL'
-  },
-];
+type ProductVoucher = {
+  id: string;
+  productName: string;
+  productImage: string;
+  code: string;
+  value: number;
+  type: 'FIXED' | 'PERCENTAGE';
+  claimed: number;
+  total: number;
+  status: 'ACTIVE' | 'FULL';
+};
 
 export default function ProductVoucherPage() {
   const router = useRouter();
-  const [vouchers] = useState(INITIAL_PRODUCT_VOUCHERS);
+  const [vouchers] = useState<ProductVoucher[]>([]);
 
-  const renderVoucher = ({ item }: { item: typeof INITIAL_PRODUCT_VOUCHERS[0] }) => {
+  const renderVoucher = ({ item }: { item: ProductVoucher }) => {
     const isFull = item.claimed >= item.total;
 
     return (
@@ -119,6 +95,12 @@ export default function ProductVoucherPage() {
         keyExtractor={item => item.id}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <View style={styles.emptyWrap}>
+            <Text style={styles.emptyTitle}>No product vouchers yet</Text>
+            <Text style={styles.emptyText}>Tap + to open the create form.</Text>
+          </View>
+        }
       />
     </SafeAreaView>
   );
@@ -193,5 +175,8 @@ const styles = StyleSheet.create({
   usageValue: { fontSize: 10, fontWeight: '800', color: '#0F172A' },
   progressBg: { height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: '#0F172A' },
+  emptyWrap: { paddingVertical: 36, alignItems: 'center' },
+  emptyTitle: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+  emptyText: { marginTop: 6, fontSize: 12, color: '#64748B' },
 });
 

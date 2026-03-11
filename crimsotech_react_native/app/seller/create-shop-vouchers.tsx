@@ -1,6 +1,6 @@
 import React from 'react';
 import { 
-  View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity 
+  View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity, Alert 
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
@@ -10,9 +10,7 @@ export default function CreateShopVouchers() {
   const router = useRouter();
 
   const handlePublish = () => {
-    // Add API logic here
-    console.log("Voucher Created");
-    router.back();
+    Alert.alert('Not Available Yet', 'Voucher creation is not implemented in web/backend yet.');
   };
 
   return (

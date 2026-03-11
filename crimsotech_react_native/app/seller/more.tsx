@@ -149,13 +149,13 @@ export default function MorePage() {
       title: 'MANAGE',
       items: [
         {
-          id: 'address',
-          title: 'Address',
-          subtitle: getFullAddress() || 'Add your shop address',
+          id: 'return-address',
+          title: 'Return Address',
+          subtitle: getFullAddress() || 'Add your return address',
           icon: 'location-outline',
           iconBg: '#F1F5F9',
           iconColor: '#475569',
-          onPress: () => router.push(`/seller/address?shopId=${shopId}`),
+          onPress: () => router.push(`/seller/return-address?shopId=${shopId}`),
         },
         {
           id: 'vouchers',
@@ -164,11 +164,11 @@ export default function MorePage() {
           icon: 'pricetag-outline',
           iconBg: '#F1F5F9',
           iconColor: '#475569',
-          onPress: () => router.push(`/seller/shop-vouchers?shopId=${shopId}`),
+          onPress: () => router.push(`/seller/vouchers?shopId=${shopId}`),
         },
         {
-          id: 'boosts',
-          title: 'Boosts',
+          id: 'boost',
+          title: 'Boost',
           subtitle: 'Promote your products',
           icon: 'rocket-outline',
           iconBg: '#F1F5F9',

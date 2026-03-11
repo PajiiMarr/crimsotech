@@ -4,10 +4,10 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  ScrollView,
+  ActivityIndicator,
+  Modal,
   TextInput,
   Alert,
-  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,44 +21,26 @@ type ShopInfo = {
   description: string;
 };
 
-type SettingItem = {
-  id: string;
-  title: string;
-  route?: string;
-  badge?: number;
-  action?: 'edit-shop';
-  subtitle?: string;
-};
-
 export default function SellerSettings() {
   const { userId, shopId } = useAuth();
   const [shopInfo, setShopInfo] = useState<ShopInfo | null>(null);
+  const [loading, setLoading] = useState(true);
   const [editVisible, setEditVisible] = useState(false);
+  const [aboutVisible, setAboutVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editedName, setEditedName] = useState('');
   const [editedDescription, setEditedDescription] = useState('');
-  const [items, setItems] = useState<SettingItem[]>([
-    { id: 'edit-shop', title: 'Edit Shop Info', action: 'edit-shop' },
-    { id: 'earnings', title: 'Earnings', route: '/seller/earnings' },
-    { id: 'boosts', title: 'Boosts', route: '/seller/boosts' },
-    { id: 'disputes', title: 'Disputes', route: '/seller/disputes' },
-    { id: 'return-address', title: 'Return Address', route: '/seller/return-address' },
-    { id: 'address', title: 'Address', route: '/seller/address', badge: 0 },
-    { id: 'shop-voucher', title: 'Shop Voucher', route: '/seller/shop-vouchers', badge: 0 },
-    { id: 'product-voucher', title: 'Product Voucher', route: '/seller/product-vouchers', badge: 0 },
-  ]);
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!shopId) return;
+      if (!shopId) {
+        setLoading(false);
+        return;
+      }
 
       try {
-        const [shopRes, dashRes] = await Promise.all([
+        const [shopRes] = await Promise.all([
           AxiosInstance.get(`/shops/${shopId}/`),
-          AxiosInstance.get('/seller-dashboard/get_dashboard/', {
-            params: { shop_id: shopId },
-            headers: { 'X-User-Id': userId || '', 'X-Shop-Id': shopId || '' },
-          }),
         ]);
 
         const loadedShop: ShopInfo = {
@@ -70,41 +52,20 @@ export default function SellerSettings() {
         setShopInfo(loadedShop);
         setEditedName(loadedShop.name);
         setEditedDescription(loadedShop.description);
-
-        const storeCounts = dashRes.data?.store_management_counts || {};
-        setItems((prev) =>
-          prev.map((item) => ({
-            ...item,
-            subtitle: item.id === 'edit-shop' ? loadedShop.name : item.subtitle,
-            badge:
-              item.id === 'address'
-                ? Number(storeCounts.address || 0)
-                : item.id === 'shop-voucher'
-                ? Number(storeCounts.shop_voucher || 0)
-                : item.id === 'product-voucher'
-                ? Number(storeCounts.product_voucher || 0)
-                : item.badge,
-          }))
-        );
       } catch (err) {
         console.error('Failed to load settings data:', err);
+      } finally {
+        setLoading(false);
       }
     };
 
     fetchData();
   }, [shopId, userId]);
 
-  const onPressItem = (item: SettingItem) => {
-    if (item.action === 'edit-shop') {
-      setEditedName(shopInfo?.name || '');
-      setEditedDescription(shopInfo?.description || '');
-      setEditVisible(true);
-      return;
-    }
-
-    if (item.route) {
-      router.push(item.route as any);
-    }
+  const openEdit = () => {
+    setEditedName(shopInfo?.name || '');
+    setEditedDescription(shopInfo?.description || '');
+    setEditVisible(true);
   };
 
   const saveShopInfo = async () => {
@@ -130,19 +91,14 @@ export default function SellerSettings() {
         }
       );
 
-      const updated: ShopInfo = {
-        id: String(shopInfo?.id || shopId),
+      setShopInfo((prev) => ({
+        id: prev?.id || String(shopId),
         name: editedName.trim(),
         description: editedDescription.trim(),
-      };
-      setShopInfo(updated);
-      setItems((prev) =>
-        prev.map((item) =>
-          item.id === 'edit-shop' ? { ...item, subtitle: updated.name } : item
-        )
-      );
+      }));
+
       setEditVisible(false);
-      Alert.alert('Success', 'Shop info updated.');
+      Alert.alert('Success', 'Shop information updated.');
     } catch (err: any) {
       console.error('Failed to update shop info:', err);
       Alert.alert('Error', err?.response?.data?.detail || 'Failed to update shop info.');
@@ -154,52 +110,65 @@ export default function SellerSettings() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#EE4D2D" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Settings</Text>
-        <View style={{ width: 24 }} />
+        <View style={styles.headerLeft}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={22} color="#EE4D2D" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Settings</Text>
+        </View>
       </View>
 
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.sectionCard}>
-          {items.map((item, index) => (
-            <TouchableOpacity
-              key={item.id}
-              style={[styles.settingRow, index === items.length - 1 && styles.lastRow]}
-              onPress={() => onPressItem(item)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.settingLeft}>
-                <Text style={styles.settingTitle}>{item.title}</Text>
-                {!!item.subtitle && <Text style={styles.settingSubtitle}>{item.subtitle}</Text>}
+      <View style={styles.content}>
+        <View style={styles.placeholderCard}>
+          {loading ? (
+            <ActivityIndicator size="small" color="#EE4D2D" />
+          ) : (
+            <>
+              <View style={styles.iconWrap}>
+                <Ionicons name="construct-outline" size={22} color="#EE4D2D" />
               </View>
-              <View style={styles.settingRight}>
-                {item.badge !== undefined && item.badge > 0 && (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>{item.badge}</Text>
-                  </View>
+              <Text style={styles.placeholderTitle}>Settings Coming Soon</Text>
+              <Text style={styles.placeholderText}>
+                This section is being updated to match the latest web settings flow.
+              </Text>
+              <View style={styles.shopBox}>
+                <Text style={styles.shopLabel}>Current Shop</Text>
+                <Text style={styles.shopName}>{shopInfo?.name || 'No shop selected'}</Text>
+                {!!shopInfo?.description && (
+                  <Text style={styles.shopDescription} numberOfLines={2}>{shopInfo.description}</Text>
                 )}
-                <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
               </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </ScrollView>
 
-      <Modal
-        visible={editVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setEditVisible(false)}
-      >
+              <View style={styles.actionsWrap}>
+                <TouchableOpacity style={styles.actionRowBtn} onPress={openEdit} activeOpacity={0.8}>
+                  <View style={styles.actionRowLeft}>
+                    <View style={styles.actionRowIconWrap}>
+                      <Ionicons name="create-outline" size={18} color="#475569" />
+                    </View>
+                    <Text style={styles.actionRowText}>Edit Shop Information</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.actionRowBtn} onPress={() => setAboutVisible(true)} activeOpacity={0.8}>
+                  <View style={styles.actionRowLeft}>
+                    <View style={styles.actionRowIconWrap}>
+                      <Ionicons name="information-circle-outline" size={18} color="#475569" />
+                    </View>
+                    <Text style={styles.actionRowText}>About App</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
+      </View>
+
+      <Modal visible={editVisible} transparent animationType="slide" onRequestClose={() => setEditVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Edit Shop Info</Text>
+            <Text style={styles.modalTitle}>Edit Shop Information</Text>
 
             <Text style={styles.fieldLabel}>Shop Name</Text>
             <TextInput
@@ -221,20 +190,28 @@ export default function SellerSettings() {
             />
 
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.cancelBtn]}
-                onPress={() => setEditVisible(false)}
-              >
+              <TouchableOpacity style={[styles.actionBtn, styles.cancelBtn]} onPress={() => setEditVisible(false)}>
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.saveBtn]}
-                onPress={saveShopInfo}
-                disabled={saving}
-              >
+              <TouchableOpacity style={[styles.actionBtn, styles.saveBtn]} onPress={saveShopInfo} disabled={saving}>
                 <Text style={styles.saveBtnText}>{saving ? 'Saving...' : 'Save'}</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={aboutVisible} transparent animationType="fade" onRequestClose={() => setAboutVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>About App</Text>
+            <Text style={styles.aboutText}>Crimsotech Seller Mobile</Text>
+            <Text style={styles.aboutSubText}>Version 1.0.0</Text>
+            <Text style={styles.aboutSubText}>Manage your shop, products, and seller operations.</Text>
+
+            <TouchableOpacity style={[styles.actionBtn, styles.saveBtn, { marginTop: 10 }]} onPress={() => setAboutVisible(false)}>
+              <Text style={styles.saveBtnText}>Close</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -250,83 +227,125 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingVertical: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
   },
-  backButton: {
-    padding: 4,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-  },
-  sectionCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    overflow: 'hidden',
-  },
-  settingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  lastRow: {
-    borderBottomWidth: 0,
-  },
-  settingLeft: {
-    flex: 1,
-  },
-  settingTitle: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#1F2937',
-  },
-  settingSubtitle: {
-    marginTop: 2,
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  settingRight: {
+  headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  badge: {
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#EF4444',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 6,
+  backButton: {
+    paddingVertical: 4,
+    paddingRight: 6,
   },
-  badgeText: {
-    color: '#FFFFFF',
-    fontSize: 11,
+  headerTitle: {
+    fontSize: 17,
     fontWeight: '700',
+    color: '#1F2937',
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  placeholderCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFF1EE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  placeholderTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 6,
+  },
+  placeholderText: {
+    textAlign: 'center',
+    fontSize: 12,
+    color: '#6B7280',
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  shopBox: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    borderRadius: 10,
+    backgroundColor: '#FAFAFA',
+    padding: 12,
+  },
+  shopLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  shopName: {
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  shopDescription: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#6B7280',
+    lineHeight: 17,
+  },
+  actionsWrap: {
+    width: '100%',
+    marginTop: 14,
+    gap: 10,
+  },
+  actionRowBtn: {
+    minHeight: 54,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+  },
+  actionRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  actionRowIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionRowText: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '600',
   },
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.35)',
     padding: 16,
   },
   modalCard: {
@@ -337,41 +356,41 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#111827',
-    marginBottom: 12,
+    color: '#1F2937',
+    marginBottom: 10,
   },
   fieldLabel: {
     fontSize: 12,
     color: '#6B7280',
-    marginBottom: 6,
     fontWeight: '600',
+    marginBottom: 6,
   },
   input: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 8,
+    borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    color: '#111827',
+    color: '#1F2937',
     marginBottom: 10,
   },
   textArea: {
-    minHeight: 90,
+    minHeight: 84,
     textAlignVertical: 'top',
   },
   modalActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 10,
-    marginTop: 6,
+    marginTop: 4,
   },
-  modalBtn: {
-    height: 38,
+  actionBtn: {
+    height: 40,
+    borderRadius: 10,
     paddingHorizontal: 16,
-    borderRadius: 8,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   cancelBtn: {
     backgroundColor: '#F3F4F6',
@@ -386,6 +405,17 @@ const styles = StyleSheet.create({
   saveBtnText: {
     color: '#FFFFFF',
     fontWeight: '700',
+  },
+  aboutText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 6,
+  },
+  aboutSubText: {
+    fontSize: 12,
+    color: '#6B7280',
+    lineHeight: 18,
   },
 });
 

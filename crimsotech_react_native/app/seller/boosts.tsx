@@ -27,6 +27,25 @@ type BoostPlan = {
   features: string[];
 };
 
+type BoostItem = {
+  id: string;
+  status: 'active' | 'pending' | 'expired' | 'cancelled' | string;
+  created_at?: string;
+  start_date?: string;
+  end_date?: string;
+  days_remaining?: number;
+  product?: { name?: string };
+  plan?: { name?: string; price?: number; duration?: number; time_unit?: string };
+};
+
+type BoostCounts = {
+  total: number;
+  active: number;
+  pending: number;
+  expired: number;
+  cancelled: number;
+};
+
 export default function BoostsScreen() {
   const { userId, shopId } = useAuth();
   const [plans, setPlans] = useState<BoostPlan[]>([]);
@@ -34,6 +53,9 @@ export default function BoostsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<BoostPlan | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const [boosts, setBoosts] = useState<BoostItem[]>([]);
+  const [counts, setCounts] = useState<BoostCounts>({ total: 0, active: 0, pending: 0, expired: 0, cancelled: 0 });
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'pending' | 'expired' | 'cancelled'>('all');
 
   const fetchPlans = async () => {
     if (!shopId) return;
@@ -62,13 +84,49 @@ export default function BoostsScreen() {
     }
   };
 
+  const fetchBoosts = async () => {
+    if (!userId) return;
+
+    try {
+      const response = await AxiosInstance.get(`/seller-boosts/user/${userId}/`, {
+        params: { status: statusFilter },
+        headers: {
+          'X-User-Id': userId || '',
+          'X-Shop-Id': shopId || '',
+        },
+      });
+
+      if (response.data?.success) {
+        setBoosts(Array.isArray(response.data.boosts) ? response.data.boosts : []);
+        setCounts(response.data.counts || { total: 0, active: 0, pending: 0, expired: 0, cancelled: 0 });
+      } else {
+        setBoosts([]);
+      }
+    } catch (error) {
+      console.error('Error fetching boosts:', error);
+      setBoosts([]);
+    }
+  };
+
   useEffect(() => {
     fetchPlans();
   }, [shopId, userId]);
 
+  useEffect(() => {
+    fetchBoosts();
+  }, [userId, shopId, statusFilter]);
+
   const onRefresh = () => {
     setRefreshing(true);
-    fetchPlans();
+    Promise.all([fetchPlans(), fetchBoosts()]).finally(() => setRefreshing(false));
+  };
+
+  const getStatusColor = (status: string) => {
+    if (status === 'active') return '#16A34A';
+    if (status === 'pending') return '#D97706';
+    if (status === 'expired') return '#6B7280';
+    if (status === 'cancelled') return '#DC2626';
+    return '#6B7280';
   };
 
   const handleBuyPlan = (plan: BoostPlan) => {
@@ -110,6 +168,47 @@ export default function BoostsScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#EE4D2D" />
         }
       >
+        <View style={styles.statusWrap}>
+          {([
+            { id: 'all', label: `All (${counts.total})` },
+            { id: 'active', label: `Active (${counts.active})` },
+            { id: 'pending', label: `Pending (${counts.pending})` },
+            { id: 'expired', label: `Expired (${counts.expired})` },
+            { id: 'cancelled', label: `Cancelled (${counts.cancelled})` },
+          ] as const).map((tab) => (
+            <TouchableOpacity
+              key={tab.id}
+              style={[styles.statusChip, statusFilter === tab.id && styles.statusChipActive]}
+              onPress={() => setStatusFilter(tab.id)}
+            >
+              <Text style={[styles.statusChipText, statusFilter === tab.id && styles.statusChipTextActive]}>{tab.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={styles.sectionBlock}>
+          <Text style={styles.sectionTitle}>Your Boosts</Text>
+          {boosts.length === 0 ? (
+            <Text style={styles.sectionEmpty}>No boosts found for this filter.</Text>
+          ) : (
+            boosts.slice(0, 8).map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.boostCard}
+                activeOpacity={0.8}
+                onPress={() => router.push(`/seller/boost-details?id=${item.id}` as any)}
+              >
+                <View style={styles.boostRowTop}>
+                  <Text style={styles.boostProduct} numberOfLines={1}>{item.product?.name || 'Boosted Product'}</Text>
+                  <Text style={[styles.boostStatus, { color: getStatusColor(item.status) }]}>{item.status.toUpperCase()}</Text>
+                </View>
+                <Text style={styles.boostMeta} numberOfLines={1}>{item.plan?.name || 'Boost Plan'}</Text>
+                <Text style={styles.boostMeta}>Days remaining: {item.days_remaining ?? 0}</Text>
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+
         {plans.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Ionicons name="rocket-outline" size={48} color="#D1D5DB" />
@@ -294,6 +393,75 @@ const styles = StyleSheet.create({
   },
   plansContainer: {
     paddingBottom: 24,
+  },
+  statusWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  statusChip: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#FFFFFF',
+  },
+  statusChipActive: {
+    borderColor: '#EE4D2D',
+    backgroundColor: '#FFF1EE',
+  },
+  statusChipText: {
+    fontSize: 11,
+    color: '#4B5563',
+    fontWeight: '600',
+  },
+  statusChipTextActive: {
+    color: '#EE4D2D',
+  },
+  sectionBlock: {
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 8,
+  },
+  sectionEmpty: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  boostCard: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  boostRowTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  boostProduct: {
+    flex: 1,
+    marginRight: 8,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  boostStatus: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  boostMeta: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 4,
   },
   planCard: {
     backgroundColor: '#FFFFFF',

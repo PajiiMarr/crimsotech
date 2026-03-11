@@ -10,17 +10,23 @@ import { Plus, Users, Tag, Info } from 'lucide-react-native';
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 44) / 2;
 
-const INITIAL_VOUCHERS = [
-  { id: '1', code: 'NEWTECH2026', type: 'FIXED', value: 500, minSpend: 5000, usageLimit: 100, used: 45, expiry: 'Feb 28, 2026', status: 'ACTIVE' },
-  { id: '2', code: 'REUSED10', type: 'PERCENTAGE', value: 10, minSpend: 1000, usageLimit: 50, used: 50, expiry: 'Expired', status: 'EXPIRED' },
-  { id: '3', code: 'LAPTOPOFF', type: 'FIXED', value: 1500, minSpend: 25000, usageLimit: 20, used: 2, expiry: 'Jun 01, 2026', status: 'ACTIVE' },
-];
+type ShopVoucher = {
+  id: string;
+  code: string;
+  type: 'FIXED' | 'PERCENTAGE';
+  value: number;
+  minSpend: number;
+  usageLimit: number;
+  used: number;
+  expiry: string;
+  status: 'ACTIVE' | 'EXPIRED';
+};
 
 export default function ShopVoucherPage() {
   const router = useRouter(); // 2. Initialize router
-  const [vouchers] = useState(INITIAL_VOUCHERS);
+  const [vouchers] = useState<ShopVoucher[]>([]);
 
-  const renderVoucher = ({ item }: { item: typeof INITIAL_VOUCHERS[0] }) => {
+  const renderVoucher = ({ item }: { item: ShopVoucher }) => {
     const isExpired = item.status === 'EXPIRED' || item.used >= item.usageLimit;
     const usagePercent = (item.used / item.usageLimit) * 100;
 
@@ -105,6 +111,12 @@ export default function ShopVoucherPage() {
         contentContainerStyle={styles.listContent}
         columnWrapperStyle={styles.columnWrapper}
         showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <View style={styles.emptyWrap}>
+            <Text style={styles.emptyTitle}>No shop vouchers yet</Text>
+            <Text style={styles.emptyText}>Use Create New to add your first voucher.</Text>
+          </View>
+        }
       />
     </SafeAreaView>
   );
@@ -159,5 +171,8 @@ const styles = StyleSheet.create({
   usageRow: { flexDirection: 'row', alignItems: 'center' },
   usageText: { fontSize: 10, color: '#64748B', marginLeft: 4, fontWeight: '700' },
   expiryText: { fontSize: 10, color: '#94A3B8', marginLeft: 4 },
+  emptyWrap: { paddingVertical: 36, alignItems: 'center' },
+  emptyTitle: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+  emptyText: { marginTop: 6, fontSize: 12, color: '#64748B' },
 });
 
