@@ -1,4 +1,4 @@
-// app/seller/components/Header.tsx
+// app/seller/includes/Header.tsx
 import React, { useEffect, useState } from 'react';
 import { 
   View, 
@@ -11,7 +11,7 @@ import {
   ActivityIndicator 
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
 import AxiosInstance from '../../../contexts/axios';
 
 interface Shop {
@@ -37,9 +37,13 @@ interface HeaderProps {
 
 export default function Header({ shopId }: HeaderProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [shop, setShop] = useState<Shop | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Check if current screen is More tab
+  const isMoreTab = pathname === '/seller/more';
 
   useEffect(() => {
     if (shopId) {
@@ -73,19 +77,18 @@ export default function Header({ shopId }: HeaderProps) {
 
   const handleMessages = () => {
     if (shopId) {
-    //   router.push(`/seller/messages?shopId=${shopId}`);
+      // router.push(`/seller/messages?shopId=${shopId}`);
+    }
+  };
+
+  const handleSettings = () => {
+    if (shopId) {
+      router.push(`/seller/settings?shopId=${shopId}`);
     }
   };
 
   const handleSwitch = () => {
-    // Navigate back to shops selection
     router.push('/customer/shops');
-  };
-
-  const handleShopPress = () => {
-    if (shop && shopId) {
-    //   router.push(`/seller/shop-profile?shopId=${shopId}`);
-    }
   };
 
   // If no shopId is provided, show a simplified header
@@ -110,13 +113,56 @@ export default function Header({ shopId }: HeaderProps) {
     );
   }
 
+  // For More tab - show only shop name and settings/switch icons
+  if (isMoreTab) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.header}>
+          {/* Left side - Shop Name only */}
+          <View style={styles.leftContainer}>
+            {loading ? (
+              <View style={styles.shopNameOnly}>
+                <View style={styles.shopNamePlaceholder} />
+              </View>
+            ) : error ? (
+              <Text style={styles.errorText} numberOfLines={1}>Error loading shop</Text>
+            ) : shop ? (
+              <Text style={styles.shopNameOnlyText} numberOfLines={1}>
+                {shop.name}
+              </Text>
+            ) : null}
+          </View>
+
+          {/* Right side - Settings and Switch icons */}
+          <View style={styles.rightContainer}>
+            <TouchableOpacity 
+              onPress={handleSettings} 
+              style={styles.iconButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="settings-outline" size={24} color="#374151" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              onPress={handleSwitch} 
+              style={styles.iconButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="swap-horizontal-outline" size={24} color="#374151" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // For other tabs - show full shop info with message icon
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.header}>
-        {/* Left side - Shop Info */}
+        {/* Left side - Full Shop Info */}
         <TouchableOpacity 
           style={styles.leftContainer}
-          onPress={handleShopPress}
           disabled={loading || !shop}
         >
           {loading ? (
@@ -179,7 +225,6 @@ export default function Header({ shopId }: HeaderProps) {
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Ionicons name="chatbubble-outline" size={24} color="#374151" />
-            {/* Unread badge - example */}
             <View style={styles.badge}>
               <Text style={styles.badgeText}>3</Text>
             </View>
@@ -203,7 +248,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'ios' ? 10 : 30, // Add this line
+    paddingTop: Platform.OS === 'ios' ? 10 : 30,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -223,7 +268,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'ios' ? 10 : 8, // Add this line
+    paddingTop: Platform.OS === 'ios' ? 10 : 8,
   },
   leftContainer: {
     flex: 1,
@@ -252,6 +297,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111827',
     marginBottom: 2,
+  },
+  shopNameOnly: {
+    justifyContent: 'center',
+  },
+  shopNameOnlyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
   },
   statusRow: {
     flexDirection: 'row',

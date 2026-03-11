@@ -15,7 +15,7 @@ export default function BottomTab({ shopId }: BottomTabProps) {
     { name: 'Dashboard', icon: 'speedometer-outline', route: '/seller/dashboard' },
     { name: 'Products', icon: 'cube-outline', route: '/seller/product-list' },
     { name: 'Orders', icon: 'list-outline', route: '/seller/order' },
-    { name: 'Vouchers', icon: 'pricetag-outline', route: '/seller/vouchers' },
+    { name: 'Gifts', icon: 'pricetag-outline', route: '/seller/gifts' },
     { name: 'More', icon: 'menu-outline', route: '/seller/more' },
   ] as const;
 
