@@ -11,6 +11,7 @@
     TouchableOpacity,
     Image
   } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
   import { MaterialIcons } from '@expo/vector-icons';
   import { useAuth } from '../../contexts/AuthContext'; 
   import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
@@ -233,11 +234,11 @@
     }
 
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <SellerHeader 
           title={shopData.name || 'My Shop'}
           subtitle={shopData.location || 'Manage your business'}
-          onSettings={() => router.push('/seller/home')}
+          onSettings={() => router.push('/seller/settings')}
         />
 
         <ScrollView 
@@ -303,7 +304,7 @@
             <DashboardComponent shopId={currentShopId} />
           </View>
         </ScrollView>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -519,3 +520,4 @@
       fontWeight: '500',
     },
   });
+

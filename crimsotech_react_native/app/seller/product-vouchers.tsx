@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { 
-  SafeAreaView, View, Text, StyleSheet, FlatList, 
+  View, Text, StyleSheet, FlatList, 
   TouchableOpacity, TextInput, Image 
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Tag, Plus, Search, ChevronRight } from 'lucide-react-native';
 
@@ -193,3 +194,4 @@ const styles = StyleSheet.create({
   progressBg: { height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: '#0F172A' },
 });
+

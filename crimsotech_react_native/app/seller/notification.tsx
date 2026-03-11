@@ -3,10 +3,10 @@ import {
 	View,
 	Text,
 	StyleSheet,
-	SafeAreaView,
 	ScrollView,
 	TouchableOpacity,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
 import {
 	Bell,
@@ -291,3 +291,5 @@ const styles = StyleSheet.create({
 		backgroundColor: '#2563EB',
 	},
 });
+
+
