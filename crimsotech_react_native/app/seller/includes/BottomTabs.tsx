@@ -14,8 +14,9 @@ export default function BottomTab({ shopId }: BottomTabProps) {
   const tabs = [
     { name: 'Dashboard', icon: 'home-outline', route: '/seller/dashboard' },
     { name: 'Products', icon: 'cube-outline', route: '/seller/product-list' },
-    { name: 'Orders', icon: 'list-outline', route: '/seller/order' },
+    { name: 'Orders', icon: 'list-outline', route: '/seller/orders' },
     { name: 'Gifts', icon: 'gift-outline', route: '/seller/gifts' },
+    { name: 'Return', icon: 'return-up-back-outline', route: '/seller/seller-return-refund-cancel' },
     { name: 'More', icon: 'menu-outline', route: '/seller/more' },
   ] as const;
 
@@ -23,7 +24,8 @@ export default function BottomTab({ shopId }: BottomTabProps) {
     'Dashboard': 'home-outline',
     'Products': 'cube',
     'Orders': 'list',
-    'Vouchers': 'pricetag',
+    'Gifts': 'gift-outline',
+    'Return': 'return-up-back-outline',
     'More': 'menu',
   };
 

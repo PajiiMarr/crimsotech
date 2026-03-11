@@ -758,7 +758,7 @@ export default function ProductList() {
                 ) : (
                   <TouchableOpacity 
                     style={styles.createProductButton}
-                    onPress={() => router.push(`/seller/createproducts?shopId=${shopId}`)}
+                    onPress={() => router.push(`/seller/components/seller-create-product?shopId=${shopId}`)}
                   >
                     <Text style={styles.createProductButtonText}>Create Product</Text>
                   </TouchableOpacity>
