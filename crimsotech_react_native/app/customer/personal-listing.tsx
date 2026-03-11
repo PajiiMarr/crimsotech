@@ -32,7 +32,7 @@ export default function PersonalListingPage() {
   // Navigate to OrderPage and pass the tab name
   const goToOrders = (tabName: string) => {
     router.push({
-      pathname: "/customer/orders",
+      pathname: "/customer/order-lists",
       params: { tab: tabName },
     });
   };
@@ -101,7 +101,7 @@ export default function PersonalListingPage() {
           <View style={styles.productRow}>
             <TouchableOpacity
               style={styles.productBox}
-              onPress={() => router.push("/customer/selling-product")}
+              onPress={() => router.push("/customer/product-listing")}
             >
               <View style={styles.productIconCircle}>
                 <Tag size={20} color="#374151" />
@@ -111,7 +111,7 @@ export default function PersonalListingPage() {
 
             <TouchableOpacity
               style={styles.productBox}
-              onPress={() => router.push("/customer/gifting-products")}
+              onPress={() => router.push("/customer/comgift")}
             >
               <View style={styles.productIconCircle}>
                 <Gift size={20} color="#374151" />
@@ -122,7 +122,7 @@ export default function PersonalListingPage() {
         </View>
 
         {/* Subscription Card */}
-        <View style={styles.card}>
+        {/* <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Subscription</Text>
             <TouchableOpacity
@@ -175,7 +175,7 @@ export default function PersonalListingPage() {
               <Text style={styles.subsText}>History</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </View> */}
       </ScrollView>
     </CustomerLayout>
   );

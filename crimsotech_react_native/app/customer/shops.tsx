@@ -304,11 +304,20 @@ export default function ShopsPage() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.title}>My Shops</Text>
-            <Text style={styles.subtitle}>
-              {shops.length} {shops.length === 1 ? "shop" : "shops"}
-            </Text>
+          <View style={styles.headerLeft}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => router.back()}
+            >
+              <MaterialIcons name="arrow-back" size={24} color="#111827" />
+            </TouchableOpacity>
+
+            <View>
+              <Text style={styles.title}>My Shops</Text>
+              <Text style={styles.subtitle}>
+                {shops.length} {shops.length === 1 ? "shop" : "shops"}
+              </Text>
+            </View>
           </View>
 
           <TouchableOpacity
@@ -711,5 +720,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     color: "#4B5563",
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  backButton: {
+    padding: 8,
+    borderRadius: 8,
+    marginRight: 4,
   },
 });

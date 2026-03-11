@@ -8,7 +8,7 @@ export default function ManagementBottomTab() {
   const pathname = usePathname();
 
   const tabs = [
-    { name: 'Products', icon: 'cube-outline', activeIcon: 'cube', route: '/customer/personal-listing' },
+    { name: 'Dashboard', icon: 'cube-outline', activeIcon: 'cube', route: '/customer/personal-listing' },
     { name: 'Orders', icon: 'list-outline', activeIcon: 'list', route: '/customer/order-lists' },
     { name: 'Product Lists', icon: 'cube-outline', activeIcon: 'cube', route: '/customer/product-listing' },
     { name: 'Listing Returns', icon: 'return-up-back-outline', activeIcon: 'return-up-back', route: '/customer/listing-returns' },
