@@ -570,8 +570,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   const [error, setError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [cartCount, setCartCount] = useState<number>(0);
-  // Add state for sidebar toggle
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  // Removed isSidebarOpen state since SidebarLayout manages its own state
   const navigate = useNavigate();
 
   // Fetch cart count
@@ -780,7 +779,8 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
           }
         }
       >
-        <SidebarLayout isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen(!isSidebarOpen)}>
+        {/* FIXED: Removed isOpen and onToggle props */}
+        <SidebarLayout>
           <div className="w-full p-4 lg:p-6">
             <Skeleton className="h-8 w-48 mb-6" />
             <div className="flex flex-col lg:flex-row gap-6 w-full">
@@ -818,7 +818,8 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
           }
         }
       >
-        <SidebarLayout isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen(!isSidebarOpen)}>
+        {/* FIXED: Removed isOpen and onToggle props */}
+        <SidebarLayout>
           <div className="w-full min-h-[60vh] flex items-center justify-center p-4">
             <div className="max-w-md w-full text-center">
               <ShoppingCart className="h-12 w-12 text-gray-300 mx-auto mb-4" />
@@ -876,7 +877,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   };
 
   return (
-    <SidebarLayout isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen(!isSidebarOpen)}>
+    <SidebarLayout>
       <div className="w-full min-h-screen">
         <div className="w-full">
           {/* Header */}

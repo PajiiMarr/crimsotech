@@ -206,71 +206,85 @@ const STATUS_CONFIG = {
   pending_shipment: { 
     label: 'Pending',  // Changed label to 'Pending' for better UX
     color: 'bg-yellow-100 text-yellow-800',
+    borderColor: 'border-l-4 border-l-yellow-500',
     icon: Clock
   },
   to_ship: { 
     label: 'Processing',  // Changed label to 'Processing' for better UX
     color: 'bg-amber-100 text-amber-800',
+    borderColor: 'border-l-4 border-l-amber-500',
     icon: Loader2
   },
   processing: {
     label: 'Processing',
     color: 'bg-amber-100 text-amber-800',
+    borderColor: 'border-l-4 border-l-amber-500',
     icon: Loader2
   },
   ready_for_pickup: { 
     label: 'Ready for Pickup', 
     color: 'bg-blue-100 text-blue-800',
+    borderColor: 'border-l-4 border-l-blue-500',
     icon: Store
   },
   shipped: { 
     label: 'Shipped', 
     color: 'bg-blue-100 text-blue-800',
+    borderColor: 'border-l-4 border-l-blue-500',
     icon: Ship
   },
   in_transit: { 
     label: 'In Transit', 
     color: 'bg-purple-100 text-purple-800',
+    borderColor: 'border-l-4 border-l-purple-500',
     icon: Truck
   },
   out_for_delivery: { 
     label: 'Out for Delivery', 
     color: 'bg-indigo-100 text-indigo-800',
+    borderColor: 'border-l-4 border-l-indigo-500',
     icon: Truck
   },
   completed: { 
     label: 'Completed', 
     color: 'bg-green-100 text-green-800',
+    borderColor: 'border-l-4 border-l-green-500',
     icon: CheckCircle
   },
   cancelled: { 
     label: 'Cancelled', 
     color: 'bg-red-100 text-red-800',
+    borderColor: 'border-l-4 border-l-red-500',
     icon: XCircle
   },
   arrange_shipment: { 
     label: 'Arrange Shipment', 
     color: 'bg-orange-100 text-orange-800',
+    borderColor: 'border-l-4 border-l-orange-500',
     icon: Handshake
   },
   pending_offer: { 
     label: 'Pending Offer', 
     color: 'bg-amber-100 text-amber-800',
+    borderColor: 'border-l-4 border-l-amber-500',
     icon: MessageCircle
   },
   pending_approval: { 
     label: 'Pending Approval', 
     color: 'bg-purple-100 text-purple-800',
+    borderColor: 'border-l-4 border-l-purple-500',
     icon: ClockIcon
   },
   approved: { 
     label: 'Approved', 
     color: 'bg-green-100 text-green-800',
+    borderColor: 'border-l-4 border-l-green-500',
     icon: CheckCheck
   },
   default: { 
     label: 'Unknown', 
     color: 'bg-gray-100 text-gray-800',
+    borderColor: 'border-l-4 border-l-gray-500',
     icon: Clock
   }
 };
@@ -912,15 +926,21 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
               <div className="space-y-4 p-4">
                 <h3 className="text-sm font-semibold">Order Actions</h3>
                 <div className="flex flex-col gap-2">
-                  <Button variant="ghost" size="sm" className="h-8 text-sm" onClick={() => toggleOrderExpansion(order.order_id)}>
-                    <Eye className="mr-2 h-4 w-4" /> View Details
-                  </Button>
+                  {/* CHANGED: View Details as Link */}
+                  <Link 
+                    to={`/seller/orders/${order.order_id}`}
+                    className="inline-flex items-center gap-2 px-2 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Eye className="h-4 w-4" />
+                    View Details
+                  </Link>
 
                   {pendingApproval && order.receipt_url && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-8 text-sm"
+                      className="h-8 text-sm justify-start"
                       onClick={(e) => {
                         e.stopPropagation();
                         window.open(order.receipt_url || undefined, '_blank');
@@ -934,7 +954,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-8 text-sm"
+                      className="h-8 text-sm justify-start"
                       onClick={(e) => {
                         e.stopPropagation();
                         setConfirmationState({
@@ -952,7 +972,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-8 text-sm"
+                      className="h-8 text-sm justify-start"
                       onClick={(e) => { 
                         e.stopPropagation(); 
                         setConfirmationState({
@@ -1050,6 +1070,29 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     return '/Crimsotech.png';
   };
 
+  // Function to get border color based on order status
+  const getOrderBorderClass = (order: Order): string => {
+    const pendingApproval = pendingApprovalStatus[order.order_id] || isPendingApproval(order);
+    const approved = isApproved(order);
+    const waitingForRider = isWaitingForRider(order);
+    const isPickup = isPickupOrder(order);
+    const hasPendingOffer = hasPendingDeliveryOffer(order);
+    const isCancelled = isCancelledOrder(order);
+
+    let statusKey = (order.status || 'default').toLowerCase();
+
+    // Override for special cases
+    if (hasPendingOffer) statusKey = 'pending_offer';
+    else if (waitingForRider) statusKey = 'pending_offer';
+    else if (isPickup && statusKey === 'pending_shipment') statusKey = 'ready_for_pickup';
+    else if (pendingApproval) statusKey = 'pending_approval';
+    else if (approved) statusKey = 'approved';
+    else if (isCancelled) statusKey = 'cancelled';
+
+    const config = STATUS_CONFIG[statusKey as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.default;
+    return config.borderColor;
+  };
+
   return (
     <SidebarLayout>
       <div className="space-y-3 p-3">
@@ -1065,48 +1108,36 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2">
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xl font-bold">{counts.all}</div>
-              <div className="text-xs text-muted-foreground">Total Orders</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xl font-bold text-yellow-600">{counts.pending_shipment}</div>
-              <div className="text-xs text-muted-foreground">Pending</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xl font-bold text-amber-600">{counts.to_ship}</div>
-              <div className="text-xs text-muted-foreground">To Process</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xl font-bold text-orange-600">{counts.waiting_rider}</div>
-              <div className="text-xs text-muted-foreground">Waiting for Rider</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xl font-bold text-blue-600">{counts.shipped}</div>
-              <div className="text-xs text-muted-foreground">Shipped</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xl font-bold text-green-600">{counts.completed}</div>
-              <div className="text-xs text-muted-foreground">Completed</div>
-            </CardContent>
-          </Card>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6   gap-2">
+          <div className="bg-white rounded-lg border p-3 shadow-sm">
+            <div className="text-xl font-bold">{counts.all}</div>
+            <div className="text-xs text-muted-foreground">Total Orders</div>
+          </div>
+          <div className="bg-white rounded-lg border p-3 shadow-sm">
+            <div className="text-xl font-bold text-yellow-600">{counts.pending_shipment}</div>
+            <div className="text-xs text-muted-foreground">Pending</div>
+          </div>
+          <div className="bg-white rounded-lg border p-3 shadow-sm">
+            <div className="text-xl font-bold text-amber-600">{counts.to_ship}</div>
+            <div className="text-xs text-muted-foreground">To Process</div>
+          </div>
+          <div className="bg-white rounded-lg border p-3 shadow-sm">
+            <div className="text-xl font-bold text-orange-600">{counts.waiting_rider}</div>
+            <div className="text-xs text-muted-foreground">Waiting for Rider</div>
+          </div>
+          <div className="bg-white rounded-lg border p-3 shadow-sm">
+            <div className="text-xl font-bold text-blue-600">{counts.shipped}</div>
+            <div className="text-xs text-muted-foreground">Shipped</div>
+          </div>
+          <div className="bg-white rounded-lg border p-3 shadow-sm">
+            <div className="text-xl font-bold text-green-600">{counts.completed}</div>
+            <div className="text-xs text-muted-foreground">Completed</div>
+          </div>
         </div>
 
-        {/* Main Content */}
-        <Card>
-          <CardContent className="p-3">
+        {/* Main Content - Replaced Card with div */}
+        <div className="bg-white rounded-lg border shadow-sm">
+          <div className="p-3">
             {!userId ? (
               <div className="text-center py-4 text-muted-foreground">
                 <div className="mb-2 text-xs">User authentication required</div>
@@ -1188,6 +1219,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       const pendingApproval = pendingApprovalStatus[order.order_id] || isPendingApproval(order);
                       const approved = isApproved(order);
                       const waitingForRider = isWaitingForRider(order);
+                      const borderClass = getOrderBorderClass(order);
 
                       // Determine DB/UI processing state (backend returns `order_status` when available)
                       const dbOrderStatus = String((order as any).order_status || '').toLowerCase();
@@ -1197,8 +1229,9 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       const isProcessingState = isDbProcessing || isUiToShip;
                       
                       return (
-                        <Card key={order.order_id} className="overflow-hidden border">
-                          <CardContent className="p-3">
+                        // Replaced Card with div and added border color
+                        <div key={order.order_id} className={`bg-white rounded-lg border overflow-hidden ${borderClass}`}>
+                          <div className="p-3">
                             {/* Top Section - Header */}
                             <div className="flex items-start justify-between mb-2">
                               <div className="flex-1 min-w-0">
@@ -1264,16 +1297,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0">
                                 {getStatusBadge(order.status, order)}
-                                <button 
-                                  onClick={() => toggleOrderExpansion(order.order_id)}
-                                  className="p-1 hover:bg-gray-100 rounded"
-                                >
-                                  {isExpanded ? (
-                                    <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
-                                  ) : (
-                                    <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-                                  )}
-                                </button>
+                                {/* CHANGED: Expand/collapse button removed */}
                               </div>
                             </div>
 
@@ -1330,95 +1354,31 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                               )}
                             </div>
 
-                            {/* Expanded Section - Details */}
-                            {isExpanded && (
-                              <div className="mt-3 pt-3 border-t space-y-2">
-                                <div className="text-[10px]">
-                                  <div className="font-medium text-gray-700 mb-1">Customer Details</div>
-                                  <div className="text-gray-600 space-y-0.5">
-                                    <div>Name: {customerName}</div>
-                                    <div>Email: {order.user.email}</div>
-                                    {order.user.phone && <div>Phone: {order.user.phone}</div>}
-                                  </div>
-                                </div>
-                                
-                                <div className="text-[10px]">
-                                  <div className="font-medium text-gray-700 mb-1">Delivery Information</div>
-                                  <div className="text-gray-600 space-y-0.5">
-                                    <div>Address: {order.delivery_address || 'N/A'}</div>
-                                    <div>Method: {order.delivery_method || order.shipping_method || 'N/A'}</div>
-                                    {order.delivery_info?.rider_name && (
-                                      <div>Rider: {order.delivery_info.rider_name}</div>
-                                    )}
-                                    {order.delivery_info?.tracking_number && (
-                                      <div>Tracking: {order.delivery_info.tracking_number}</div>
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div className="text-[10px]">
-                                  <div className="font-medium text-gray-700 mb-1">Order Items</div>
-                                  <div className="space-y-1">
-                                    {order.items.map((item, idx) => (
-                                      <div key={idx} className="flex justify-between text-gray-600">
-                                        <span className="truncate max-w-[180px]">
-                                          {item.cart_item?.product?.name} x{item.quantity}
-                                        </span>
-                                        <span>{formatCurrency(item.total_amount)}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-
-                                {order.delivery_info?.status === 'pending_offer' && (
-                                  <div className="bg-amber-50 p-2 rounded text-[10px] text-amber-700">
-                                    <div className="font-medium">Pending Rider Offer</div>
-                                    <div>A rider will soon provide a delivery fee offer.</div>
-                                  </div>
-                                )}
-
-                                {pendingApproval && order.receipt_url && (
-                                  <div className="bg-purple-50 p-2 rounded text-[10px] text-purple-700">
-                                    <div className="font-medium">Payment Receipt</div>
-                                    <Button
-                                      variant="link"
-                                      size="sm"
-                                      className="h-auto p-0 text-[10px] text-purple-700"
-                                      onClick={() => window.open(order.receipt_url || undefined, '_blank')}
-                                    >
-                                      View receipt
-                                    </Button>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
                             {/* Bottom Section - Actions */}
                             <div className="flex items-center justify-between pt-2 border-t mt-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => toggleOrderExpansion(order.order_id)}
-                                className="h-6 px-2 text-[10px]"
+                              {/* CHANGED: View Details as Link instead of toggle button */}
+                              <Link 
+                                to={`/seller/seller-order-list/${order.order_id}`}
+                                className="inline-flex items-center gap-1 h-6 px-2 text-[10px] hover:bg-gray-100 rounded-md transition-colors"
                               >
-                                <Eye className="w-2.5 h-2.5 mr-1" />
-                                {isExpanded ? 'Show Less' : 'View Details'}
-                              </Button>
+                                <Eye className="w-2.5 h-2.5" />
+                                View Details
+                              </Link>
                               
                               <div className="flex gap-1">
                                 {getActionButtons(order)}
                               </div>
                             </div>
-                          </CardContent>
-                        </Card>
+                          </div>
+                        </div>
                       );
                     })
                   )}
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
       {/* Confirmation Modal/Sheet */}  

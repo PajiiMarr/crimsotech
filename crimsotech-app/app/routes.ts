@@ -78,9 +78,9 @@ export default [
         route("seller-boosts/pay-boost/:boostPlanId", "routes/seller/select-boost/pay-boosting.tsx"), 
         route("seller-create-product", "routes/seller/seller-create-product.tsx"), 
         route("seller-order-list", "routes/seller/seller-order-list.tsx"), 
+        route("seller-order-list/:orderId", "routes/seller/view_order/view_orders.tsx"), 
         route("seller-return-refund-cancel", "routes/seller/seller-return-refund-cancel.tsx"), 
         route("return-address", "routes/seller/return-address.tsx"), 
-        // Single route supports both param and query-based navigation in the loader
         route("view-refund-details/:refundId", "routes/seller/view-refund-details.tsx"),
         route("seller-earnings", "routes/seller/seller-earnings.tsx"), 
         route("seller-vouchers", "routes/seller/seller-vouchers.tsx"), 
@@ -88,11 +88,6 @@ export default [
         route("gift", "routes/seller/seller-gift.tsx"), 
         route("apply-gift", "routes/seller/apply-gift/apply-gift.tsx"),
         route("seller-create-gift", "routes/seller/seller-create-gift.tsx"), 
-
-
-        
-    
-        
          ]),
 
 

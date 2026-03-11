@@ -21776,10 +21776,6 @@ class SellerOrderList(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'])
     def seller_view_order(self, request):
-        """
-        Get order details for seller view order page
-        GET /seller-order-list/seller_view_order/?order_id={order_id}&shop_id={shop_id}
-        """
         order_id = request.GET.get('order_id')
         shop_id = request.GET.get('shop_id')
         
@@ -21847,9 +21843,31 @@ class SellerOrderList(viewsets.ViewSet):
                 price = float(variant.price) if variant and variant.price else 0
                 variant_title = variant.title if variant else product.condition
                 
-                # Get product media
-                product_media = self._get_product_media(product)
-                variant_image_url = self._get_variant_media(variant)
+                # Get product media - FIXED: removed .order_by('created_at') since it doesn't exist
+                product_media = []
+                try:
+                    # Get all media for this product without ordering by created_at
+                    product_media_queryset = ProductMedia.objects.filter(product=product)[:5]
+                    
+                    for media in product_media_queryset:
+                        if media.file_data:
+                            # Convert S3 URL to public URL if needed
+                            file_url = convert_s3_to_public_url(media.file_data.url)
+                            product_media.append({
+                                "id": str(media.id),
+                                "url": file_url,
+                                "file_type": media.file_type
+                            })
+                except Exception as e:
+                    print(f"Error getting product media: {e}")
+                
+                # Get variant image URL
+                variant_image_url = None
+                if variant and variant.image:
+                    try:
+                        variant_image_url = convert_s3_to_public_url(variant.image.url)
+                    except Exception as e:
+                        print(f"Error getting variant image: {e}")
                 
                 item_total = price * checkout.quantity
                 total_amount += item_total
@@ -21860,6 +21878,10 @@ class SellerOrderList(viewsets.ViewSet):
                     "name": product.name,
                     "price": price,
                     "variant": variant_title,
+                    "shop": {
+                        "id": str(shop.id),
+                        "name": shop.name
+                    },
                     "media": product_media,
                     "primary_image": product_media[0] if product_media else None
                 }
@@ -21898,7 +21920,7 @@ class SellerOrderList(viewsets.ViewSet):
                         'email': order.user.email,
                         'first_name': order.user.first_name,
                         'last_name': order.user.last_name,
-                        'phone': order.user.contact_number,
+                        'contact_number': order.user.contact_number,
                     },
                     'approval': order.approval,  # Add approval field
                     'status': shipping_status,
@@ -21906,11 +21928,24 @@ class SellerOrderList(viewsets.ViewSet):
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
+                    'shipping_address': {
+                        'id': str(order.shipping_address.id),
+                        'recipient_name': order.shipping_address.recipient_name,
+                        'recipient_phone': order.shipping_address.recipient_phone,
+                        'full_address': order.shipping_address.get_full_address(),
+                        'instructions': order.shipping_address.instructions,
+                    } if order.shipping_address else None,
                     'created_at': order.created_at.isoformat() if order.created_at else None,
                     'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                    'completed_at': order.completed_at.isoformat() if order.completed_at else None,
                     'items': items,
                     'delivery_info': delivery_info,
-                    'receipt_url': receipt_url  # Add receipt URL to response
+                    'receipt': {
+                        'url': receipt_url,
+                        'file_name': order.receipt.name.split('/')[-1] if order.receipt else None,
+                        'file_type': order.receipt.name.split('.')[-1].lower() if order.receipt else None,
+                        'uploaded_at': order.updated_at.isoformat() if order.updated_at else None
+                    } if receipt_url else None
                 }
             }
 
@@ -21931,7 +21966,7 @@ class SellerOrderList(viewsets.ViewSet):
                 'success': False,
                 'message': f'Error retrieving order: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+    
 class CheckoutOrder(viewsets.ViewSet):
     @action(detail=False, methods=['GET'])
     def get_checkout_items(self, request):
