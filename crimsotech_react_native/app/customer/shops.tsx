@@ -228,7 +228,7 @@ export default function ShopsPage() {
         <TouchableOpacity
           style={styles.manageButton}
           activeOpacity={0.9}
-          onPress={() => router.push(`/seller/home?shopId=${shop.id}`)}
+          onPress={() => router.push(`/seller/dashboard?shopId=${shop.id}`)}
         >
           <Text style={styles.manageButtonText}>Manage Shop</Text>
           <MaterialIcons name="arrow-forward" size={16} color="#111827" />

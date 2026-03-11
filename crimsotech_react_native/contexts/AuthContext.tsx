@@ -3,7 +3,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import AxiosInstance from './axios';
 
-type UserRole = 'customer' | 'rider' | 'admin' | null;
+type UserRole = 'customer' | 'rider' | null;
 
 type AuthContextType = {
   // Auth data

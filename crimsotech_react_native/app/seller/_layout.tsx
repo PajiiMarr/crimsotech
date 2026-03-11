@@ -1,95 +1,96 @@
 // app/seller/_layout.tsx
-import React from 'react';
-import { Tabs } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import React, { useEffect, useState } from 'react';
+import { Stack } from 'expo-router';
 import RoleGuard from '../guards/RoleGuard';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import Header from './includes/header';
+import BottomTab from './includes/BottomTabs';
+import { useLocalSearchParams } from 'expo-router';
 
 export default function SellerLayout() {
+  const params = useLocalSearchParams();
+  const [shopId, setShopId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (params.shopId) {
+      setShopId(params.shopId as string);
+    }
+    setLoading(false);
+  }, [params]);
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#EE4D2D" />
+      </View>
+    );
+  }
+
   return (
     <RoleGuard allowedRoles={['customer']}>
-      <Tabs
-        screenOptions={{
-          headerShown: false,
-          tabBarActiveTintColor: '#EE4D2D',
-          tabBarInactiveTintColor: '#9CA3AF',
-          tabBarStyle: { borderTopColor: '#E5E7EB' },
-        }}
-      >
-        {/* Visible Tabs */}
-        <Tabs.Screen
-          name="home"
-          options={{
-            title: 'Home',
-            tabBarIcon: ({ focused, color, size }) => (
-              <Ionicons name={focused ? 'home' : 'home-outline'} size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="product-list"
-          options={{
-            title: 'Products',
-            tabBarIcon: ({ focused, color, size }) => (
-              <Ionicons name={focused ? 'cube' : 'cube-outline'} size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="orders"
-          options={{
-            title: 'Orders',
-            tabBarIcon: ({ focused, color, size }) => (
-              <Ionicons name={focused ? 'list' : 'list-outline'} size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="refunds"
-          options={{
-            title: 'Refunds',
-            tabBarIcon: ({ focused, color, size }) => (
-              <Ionicons name={focused ? 'arrow-undo' : 'arrow-undo-outline'} size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="gifts"
-          options={{
-            title: 'Gifts',
-            tabBarIcon: ({ focused, color, size }) => (
-              <Ionicons name={focused ? 'gift' : 'gift-outline'} size={size} color={color} />
-            ),
-          }}
-        />
-
-        {/* Hidden pages (accessible via navigation, not shown in bottom tabs) */}
-        <Tabs.Screen name="address" options={{ href: null }} />
-        <Tabs.Screen name="apply-gift" options={{ href: null }} />
-        <Tabs.Screen name="apply-gift-form" options={{ href: null }} />
-        <Tabs.Screen name="arrange-shipment" options={{ href: null }} />
-        <Tabs.Screen name="boosts" options={{ href: null }} />
-        <Tabs.Screen name="create-address" options={{ href: null }} />
-        <Tabs.Screen name="create-gift" options={{ href: null }} />
-        <Tabs.Screen name="create-product-vouchers" options={{ href: null }} />
-        <Tabs.Screen name="create-shop-vouchers" options={{ href: null }} />
-        <Tabs.Screen name="createproducts" options={{ href: null }} />
-        <Tabs.Screen name="dashboard" options={{ href: null }} />
-        <Tabs.Screen name="disputes" options={{ href: null }} />
-        <Tabs.Screen name="earnings" options={{ href: null }} />
-        <Tabs.Screen name="file-dispute" options={{ href: null }} />
-        <Tabs.Screen name="myproducts" options={{ href: null }} />
-        <Tabs.Screen name="notification" options={{ href: null }} />
-        <Tabs.Screen name="order" options={{ href: null }} />
-        <Tabs.Screen name="pay-boosting" options={{ href: null }} />
-        <Tabs.Screen name="product-vouchers" options={{ href: null }} />
-        <Tabs.Screen name="return-address" options={{ href: null }} />
-        <Tabs.Screen name="select-boost-product" options={{ href: null }} />
-        <Tabs.Screen name="sellerHeader" options={{ href: null }} />
-        <Tabs.Screen name="settings" options={{ href: null }} />
-        <Tabs.Screen name="shop-vouchers" options={{ href: null }} />
-        <Tabs.Screen name="view-order" options={{ href: null }} />
-        <Tabs.Screen name="view-refund-details" options={{ href: null }} />
-      </Tabs>
+      <View style={styles.container}>
+        <Header shopId={shopId} />
+        <View style={styles.content}>
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              animation: 'slide_from_right',
+            }}
+          >
+            <Stack.Screen name="dashboard" />
+            <Stack.Screen name="products" />
+            <Stack.Screen name="orders" />
+            <Stack.Screen name="vouchers" />
+            <Stack.Screen name="more" />
+            <Stack.Screen name="home" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="product-list" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="refunds" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="gifts" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="address" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="apply-gift" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="apply-gift-form" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="arrange-shipment" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="boosts" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="create-address" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="create-gift" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="create-product-vouchers" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="create-shop-vouchers" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="createproducts" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="disputes" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="earnings" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="file-dispute" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="myproducts" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="notification" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="order" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="pay-boosting" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="product-vouchers" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="return-address" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="select-boost-product" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="sellerHeader" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="shop-vouchers" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="view-order" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="view-refund-details" options={{ animation: 'slide_from_right' }} />
+          </Stack>
+        </View>
+        <BottomTab shopId={shopId} />
+      </View>
     </RoleGuard>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+  },
+  content: {
+    flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+});
