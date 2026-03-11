@@ -405,11 +405,6 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
            !!order.delivery_info?.rider_name;
   };
 
-  // Check if order is ready for pickup
-  const isReadyForPickup = (order: Order): boolean => {
-    return order.status?.toLowerCase() === 'ready_for_pickup';
-  };
-
   // Refresh orders function
   const refreshOrders = async () => {
     if (!shopId) return;
@@ -634,9 +629,9 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
           );
           break;
         case 'to_ship':
-          // To Process tab shows orders with status 'to_ship' but NOT waiting for rider
+          // To Process tab shows orders with status 'to_ship'
           filtered = filtered.filter(order => 
-            order.status?.toLowerCase() === 'to_ship' && !isWaitingForRider(order)
+            order.status?.toLowerCase() === 'to_ship'
           );
           break;
         case 'waiting_rider':
@@ -675,7 +670,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
   const counts = {
     all: orders.length,
     pending_shipment: orders.filter(o => o.status?.toLowerCase() === 'pending_shipment').length,
-    to_ship: orders.filter(o => o.status?.toLowerCase() === 'to_ship' && !isWaitingForRider(o)).length,
+    to_ship: orders.filter(o => o.status?.toLowerCase() === 'to_ship').length,
     waiting_rider: orders.filter(o => isWaitingForRider(o)).length,
     shipped: orders.filter(o => {
       const s = o.status?.toLowerCase();
@@ -800,8 +795,6 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     const isLoading = loadingActions[order.order_id];
     const pendingApproval = pendingApprovalStatus[order.order_id] || isPendingApproval(order);
     const approved = isApproved(order);
-    const waitingForRider = isWaitingForRider(order);
-    const readyForPickup = isReadyForPickup(order);
 
     // Check if order is pending_shipment (show confirm button if not pending approval, including when approved)
     const isPending = order.status?.toLowerCase() === 'pending_shipment' && !pendingApproval;
@@ -812,50 +805,6 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         <Button size="sm" variant="ghost" className="h-6 w-6 p-0" disabled>
           <Loader2 className="w-3 h-3 animate-spin" />
         </Button>
-      );
-    }
-
-    // For ready for pickup orders, show Picked Up + Cancel
-    if (readyForPickup) {
-      return (
-        <div className="flex gap-1 items-center">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 text-[10px]"
-            onClick={(e) => { 
-              e.stopPropagation(); 
-              handleUpdateStatus(order.order_id, 'picked_up');
-            }}
-            title="Mark as picked up"
-          >
-            <CheckCircle className="mr-1 w-3 h-3 text-blue-600" /> Picked Up
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            className={`h-6 px-2 text-[10px] ${canCancel ? '' : 'opacity-50 cursor-not-allowed text-gray-400'}`}
-            disabled={!canCancel}
-            onClick={(e) => { 
-              e.stopPropagation(); 
-              if (!canCancel) {
-                toast.error("Cannot cancel", {
-                  description: "This order cannot be cancelled at this stage."
-                });
-                return;
-              }
-              setConfirmationState({
-                open: true,
-                type: 'cancel',
-                orderId: order.order_id
-              });
-            }}
-            title={canCancel ? 'Cancel order' : 'Cannot cancel this order'}
-          >
-            <Ban className="mr-1 w-3 h-3 text-red-600" /> Cancel
-          </Button>
-        </div>
       );
     }
 
@@ -938,7 +887,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     </Button>
                   )}
 
-                  {actions.includes('prepare_shipment') && !pendingApproval && !waitingForRider && (
+                  {actions.includes('prepare_shipment') && !pendingApproval && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -956,7 +905,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     </Button>
                   )}
 
-                  {canCancel && !pendingApproval && !waitingForRider && (
+                  {canCancel && !pendingApproval && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -994,7 +943,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
               </Button>
             )}
 
-            {actions.includes('prepare_shipment') && !pendingApproval && !waitingForRider && (
+            {actions.includes('prepare_shipment') && !pendingApproval && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -1013,7 +962,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
               </Button>
             )}
 
-            {canCancel && !pendingApproval && !waitingForRider && (
+            {canCancel && !pendingApproval && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -1196,7 +1145,6 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                       const pendingApproval = pendingApprovalStatus[order.order_id] || isPendingApproval(order);
                       const approved = isApproved(order);
                       const waitingForRider = isWaitingForRider(order);
-                      const readyForPickup = isReadyForPickup(order);
 
                       // Determine DB/UI processing state (backend returns `order_status` when available)
                       const dbOrderStatus = String((order as any).order_status || '').toLowerCase();
@@ -1211,7 +1159,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                             {/* Top Section - Header */}
                             <div className="flex items-start justify-between mb-2">
                               <div className="flex-1 min-w-0">
-                                {/* Status note: show when order is waiting for rider */}
+                                {/* Status note: show when order is processing and a rider is already assigned but delivery is still pending */}
                                 {waitingForRider && (
                                   <div className="bg-orange-50 p-2 rounded text-[10px] text-orange-700 mb-1">
                                     <div className="font-medium flex items-center gap-1">
@@ -1221,7 +1169,6 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                                   </div>
                                 )}
 
-                                {/* Status note: show when order is processing and a rider is already assigned but delivery is still pending */}
                                 {activeTab === 'to_ship' && isProcessingState && order.delivery_info?.status === 'pending' && order.delivery_info?.rider_name && !waitingForRider && (
                                   <div className="bg-amber-50 p-2 rounded text-[10px] text-amber-700 mb-1">
                                     <div className="font-medium">Waiting for rider to accept the order {order.delivery_info.rider_name}</div>
@@ -1431,7 +1378,7 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
         </Card>
       </div>
 
-      {/* Confirmation Modal/Sheet */}
+      {/* Confirmation Modal/Sheet */}  
       <ConfirmationDialog
         open={confirmationState.open}
         onOpenChange={(open) => setConfirmationState(prev => ({ ...prev, open }))}

@@ -16,10 +16,10 @@ class Command(BaseCommand):
     def handle(self, *args, **kwargs):
         """Only seed if database is empty"""
         
-        # # Check if data already exists
-        # if Shop.objects.exists():
-        #     self.stdout.write(self.style.WARNING("⚠️  Data already exists, skipping seed..."))
-        #     return
+        # Check if data already exists
+        if Shop.objects.exists():
+            self.stdout.write(self.style.WARNING("⚠️  Data already exists, skipping seed..."))
+            return
         
         self.stdout.write("🌱 Starting comprehensive shop data seeding...")
         
