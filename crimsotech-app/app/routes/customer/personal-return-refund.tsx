@@ -168,8 +168,6 @@ interface ReturnStats {
 export async function loader({ request, context }: Route.LoaderArgs) {
   // Session+role checks
   try {
-    const { registrationMiddleware } = await import('~/middleware/registration.server');
-    await registrationMiddleware({ request, context: undefined, params: {}, unstable_pattern: undefined } as any);
     const { requireRole } = await import('~/middleware/role-require.server');
     // User must be a customer (seller with personal listings)
     await requireRole(request, undefined, ['isCustomer'] as any);

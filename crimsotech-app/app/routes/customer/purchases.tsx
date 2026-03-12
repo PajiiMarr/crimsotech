@@ -230,48 +230,51 @@ const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
 };
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const { registrationMiddleware } = await import("~/middleware/registration.server");
-  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
-
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
 
-  let user = (context as any).user;
-  if (!user) {
-    user = await fetchUserRole({ request, context });
-  }
-
+  const user = await fetchUserRole({ request, context });
   await requireRole(request, context, ["isCustomer"]);
 
+  const headers: HeadersInit = (context as any).__sessionCookie
+    ? { "Set-Cookie": (context as any).__sessionCookie }
+    : {};
+
+  const fallback = {
+    user: {
+      id: user?.user_id || '',
+      name: user?.name || 'Customer',
+      username: user?.username || '',
+      isCustomer: true,
+      isAdmin: false,
+      isRider: false,
+      isModerator: false,
+      isSeller: false,
+    },
+    purchaseItems: [] as PurchaseItem[],
+    rawPurchases: null as PurchasesResponse | null,
+  };
+
   try {
-    // Fetch purchases from backend
     const response = await AxiosInstance.get<PurchasesResponse>('/purchases-buyer/user_purchases/', {
-      headers: {
-        'X-User-Id': user?.user_id || ''
-      }
+      headers: { 'X-User-Id': user?.user_id || '' }
     });
-
     const purchasesData = response.data;
-
-    // Transform backend data to frontend format
     const purchaseItems: PurchaseItem[] = [];
 
     purchasesData.purchases.forEach((order: PurchaseOrder) => {
       console.log(`Processing order ${order.order_id} with status: ${order.status}`);
-      
+
       if (order.items && order.items.length > 0) {
-        // Create one PurchaseItem per product in the order
         order.items.forEach((item: OrderItem, index: number) => {
           console.log(`Item ${index} has status: ${item.status}, order status: ${order.status}`);
-          
+
           const statusToUse = item.status || order.status || 'pending';
           const mappedStatus = mapStatus(statusToUse);
-          
-          // FIXED: Get image URL and make it absolute using the helper function
-          const rawImageUrl = item.primary_image?.url || 
-                            (item.product_images && item.product_images[0]?.url);
+          const rawImageUrl = item.primary_image?.url ||
+            (item.product_images && item.product_images[0]?.url);
           const imageUrl = getFullImageUrl(rawImageUrl);
-          
+
           const purchaseItem: PurchaseItem = {
             id: `${order.order_id}-${index}`,
             order_id: order.order_id,
@@ -297,7 +300,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           purchaseItems.push(purchaseItem);
         });
       } else {
-        const purchaseItem: PurchaseItem = {
+        purchaseItems.push({
           id: order.order_id,
           order_id: order.order_id,
           product_id: 'no-product',
@@ -312,12 +315,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           order: order,
           is_refundable: false,
           can_review: false
-        };
-        purchaseItems.push(purchaseItem);
+        });
       }
     });
 
-    return {
+    const data: typeof fallback = {
       user: {
         id: purchasesData.user_id,
         name: purchasesData.username,
@@ -329,30 +331,32 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         isSeller: false,
       },
       purchaseItems,
-      rawPurchases: purchasesData
+      rawPurchases: purchasesData,
     };
+
+    return Response.json(data, { headers });
+
   } catch (error) {
     console.error('Error fetching purchases:', error);
-    
-    return {
-      user: {
-        id: user?.user_id || '',
-        name: user?.name || 'Customer',
-        username: user?.username || '',
-        isCustomer: true,
-        isAdmin: false,
-        isRider: false,
-        isModerator: false,
-        isSeller: false,
-      },
-      purchaseItems: [],
-      rawPurchases: null
-    };
+    return Response.json(fallback, { headers });
   }
 }
 
 export default function Purchases({ loaderData }: Route.ComponentProps) {
-  const { user, purchaseItems } = loaderData;
+  const { user, purchaseItems } = loaderData as {
+    user: {
+      id: string;
+      name: string;
+      username: string;
+      isCustomer: boolean;
+      isAdmin: boolean;
+      isRider: boolean;
+      isModerator: boolean;
+      isSeller: boolean;
+    };
+    purchaseItems: PurchaseItem[];
+    rawPurchases: PurchasesResponse | null;
+  };
   const [activeTab, setActiveTab] = useState<string>('all');
   const navigate = useNavigate();
   const [expandedPurchases, setExpandedPurchases] = useState<Set<string>>(new Set());

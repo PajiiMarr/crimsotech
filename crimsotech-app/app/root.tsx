@@ -11,6 +11,7 @@ import {
   useLocation,
   useNavigation,
 } from "react-router";
+import { sessionMiddleware } from "./middleware";
 import { Toaster } from "~/components/ui/sonner";
 import { Button } from '~/components/ui/button'
 import type { Route } from "./+types/root";
@@ -21,6 +22,8 @@ import "nprogress/nprogress.css";
 import { useEffect, useRef, useCallback } from "react";
 import { UserProvider } from "./components/providers/user-role-provider";
 import type { User } from "./contexts/user-role";
+
+export const unstable_middleware = [sessionMiddleware];
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },

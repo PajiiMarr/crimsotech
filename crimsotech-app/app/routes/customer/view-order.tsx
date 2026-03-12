@@ -48,14 +48,6 @@ import ViewReturns from "./view/view-returns";
 import ViewDispute from "./view/view-dispute";
 
 export async function loader({ request, context, params }: any) {
-  const { registrationMiddleware } = await import("~/middleware/registration.server");
-  await registrationMiddleware({
-    request,
-    context,
-    params,
-    unstable_pattern: undefined,
-  } as any);
-
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
 

@@ -95,48 +95,30 @@ const FALLBACK_IMAGE = "/Crimsotech.png";
 // ------------------ HELPER FUNCTIONS ------------------
 const formatImageUrl = (url: string | null | undefined): string | null => {
   if (!url || url.trim() === "") return null;
-
-  // Already a full URL
-  if (url.startsWith("http://") || url.startsWith("https://")) {
-    return url;
-  }
-
-  // Relative /media/ or any / path — prepend API base
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
   if (url.startsWith("/")) {
     const baseUrl = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
     return `${baseUrl}${url}`;
   }
-
   return url;
 };
 
-/**
- * Resolve the best image for a cart item.
- * Priority: variant image → product main_image → first media_file → fallback
- */
 const resolveCartItemImage = (
   variantDetails: VariantDetails | null,
   productDetails: ProductDetails
 ): string => {
-  // 1. Variant-specific image (most specific)
   if (variantDetails?.image) {
     const resolved = formatImageUrl(variantDetails.image);
     if (resolved) return resolved;
   }
-
-  // 2. Product main image
   if (productDetails?.main_image) {
     const resolved = formatImageUrl(productDetails.main_image);
     if (resolved) return resolved;
   }
-
-  // 3. First media file
   if (productDetails?.media_files && productDetails.media_files.length > 0) {
     const resolved = formatImageUrl(productDetails.media_files[0].url);
     if (resolved) return resolved;
   }
-
-  // 4. Fallback
   return FALLBACK_IMAGE;
 };
 
@@ -145,24 +127,18 @@ const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
   return apiItems.map((item) => {
     const productDetails = item.product_details;
     const variantDetails = item.variant_details;
-
     const price = variantDetails?.price ? parseFloat(variantDetails.price) : 0;
     const maxAvailable = variantDetails?.quantity_available ?? 999;
-
     const image = resolveCartItemImage(variantDetails, productDetails);
-
     const subtotal = item.total_price
       ? parseFloat(item.total_price)
       : price * item.quantity;
-
-    // Variant display title: prefer option_title if set, else title
     const variantLabel =
       variantDetails?.option_title?.trim()
         ? variantDetails.option_title
         : variantDetails?.title?.trim()
         ? variantDetails.title
         : null;
-
     return {
       id: item.id,
       product_id: productDetails?.id || item.product,
@@ -188,26 +164,23 @@ export function meta(): Route.MetaDescriptors {
 }
 
 // ------------------ LOADER ------------------
-export async function loader({ request }: Route.LoaderArgs) {
-  const { getSession, commitSession } = await import("~/sessions.server");
-  const session = await getSession(request.headers.get("Cookie"));
-  const userId = session.get("userId");
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { fetchUserRole } = await import("~/middleware/role.server");
+  const { requireRole } = await import("~/middleware/role-require.server");
 
-  return {
-    user: {
-      id: userId,
-      isAdmin: false,
-      isRider: false,
-      isModerator: false,
-      isCustomer: true,
-    },
-    headers: { "Set-Cookie": await commitSession(session) },
-  };
+  const user = await fetchUserRole({ request, context });
+  await requireRole(request, context, ["isCustomer"]);
+
+  if ((context as any).__sessionCookie) {
+    return Response.json({ user }, {
+      headers: { "Set-Cookie": (context as any).__sessionCookie },
+    });
+  }
+
+  return { user };
 }
 
 // ------------------ COMPONENTS ------------------
-
-// Shop Header Component
 const ShopHeader = ({
   shopName,
   itemCount,
@@ -258,7 +231,6 @@ const ShopHeader = ({
   );
 };
 
-// Compact Cart Item
 const CompactCartItem = ({
   item,
   onUpdateQuantity,
@@ -298,7 +270,6 @@ const CompactCartItem = ({
         onCheckedChange={(checked) => onSelect(item.id, Boolean(checked))}
         className="h-4 w-4 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
       />
-
       <div className="h-16 w-16 flex-shrink-0 relative">
         <img
           src={imageError ? FALLBACK_IMAGE : item.image}
@@ -307,7 +278,6 @@ const CompactCartItem = ({
           onError={() => setImageError(true)}
         />
       </div>
-
       <div className="flex-1 min-w-0">
         <div className="flex justify-between">
           <div>
@@ -322,10 +292,8 @@ const CompactCartItem = ({
             ₱{(item.price * item.quantity).toFixed(2)}
           </p>
         </div>
-
         <div className="flex items-center justify-between mt-1">
           <p className="text-xs text-gray-500">₱{item.price.toFixed(2)} each</p>
-
           <div className="flex items-center gap-3">
             <div className="flex items-center border rounded">
               <button
@@ -350,7 +318,6 @@ const CompactCartItem = ({
                 <Plus className="h-3 w-3" />
               </button>
             </div>
-
             <button
               onClick={() => onRemove(item.id)}
               disabled={isUpdating}
@@ -361,7 +328,6 @@ const CompactCartItem = ({
             </button>
           </div>
         </div>
-
         {item.max_available !== undefined && item.quantity >= item.max_available && (
           <p className="text-xs text-orange-500 mt-1">Max available quantity</p>
         )}
@@ -370,7 +336,6 @@ const CompactCartItem = ({
   );
 };
 
-// Shop Section Component
 const ShopSection = ({
   shopName,
   items,
@@ -387,17 +352,10 @@ const ShopSection = ({
   onSelectShop: (shopName: string, checked: boolean) => void;
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
-
-  const shopTotal = items.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0
-  );
+  const shopTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const allSelected = items.every((item) => item.selected);
   const selectedItems = items.filter((item) => item.selected);
-  const selectedTotal = selectedItems.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0
-  );
+  const selectedTotal = selectedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   return (
     <div className="border rounded-lg mb-4 overflow-hidden bg-white shadow-sm">
@@ -410,7 +368,6 @@ const ShopSection = ({
         isExpanded={isExpanded}
         onToggleExpand={() => setIsExpanded(!isExpanded)}
       />
-
       {isExpanded && (
         <>
           <div className="divide-y">
@@ -424,8 +381,6 @@ const ShopSection = ({
               />
             ))}
           </div>
-
-          {/* Shop Summary */}
           <div className="px-3 py-2 bg-orange-50 border-t">
             <div className="flex items-center justify-between text-sm">
               <span className="text-gray-600">
@@ -440,12 +395,7 @@ const ShopSection = ({
   );
 };
 
-// Simple Coupon Section
-const SimpleCouponSection = ({
-  onApplyCoupon,
-}: {
-  onApplyCoupon: (code: string) => void;
-}) => {
+const SimpleCouponSection = ({ onApplyCoupon }: { onApplyCoupon: (code: string) => void }) => {
   const [couponCode, setCouponCode] = useState("");
   const [isApplying, setIsApplying] = useState(false);
 
@@ -466,7 +416,6 @@ const SimpleCouponSection = ({
         <Tag className="h-4 w-4 text-orange-600" />
         <span className="text-sm font-medium">Have a coupon?</span>
       </div>
-
       <div className="flex gap-2">
         <input
           type="text"
@@ -490,7 +439,6 @@ const SimpleCouponSection = ({
   );
 };
 
-// Simple Order Summary
 const SimpleOrderSummary = ({
   subtotal,
   discount,
@@ -507,37 +455,31 @@ const SimpleOrderSummary = ({
   shopCount: number;
 }) => {
   const total = subtotal - discount + delivery;
-
   return (
     <div className="border rounded-lg p-4 bg-white">
       <h3 className="font-semibold text-gray-900 mb-4">Order Summary</h3>
-
       <div className="space-y-2 text-sm mb-4">
         <div className="flex justify-between">
           <span className="text-gray-600">Items ({itemCount})</span>
           <span>₱{subtotal.toFixed(2)}</span>
         </div>
-
         <div className="flex justify-between items-center">
           <span className="text-gray-600">Shops ({shopCount})</span>
           <Badge variant="outline" className="text-xs border-orange-200 text-orange-700 bg-orange-50">
             Separate deliveries
           </Badge>
         </div>
-
         {discount > 0 && (
           <div className="flex justify-between">
             <span className="text-gray-600">Discount</span>
             <span className="text-orange-600">-₱{discount.toFixed(2)}</span>
           </div>
         )}
-
         <div className="flex justify-between">
           <span className="text-gray-600">Delivery (estimated)</span>
           <span>₱{delivery.toFixed(2)}</span>
         </div>
       </div>
-
       <div className="border-t pt-4 mb-4">
         <div className="flex justify-between font-semibold text-base">
           <span>Total</span>
@@ -547,7 +489,6 @@ const SimpleOrderSummary = ({
           From {shopCount} {shopCount === 1 ? "shop" : "shops"}
         </div>
       </div>
-
       <Button
         onClick={onProceedToCheckout}
         disabled={itemCount === 0}
@@ -563,46 +504,39 @@ const SimpleOrderSummary = ({
 // ------------------ MAIN COMPONENT ------------------
 export default function Cart({ loaderData }: Route.ComponentProps) {
   const user = loaderData?.user;
-  const userId = user?.id;
+  const userId = user?.id || (user as any)?.user_id;
 
   const [cartItems, setCartItems] = useState<CartItemType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [cartCount, setCartCount] = useState<number>(0);
-  // Removed isSidebarOpen state since SidebarLayout manages its own state
   const navigate = useNavigate();
 
-  // Fetch cart count
   const fetchCartCount = async () => {
     if (!userId) return;
     try {
       const response = await AxiosInstance.get<CartCountResponse>("/cart/count/", {
         params: { user_id: userId },
       });
-      if (response.data.success) {
-        setCartCount(response.data.count);
-      }
+      if (response.data.success) setCartCount(response.data.count);
     } catch (err) {
       console.error("Error fetching cart count:", err);
     }
   };
 
-  // Fetch cart items
   useEffect(() => {
     if (!userId) {
       setError("Please login to view your cart");
       setLoading(false);
       return;
     }
-
     const fetchCart = async () => {
       try {
         setLoading(true);
         const response = await AxiosInstance.get<CartApiResponse>("/view-cart/", {
           params: { user_id: userId },
         });
-
         if (response.data.success && response.data.cart_items) {
           const transformedItems = transformApiData(response.data.cart_items);
           setCartItems(transformedItems);
@@ -626,24 +560,17 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
         setLoading(false);
       }
     };
-
     fetchCart();
   }, [userId]);
 
-  // Update quantity
   const updateQuantity = async (id: string, newQuantity: number) => {
-    if (newQuantity < 1) {
-      removeItem(id);
-      return;
-    }
-
+    if (newQuantity < 1) { removeItem(id); return; }
     setUpdatingId(id);
     try {
       await AxiosInstance.put(`/view-cart/update/${id}/`, {
         user_id: userId,
         quantity: newQuantity,
       });
-
       setCartItems((items) =>
         items.map((item) =>
           item.id === id
@@ -651,26 +578,21 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
             : item
         )
       );
-
       fetchCartCount();
     } catch (err: any) {
       console.error("Error updating quantity:", err);
-      if (err.response?.data?.error) {
-        alert(err.response.data.error);
-      }
+      if (err.response?.data?.error) alert(err.response.data.error);
     } finally {
       setUpdatingId(null);
     }
   };
 
-  // Remove item
   const removeItem = async (id: string) => {
     setUpdatingId(id);
     try {
       await AxiosInstance.delete(`/view-cart/delete/${id}/`, {
         data: { user_id: userId },
       });
-
       setCartItems((items) => {
         const newItems = items.filter((item) => item.id !== id);
         setCartCount(newItems.length);
@@ -683,11 +605,9 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
     }
   };
 
-  // Remove selected items
   const removeSelectedItems = async () => {
     const selectedIds = selectedItems.map((item) => item.id);
     if (selectedIds.length === 0) return;
-
     if (confirm(`Remove ${selectedIds.length} item(s) from cart?`)) {
       await Promise.all(selectedIds.map((id) => removeItem(id)));
     }
@@ -711,7 +631,6 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
     setCartItems((items) => items.map((item) => ({ ...item, selected: checked })));
   };
 
-  // Group items by shop
   const groupedItems = cartItems.reduce<Record<string, CartItemType[]>>(
     (acc, item) => {
       if (!acc[item.shop_name]) acc[item.shop_name] = [];
@@ -722,42 +641,26 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   );
 
   const shopCount = Object.keys(groupedItems).length;
-
-  // Calculations
   const selectedItems = cartItems.filter((item) => item.selected);
   const selectedShops = new Set(selectedItems.map((item) => item.shop_name)).size;
-  const subtotal = selectedItems.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0
-  );
+  const subtotal = selectedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const discount = 0;
   const delivery = selectedItems.length > 0 ? DELIVERY_FEE : 0;
 
   const handleCheckout = () => {
-    if (selectedItems.length === 0) {
-      alert("Please select items to checkout");
-      return;
-    }
-
+    if (selectedItems.length === 0) { alert("Please select items to checkout"); return; }
     const selectedIds = selectedItems.map((item) => item.id).join(",");
-
     try {
       localStorage.setItem("selectedCartItems", JSON.stringify(selectedItems));
-      localStorage.setItem(
-        "checkoutSummary",
-        JSON.stringify({
-          subtotal,
-          discount,
-          delivery,
-          total: subtotal - discount + delivery,
-          itemCount: selectedItems.length,
-          shopCount: selectedShops,
-        })
-      );
+      localStorage.setItem("checkoutSummary", JSON.stringify({
+        subtotal, discount, delivery,
+        total: subtotal - discount + delivery,
+        itemCount: selectedItems.length,
+        shopCount: selectedShops,
+      }));
     } catch (err) {
       console.error("Failed to store checkout data:", err);
     }
-
     navigate(`/orders?selected=${selectedIds}`);
   };
 
@@ -766,20 +669,9 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
     alert(`Coupon "${code}" applied successfully!`);
   };
 
-  // Loading state
   if (loading) {
     return (
-      <UserProvider
-        user={
-          user || {
-            id: "loading",
-            isCustomer: true,
-            username: "loading",
-            email: "loading@example.com",
-          }
-        }
-      >
-        {/* FIXED: Removed isOpen and onToggle props */}
+      <UserProvider user={user || { id: "loading", isCustomer: true, username: "loading", email: "loading@example.com" }}>
         <SidebarLayout>
           <div className="w-full p-4 lg:p-6">
             <Skeleton className="h-8 w-48 mb-6" />
@@ -805,20 +697,9 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
     );
   }
 
-  // Error state
   if (error) {
     return (
-      <UserProvider
-        user={
-          user || {
-            id: "guest",
-            isCustomer: false,
-            username: "guest",
-            email: "guest@example.com",
-          }
-        }
-      >
-        {/* FIXED: Removed isOpen and onToggle props */}
+      <UserProvider user={user || { id: "guest", isCustomer: false, username: "guest", email: "guest@example.com" }}>
         <SidebarLayout>
           <div className="w-full min-h-[60vh] flex items-center justify-center p-4">
             <div className="max-w-md w-full text-center">
@@ -827,35 +708,13 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
               <div className="space-y-2">
                 {error.includes("login") ? (
                   <>
-                    <Button
-                      onClick={() => navigate("/login")}
-                      className="w-full bg-orange-500 hover:bg-orange-600"
-                    >
-                      Go to Login
-                    </Button>
-                    <Button
-                      onClick={() => navigate("/")}
-                      variant="outline"
-                      className="w-full border-orange-200 text-orange-600 hover:bg-orange-50"
-                    >
-                      Continue Shopping
-                    </Button>
+                    <Button onClick={() => navigate("/login")} className="w-full bg-orange-500 hover:bg-orange-600">Go to Login</Button>
+                    <Button onClick={() => navigate("/")} variant="outline" className="w-full border-orange-200 text-orange-600 hover:bg-orange-50">Continue Shopping</Button>
                   </>
                 ) : (
                   <>
-                    <Button
-                      onClick={() => window.location.reload()}
-                      className="w-full bg-orange-500 hover:bg-orange-600"
-                    >
-                      Try Again
-                    </Button>
-                    <Button
-                      onClick={() => navigate("/")}
-                      variant="outline"
-                      className="w-full border-orange-200 text-orange-600 hover:bg-orange-50"
-                    >
-                      Continue Shopping
-                    </Button>
+                    <Button onClick={() => window.location.reload()} className="w-full bg-orange-500 hover:bg-orange-600">Try Again</Button>
+                    <Button onClick={() => navigate("/")} variant="outline" className="w-full border-orange-200 text-orange-600 hover:bg-orange-50">Continue Shopping</Button>
                   </>
                 )}
               </div>
@@ -866,21 +725,10 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
     );
   }
 
-  const safeUser = user || {
-    id: "guest",
-    isAdmin: false,
-    isRider: false,
-    isModerator: false,
-    isCustomer: false,
-    username: "guest",
-    email: "guest@example.com",
-  };
-
   return (
     <SidebarLayout>
       <div className="w-full min-h-screen">
         <div className="w-full">
-          {/* Header */}
           <div className="mb-6 w-full">
             <div className="flex items-center justify-between w-full">
               <div>
@@ -889,8 +737,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                   Shopping Cart ({cartItems.length})
                 </h1>
                 <p className="text-sm text-gray-500 mt-1">
-                  {selectedItems.length} items selected • ₱{subtotal.toFixed(2)}{" "}
-                  • {shopCount} shops
+                  {selectedItems.length} items selected • ₱{subtotal.toFixed(2)} • {shopCount} shops
                 </p>
               </div>
               {cartItems.length > 0 && (
@@ -912,52 +759,27 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
               <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-orange-50 flex items-center justify-center">
                 <ShoppingCart className="h-10 w-10 text-orange-400" />
               </div>
-              <h3 className="text-lg lg:text-xl font-medium mb-2">
-                Your cart is empty
-              </h3>
-              <p className="text-gray-500 mb-6 max-w-md mx-auto">
-                Add items from your favorite shops to get started
-              </p>
+              <h3 className="text-lg lg:text-xl font-medium mb-2">Your cart is empty</h3>
+              <p className="text-gray-500 mb-6 max-w-md mx-auto">Add items from your favorite shops to get started</p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                <Button
-                  onClick={() => navigate("/")}
-                  className="bg-orange-500 hover:bg-orange-600 px-6"
-                >
-                  Start Shopping
-                </Button>
-                <Button 
-                  onClick={() => navigate(-1)} 
-                  variant="outline"
-                  className="border-orange-200 text-orange-600 hover:bg-orange-50"
-                >
-                  Go Back
-                </Button>
+                <Button onClick={() => navigate("/")} className="bg-orange-500 hover:bg-orange-600 px-6">Start Shopping</Button>
+                <Button onClick={() => navigate(-1)} variant="outline" className="border-orange-200 text-orange-600 hover:bg-orange-50">Go Back</Button>
               </div>
             </div>
           ) : (
             <div className="flex flex-col lg:flex-row gap-6 w-full">
-              {/* Left Column - Cart Items */}
               <div className="lg:w-2/3">
-                {/* Selection Bar */}
                 <div className="bg-white rounded-lg p-3 mb-4 flex items-center justify-between border shadow-sm">
                   <div className="flex items-center gap-2">
                     <Checkbox
-                      checked={
-                        cartItems.length > 0 &&
-                        cartItems.every((item) => item.selected)
-                      }
+                      checked={cartItems.length > 0 && cartItems.every((item) => item.selected)}
                       onCheckedChange={handleSelectAll}
                       className="h-4 w-4 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
                     />
-                    <span className="text-sm font-medium">
-                      Select All Items ({cartItems.length})
-                    </span>
+                    <span className="text-sm font-medium">Select All Items ({cartItems.length})</span>
                   </div>
-
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-500">
-                      {shopCount} {shopCount === 1 ? "shop" : "shops"}
-                    </span>
+                    <span className="text-sm text-gray-500">{shopCount} {shopCount === 1 ? "shop" : "shops"}</span>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -971,7 +793,6 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                   </div>
                 </div>
 
-                {/* Shop Sections */}
                 {Object.entries(groupedItems).map(([shopName, items]) => (
                   <ShopSection
                     key={shopName}
@@ -984,7 +805,6 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                   />
                 ))}
 
-                {/* Mobile Continue Button */}
                 {cartItems.length > 0 && (
                   <Button
                     variant="outline"
@@ -997,7 +817,6 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                 )}
               </div>
 
-              {/* Right Column - Order Summary */}
               <div className="lg:w-1/3">
                 <div className="sticky top-6 space-y-4">
                   <SimpleCouponSection onApplyCoupon={handleApplyCoupon} />
@@ -1009,16 +828,13 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                     itemCount={selectedItems.length}
                     shopCount={selectedShops}
                   />
-
-                  {/* Additional Info */}
                   <div className="border rounded-lg p-4 bg-white">
                     <div className="flex items-center gap-2 mb-2">
                       <Package className="h-4 w-4 text-orange-600" />
                       <h4 className="text-sm font-medium">Multi-Shop Order</h4>
                     </div>
                     <p className="text-xs text-gray-600 mb-3">
-                      Items from different shops will be delivered separately.
-                      Each shop may have different delivery times.
+                      Items from different shops will be delivered separately. Each shop may have different delivery times.
                     </p>
                     <div className="space-y-1 text-xs">
                       <div className="flex justify-between">

@@ -37,6 +37,7 @@ export interface User {
   is_suspended?: boolean;
   created_at?: string;
   updated_at?: string;
+  registration_stage?: number;
 }
 
 export const userContext = createContext<User | null>(null);

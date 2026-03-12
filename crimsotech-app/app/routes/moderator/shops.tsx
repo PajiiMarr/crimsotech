@@ -95,8 +95,7 @@ interface LoaderData {
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
-  const { registrationMiddleware } = await import("~/middleware/registration.server");
-  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
+
 
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
