@@ -19,6 +19,9 @@ else
     CONCURRENCY=400
 fi
 
+echo ">>> flushing database"
+python manage.py flush
+
 echo ">>> seeding data"
 python manage.py seed_data
 
@@ -28,7 +31,7 @@ python manage.py migrate --noinput
 echo ">>> collecting static files"
 python manage.py collectstatic --noinput
 
-echo ">>> starting server with WebSocket support"
+echo ">>> starting server with WebSocket support"s
 echo ">>> Workers: $WORKERS, Memory: ${MEMORY_LIMIT}MB"
 
 # Set Django settings module explicitly
