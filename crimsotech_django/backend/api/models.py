@@ -129,6 +129,7 @@ class Rider(models.Model):
     )
     is_accepting_deliveries = models.BooleanField(default=False)
     last_status_update = models.DateTimeField(auto_now=True)
+    declined_order_count = models.IntegerField(default=0)
 
     class Meta:
         indexes = [
