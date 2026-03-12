@@ -51,6 +51,7 @@ from .utils.model_handler import ElectronicsClassifier
 import json
 from api.utils.storage_utils import convert_s3_to_public_url
 from django.shortcuts import get_object_or_404
+from backend.api.tasks import assign_deliveries_task, check_delivery_responses_task
 
 
 # Initialize classifier once (Django will cache this)
@@ -20862,6 +20863,9 @@ class SellerOrderList(viewsets.ViewSet):
                     message=f'You have a new delivery assignment for order #{str(order.order)[:8]}',
                     is_read=False
                 )
+            
+            assign_deliveries_task.delay()
+            check_delivery_responses_task.delay()
 
             return Response({
                 "success": True,
@@ -20879,13 +20883,8 @@ class SellerOrderList(viewsets.ViewSet):
                 "message": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    # NEW: Check delivery responses endpoint
     @action(detail=False, methods=['post'])
     def check_delivery_responses(self, request):
-        """
-        Check and process delivery responses for an order
-        POST /seller-order-list/check_delivery_responses/?order_id={order_id}
-        """
         try:
             order_id = request.GET.get('order_id')
             if not order_id:
