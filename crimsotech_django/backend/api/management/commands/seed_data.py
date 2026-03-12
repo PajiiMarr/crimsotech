@@ -35,7 +35,7 @@ class Command(BaseCommand):
                 categories = self.create_categories(shops, admin_user)
                 
                 # # Create products matching frontend data
-                products = self.create_products(customers, shops, categories, admin_user)
+                # products = self.create_products(customers, shops, categories, admin_user)
                 # self.create_engagement_data()
                 
                 # # Create boosts and boost plans
