@@ -16,6 +16,7 @@ import {
   User,
   Package,
   PhilippinePeso,
+  Printer,
   CheckCircle,
   XCircle,
   Search,
@@ -535,6 +536,47 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
     }
   };
 
+  // NEW: Handle waybill download
+  const handlePrintWaybill = async (orderId: string) => {
+    try {
+      setLoadingActions(prev => ({ ...prev, [orderId]: true }));
+      
+      const response = await AxiosInstance.get(
+        `/seller-order-list/${orderId}/generate_waybill/`,
+        {
+          params: { shop_id: shopId },
+          headers: {
+            'X-User-Id': userId
+          },
+          responseType: 'blob' // Important for PDF download
+        }
+      );
+      
+      // Create a blob from the PDF stream
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `waybill_${orderId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      toast.success("Waybill downloaded", {
+        description: "Waybill PDF has been generated successfully."
+      });
+      
+    } catch (error: any) {
+      console.error('Error downloading waybill:', error);
+      toast.error("Failed to generate waybill", {
+        description: error.response?.data?.message || "Please try again."
+      });
+    } finally {
+      setLoadingActions(prev => ({ ...prev, [orderId]: false }));
+    }
+  };
+
   // Load actions when component mounts or orders change
   useEffect(() => {
     if (shopId && orders.length > 0) {
@@ -967,6 +1009,23 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                     </Button>
                   )}
 
+                  {/* NEW: Print Waybill button for mobile */}
+                  {actions.includes('print_waybill') && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-sm justify-start"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePrintWaybill(order.order_id);
+                      }}
+                      disabled={loadingActions[order.order_id]}
+                    >
+                      <Printer className="mr-2 h-4 w-4 text-blue-600" /> 
+                      {loadingActions[order.order_id] ? 'Loading...' : 'Print Waybill'}
+                    </Button>
+                  )}
+
                   {canCancel && !pendingApproval && (
                     <Button
                       variant="ghost"
@@ -1021,6 +1080,24 @@ export default function SellerOrderList({ loaderData }: Route.ComponentProps) {
                 title="Prepare for shipment"
               >
                 <Package2 className="mr-1 w-3 h-3 text-blue-600" /> Prepare
+              </Button>
+            )}
+
+            {/* NEW: Print Waybill button for desktop */}
+            {actions.includes('print_waybill') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-[10px]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePrintWaybill(order.order_id);
+                }}
+                title="Print Waybill"
+                disabled={loadingActions[order.order_id]}
+              >
+                <Printer className="mr-1 w-3 h-3 text-blue-600" /> 
+                {loadingActions[order.order_id] ? '...' : 'Waybill'}
               </Button>
             )}
 

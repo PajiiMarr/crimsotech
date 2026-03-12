@@ -51,7 +51,7 @@ from .utils.model_handler import ElectronicsClassifier
 import json
 from api.utils.storage_utils import convert_s3_to_public_url
 from django.shortcuts import get_object_or_404
-from backend.api.tasks import assign_deliveries_task, check_delivery_responses_task
+from .tasks import assign_deliveries_task, check_delivery_responses_task
 
 
 # Initialize classifier once (Django will cache this)
@@ -21390,6 +21390,10 @@ class SellerOrderList(viewsets.ViewSet):
             
             elif current_shipping_status == 'in_transit':
                 available_actions = ['complete']
+
+            # Add print waybill button for processing orders with accepted delivery
+            if order.status == 'processing' and latest_delivery and latest_delivery.status == 'accepted':
+                available_actions.append('print_waybill')
             
             # Always allow cancellation if not completed or cancelled and not pending approval
             if current_shipping_status not in ['completed', 'cancelled', 'picked_up'] and not is_pending_approval:
@@ -21966,6 +21970,361 @@ class SellerOrderList(viewsets.ViewSet):
                 'message': f'Error retrieving order: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=True, methods=['get'])
+    def generate_waybill(self, request, pk=None):
+        """
+        Generate compact Shopee-style waybill sticker (J&T/Shopee format, 1/4 bondpaper size)
+        FIXED: Full-width layout with QR code on right
+        GET /seller-order-list/{order_id}/generate_waybill/?shop_id={shop_id}
+        """
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+            import io
+            from django.http import HttpResponse
+            import qrcode
+            from PIL import Image as PILImage
+            import textwrap
+            from django.utils import timezone
+            
+            # Get order and validate
+            try:
+                order = Order.objects.get(order=pk)
+            except Order.DoesNotExist:
+                return Response({"success": False, "message": "Order not found"}, status=404)
+
+            shop_id = request.GET.get('shop_id')
+            if not shop_id:
+                return Response({"success": False, "message": "Shop ID required"}, status=400)
+            
+            try:
+                shop = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                return Response({"success": False, "message": "Shop not found"}, status=404)
+            
+            has_shop_items = Checkout.objects.filter(
+                order=order, cart_item__product__shop=shop
+            ).exists()
+            if not has_shop_items:
+                return Response({"success": False, "message": "No items from your shop"}, status=403)
+
+            delivery = Delivery.objects.filter(order=order).select_related('rider__rider').first()
+            checkout_items = Checkout.objects.filter(
+                order=order, cart_item__product__shop=shop
+            ).select_related('cart_item__product', 'cart_item__variant')
+
+            # EXACT 1/4 BONDPAPER SIZE: 4.25 x 5.5 inches (half of 8.5x11)
+            buffer = io.BytesIO()
+            STICKER_WIDTH = 4.25 * inch  # Exactly half of 8.5 inches
+            STICKER_HEIGHT = 5.5 * inch  # Exactly half of 11 inches
+            
+            doc = SimpleDocTemplate(
+                buffer, pagesize=(STICKER_WIDTH, STICKER_HEIGHT),
+                rightMargin=0.1*inch, leftMargin=0.1*inch,
+                topMargin=0.1*inch, bottomMargin=0.1*inch,
+                title=f"Waybill_{order.order}",
+                author="Crimson Delivery"
+            )
+            
+            elements = []
+            styles = getSampleStyleSheet()
+            
+            # Create styles that fill the space
+            title_style = ParagraphStyle(
+                'Title',
+                parent=styles['Normal'],
+                fontSize=14,
+                alignment=TA_CENTER,
+                spaceAfter=4,
+                textColor=colors.HexColor('#2c3e50'),
+                fontName='Helvetica-Bold'
+            )
+            
+            header_style = ParagraphStyle(
+                'Header',
+                parent=styles['Normal'],
+                fontSize=10,
+                alignment=TA_CENTER,
+                spaceAfter=4,
+                textColor=colors.HexColor('#34495e'),
+                fontName='Helvetica-Bold'
+            )
+            
+            section_header = ParagraphStyle(
+                'SectionHeader',
+                parent=styles['Normal'],
+                fontSize=9,
+                fontName='Helvetica-Bold',
+                textColor=colors.HexColor('#2980b9'),
+                spaceAfter=2
+            )
+            
+            normal_style = ParagraphStyle(
+                'Normal',
+                parent=styles['Normal'],
+                fontSize=8,
+                leading=10,
+                spaceAfter=2
+            )
+            
+            small_style = ParagraphStyle(
+                'Small',
+                parent=styles['Normal'],
+                fontSize=7,
+                leading=9,
+                textColor=colors.HexColor('#7f8c8d')
+            )
+            
+            bold_small = ParagraphStyle(
+                'BoldSmall',
+                parent=styles['Normal'],
+                fontSize=8,
+                leading=10,
+                fontName='Helvetica-Bold'
+            )
+
+           
+            # 2. ORDER INFO BAR - Full width
+            waybill_num = f"WB-{str(order.order)[:8].upper()}"
+            order_info_data = [[
+                Paragraph(f"<b>Order:</b> #{str(order.order)[:8]}", normal_style),
+                Paragraph(f"<b>Date:</b> {order.created_at.strftime('%m/%d/%Y')}", normal_style),
+                Paragraph(f"<b>Track:</b> {waybill_num}", normal_style)
+            ]]
+            order_info_table = Table(order_info_data, colWidths=[STICKER_WIDTH/3-0.15*inch]*3)
+            order_info_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#ecf0f1')),
+                ('TOPPADDING', (0,0), (-1,-1), 4),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ]))
+            elements.append(order_info_table)
+            elements.append(Spacer(1, 0.05*inch))
+            
+            # 3. QR CODE WITH INFO SIDE-BY-SIDE - Fills the width
+            # Generate QR Code
+            qr = qrcode.QRCode(version=2, box_size=4, border=1)
+            qr_data = f"ORDER:{order.order}|SHOP:{shop.id}"
+            if delivery and delivery.rider:
+                qr_data += f"|RIDER:{delivery.rider.rider.id}"
+            qr.add_data(qr_data)
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill_color="black", back_color="white")
+            img_buffer = io.BytesIO()
+            qr_img.save(img_buffer, 'PNG')
+            img_buffer.seek(0)
+            qr_img_rl = Image(img_buffer, width=1.2*inch, height=1.2*inch)
+            
+            # Left side info (fills the space beside QR)
+            left_info_data = [
+                [Paragraph("<b>SHIPPING INFO</b>", bold_small)],
+                [Paragraph(f"<b>Payment:</b> {order.payment_method or 'N/A'}", small_style)],
+                [Paragraph(f"<b>Items:</b> {len(checkout_items)}", small_style)],
+            ]
+            
+            if delivery and delivery.delivery_fee:
+                left_info_data.append([Paragraph(f"<b>Delivery Fee:</b> ₱{float(delivery.delivery_fee):,.0f}", small_style)])
+            
+            left_info_table = Table(left_info_data, colWidths=[2.5*inch])
+            left_info_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('TOPPADDING', (0,0), (-1,-1), 2),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+                ('BACKGROUND', (0,0), (0,0), colors.HexColor('#f8f9fa')),
+            ]))
+            
+            # Combine left info and QR code side by side
+            qr_row = [[left_info_table, qr_img_rl]]
+            qr_table = Table(qr_row, colWidths=[2.7*inch, 1.2*inch])
+            qr_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (0,0), 'LEFT'),
+                ('ALIGN', (1,0), (1,0), 'RIGHT'),
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ]))
+            elements.append(qr_table)
+            elements.append(Spacer(1, 0.05*inch))
+            
+            # 4. SENDER/RECEIVER - Side by side to fill width
+            customer = order.user
+            
+            # Sender info (left column)
+            sender_text = f"""
+            <b>FROM:</b><br/>
+            {shop.name}<br/>
+            <font size=6>{shop.street}, {shop.barangay}<br/>{shop.city}</font><br/>
+            <font size=6><b>Tel:</b> {shop.contact_number or 'N/A'}</font>
+            """
+            
+            # Receiver info (right column)
+            if order.shipping_address:
+                addr = order.shipping_address
+                receiver_text = f"""
+                <b>TO:</b><br/>
+                {addr.recipient_name}<br/>
+                <font size=6>{addr.get_full_address()}<br/></font>
+                <font size=6><b>Tel:</b> {addr.recipient_phone}</font>
+                """
+            else:
+                receiver_text = f"""
+                <b>TO:</b><br/>
+                {customer.first_name} {customer.last_name}<br/>
+                <font size=6>{order.delivery_address_text or 'N/A'}<br/></font>
+                <font size=6><b>Tel:</b> {customer.contact_number or 'N/A'}</font>
+                """
+            
+            address_data = [
+                [Paragraph(sender_text, normal_style),
+                Paragraph(receiver_text, normal_style)]
+            ]
+            address_table = Table(address_data, colWidths=[STICKER_WIDTH/2-0.15*inch, STICKER_WIDTH/2-0.15*inch])
+            address_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('BACKGROUND', (0,0), (0,0), colors.HexColor('#f8f9fa')),
+                ('BACKGROUND', (1,0), (1,0), colors.HexColor('#f8f9fa')),
+                ('TOPPADDING', (0,0), (-1,-1), 4),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ('LEFTPADDING', (0,0), (-1,-1), 4),
+                ('RIGHTPADDING', (0,0), (-1,-1), 4),
+            ]))
+            elements.append(address_table)
+            elements.append(Spacer(1, 0.05*inch))
+            
+            # 5. RIDER INFO - Full width
+            if delivery and delivery.rider:
+                rider = delivery.rider.rider
+                rider_text = f"🚀 <b>RIDER:</b> {rider.first_name} {rider.last_name} | <b>📞</b> {rider.contact_number or 'N/A'}"
+            else:
+                rider_text = "🚀 <b>AWAITING RIDER ASSIGNMENT</b>"
+            
+            rider_bg = colors.HexColor('#d4edda') if delivery and delivery.rider else colors.HexColor('#fff3cd')
+            rider_table = Table([[Paragraph(rider_text, normal_style)]], colWidths=[STICKER_WIDTH-0.2*inch])
+            rider_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), rider_bg),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('TOPPADDING', (0,0), (-1,-1), 4),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ]))
+            elements.append(rider_table)
+            elements.append(Spacer(1, 0.05*inch))
+            
+            # 6. ITEMS SUMMARY - Full width
+            elements.append(Paragraph("ORDER ITEMS", section_header))
+            
+            items_data = [[
+                Paragraph("<b>Item</b>", bold_small),
+                Paragraph("<b>Qty</b>", bold_small),
+                Paragraph("<b>Price</b>", bold_small)
+            ]]
+            
+            for checkout in checkout_items[:3]:  # Show first 3 items
+                cart_item = checkout.cart_item
+                if not cart_item or not cart_item.product:
+                    continue
+                product = cart_item.product
+                name = product.name[:18] + '..' if len(product.name) > 18 else product.name
+                price = float(checkout.total_amount or 0)
+                items_data.append([
+                    Paragraph(name, small_style),
+                    Paragraph(str(checkout.quantity), small_style),
+                    Paragraph(f"₱{price:,.0f}", small_style)
+                ])
+            
+            if len(checkout_items) > 3:
+                items_data.append([
+                    Paragraph(f"+{len(checkout_items)-3} more items", small_style),
+                    Paragraph("", small_style),
+                    Paragraph("", small_style)
+                ])
+            
+            items_table = Table(items_data, colWidths=[2.2*inch, 0.5*inch, 0.8*inch])
+            items_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#3498db')),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                ('ALIGN', (0,0), (0,-1), 'LEFT'),
+                ('ALIGN', (1,0), (1,-1), 'CENTER'),
+                ('ALIGN', (2,0), (2,-1), 'RIGHT'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,-1), 7),
+                ('BOTTOMPADDING', (0,0), (-1,0), 4),
+                ('TOPPADDING', (0,1), (-1,-1), 2),
+                ('BOTTOMPADDING', (0,1), (-1,-1), 2),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#bdc3c7')),
+            ]))
+            elements.append(items_table)
+            elements.append(Spacer(1, 0.05*inch))
+            
+            # 7. TOTALS - Full width
+            delivery_fee = float(delivery.delivery_fee if delivery and delivery.delivery_fee else 0)
+            subtotal = sum(float(c.total_amount or 0) for c in checkout_items)
+            grand_total = subtotal + delivery_fee
+            
+            totals_data = [
+                [Paragraph("Subtotal:", normal_style),
+                Paragraph(f"₱{subtotal:,.0f}", normal_style)],
+                [Paragraph("Delivery Fee:", normal_style),
+                Paragraph(f"₱{delivery_fee:,.0f}", normal_style)],
+                [Paragraph("<b>TOTAL:</b>", bold_small),
+                Paragraph(f"<b>₱{grand_total:,.0f}</b>", bold_small)]
+            ]
+            
+            totals_table = Table(totals_data, colWidths=[3.0*inch, 0.8*inch])
+            totals_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (0,-1), 'LEFT'),
+                ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+                ('LINEABOVE', (0,-1), (1,-1), 1, colors.black),
+                ('TOPPADDING', (0,-1), (1,-1), 4),
+            ]))
+            elements.append(totals_table)
+            elements.append(Spacer(1, 0.05*inch))
+            
+            # 8. SIGNATURE LINE - Full width
+            sig_data = [[
+                Paragraph("Seller Sig: _________________", small_style),
+                Paragraph("Receiver Sig: _________________", small_style),
+                Paragraph(f"Date: {timezone.now().strftime('%m/%d')}", small_style)
+            ]]
+            sig_table = Table(sig_data, colWidths=[1.4*inch, 1.4*inch, 1.0*inch])
+            sig_table.setStyle(TableStyle([
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
+                ('TOPPADDING', (0,0), (-1,-1), 8),
+            ]))
+            elements.append(sig_table)
+            
+            # Build PDF
+            doc.build(elements)
+            pdf_bytes = buffer.getvalue()
+            buffer.close()
+            
+            # Return PDF directly as download
+            response = HttpResponse(pdf_bytes, content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="waybill_{waybill_num}.pdf"'
+            response['Content-Length'] = len(pdf_bytes)
+            return response
+            
+        except Shop.DoesNotExist:
+            return Response({"success": False, "message": "Shop not found"}, status=404)
+        except ImportError as e:
+            return Response({
+                "success": False,
+                "message": f"PDF libraries missing: {str(e)}. Install: pip install reportlab qrcode[pil]"
+            }, status=500)
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            return Response({
+                "success": False,
+                "message": f"Waybill generation failed: {str(e)}"
+            }, status=500)
+
 class CheckoutOrder(viewsets.ViewSet):
     @action(detail=False, methods=['GET'])
     def get_checkout_items(self, request):
