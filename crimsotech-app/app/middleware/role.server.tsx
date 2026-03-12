@@ -3,7 +3,7 @@ import AxiosInstance from "~/components/axios/Axios";
 import { getSession } from "~/sessions.server";
 
 export async function fetchUserRole({ request, context }: any) {
-  // Use direct property access instead of context.get()
+  // Check if we already have the user data in context
   if (context.user) {
     return context.user;
   }
@@ -13,11 +13,12 @@ export async function fetchUserRole({ request, context }: any) {
   
   if (!userId) throw new Response("Unauthorized", { status: 401 });
   
+  // Only make the API request if we have a userId but no context.user
   const response = await AxiosInstance.get("/get-role/", {
     headers: { "X-User-Id": userId },
   });
   
-  // Use direct property assignment instead of context.set()
+  // Store the user data in context for future requests
   context.user = response.data;
   return response.data;
 }

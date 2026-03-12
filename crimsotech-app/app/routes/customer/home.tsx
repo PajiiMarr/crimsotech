@@ -36,26 +36,17 @@ import {
   DialogFooter,
 } from '~/components/ui/dialog'
 
-// ----------------------------
-// URL Conversion Utility
-// ----------------------------
 const convertS3ToPublicUrl = (s3Url: string | null | undefined): string | null => {
   if (!s3Url) return null;
   
   try {
-    // Convert Supabase S3 URL to public URL format
-    // S3 URL: https://project-ref.storage.supabase.co/storage/v1/s3/bucket-name/file-path
-    // Public URL: https://project-ref.supabase.co/storage/v1/object/public/bucket-name/file-path
-    
-    // Method 1: Regex extraction
     const match = s3Url.match(/https:\/\/([^\.]+)\.storage\.supabase\.co\/storage\/v1\/s3\/([^\/]+)\/(.+)/);
     
     if (match) {
-      const projectRef = match[1];  // e.g., "nkbunzcxponphxlrzvfh"
-      const bucketName = match[2];  // e.g., "crimsotech_medias"
-      const filePath = match[3];    // e.g., "product/Screenshot_2026-02-05_at_5.13.35PM.png"
+      const projectRef = match[1]; 
+      const bucketName = match[2]; 
+      const filePath = match[3];   
       
-      // Construct public URL
       return `https://${projectRef}.supabase.co/storage/v1/object/public/${bucketName}/${filePath}`;
     }
     
@@ -646,9 +637,6 @@ const CategoriesSection = ({
   );
 };
 
-// ----------------------------
-// Loader
-// ----------------------------
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { fetchUserRole } = await import("~/middleware/role.server")
   const { requireRole } = await import("~/middleware/role-require.server");

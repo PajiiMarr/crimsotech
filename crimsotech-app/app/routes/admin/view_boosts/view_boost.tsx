@@ -1316,7 +1316,6 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
               )}
             </Accordion>
 
-            {/* Image Modal */}
             {selectedImage && (
               <div 
                 className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4"
@@ -1336,7 +1335,6 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
               </div>
             )}
 
-            {/* Responsive Dialog */}
             {isMobile ? renderMobileDialog() : renderDesktopDialog()}
           </div>
         </div>
