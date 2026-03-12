@@ -42,13 +42,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
 
-  // Apply the middleware
-  const middlewareResult = await registrationMiddleware({ 
-    request, 
-    context, 
-    params: {}, 
-    unstable_pattern: undefined 
-  } as any);
+  
 
   let user = (context as any).user;
   if (!user) {
