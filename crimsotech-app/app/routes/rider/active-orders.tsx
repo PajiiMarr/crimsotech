@@ -162,11 +162,7 @@ const STATUS_CONFIG = {
     color: 'bg-yellow-100 text-yellow-800',
     icon: Clock
   },
-  pending_offer: { 
-    label: 'Pending Offer', 
-    color: 'bg-amber-100 text-amber-800',
-    icon: Clock
-  },
+
   accepted: {
     label: 'Accepted',
     color: 'bg-indigo-100 text-indigo-800',
@@ -486,7 +482,7 @@ const handleDeliverWithProof = async () => {
     // Client-side guard: prevent firing pickup if delivery is not in a valid pre-pickup state
     if (actionType === 'pickup') {
       const status = String(selectedDelivery.status || '').toLowerCase();
-      const allowed = ['pending', 'pending_offer', 'accepted'];
+      const allowed = ['pending', 'accepted'];
       if (!allowed.includes(status)) {
         alert(`Cannot mark pickup — delivery status is "${selectedDelivery.status}" (expected: ${allowed.join(', ')}).`);
         return;
@@ -643,7 +639,7 @@ const handleDeliverWithProof = async () => {
   };
 
   // Prepare transformed data for the table (filtered by activeTab)
-  const pendingStatuses = ['pending', 'pending_offer'];
+  const pendingStatuses = ['pending'];
   const toProcessStatuses = ['accepted', 'picked_up']; // "To Process" / To Pick Up includes accepted + picked_up (in-transit)
 
   const filteredDeliveries = useMemo(() => {
@@ -1212,7 +1208,7 @@ const handleDeliverWithProof = async () => {
                                       <span className="text-xs">Mark Failed</span>
                                     </Button>
                                   </>
-                                ) : delivery.status === 'pending_offer' ? (
+                                ) : delivery.status === 'pending' ? (
                                   <Button 
                                     size="sm" 
                                     onClick={() => handlePickupClick(delivery)}

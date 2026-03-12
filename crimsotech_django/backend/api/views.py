@@ -20611,7 +20611,7 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
         
         pending_deliveries = Delivery.objects.filter(
             rider=rider,
-            status='pending_offer'
+            status='pending'
         ).select_related('order', 'order__user').order_by('-created_at')
         
         data = []
@@ -20649,7 +20649,7 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
     def respond_to_offer(self, request, pk=None):
         """Rider responds to a delivery offer"""
         try:
-            delivery = Delivery.objects.get(id=pk, rider=request.user.rider, status='pending_offer')
+            delivery = Delivery.objects.get(id=pk, rider=request.user.rider, status='pending')
         except Delivery.DoesNotExist:
             return Response({
                 'success': False,
@@ -20732,7 +20732,7 @@ class SellerOrderList(viewsets.ViewSet):
             delivery = Delivery.objects.filter(
                 order=order,
                 rider=rider,
-                status='pending_offer'
+                status='pending'
             ).first()
 
             if not delivery:
@@ -20819,7 +20819,7 @@ class SellerOrderList(viewsets.ViewSet):
             # Check if there's already a pending delivery
             existing_delivery = Delivery.objects.filter(
                 order=order,
-                status__in=['pending_offer', 'accepted', 'picked_up', 'in_progress']
+                status__in=['pending', 'accepted', 'picked_up', 'in_progress']
             ).exists()
             
             if existing_delivery:
@@ -20847,7 +20847,7 @@ class SellerOrderList(viewsets.ViewSet):
                 delivery = Delivery.objects.create(
                     order=order,
                     rider=rider,
-                    status='pending_offer',
+                    status='pending',
                     delivery_fee=50,  # Default delivery fee - you can make this dynamic
                     distance_km=5.0,  # Default distance - you can calculate this
                     estimated_minutes=30  # Default estimate - you can calculate this
@@ -20906,7 +20906,7 @@ class SellerOrderList(viewsets.ViewSet):
             # Get all pending offers for this order
             pending_deliveries = Delivery.objects.filter(
                 order=order,
-                status='pending_offer'
+                status='pending'
             ).select_related('rider__rider')
 
             responses = []
@@ -20922,7 +20922,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "delivery_id": str(delivery.id),
                     "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery.rider else None,
                     "status": delivery.status,
-                    "has_responded": delivery.status != 'pending_offer'
+                    "has_responded": delivery.status != 'pending'
                 }
                 
                 # If delivery is accepted, mark it
@@ -20939,7 +20939,7 @@ class SellerOrderList(viewsets.ViewSet):
                 # Update other pending deliveries to cancelled
                 Delivery.objects.filter(
                     order=order,
-                    status='pending_offer'
+                    status='pending'
                 ).exclude(id=accepted_delivery.id).update(status='cancelled')
 
             return Response({
@@ -21010,7 +21010,7 @@ class SellerOrderList(viewsets.ViewSet):
         # Get delivery info from latest delivery
         delivery_info = None
         if latest_delivery:
-            is_pending_offer = latest_delivery.status == 'pending_offer'
+            is_pending_offer = latest_delivery.status == 'pending'
             
             delivery_info = {
                 "delivery_id": str(latest_delivery.id),
@@ -21080,7 +21080,7 @@ class SellerOrderList(viewsets.ViewSet):
             estimated_delivery = None
             
             if latest_delivery:
-                tracking_number = f"TRK-{str(latest_delivery.id)[:10]}" if not latest_delivery.status == 'pending_offer' else None
+                tracking_number = f"TRK-{str(latest_delivery.id)[:10]}" if not latest_delivery.status == 'pending' else None
                 shipping_method = "Standard Shipping" if not is_pickup else "Store Pickup"
                 estimated_delivery = self._get_estimated_delivery(latest_delivery)
             
@@ -21252,7 +21252,7 @@ class SellerOrderList(viewsets.ViewSet):
         }
         
         # Handle pending offers
-        if delivery_status == 'pending_offer':
+        if delivery_status == 'pending':
             return 'arrange_shipment'
         
         # Handle delivery-specific statuses
@@ -21326,7 +21326,7 @@ class SellerOrderList(viewsets.ViewSet):
             # Check if there's a pending delivery offer
             has_pending_offer = Delivery.objects.filter(
                 order=order,
-                status='pending_offer'
+                status='pending'
             ).exists()
 
             # Determine if it's a pickup order
@@ -21578,7 +21578,7 @@ class SellerOrderList(viewsets.ViewSet):
             
             has_pending_offer = Delivery.objects.filter(
                 order=order,
-                status='pending_offer'
+                status='pending'
             ).exists()
             
             # Check if order is pending approval after update
@@ -25705,7 +25705,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                     delivery = Delivery.objects.filter(
                         order__order=order_uuid,
                         rider=rider,
-                        status__in=['pending', 'pending_offer', 'accepted']
+                        status__in=['pending', 'accepted']
                     ).first()
                 except Exception:
                     delivery = None
@@ -32411,13 +32411,10 @@ class RiderDashboardViewSet(viewsets.ViewSet):
             
             # Post-process to normalize "pending_offer" to "pending"
             data = delivery_serializer.data
-            for delivery in data:
-                if delivery['status'] == 'pending_offer':
-                    delivery['status'] = 'pending'
             
             return Response({
                 'metrics': metrics,
-                'deliveries': data
+                'deliveries': delivery_serializer.data
             })
             
         except ValueError as e:
