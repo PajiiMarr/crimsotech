@@ -25263,7 +25263,8 @@ class RiderOrdersActive(viewsets.ViewSet):
             total=Count('id'),
             pending=Count('id', filter=Q(status='pending')),
             picked_up=Count('id', filter=Q(status='picked_up')),
-            delivered=Count('id', filter=Q(status='delivered'))
+            delivered=Count('id', filter=Q(status='delivered')),
+            declined=Count('id', filter=Q(status='declined'))
         )
         
         # Calculate expected earnings from active orders
@@ -25337,7 +25338,8 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "late_deliveries": total_completed - timely_deliveries,
                 "today_deliveries": today_deliveries,
                 "week_earnings": float(week_earnings),
-                "has_data": status_counts['total'] > 0
+                "has_data": status_counts['total'] > 0,
+                "declined_orders": status_counts['declined']
             }
         }
         
@@ -25821,6 +25823,113 @@ class RiderOrdersActive(viewsets.ViewSet):
             }
         })
 
+    @action(detail=False, methods=['post'])
+    def decline_order(self, request):
+        """
+        Rider declines an order assignment
+        Expects: order_id (Order UUID or Delivery UUID), reason (optional)
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        order_id = request.data.get('order_id')
+        reason = request.data.get('reason', '')  # Optional decline reason
+
+        if not order_id:
+            return Response(
+                {"success": False, "error": "order_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            order_uuid = uuid.UUID(str(order_id))
+        except (ValueError, AttributeError):
+            return Response(
+                {"success": False, "error": "Invalid order_id format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Try to treat order_id as a Delivery ID first
+        delivery = Delivery.objects.filter(id=order_uuid, rider=rider).first()
+
+        # If not found, treat as Order ID
+        if not delivery:
+            order = Order.objects.filter(order=order_uuid).first()
+            if not order:
+                return Response(
+                    {"success": False, "error": "Order not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            delivery = Delivery.objects.filter(order=order, rider=rider).first()
+
+            if not delivery:
+                return Response(
+                    {"success": False, "error": "Delivery not found for this order"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+        # Check if delivery can be declined
+        if delivery.status not in ['pending', 'accepted']:
+            return Response(
+                {"success": False, "error": f"Cannot decline order with status: {delivery.status}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Update delivery status to declined
+        delivery.status = 'declined'
+        delivery.updated_at = timezone.now()
+        
+        # Store decline reason if your model has this field
+        # delivery.decline_reason = reason
+        
+        delivery.save()
+
+        # INCREMENT THE RIDER'S DECLINED COUNT HERE
+        rider.declined_order_count += 1
+        rider.save()
+
+        # Create notification for the seller that rider declined
+        try:
+            # Get the shop from the order
+            checkout = Checkout.objects.filter(order=delivery.order).first()
+            if checkout and checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                shop = checkout.cart_item.product.shop
+                if shop and shop.customer and shop.customer.customer:
+                    Notification.objects.create(
+                        user=shop.customer.customer,
+                        title='Delivery Offer Declined',
+                        type='delivery',
+                        message=f'Rider {rider.rider.username if hasattr(rider, "rider") else "Unknown"} has declined delivery for order #{str(delivery.order.order)[:8]}' + (f'. Reason: {reason}' if reason else ''),
+                        is_read=False
+                    )
+        except Exception as e:
+            # Log error but don't fail the response
+            print(f"Error creating notification: {e}")
+
+        # Check if there are other pending deliveries for this order
+        other_pending = Delivery.objects.filter(
+            order=delivery.order,
+            status='pending'
+        ).exclude(id=delivery.id).exists()
+
+        return Response({
+            "success": True,
+            "message": "Order declined successfully",
+            "data": {
+                "delivery": {
+                    "id": str(delivery.id),
+                    "status": delivery.status,
+                    "order_id": str(delivery.order.order)
+                },
+                "other_riders_pending": other_pending,
+                "declined_at": delivery.updated_at.isoformat()
+            }
+        })
     
 class ProofManagementViewSet(viewsets.ViewSet):
     """ViewSet for managing delivery proofs"""
