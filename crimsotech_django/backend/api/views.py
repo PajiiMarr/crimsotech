@@ -51,7 +51,7 @@ from .utils.model_handler import ElectronicsClassifier
 import json
 from api.utils.storage_utils import convert_s3_to_public_url
 from django.shortcuts import get_object_or_404
-from backend.api.tasks import assign_deliveries_task, check_delivery_responses_task
+from .tasks import assign_deliveries_task, check_delivery_responses_task
 
 
 # Initialize classifier once (Django will cache this)
