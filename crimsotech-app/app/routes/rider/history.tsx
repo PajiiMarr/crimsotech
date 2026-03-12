@@ -73,7 +73,7 @@ interface OrderHistoryData {
   recipient_phone: string;
   
   // Delivery details
-  status: 'pending' | 'picked_up' | 'in_progress' | 'delivered' | 'completed' | 'cancelled';
+  status: 'pending' | 'accepted' | 'picked_up' | 'in_progress' | 'delivered' | 'completed' | 'cancelled' | 'declined';
   distance_km?: number;
   estimated_minutes?: number;
   actual_minutes?: number;
@@ -117,6 +117,7 @@ interface HistoryMetrics {
   delivered_count: number;
   completed_count: number;
   cancelled_count: number;
+  declined_count: number;
   total_earnings: number;
   avg_delivery_time: number;
   avg_rating: number;
@@ -152,15 +153,15 @@ const STATUS_CONFIG = {
     color: 'bg-yellow-100 text-yellow-800',
     icon: Clock
   },
-  pending_offer: { 
-    label: 'Pending Offer', 
-    color: 'bg-amber-100 text-amber-800',
-    icon: Clock
-  },
   accepted: {
     label: 'Accepted',
     color: 'bg-indigo-100 text-indigo-800',
     icon: CheckCircle
+  },
+  declined: {
+    label: 'Declined',
+    color: 'bg-red-100 text-red-800',
+    icon: AlertCircle
   },
   picked_up: { 
     label: 'In Transit', 
@@ -232,6 +233,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
       delivered_count: 0,
       completed_count: 0,
       cancelled_count: 0,
+      declined_count: 0,
       total_earnings: 0,
       avg_delivery_time: 0,
       avg_rating: 0,
@@ -297,6 +299,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
             delivered_count: 0,
             completed_count: 0,
             cancelled_count: 0,
+            declined_count: 0,
             total_earnings: 0,
             avg_delivery_time: 0,
             avg_rating: 0,
@@ -315,6 +318,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
           delivered_count: 0,
           completed_count: 0,
           cancelled_count: 0,
+          declined_count: 0,
           total_earnings: 0,
           avg_delivery_time: 0,
           avg_rating: 0,
@@ -331,6 +335,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
     // Fetch proofs for a delivery
     const fetchDeliveryProofs = async (deliveryId: string) => {
   setLoadingProofs(true);
+  setCurrentDeliveryId(deliveryId);
   try {
     const response = await AxiosInstance.get(`/rider-proof/delivery/${deliveryId}/proofs/`, {
       headers: { 'X-User-Id': user.user_id }
@@ -348,6 +353,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
     console.error('Error fetching proofs:', error);
   } finally {
     setLoadingProofs(false);
+    setCurrentDeliveryId(null);
   }
 };
 
@@ -452,6 +458,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
     const filteredTableData = useMemo(() => {
       const activeStatuses = ['pending', 'accepted', 'picked_up', 'in_progress'];
       const completedStatuses = ['delivered', 'completed']; // Include both delivered and completed
+      const cancelledStatuses = ['cancelled', 'declined']; // Include both cancelled and declined
 
       let filtered = historyData;
       
@@ -463,7 +470,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
           filtered = historyData.filter(d => completedStatuses.includes(d.status));
           break;
         case 'cancelled':
-          filtered = historyData.filter(d => d.status === 'cancelled');
+          filtered = historyData.filter(d => cancelledStatuses.includes(d.status));
           break;
       }
 
@@ -485,6 +492,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
     const getTabCount = (tabId: string) => {
       const activeStatuses = ['pending', 'accepted', 'picked_up', 'in_progress'];
       const completedStatuses = ['delivered', 'completed'];
+      const cancelledStatuses = ['cancelled', 'declined'];
 
       switch (tabId) {
         case 'active':
@@ -492,7 +500,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
         case 'completed':
           return historyData.filter(d => completedStatuses.includes(d.status)).length;
         case 'cancelled':
-          return historyData.filter(d => d.status === 'cancelled').length;
+          return historyData.filter(d => cancelledStatuses.includes(d.status)).length;
         default:
           return 0;
       }
@@ -544,9 +552,10 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
                     />
 
                     {/* Key Metrics - MINIMALIST (matching active orders) */}
-                    <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-2">
                       {isLoading ? (
                         <>
+                          <MetricCardSkeleton />
                           <MetricCardSkeleton />
                           <MetricCardSkeleton />
                           <MetricCardSkeleton />
@@ -565,7 +574,7 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
                                       <CheckCircle className="w-2 h-2 text-green-500" /> {metrics.delivered_count + metrics.completed_count}
                                     </span>
                                     <span className="flex items-center gap-0.5">
-                                      <AlertCircle className="w-2 h-2 text-red-500" /> {metrics.cancelled_count}
+                                      <AlertCircle className="w-2 h-2 text-red-500" /> {metrics.cancelled_count + metrics.declined_count}
                                     </span>
                                   </div>
                                 </div>
@@ -616,6 +625,21 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
                                 </div>
                                 <div className="p-1.5 bg-purple-100 rounded-full">
                                   <BarChart3 className="w-3 h-3 sm:w-4 sm:h-4 text-purple-600" />
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <Card>
+                            <CardContent className="p-3">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Declined Orders</p>
+                                  <p className="text-lg font-bold mt-1">{metrics.declined_count}</p>
+                                  <p className="text-[10px] text-muted-foreground mt-1">{metrics.cancelled_count} cancelled</p>
+                                </div>
+                                <div className="p-1.5 bg-orange-100 rounded-full">
+                                  <AlertCircle className="w-3 h-3 sm:w-4 sm:h-4 text-orange-600" />
                                 </div>
                               </div>
                             </CardContent>

@@ -136,6 +136,7 @@ interface Metrics {
   today_deliveries: number;
   week_earnings: number;
   has_data: boolean;
+  declined_orders: number;
 }
 
 interface Proof {
@@ -162,7 +163,6 @@ const STATUS_CONFIG = {
     color: 'bg-yellow-100 text-yellow-800',
     icon: Clock
   },
-
   accepted: {
     label: 'Accepted',
     color: 'bg-indigo-100 text-indigo-800',
@@ -230,15 +230,18 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     late_deliveries: 0,
     today_deliveries: 0,
     week_earnings: 0,
-    has_data: false
+    has_data: false,
+    declined_orders: 0
   });
   
   // State for loading and date range
   const [isLoading, setIsLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null);
-  const [actionType, setActionType] = useState<'pickup' | 'deliver' | null>(null);
+  const [actionType, setActionType] = useState<'pickup' | 'deliver' | 'decline' | null>(null);
   const [showActionDialog, setShowActionDialog] = useState(false);
+  const [showDeclineDialog, setShowDeclineDialog] = useState(false);
+  const [showLimitReachedDialog, setShowLimitReachedDialog] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState({
     start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
@@ -253,6 +256,9 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
   const [uploadingProofs, setUploadingProofs] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // State for decline warning
+  const [showDeclineWarning, setShowDeclineWarning] = useState(false);
 
   // Minimalist tabs for rider active orders (Pending / To Process)
   const [activeTab, setActiveTab] = useState<'pending' | 'to_process'>('pending');
@@ -269,6 +275,13 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     
     return () => window.removeEventListener('resize', checkIfDesktop);
   }, []);
+
+  // Show warning when approaching decline limit (at 2 declines)
+  useEffect(() => {
+    if (metrics.declined_orders === 2) {
+      setShowDeclineWarning(true);
+    }
+  }, [metrics.declined_orders]);
 
   // Fetch data function
   const fetchDeliveryData = async () => {
@@ -313,7 +326,8 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
         late_deliveries: 0,
         today_deliveries: 0,
         week_earnings: 0,
-        has_data: false
+        has_data: false,
+        declined_orders: 0
       });
       setDeliveries([]);
       setPendingOrders([]);
@@ -322,119 +336,161 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     }
   };
 
-  // Handle delivery action with proof of delivery
-  // Handle delivery action with proof of delivery
-const handleDeliverWithProof = async () => {
-  if (!selectedDelivery) return;
-
-  if (proofImages.length === 0) {
-    alert('Please take at least one photo as proof of delivery');
-    return;
-  }
-
-  try {
-    setUploadingProofs(true);
-    setUploadProgress(0);
-
-    // Upload each proof image
-    for (let i = 0; i < proofFiles.length; i++) {
-      const file = proofFiles[i];
-      const formData = new FormData();
-      formData.append('proof_type', 'delivery');
-      formData.append('file', file);
-
-      // 🔍 DEBUG: Log file info before upload
-      console.log('🔍 UPLOAD DEBUG ==================');
-      console.log('File name:', file.name);
-      console.log('File size:', file.size, 'bytes');
-      console.log('File type:', file.type);
-      console.log('Delivery ID:', selectedDelivery.id);
-      console.log('Upload URL:', `/rider-proof/upload/${selectedDelivery.id}/`);
+  // Handle decline order with backend
+  const handleDeclineOrder = async () => {
+    if (!selectedDelivery) return;
+    
+    try {
+      setIsActionLoading(true);
       
-      // Log FormData contents (for debugging)
-      for (let pair of (formData as any).entries()) {
-        console.log('FormData:', pair[0], pair[1]);
+      const formData = new FormData();
+      formData.append('order_id', selectedDelivery.id);
+
+      const response = await AxiosInstance.post('/rider-orders-active/decline_order/', formData, {
+        headers: {
+          'X-User-Id': user.user_id
+        }
+      });
+
+      console.debug('Decline order response:', response.data);
+
+      if (response.data.success) {
+        // Get the current count before refresh
+        const currentDeclinedCount = metrics.declined_orders;
+        
+        // Refresh data to get updated metrics
+        await fetchDeliveryData();
+        
+        // Close dialog
+        setShowDeclineDialog(false);
+        setSelectedDelivery(null);
+        setActionType(null);
+        
+        // Show success message
+        const newDeclinedCount = currentDeclinedCount + 1;
+        const remaining = 3 - newDeclinedCount;
+        
+        if (remaining > 0) {
+          alert(`Order declined successfully. You have ${remaining} decline${remaining !== 1 ? 's' : ''} remaining.`);
+        }
+      } else {
+        alert(response.data.error || 'Failed to decline order');
+      }
+    } catch (err: any) {
+      console.error('Error declining order:', err);
+      alert(err?.response?.data?.error || 'Failed to decline order');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  // Handle delivery action with proof of delivery
+  const handleDeliverWithProof = async () => {
+    if (!selectedDelivery) return;
+
+    if (proofImages.length === 0) {
+      alert('Please take at least one photo as proof of delivery');
+      return;
+    }
+
+    try {
+      setUploadingProofs(true);
+      setUploadProgress(0);
+
+      // Upload each proof image
+      for (let i = 0; i < proofFiles.length; i++) {
+        const file = proofFiles[i];
+        const formData = new FormData();
+        formData.append('proof_type', 'delivery');
+        formData.append('file', file);
+
+        console.log('🔍 UPLOAD DEBUG ==================');
+        console.log('File name:', file.name);
+        console.log('File size:', file.size, 'bytes');
+        console.log('File type:', file.type);
+        console.log('Delivery ID:', selectedDelivery.id);
+        console.log('Upload URL:', `/rider-proof/upload/${selectedDelivery.id}/`);
+      
+        for (let pair of (formData as any).entries()) {
+          console.log('FormData:', pair[0], pair[1]);
+        }
+
+        const response = await AxiosInstance.post(
+          `/rider-proof/upload/${selectedDelivery.id}/`,
+          formData,
+          {
+            headers: {
+              'X-User-Id': user.user_id,
+              'Content-Type': 'multipart/form-data'
+            }
+          }
+        );
+
+        console.log('✅ UPLOAD RESPONSE ==================');
+        console.log('Response status:', response.status);
+        console.log('Response data:', response.data);
+      
+        if (response.data && response.data.success) {
+          console.log('Proof uploaded successfully!');
+          console.log('File URL from server:', response.data.proof?.file_url);
+          console.log('File path in DB:', response.data.proof?.file_name);
+        }
+
+        setUploadProgress(((i + 1) / proofFiles.length) * 100);
       }
 
-      const response = await AxiosInstance.post(
-        `/rider-proof/upload/${selectedDelivery.id}/`,
-        formData,
+      // After all proofs are uploaded, mark as delivered
+      const deliverFormData = new FormData();
+      deliverFormData.append('delivery_id', selectedDelivery.id);
+      if (selectedDelivery.order?.order_id) {
+        deliverFormData.append('order_id', selectedDelivery.order.order_id);
+      }
+
+      const deliverResponse = await AxiosInstance.post(
+        '/rider-orders-active/deliver_order/',
+        deliverFormData,
         {
           headers: {
             'X-User-Id': user.user_id,
-            'Content-Type': 'multipart/form-data'
           }
         }
       );
 
-      // 🔍 DEBUG: Log server response
-      console.log('✅ UPLOAD RESPONSE ==================');
-      console.log('Response status:', response.status);
-      console.log('Response data:', response.data);
+      console.log('📦 DELIVERY RESPONSE ==================');
+      console.log('Delivery response:', deliverResponse.data);
+
+      if (deliverResponse.data.success) {
+        // Refresh data
+        await fetchDeliveryData();
+        // Close modal
+        setShowProofModal(false);
+        setProofImages([]);
+        setProofFiles([]);
+        setSelectedDelivery(null);
+        setActionType(null);
+        alert('Order delivered successfully with proof!');
+        // redirect to history page
+        navigate('/rider/orders/history');
+      } else {
+        alert(deliverResponse.data.error || 'Failed to mark order as delivered');
+      }
+    } catch (error: any) {
+      console.error('❌ ERROR ==================');
+      console.error('Error uploading proofs or marking delivery:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      console.error('Error headers:', error.response?.headers);
       
-      if (response.data && response.data.success) {
-        console.log('Proof uploaded successfully!');
-        console.log('File URL from server:', response.data.proof?.file_url);
-        console.log('File path in DB:', response.data.proof?.file_name);
+      if (error.response?.data) {
+        console.error('Server error details:', error.response.data);
       }
-
-      setUploadProgress(((i + 1) / proofFiles.length) * 100);
+      
+      alert(error.response?.data?.error || 'Failed to complete delivery');
+    } finally {
+      setUploadingProofs(false);
+      setUploadProgress(0);
     }
-
-    // After all proofs are uploaded, mark as delivered
-    const deliverFormData = new FormData();
-    deliverFormData.append('delivery_id', selectedDelivery.id);
-    if (selectedDelivery.order?.order_id) {
-      deliverFormData.append('order_id', selectedDelivery.order.order_id);
-    }
-
-    const deliverResponse = await AxiosInstance.post(
-      '/rider-orders-active/deliver_order/',
-      deliverFormData,
-      {
-        headers: {
-          'X-User-Id': user.user_id,
-        }
-      }
-    );
-
-    // 🔍 DEBUG: Log delivery response
-    console.log('📦 DELIVERY RESPONSE ==================');
-    console.log('Delivery response:', deliverResponse.data);
-
-    if (deliverResponse.data.success) {
-      // Refresh data
-      await fetchDeliveryData();
-      // Close modal
-      setShowProofModal(false);
-      setProofImages([]);
-      setProofFiles([]);
-      setSelectedDelivery(null);
-      setActionType(null);
-      alert('Order delivered successfully with proof!');
-      // redirect to history page
-      navigate('/rider/orders/history');
-    } else {
-      alert(deliverResponse.data.error || 'Failed to mark order as delivered');
-    }
-  } catch (error: any) {
-    console.error('❌ ERROR ==================');
-    console.error('Error uploading proofs or marking delivery:', error);
-    console.error('Error response:', error.response?.data);
-    console.error('Error status:', error.response?.status);
-    console.error('Error headers:', error.response?.headers);
-    
-    // Try to get more details about the error
-    if (error.response?.data) {
-      console.error('Server error details:', error.response.data);
-    }
-    
-    alert(error.response?.data?.error || 'Failed to complete delivery');
-  } finally {
-    setUploadingProofs(false);
-    setUploadProgress(0);
-  }
-};
+  };
 
   // Handle camera capture
   const handleCameraCapture = () => {
@@ -547,6 +603,19 @@ const handleDeliverWithProof = async () => {
     setShowProofModal(true); // Directly open proof modal
   };
 
+  // Handle decline click - open confirmation modal or limit reached modal
+  const handleDeclineClick = (delivery: Delivery) => {
+    if (metrics.declined_orders >= 3) {
+      // Show limit reached modal
+      setSelectedDelivery(delivery);
+      setShowLimitReachedDialog(true);
+      return;
+    }
+    setSelectedDelivery(delivery);
+    setActionType('decline');
+    setShowDeclineDialog(true);
+  };
+
   // Accept a delivery (calls backend accept_order endpoint)
   const handleAcceptDelivery = async (delivery: Delivery) => {
     try {
@@ -560,13 +629,11 @@ const handleDeliverWithProof = async () => {
         }
       });
 
-      // DEBUG: show server response so we can confirm persisted status
       console.debug('rider/accept_order response', response.data);
 
       if (response.data.success) {
         // update UI to show 'accepted' status (frontend representation)
         setDeliveries(prev => prev.map(d => d.id === delivery.id ? { ...d, status: 'accepted' } : d));
-        // if currently selectedDelivery is the same, update it too
         if (selectedDelivery?.id === delivery.id) {
           setSelectedDelivery(prev => prev ? { ...prev, status: 'accepted' } : prev);
         }
@@ -580,21 +647,6 @@ const handleDeliverWithProof = async () => {
       alert(err?.response?.data?.error || 'Failed to accept order');
     } finally {
       setIsActionLoading(false);
-    }
-  };
-
-  // Decline a delivery (no server endpoint available — remove locally and refresh)
-  const handleDeclineDelivery = async (deliveryId: string) => {
-    // optimistic UI: remove from list immediately for feedback
-    setDeliveries(prev => prev.filter(d => d.id !== deliveryId));
-    // attempt a refresh to sync with server
-    try {
-      await fetchDeliveryData();
-      alert('Order declined');
-    } catch (err) {
-      // still succeed locally
-      console.warn('Decline refresh failed, delivery removed locally', err);
-      alert('Order declined (local)');
     }
   };
 
@@ -750,9 +802,10 @@ const handleDeliverWithProof = async () => {
           />
 
           {/* Key Metrics - MINIMALIST */}
-          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-2">
             {isLoading ? (
               <>
+                <MetricCardSkeleton />
                 <MetricCardSkeleton />
                 <MetricCardSkeleton />
                 <MetricCardSkeleton />
@@ -843,9 +896,176 @@ const handleDeliverWithProof = async () => {
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* Decline Orders Metric Card */}
+                <Card>
+                  <CardContent className="p-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Declined Orders</p>
+                        <p className="text-lg font-bold mt-1">
+                          {metrics.declined_orders}/3
+                        </p>
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          {metrics.today_deliveries} total deliveries
+                        </p>
+                      </div>
+                      <div className={`p-1.5 rounded-full ${metrics.declined_orders >= 3 ? 'bg-red-100' : 'bg-orange-100'}`}>
+                        <AlertCircle className={`w-3 h-3 sm:w-4 sm:h-4 ${metrics.declined_orders >= 3 ? 'text-red-600' : 'text-orange-600'}`} />
+                      </div>
+                    </div>
+                    {/* Progress bar for decline limit */}
+                    <div className="mt-2">
+                      <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div 
+                          className={`h-1.5 rounded-full transition-all ${
+                            metrics.declined_orders >= 3 ? 'bg-red-600' : 
+                            metrics.declined_orders >= 2 ? 'bg-orange-500' : 'bg-yellow-500'
+                          }`}
+                          style={{ width: `${(metrics.declined_orders / 3) * 100}%` }}
+                        />
+                      </div>
+                      <p className="text-[8px] text-gray-500 mt-1">
+                        {metrics.declined_orders >= 3 
+                          ? 'Decline limit reached - cannot decline more orders' 
+                          : `${3 - metrics.declined_orders} decline${3 - metrics.declined_orders !== 1 ? 's' : ''} remaining`}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
               </>
             )}
           </div>
+
+          {/* Approaching Decline Limit Warning Modal (shows at 2 declines) */}
+          <AlertDialog open={showDeclineWarning} onOpenChange={setShowDeclineWarning}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle className="flex items-center gap-2 text-orange-600">
+                  <AlertCircle className="w-5 h-5" />
+                  Approaching Decline Limit
+                </AlertDialogTitle>
+                <AlertDialogDescription className="space-y-2">
+                  <p>
+                    You have declined {metrics.declined_orders} out of 3 allowed orders.
+                  </p>
+                  <p className="font-medium text-orange-600">
+                    You have {3 - metrics.declined_orders} decline{3 - metrics.declined_orders !== 1 ? 's' : ''} remaining.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Reaching the limit will prevent you from declining further orders.
+                  </p>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogAction 
+                  onClick={() => setShowDeclineWarning(false)} 
+                  className="bg-orange-600 hover:bg-orange-700 text-xs h-8"
+                >
+                  Understood
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          {/* Decline Limit Reached Modal (shows at 3 declines) */}
+          <AlertDialog open={showLimitReachedDialog} onOpenChange={setShowLimitReachedDialog}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+                  <AlertCircle className="w-5 h-5" />
+                  Decline Limit Reached
+                </AlertDialogTitle>
+                <AlertDialogDescription className="space-y-3">
+                  <p className="text-sm">
+                    You have reached the maximum number of declined orders (3).
+                  </p>
+                  <div className="bg-muted p-3 rounded space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="font-medium">Order ID:</span>
+                      <span className="font-mono">#{selectedDelivery?.order.order_id?.slice(-8)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Customer:</span>
+                      <span>{selectedDelivery?.order.customer.first_name} {selectedDelivery?.order.customer.last_name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Amount:</span>
+                      <span className="font-bold">{selectedDelivery ? formatCurrency(selectedDelivery.order.total_amount) : '₱0.00'}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-red-600 font-medium mt-2">
+                    You cannot decline any more orders. Please accept this order or wait for it to expire.
+                  </p>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogAction 
+                  onClick={() => {
+                    setShowLimitReachedDialog(false);
+                    setSelectedDelivery(null);
+                  }} 
+                  className="bg-red-600 hover:bg-red-700 text-xs h-8"
+                >
+                  Understood
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          {/* Decline Confirmation Dialog */}
+          {selectedDelivery && actionType === 'decline' && (
+            <AlertDialog open={showDeclineDialog} onOpenChange={setShowDeclineDialog}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+                    <AlertCircle className="w-5 h-5" />
+                    Decline Order
+                  </AlertDialogTitle>
+                  <AlertDialogDescription className="space-y-3">
+                    <p className="text-sm">
+                      Are you sure you want to decline this order?
+                    </p>
+                    <div className="bg-muted p-3 rounded space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="font-medium">Order ID:</span>
+                        <span className="font-mono">#{selectedDelivery.order.order_id?.slice(-8)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Customer:</span>
+                        <span>{selectedDelivery.order.customer.first_name} {selectedDelivery.order.customer.last_name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Amount:</span>
+                        <span className="font-bold">{formatCurrency(selectedDelivery.order.total_amount)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Remaining declines:</span>
+                        <span className={`font-bold ${3 - metrics.declined_orders <= 1 ? 'text-red-600' : 'text-orange-600'}`}>
+                          {3 - metrics.declined_orders - 1} left
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      This action cannot be undone. The order will be reassigned to another rider.
+                    </p>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isActionLoading} className="text-xs h-8">
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleDeclineOrder}
+                    disabled={isActionLoading}
+                    className="text-xs h-8 bg-red-600 hover:bg-red-700"
+                  >
+                    {isActionLoading ? "Processing..." : 'Yes, Decline Order'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
 
           {/* Pickup Action Confirmation Dialog */}
           {selectedDelivery && actionType === 'pickup' && (
@@ -1059,6 +1279,7 @@ const handleDeliverWithProof = async () => {
                       const isExpanded = expandedDeliveries.has(delivery.id);
                       const customer = delivery.order.customer;
                       const address = delivery.order.shipping_address;
+                      const isDeclineDisabled = metrics.declined_orders >= 3;
                       
                       return (
                         <Card key={delivery.id} className="overflow-hidden border">
@@ -1170,10 +1391,19 @@ const handleDeliverWithProof = async () => {
                                     <Button
                                       size="sm"
                                       variant="ghost"
-                                      className="h-6 px-2 text-[10px] text-red-600 hover:bg-red-50"
-                                      onClick={async () => { if (!confirm('Decline this delivery?')) return; await handleDeclineDelivery(delivery.id); }}
+                                      className={`h-6 px-2 text-[10px] ${
+                                        isDeclineDisabled 
+                                          ? 'text-gray-400 cursor-not-allowed hover:bg-transparent' 
+                                          : 'text-red-600 hover:bg-red-50'
+                                      }`}
+                                      onClick={() => handleDeclineClick(delivery)}
+                                      disabled={isActionLoading}
+                                      title={isDeclineDisabled ? 'Decline limit reached (3/3)' : 'Decline this order'}
                                     >
                                       <span className="text-xs">Decline</span>
+                                      {isDeclineDisabled && (
+                                        <span className="ml-1 text-[8px]">(Limit reached)</span>
+                                      )}
                                     </Button>
 
                                     <Button
@@ -1181,6 +1411,7 @@ const handleDeliverWithProof = async () => {
                                       variant="ghost"
                                       className="h-6 px-2 text-[10px] text-green-600 hover:bg-green-50"
                                       onClick={() => handleAcceptDelivery(delivery)}
+                                      disabled={isActionLoading}
                                     >
                                       <CheckCircle className="w-2.5 h-2.5 mr-1" />
                                       Accept
@@ -1204,19 +1435,11 @@ const handleDeliverWithProof = async () => {
                                       variant="ghost"
                                       className="h-6 px-2 text-[10px] text-red-600 hover:bg-red-50"
                                       onClick={() => handleMarkFailed(delivery)}
+                                      disabled={isActionLoading}
                                     >
                                       <span className="text-xs">Mark Failed</span>
                                     </Button>
                                   </>
-                                ) : delivery.status === 'pending' ? (
-                                  <Button 
-                                    size="sm" 
-                                    onClick={() => handlePickupClick(delivery)}
-                                    className="h-6 px-2 text-[10px]"
-                                  >
-                                    <Package className="w-2.5 h-2.5 mr-1" />
-                                    Pick Up
-                                  </Button>
                                 ) : delivery.status === 'picked_up' ? (
                                   <Button 
                                     size="sm" 

@@ -1086,6 +1086,7 @@ class RiderMetricsSerializer(serializers.Serializer):
     current_month_earnings = serializers.DecimalField(max_digits=12, decimal_places=2)
     has_data = serializers.BooleanField()
     growth_metrics = serializers.DictField(required=False)
+    declined_orders = serializers.IntegerField() 
 
 class LogsSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
