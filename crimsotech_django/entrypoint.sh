@@ -20,7 +20,7 @@ else
 fi
 
 echo ">>> flushing database"
-python manage.py flush
+python manage.py flush --noinput
 
 echo ">>> seeding data"
 python manage.py seed_data
