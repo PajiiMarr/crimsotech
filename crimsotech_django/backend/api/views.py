@@ -1488,86 +1488,76 @@ class AdminDashboard(viewsets.ViewSet):
             raise
 
     def _get_shop_analytics_data(self, start_date, end_date):
-        """Extract shop analytics data with date filtering"""
-        try:
-            # Get shop performance using Checkout model
-            shop_stats = Checkout.objects.filter(
-                created_at__gte=start_date,
-                created_at__lte=end_date,
-                cart_item__product__shop__isnull=False
-            ).values(
-                'cart_item__product__shop__id',
-                'cart_item__product__shop__name'
-            ).annotate(
-                total_sales=Sum('total_amount'),
-                order_count=Count('order', distinct=True)
-            ).order_by('-total_sales')[:10]
+            try:
+                shop_stats = Checkout.objects.filter(
+                    created_at__gte=start_date,
+                    created_at__lte=end_date,
+                    cart_item__product__shop__isnull=False
+                ).values(
+                    'cart_item__product__shop__id',
+                    'cart_item__product__shop__name'
+                ).annotate(
+                    total_sales=Sum('total_amount'),
+                    order_count=Count('order', distinct=True)
+                ).order_by('-total_sales')[:10]
 
-            shop_performance = []
-            for stat in shop_stats:
-                shop_id = stat['cart_item__product__shop__id']
-                shop_name = stat['cart_item__product__shop__name'] or 'Unknown Shop'
+                shop_performance = []
+                for stat in shop_stats:
+                    shop_id = stat['cart_item__product__shop__id']
+                    shop_name = stat['cart_item__product__shop__name'] or 'Unknown Shop'
 
-                # Get the shop object
-                try:
-                    shop = Shop.objects.get(id=shop_id)
+                    try:
+                        shop = Shop.objects.get(id=shop_id)
 
-                    # Get average rating for this shop
-                    avg_rating = Review.objects.filter(
-                        shop=shop,
-                        created_at__date__gte=start_date,
-                        created_at__date__lte=end_date
-                    ).aggregate(avg=Avg('rating'))['avg'] or 0
+                        avg_rating = Review.objects.filter(
+                            shop=shop,
+                            created_at__date__gte=start_date,
+                            created_at__date__lte=end_date
+                        ).aggregate(avg=Avg('average_rating'))['avg'] or 0
 
-                    # Get follower count
-                    follower_count = ShopFollow.objects.filter(shop=shop).count()
+                        follower_count = ShopFollow.objects.filter(shop=shop).count()
 
-                    # Get active product count (products that are not removed and published)
-                    product_count = Product.objects.filter(
-                        shop=shop,
-                        is_removed=False,
-                        upload_status='published'
-                    ).count()
+                        product_count = Product.objects.filter(
+                            shop=shop,
+                            is_removed=False,
+                            upload_status='published'
+                        ).count()
 
-                    shop_performance.append({
-                        'name': shop_name,
-                        'sales': float(stat['total_sales'] or 0),
-                        'orders': stat['order_count'] or 0,
-                        'rating': round(float(avg_rating), 1),
-                        'followers': follower_count,
-                        'products': product_count,
-                    })
-                except Shop.DoesNotExist:
-                    continue
+                        shop_performance.append({
+                            'name': shop_name,
+                            'sales': float(stat['total_sales'] or 0),
+                            'orders': stat['order_count'] or 0,
+                            'rating': round(float(avg_rating), 1),
+                            'followers': follower_count,
+                            'products': product_count,
+                        })
+                    except Shop.DoesNotExist:
+                        continue
 
-            return {
-                'shop_performance': shop_performance,
-            }
-        except Exception as e:
-            print(f"Error in _get_shop_analytics_data: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            raise
+                return {
+                    'shop_performance': shop_performance,
+                }
+            except Exception as e:
+                print(f"Error in _get_shop_analytics_data: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                raise
+        
 
     def _get_operational_data(self, start_date, end_date):
-        """Extract operational metrics data with date filtering"""
         try:
-            # Active Boosts within date range
             active_boosts = Boost.objects.filter(
                 start_date__date__lte=end_date,
                 end_date__date__gte=start_date,
                 status='active'
             ).count()
 
-            # Pending Refunds within date range
             pending_refunds = Refund.objects.filter(
                 requested_at__date__gte=start_date,
                 requested_at__date__lte=end_date,
                 status='pending'
             ).count()
 
-            # Low Stock Products (current snapshot)
-            # Note: Product model doesn't have quantity field directly, need to use Variants
             low_stock_variants = Variants.objects.filter(
                 quantity__lt=5,
                 is_active=True,
@@ -1575,27 +1565,23 @@ class AdminDashboard(viewsets.ViewSet):
                 product__upload_status='published'
             ).values('product').distinct().count()
 
-            # Average Rating from Reviews within date range
             avg_rating = Review.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
             ).aggregate(
-                avg_rating=Avg('rating')
+                avg_rating=Avg('average_rating')
             )['avg_rating'] or 0
 
-            # Pending Reports within date range
             pending_reports = Report.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date,
                 status='pending'
             ).count()
 
-            # Active Riders (current snapshot)
             active_riders = Rider.objects.filter(
                 verified=True
             ).count()
 
-            # Active Vouchers within date range
             active_vouchers = Voucher.objects.filter(
                 is_active=True,
                 added_at__lte=end_date,
@@ -1605,7 +1591,7 @@ class AdminDashboard(viewsets.ViewSet):
             return {
                 'active_boosts': active_boosts,
                 'pending_refunds': pending_refunds,
-                'low_stock_products': low_stock_variants,  # Changed to count of products with low stock variants
+                'low_stock_products': low_stock_variants,
                 'avg_rating': round(float(avg_rating), 1),
                 'pending_reports': pending_reports,
                 'active_riders': active_riders,
@@ -1617,6 +1603,7 @@ class AdminDashboard(viewsets.ViewSet):
             traceback.print_exc()
             raise
 
+    
     # Helper methods
     def _get_status_color(self, status):
         """Get color code for order status"""
@@ -1633,33 +1620,17 @@ class AdminDashboard(viewsets.ViewSet):
     
 
 class AdminAnalytics(viewsets.ViewSet):
-    """
-    ViewSet for admin analytics data with date range filtering
-    """
-
-    
     @action(detail=False, methods=['get'])
     def get_comprehensive_analytics(self, request):
-        """
-        Get all analytics data in a single endpoint with date range filtering
-        
-        Query Parameters:
-        - start_date: Start date in YYYY-MM-DD format (optional)
-        - end_date: End date in YYYY-MM-DD format (optional)
-        - range_type: Type of date range grouping ('daily', 'weekly', 'monthly', 'yearly')
-        """
         try:
-            # Get date range parameters
             start_date_str = request.query_params.get('start_date')
             end_date_str = request.query_params.get('end_date')
             date_range_type = request.query_params.get('range_type', 'weekly')
             
-            # Validate range_type
             valid_range_types = ['daily', 'weekly', 'monthly', 'yearly', 'custom']
             if date_range_type not in valid_range_types:
                 date_range_type = 'weekly'
             
-            # Parse dates
             start_date = None
             end_date = None
             
@@ -1673,16 +1644,13 @@ class AdminAnalytics(viewsets.ViewSet):
                         'error': f'Invalid date format. Use YYYY-MM-DD. Error: {str(e)}'
                     }, status=status.HTTP_400_BAD_REQUEST)
             else:
-                # Default to last 7 days if no dates provided
                 end_date = timezone.now().date()
                 start_date = end_date - timedelta(days=6)
             
-            # Ensure start_date is not after end_date
             if start_date > end_date:
                 start_date, end_date = end_date, start_date
             
-            # Validate date range (optional: limit to prevent excessive queries)
-            max_days = 365 * 2  # 2 years max
+            max_days = 365 * 2
             date_range_days = (end_date - start_date).days
             if date_range_days > max_days:
                 return Response({
@@ -1690,7 +1658,6 @@ class AdminAnalytics(viewsets.ViewSet):
                     'error': f'Date range exceeds maximum allowed ({max_days} days)'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get data from all analytics sections with date filtering
             order_sales_data = self._get_order_sales_analytics(start_date, end_date, date_range_type)
             user_customer_data = self._get_user_customer_analytics(start_date, end_date, date_range_type)
             product_inventory_data = self._get_product_inventory_analytics(start_date, end_date)
@@ -1734,13 +1701,10 @@ class AdminAnalytics(viewsets.ViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _get_order_sales_analytics(self, start_date, end_date, range_type='weekly'):
-        """Get order and sales analytics data with date filtering"""
         try:
             date_range_days = (end_date - start_date).days + 1
             
-            # Determine grouping based on range type
             if range_type == 'daily' or date_range_days <= 7:
-                # Daily grouping
                 current_date = start_date
                 order_metrics_data = []
                 
@@ -1753,7 +1717,6 @@ class AdminAnalytics(viewsets.ViewSet):
                         avg_order_value=Avg('total_amount')
                     )
                     
-                    # Calculate refunds separately - count cancelled orders as refunds
                     refunds = Order.objects.filter(
                         created_at__date=current_date,
                         status='cancelled'
@@ -1770,7 +1733,6 @@ class AdminAnalytics(viewsets.ViewSet):
                     current_date += timedelta(days=1)
                     
             elif range_type == 'monthly' or date_range_days > 60:
-                # Monthly grouping
                 monthly_orders = Order.objects.filter(
                     created_at__date__gte=start_date,
                     created_at__date__lte=end_date
@@ -1785,7 +1747,6 @@ class AdminAnalytics(viewsets.ViewSet):
                 order_metrics_data = []
                 for month_data in monthly_orders:
                     if month_data['month']:
-                        # Calculate refunds for this month
                         month_start = month_data['month'].date()
                         month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
                         
@@ -1803,7 +1764,6 @@ class AdminAnalytics(viewsets.ViewSet):
                             'refunds': refunds,
                         })
             else:
-                # Weekly grouping
                 current_date = start_date
                 week_num = 1
                 order_metrics_data = []
@@ -1820,7 +1780,6 @@ class AdminAnalytics(viewsets.ViewSet):
                         avg_order_value=Avg('total_amount')
                     )
                     
-                    # Calculate refunds for this week
                     refunds = Order.objects.filter(
                         created_at__date__gte=current_date,
                         created_at__date__lte=week_end,
@@ -1838,7 +1797,6 @@ class AdminAnalytics(viewsets.ViewSet):
                     current_date = week_end + timedelta(days=1)
                     week_num += 1
             
-            # Order status distribution (within date range)
             order_status_data = Order.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
@@ -1854,7 +1812,6 @@ class AdminAnalytics(viewsets.ViewSet):
                     'color': self._get_status_color(status_data['status'])
                 })
             
-            # Payment method distribution (within date range)
             payment_methods = Order.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
@@ -1892,13 +1849,10 @@ class AdminAnalytics(viewsets.ViewSet):
             }
     
     def _get_user_customer_analytics(self, start_date, end_date, range_type='weekly'):
-        """Get user and customer analytics data with date filtering"""
         try:
             date_range_days = (end_date - start_date).days + 1
             
-            # Determine grouping based on range type
             if range_type == 'monthly' or date_range_days > 60:
-                # Monthly grouping
                 monthly_users = User.objects.filter(
                     is_customer=True,
                     created_at__date__gte=start_date,
@@ -1912,7 +1866,6 @@ class AdminAnalytics(viewsets.ViewSet):
                 user_growth_data = []
                 for month_data in monthly_users:
                     if month_data['month']:
-                        # Calculate returning users
                         month_start = month_data['month'].date()
                         month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
                         
@@ -1930,7 +1883,6 @@ class AdminAnalytics(viewsets.ViewSet):
                             'total': month_data['new_users'] + returning_users,
                         })
             else:
-                # Weekly grouping
                 current_date = start_date
                 week_num = 1
                 user_growth_data = []
@@ -1961,7 +1913,6 @@ class AdminAnalytics(viewsets.ViewSet):
                     current_date = week_end + timedelta(days=1)
                     week_num += 1
             
-            # User role distribution (current snapshot)
             total_users = User.objects.count()
             role_distribution = []
             
@@ -1989,7 +1940,6 @@ class AdminAnalytics(viewsets.ViewSet):
                     },
                 ]
             
-            # Registration stage distribution (current snapshot) - Note: registration_stage is on User model
             stage_distribution = User.objects.filter(
                 registration_stage__isnull=False
             ).values('registration_stage').annotate(
@@ -2020,9 +1970,7 @@ class AdminAnalytics(viewsets.ViewSet):
             }
     
     def _get_product_inventory_analytics(self, start_date, end_date):
-        """Get product and inventory analytics data with date filtering"""
         try:
-            # Top performing products (within date range)
             product_stats = Checkout.objects.filter(
                 created_at__gte=start_date,
                 created_at__lte=end_date,
@@ -2043,7 +1991,6 @@ class AdminAnalytics(viewsets.ViewSet):
                 try:
                     product = Product.objects.get(id=product_id)
                     
-                    # Get views count (within date range) - using CustomerActivity model
                     views = CustomerActivity.objects.filter(
                         product=product,
                         activity_type='view',
@@ -2051,10 +1998,7 @@ class AdminAnalytics(viewsets.ViewSet):
                         created_at__date__lte=end_date
                     ).count()
                     
-                    # Get favorites count (total, not date filtered as Favorites lacks timestamp)
                     favorites = Favorites.objects.filter(product=product).count()
-                    
-                    # Get total stock from variants
                     total_stock = product.total_stock
                     
                     product_performance.append({
@@ -2068,7 +2012,6 @@ class AdminAnalytics(viewsets.ViewSet):
                 except Product.DoesNotExist:
                     continue
             
-            # Category performance (within date range)
             category_stats = Checkout.objects.filter(
                 created_at__gte=start_date,
                 created_at__lte=end_date,
@@ -2089,12 +2032,11 @@ class AdminAnalytics(viewsets.ViewSet):
                 try:
                     category = Category.objects.get(id=category_id)
                     
-                    # Get average rating for products in this category
                     avg_rating = Review.objects.filter(
                         product__category=category,
                         created_at__date__gte=start_date,
                         created_at__date__lte=end_date
-                    ).aggregate(avg=Avg('rating'))['avg'] or 0
+                    ).aggregate(avg=Avg('average_rating'))['avg'] or 0
                     
                     category_data.append({
                         'category': category_name,
@@ -2105,7 +2047,6 @@ class AdminAnalytics(viewsets.ViewSet):
                 except Category.DoesNotExist:
                     continue
             
-            # Inventory status (current snapshot based on variants)
             products_with_low_stock = 0
             products_with_stock = 0
             products_out_of_stock = 0
@@ -2120,24 +2061,11 @@ class AdminAnalytics(viewsets.ViewSet):
                     products_out_of_stock += 1
             
             inventory_status = [
-                {
-                    'status': 'In Stock',
-                    'count': products_with_stock,
-                    'color': '#10b981'
-                },
-                {
-                    'status': 'Low Stock',
-                    'count': products_with_low_stock,
-                    'color': '#f59e0b'
-                },
-                {
-                    'status': 'Out of Stock',
-                    'count': products_out_of_stock,
-                    'color': '#ef4444'
-                },
+                {'status': 'In Stock', 'count': products_with_stock, 'color': '#10b981'},
+                {'status': 'Low Stock', 'count': products_with_low_stock, 'color': '#f59e0b'},
+                {'status': 'Out of Stock', 'count': products_out_of_stock, 'color': '#ef4444'},
             ]
             
-            # Product engagement data (within date range)
             engagement_data = [
                 {
                     'activity': 'Product Views',
@@ -2156,7 +2084,7 @@ class AdminAnalytics(viewsets.ViewSet):
                 },
                 {
                     'activity': 'Wishlist Adds',
-                    'count': Favorites.objects.count()  # Favorites don't have timestamps
+                    'count': Favorites.objects.count()
                 },
                 {
                     'activity': 'Reviews Posted',
@@ -2185,9 +2113,7 @@ class AdminAnalytics(viewsets.ViewSet):
             }
     
     def _get_shop_merchant_analytics(self, start_date, end_date, range_type='weekly'):
-        """Get shop and merchant analytics data with date filtering"""
         try:
-            # Top performing shops (within date range)
             shop_stats = Checkout.objects.filter(
                 created_at__gte=start_date,
                 created_at__lte=end_date,
@@ -2212,7 +2138,7 @@ class AdminAnalytics(viewsets.ViewSet):
                         shop=shop,
                         created_at__date__gte=start_date,
                         created_at__date__lte=end_date
-                    ).aggregate(avg=Avg('rating'))['avg'] or 0
+                    ).aggregate(avg=Avg('average_rating'))['avg'] or 0
                     
                     follower_count = ShopFollow.objects.filter(shop=shop).count()
                     product_count = Product.objects.filter(
@@ -2232,7 +2158,6 @@ class AdminAnalytics(viewsets.ViewSet):
                 except Shop.DoesNotExist:
                     continue
             
-            # Shop growth over time (within date range)
             date_range_days = (end_date - start_date).days + 1
             
             if range_type == 'monthly' or date_range_days > 60:
@@ -2266,7 +2191,6 @@ class AdminAnalytics(viewsets.ViewSet):
                             'followers': total_followers
                         })
             else:
-                # Weekly grouping
                 current_date = start_date
                 week_num = 1
                 shop_growth_data = []
@@ -2297,7 +2221,6 @@ class AdminAnalytics(viewsets.ViewSet):
                     current_date = week_end + timedelta(days=1)
                     week_num += 1
             
-            # Shop locations (current snapshot) - using city field from Shop model
             shop_locations = Shop.objects.exclude(
                 Q(city__isnull=True) | Q(city='')
             ).values('city').annotate(
@@ -2306,7 +2229,6 @@ class AdminAnalytics(viewsets.ViewSet):
             
             location_data = []
             for location in shop_locations:
-                # Calculate revenue for shops in this location (within date range)
                 location_revenue = Checkout.objects.filter(
                     created_at__gte=start_date,
                     created_at__lte=end_date,
@@ -2335,9 +2257,7 @@ class AdminAnalytics(viewsets.ViewSet):
             }
     
     def _get_boost_promotion_analytics(self, start_date, end_date):
-        """Get boost and promotion analytics data with date filtering"""
         try:
-            # Boost performance data (within date range)
             boost_performance = Boost.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
@@ -2350,8 +2270,6 @@ class AdminAnalytics(viewsets.ViewSet):
             
             boost_performance_data = []
             for boost in boost_performance:
-                # Calculate revenue separately since boost_plan__price might not exist directly
-                # We need to get the boost plan price
                 boost_plan_name = boost['boost_plan__name']
                 if boost_plan_name:
                     try:
@@ -2369,23 +2287,10 @@ class AdminAnalytics(viewsets.ViewSet):
                     'active_boosts': boost['active_boosts']
                 })
             
-            # Active boost status (current snapshot)
             active_boost_status = [
-                {
-                    'status': 'Active',
-                    'count': Boost.objects.filter(status='active').count(),
-                    'color': '#10b981'
-                },
-                {
-                    'status': 'Pending',
-                    'count': Boost.objects.filter(status='pending').count(),
-                    'color': '#f59e0b'
-                },
-                {
-                    'status': 'Expired',
-                    'count': Boost.objects.filter(status='expired').count(),
-                    'color': '#6b7280'
-                },
+                {'status': 'Active', 'count': Boost.objects.filter(status='active').count(), 'color': '#10b981'},
+                {'status': 'Pending', 'count': Boost.objects.filter(status='pending').count(), 'color': '#f59e0b'},
+                {'status': 'Expired', 'count': Boost.objects.filter(status='expired').count(), 'color': '#6b7280'},
             ]
             
             return {
@@ -2402,9 +2307,7 @@ class AdminAnalytics(viewsets.ViewSet):
             }
     
     def _get_rider_delivery_analytics(self, start_date, end_date):
-        """Get rider and delivery analytics data with date filtering"""
         try:
-            # Rider performance (within date range)
             rider_performance = Rider.objects.annotate(
                 delivery_count=Count(
                     'delivery',
@@ -2435,7 +2338,6 @@ class AdminAnalytics(viewsets.ViewSet):
                     'successRate': round(success_rate, 1)
                 })
             
-            # Delivery status distribution (within date range)
             delivery_status_data = Delivery.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
@@ -2445,13 +2347,8 @@ class AdminAnalytics(viewsets.ViewSet):
             
             status_distribution = []
             color_map = {
-                'pending': '#f59e0b',
-                'picked_up': '#3b82f6',
-                'in_progress': '#8b5cf6',
-                'delivered': '#10b981',
-                'cancelled': '#ef4444',
-                'declined': '#6b7280',
-                'accepted': '#3b82f6',
+                'pending': '#f59e0b', 'picked_up': '#3b82f6', 'in_progress': '#8b5cf6',
+                'delivered': '#10b981', 'cancelled': '#ef4444', 'declined': '#6b7280', 'accepted': '#3b82f6',
             }
             for status_data in delivery_status_data:
                 status_distribution.append({
@@ -2460,18 +2357,9 @@ class AdminAnalytics(viewsets.ViewSet):
                     'color': color_map.get(status_data['status'], '#6b7280')
                 })
             
-            # Rider verification status (current snapshot)
             rider_verification_data = [
-                {
-                    'status': 'Verified',
-                    'count': Rider.objects.filter(verified=True).count(),
-                    'color': '#10b981'
-                },
-                {
-                    'status': 'Pending',
-                    'count': Rider.objects.filter(verified=False).count(),
-                    'color': '#f59e0b'
-                },
+                {'status': 'Verified', 'count': Rider.objects.filter(verified=True).count(), 'color': '#10b981'},
+                {'status': 'Pending', 'count': Rider.objects.filter(verified=False).count(), 'color': '#f59e0b'},
             ]
             
             return {
@@ -2490,10 +2378,7 @@ class AdminAnalytics(viewsets.ViewSet):
             }
     
     def _get_voucher_discount_analytics(self, start_date, end_date):
-        """Get voucher and discount analytics data with date filtering"""
         try:
-            # Voucher performance (within date range)
-            # Note: Checkout model has voucher field, but we need to join properly
             voucher_stats = Checkout.objects.filter(
                 created_at__gte=start_date,
                 created_at__lte=end_date,
@@ -2527,11 +2412,9 @@ class AdminAnalytics(viewsets.ViewSet):
             }
     
     def _get_refund_return_analytics(self, start_date, end_date, range_type='weekly'):
-        """Get refund and return analytics data with date filtering"""
         try:
             date_range_days = (end_date - start_date).days + 1
             
-            # Determine grouping
             if range_type == 'monthly' or date_range_days > 60:
                 monthly_refunds = Refund.objects.filter(
                     requested_at__date__gte=start_date,
@@ -2554,7 +2437,6 @@ class AdminAnalytics(viewsets.ViewSet):
                             'rejected': month_data['rejected']
                         })
             else:
-                # Weekly grouping
                 current_date = start_date
                 week_num = 1
                 refund_analytics_data = []
@@ -2581,7 +2463,6 @@ class AdminAnalytics(viewsets.ViewSet):
                     current_date = week_end + timedelta(days=1)
                     week_num += 1
             
-            # Refund reason distribution (within date range)
             refund_reason_data = Refund.objects.filter(
                 requested_at__date__gte=start_date,
                 requested_at__date__lte=end_date
@@ -2610,9 +2491,7 @@ class AdminAnalytics(viewsets.ViewSet):
             }
     
     def _get_report_moderation_analytics(self, start_date, end_date):
-        """Get report and moderation analytics data with date filtering"""
         try:
-            # Report analytics by type (within date range)
             report_analytics = Report.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
@@ -2631,7 +2510,6 @@ class AdminAnalytics(viewsets.ViewSet):
                     'pending': report_type['pending_count']
                 })
             
-            # Report status distribution (within date range)
             report_status_data = Report.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
@@ -2641,11 +2519,8 @@ class AdminAnalytics(viewsets.ViewSet):
             
             status_data = []
             color_map = {
-                'pending': '#f59e0b',
-                'under_review': '#3b82f6',
-                'resolved': '#10b981',
-                'dismissed': '#6b7280',
-                'action_taken': '#8b5cf6'
+                'pending': '#f59e0b', 'under_review': '#3b82f6', 'resolved': '#10b981',
+                'dismissed': '#6b7280', 'action_taken': '#8b5cf6'
             }
             for status_item in report_status_data:
                 status_data.append({
@@ -2667,9 +2542,7 @@ class AdminAnalytics(viewsets.ViewSet):
                 'report_status_data': [],
             }
     
-    # Helper methods
     def _get_status_color(self, status):
-        """Get color code for order status"""
         color_map = {
             'pending': '#f59e0b',
             'processing': '#3b82f6',
@@ -2682,7 +2555,6 @@ class AdminAnalytics(viewsets.ViewSet):
         return color_map.get(status.lower(), '#6b7280')
     
     def _get_stage_label(self, stage):
-        """Get label for registration stage"""
         stages = {
             1: 'Stage 1: Started',
             2: 'Stage 2: Basic Info',
@@ -2690,36 +2562,23 @@ class AdminAnalytics(viewsets.ViewSet):
             4: 'Stage 4: Complete',
         }
         return stages.get(stage, f'Stage {stage or 0}')
-    
+        
 
 class AdminProduct(viewsets.ViewSet):
-    """
-    ViewSet for admin product metrics and analytics
-    """
-    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
-        """
-        Get comprehensive product metrics for admin dashboard with date range support
-        """
         try:
-            # Get date range parameters from request
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             range_type = request.query_params.get('range_type', 'weekly')
             
-            # Set up date range filters
             date_filters = {}
             if start_date and end_date:
                 try:
-                    # Use datetime class from datetime module
                     start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
                     end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
                     
-                    # Adjust end date to include the entire day
                     end_date_obj_with_time = datetime.combine(end_date_obj, time.max)
-                    
-                    # Create timezone aware datetimes
                     tz = timezone.get_current_timezone()
                     start_datetime = timezone.make_aware(datetime.combine(start_date_obj, time.min), tz)
                     end_datetime = timezone.make_aware(end_date_obj_with_time, tz)
@@ -2728,41 +2587,33 @@ class AdminProduct(viewsets.ViewSet):
                         'created_at__gte': start_datetime,
                         'created_at__lte': end_datetime
                     }
-                    
                 except ValueError as e:
                     print(f"Date parsing error: {str(e)}")
-                    # If date parsing fails, use default (all time)
-                    pass
             
-            # Total products within date range
             total_products = Product.objects.filter(**date_filters).count()
             
-            # Low Stock Alert - Need to check variants instead of product.quantity
             low_stock_count = 0
             products = Product.objects.filter(is_removed=False, upload_status='published')
             for product in products:
                 if product.total_stock < 5:
                     low_stock_count += 1
             
-            # Active Boosts within date range with fallback
             active_boosts_count = Boost.objects.filter(
                 product__isnull=False,
                 status='active',
                 **date_filters
             ).count()
             
-            # Compute average rating from Reviews within date range (using product-based reviews)
             rating_agg = Review.objects.filter(
                 product__isnull=False,
                 created_at__gte=date_filters.get('created_at__gte', datetime.min),
                 created_at__lte=date_filters.get('created_at__lte', datetime.max)
             ).aggregate(
-                avg_rating=Avg('rating'),
+                avg_rating=Avg('average_rating'),
                 total_reviews=Count('id')
             )
             avg_rating = rating_agg['avg_rating'] or 0.0
             
-            # Compute engagement metrics from CustomerActivity within date range
             engagement_filters = {}
             if 'created_at__gte' in date_filters and 'created_at__lte' in date_filters:
                 engagement_filters = {
@@ -2777,7 +2628,6 @@ class AdminProduct(viewsets.ViewSet):
                 count=Count('activity_type')
             )
             
-            # Create a dictionary to store engagement metrics per product
             product_engagement = {}
             for engagement in engagement_data:
                 product_id = engagement['product']
@@ -2786,10 +2636,7 @@ class AdminProduct(viewsets.ViewSet):
                 
                 if product_id not in product_engagement:
                     product_engagement[product_id] = {
-                        'views': 0,
-                        'purchases': 0,
-                        'favorites': 0,
-                        'total_engagement': 0
+                        'views': 0, 'purchases': 0, 'favorites': 0, 'total_engagement': 0
                     }
                 
                 if activity_type == 'view':
@@ -2799,24 +2646,20 @@ class AdminProduct(viewsets.ViewSet):
                 elif activity_type == 'favorite':
                     product_engagement[product_id]['favorites'] = count
                 
-                # Calculate total engagement
                 product_engagement[product_id]['total_engagement'] = (
                     product_engagement[product_id]['views'] +
                     product_engagement[product_id]['purchases'] +
                     product_engagement[product_id]['favorites']
                 )
             
-            # Get top products by engagement within date range
             top_products_data = []
             if product_engagement:
-                # Get product details for top engaged products
                 top_product_ids = sorted(
                     product_engagement.keys(),
                     key=lambda x: product_engagement[x]['total_engagement'],
                     reverse=True
                 )[:5]
                 
-                # Apply date filters to products
                 top_products_qs = Product.objects.filter(id__in=top_product_ids)
                 if date_filters:
                     top_products_qs = top_products_qs.filter(**date_filters)
@@ -2836,38 +2679,32 @@ class AdminProduct(viewsets.ViewSet):
                             'total_engagement': engagement['total_engagement']
                         })
             
-            # If no engagement data, get top products by creation date as fallback
             if not top_products_data:
                 top_products = Product.objects.filter(**date_filters).order_by('-created_at')[:5]
                 top_products_data = [
                     {
                         'name': product.name,
-                        'views': 0,
-                        'purchases': 0,
-                        'favorites': 0,
-                        'total_engagement': 0
+                        'views': 0, 'purchases': 0, 'favorites': 0, 'total_engagement': 0
                     }
                     for product in top_products
                 ]
             
-            # Rating Distribution from Reviews (product-based) within date range
             rating_distribution = Review.objects.filter(
                 created_at__gte=date_filters.get('created_at__gte', datetime.min),
                 created_at__lte=date_filters.get('created_at__lte', datetime.max)
-            ).values('rating').annotate(
-                count=Count('rating')
-            ).order_by('-rating')
+            ).values('average_rating').annotate(
+                count=Count('id')
+            ).order_by('-average_rating')
             
             rating_distribution_data = [
                 {
-                    'name': f'{rating["rating"]} Stars',
+                    'name': f'{int(rating["average_rating"])} Stars',
                     'value': rating['count']
                 }
                 for rating in rating_distribution
-                if rating['rating'] is not None
+                if rating['average_rating'] is not None
             ]
             
-            # Fill in missing ratings
             existing_ratings = {rd['name'][0] for rd in rating_distribution_data}
             for rating_val in [5, 4, 3, 2, 1]:
                 if str(rating_val) not in existing_ratings:
@@ -2876,14 +2713,11 @@ class AdminProduct(viewsets.ViewSet):
                         'value': 0
                     })
             
-            # Sort rating distribution
             rating_distribution_data.sort(key=lambda x: x['name'], reverse=True)
             
-            # Calculate growth metrics if comparing to previous period
             growth_metrics = {}
             if start_date and end_date and 'start_date_obj' in locals() and 'end_date_obj' in locals():
                 try:
-                    # Calculate previous period (same duration before start date)
                     period_days = (end_date_obj - start_date_obj).days + 1
                     prev_end_date = start_date_obj - timedelta(days=1)
                     prev_start_date = prev_end_date - timedelta(days=period_days - 1)
@@ -2895,13 +2729,11 @@ class AdminProduct(viewsets.ViewSet):
                         datetime.combine(prev_end_date, time.max), tz
                     )
                     
-                    # Previous period total products
                     prev_total_products = Product.objects.filter(
                         created_at__gte=prev_start_datetime,
                         created_at__lte=prev_end_datetime
                     ).count()
                     
-                    # Previous period low stock - count products with variants low stock
                     prev_low_stock = 0
                     prev_products = Product.objects.filter(
                         created_at__gte=prev_start_datetime,
@@ -2913,16 +2745,8 @@ class AdminProduct(viewsets.ViewSet):
                         if product.total_stock < 5:
                             prev_low_stock += 1
                     
-                    # Calculate growth percentages
-                    if prev_total_products > 0:
-                        product_growth = ((total_products - prev_total_products) / prev_total_products) * 100
-                    else:
-                        product_growth = 100 if total_products > 0 else 0
-                    
-                    if prev_low_stock > 0:
-                        low_stock_growth = ((low_stock_count - prev_low_stock) / prev_low_stock) * 100
-                    else:
-                        low_stock_growth = 100 if low_stock_count > 0 else 0
+                    product_growth = ((total_products - prev_total_products) / prev_total_products * 100) if prev_total_products > 0 else (100 if total_products > 0 else 0)
+                    low_stock_growth = ((low_stock_count - prev_low_stock) / prev_low_stock * 100) if prev_low_stock > 0 else (100 if low_stock_count > 0 else 0)
                     
                     growth_metrics = {
                         'product_growth': round(product_growth, 1),
@@ -2931,7 +2755,6 @@ class AdminProduct(viewsets.ViewSet):
                         'previous_period_low_stock': prev_low_stock,
                         'period_days': period_days
                     }
-                    
                 except Exception as e:
                     print(f"Error calculating growth metrics: {str(e)}")
                     growth_metrics = {}
@@ -2947,10 +2770,8 @@ class AdminProduct(viewsets.ViewSet):
                     'rating_distribution': rating_distribution_data,
                     'growth_metrics': growth_metrics,
                     'has_data': any([
-                        total_products > 0,
-                        low_stock_count > 0,
-                        active_boosts_count > 0,
-                        avg_rating > 0,
+                        total_products > 0, low_stock_count > 0,
+                        active_boosts_count > 0, avg_rating > 0,
                         len(top_products_data) > 0
                     ]),
                     'date_range': {
@@ -2976,28 +2797,17 @@ class AdminProduct(viewsets.ViewSet):
         
     @action(detail=False, methods=['get'])
     def get_products_list(self, request):
-        """
-        Get complete list of products for admin with search, filter, and date range support
-        (No pagination - returns all products)
-        """
         try:
-            # Get query parameters
             search = request.query_params.get('search', '')
             category = request.query_params.get('category', 'all')
-            
-            # Get date range parameters
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
             range_type = request.query_params.get('range_type', 'weekly')
             
-            # Start with base query
             products = Product.objects.all().order_by('-created_at').select_related(
-                'shop', 
-                'category',
-                'category_admin'  # Include category_admin for proper category fetching
+                'shop', 'category', 'category_admin'
             )
             
-            # Apply date range filter if provided
             start_datetime = None
             end_datetime = None
             
@@ -3006,10 +2816,7 @@ class AdminProduct(viewsets.ViewSet):
                     start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
                     end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
                     
-                    # Adjust end date to include the entire day
                     end_date_obj_with_time = datetime.combine(end_date_obj, time.max)
-                    
-                    # Create timezone aware datetimes
                     tz = timezone.get_current_timezone()
                     start_datetime = timezone.make_aware(datetime.combine(start_date_obj, time.min), tz)
                     end_datetime = timezone.make_aware(end_date_obj_with_time, tz)
@@ -3018,34 +2825,23 @@ class AdminProduct(viewsets.ViewSet):
                         created_at__gte=start_datetime,
                         created_at__lte=end_datetime
                     )
-                    
                 except ValueError as e:
                     print(f"Date parsing error in get_products_list: {str(e)}")
-                    # If date parsing fails, ignore date filter
-                    pass
             
-            # Apply search filter
             if search:
                 products = products.filter(
-                    Q(name__icontains=search) | 
-                    Q(description__icontains=search)
+                    Q(name__icontains=search) | Q(description__icontains=search)
                 )
             
-            # Apply category filter
             if category != 'all':
-                # Filter by both regular category and admin category
                 products = products.filter(
                     Q(category__name=category) | Q(category_admin__name=category)
                 )
             
-            # Get all products (no pagination)
             all_products = list(products)
             total_count = len(all_products)
-            
-            # Get product IDs for related data queries
             product_ids = [product.id for product in all_products]
             
-            # Compute engagement data from CustomerActivity with date range
             engagement_filters = {}
             if start_datetime and end_datetime:
                 engagement_filters = {
@@ -3076,7 +2872,6 @@ class AdminProduct(viewsets.ViewSet):
                 elif activity_type == 'favorite':
                     engagement_map[product_id]['favorites'] = count
             
-            # Compute variants data - get price range and quantity
             variants_data = Variants.objects.filter(
                 product__in=product_ids,
                 is_active=True
@@ -3096,7 +2891,6 @@ class AdminProduct(viewsets.ViewSet):
                     'total_quantity': vd['total_quantity'] or 0
                 }
             
-            # Compute issues count
             issues_data = Issues.objects.filter(
                 product__in=product_ids
             ).values('product').annotate(
@@ -3105,7 +2899,6 @@ class AdminProduct(viewsets.ViewSet):
             
             issues_map = {id['product']: id['issues_count'] for id in issues_data}
             
-            # Compute boost plan
             boost_data = Boost.objects.filter(
                 product__in=product_ids,
                 status='active'
@@ -3116,51 +2909,32 @@ class AdminProduct(viewsets.ViewSet):
                 if boost.boost_plan and boost.product_id:
                     boost_map[boost.product_id] = boost.boost_plan.name
             
-            # Get all reviews for rating calculation
             review_data = Review.objects.filter(
                 product__in=product_ids
             ).values('product').annotate(
-                avg_rating=Avg('rating')
+                avg_rating=Avg('average_rating')
             )
             
             rating_map = {rd['product']: rd['avg_rating'] or 0.0 for rd in review_data}
             
-            # Serialize with computed fields
             products_data = []
             for product in all_products:
                 product_id = product.id
-                
-                # Get computed engagement data
                 engagement = engagement_map.get(product_id, {'views': 0, 'purchases': 0, 'favorites': 0})
-                
-                # Get rating
                 product_rating = rating_map.get(product_id, 0.0)
-                
-                # Get variants data
                 variant_info = variants_map.get(product_id, {
-                    'variants_count': 0,
-                    'min_price': None,
-                    'max_price': None,
-                    'total_quantity': 0
+                    'variants_count': 0, 'min_price': None, 'max_price': None, 'total_quantity': 0
                 })
-                
-                # Get issues count
                 issues_count = issues_map.get(product_id, 0)
-                
-                # Get boost plan
                 boost_plan = boost_map.get(product_id, 'None')
-                
-                # Determine low stock based on variants
                 low_stock = variant_info['total_quantity'] < 5 if variant_info['total_quantity'] else True
                 
-                # Get category name - use category_admin first, then fallback to category
                 category_name = 'Uncategorized'
                 if product.category_admin:
                     category_name = product.category_admin.name
                 elif product.category:
                     category_name = product.category.name
                 
-                # Format price display
                 min_price = variant_info['min_price']
                 max_price = variant_info['max_price']
                 
@@ -3174,7 +2948,6 @@ class AdminProduct(viewsets.ViewSet):
                 else:
                     price_display = "No price"
                 
-                # Build product data
                 product_data = {
                     'id': str(product_id),
                     'name': product.name,
@@ -3223,19 +2996,16 @@ class AdminProduct(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
     @action(detail=False, methods=['get'])    
     def get_product(self, request):
         product_id = request.query_params.get('product_id')
         
-        # Validate product_id parameter
         if not product_id:
             return Response(
                 {"error": "product_id parameter is required"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Validate UUID format
         try:
             uuid.UUID(product_id)
         except ValueError:
@@ -3245,38 +3015,28 @@ class AdminProduct(viewsets.ViewSet):
             )
         
         try:
-            # Get product with all related data
             product = Product.objects.select_related(
-                'shop',
-                'customer',
-                'category_admin',
-                'category',
-                'customer__customer'  # Access the User through Customer
+                'shop', 'customer', 'category_admin', 'category',
+                'customer__customer'
             ).prefetch_related(
                 'productmedia_set',
-                Prefetch('variants', 
-                        queryset=Variants.objects.all().order_by('created_at')),
-                Prefetch('reviews', 
-                        queryset=Review.objects.select_related('customer__customer').order_by('-created_at')),
-                Prefetch('favorites_set', 
-                        queryset=Favorites.objects.select_related('customer__customer')),
-                Prefetch('boost_set', 
-                        queryset=Boost.objects.select_related('boost_plan').filter(
-                            Q(status='active') | Q(status='pending')
-                        )),
-                Prefetch('reports_against', 
-                        queryset=Report.objects.select_related('reporter').filter(
-                            status__in=['pending', 'under_review']
-                        ))
+                Prefetch('variants', queryset=Variants.objects.all().order_by('created_at')),
+                Prefetch('reviews', queryset=Review.objects.select_related('customer__customer').order_by('-created_at')),
+                Prefetch('favorites_set', queryset=Favorites.objects.select_related('customer__customer')),
+                Prefetch('boost_set', queryset=Boost.objects.select_related('boost_plan').filter(
+                    Q(status='active') | Q(status='pending')
+                )),
+                Prefetch('reports_against', queryset=Report.objects.select_related('reporter').filter(
+                    status__in=['pending', 'under_review']
+                ))
             ).get(id=product_id)
             
-            # Build the response data
             product_data = {
                 "id": str(product.id),
                 "name": product.name,
                 "description": product.description,
-                "quantity": product.total_stock,  # Use total_stock property
-                "used_for": product.description,  # Using description as used_for since model doesn't have used_for field
+                "quantity": product.total_stock,
+                "used_for": product.description,
                 "price_range": {
                     "min": str(product.min_price) if product.min_price else "0.00",
                     "max": str(product.max_price) if product.max_price else "0.00"
@@ -3295,7 +3055,6 @@ class AdminProduct(viewsets.ViewSet):
                 "favorites_count": product.favorites_set.count(),
             }
             
-            # Shop data
             if product.shop:
                 product_data["shop"] = {
                     "id": str(product.shop.id),
@@ -3313,7 +3072,6 @@ class AdminProduct(viewsets.ViewSet):
             else:
                 product_data["shop"] = None
             
-            # Customer data
             if product.customer and product.customer.customer:
                 user = product.customer.customer
                 product_data["customer"] = {
@@ -3329,7 +3087,6 @@ class AdminProduct(viewsets.ViewSet):
             else:
                 product_data["customer"] = None
             
-            # Category data
             if product.category:
                 product_data["category"] = {
                     "id": str(product.category.id),
@@ -3338,7 +3095,6 @@ class AdminProduct(viewsets.ViewSet):
             else:
                 product_data["category"] = None
             
-            # Admin category data
             if product.category_admin:
                 product_data["category_admin"] = {
                     "id": str(product.category_admin.id),
@@ -3347,7 +3103,6 @@ class AdminProduct(viewsets.ViewSet):
             else:
                 product_data["category_admin"] = None
             
-            # Media files
             product_data["media"] = [
                 {
                     "id": str(media.id),
@@ -3357,13 +3112,10 @@ class AdminProduct(viewsets.ViewSet):
                 for media in product.productmedia_set.all()
             ]
             
-            # Variants - Enhanced to include variant images and all variant fields
             product_data["variants"] = []
             for variant in product.variants.all():
-                # Build variant options from option_map if available
                 options = []
                 if variant.option_map:
-                    # If option_map is a JSON/dict, convert to list format
                     if isinstance(variant.option_map, dict):
                         for key, value in variant.option_map.items():
                             options.append({
@@ -3373,7 +3125,6 @@ class AdminProduct(viewsets.ViewSet):
                                 "title": variant.option_title
                             })
                 elif variant.option_title:
-                    # Fallback to single option if option_map not available
                     options.append({
                         "id": str(variant.id) + "-1",
                         "name": "default",
@@ -3381,7 +3132,6 @@ class AdminProduct(viewsets.ViewSet):
                         "title": variant.option_title
                     })
                 
-                # Parse option_ids if it exists
                 option_ids = []
                 if variant.option_ids:
                     if isinstance(variant.option_ids, list):
@@ -3418,18 +3168,17 @@ class AdminProduct(viewsets.ViewSet):
                     "image": convert_s3_to_public_url(variant.image.url) if variant.image else None,
                     "option_title": variant.option_title,
                     "option_ids": option_ids,
-                    "option_map": variant.option_map,  # Include raw option_map for frontend processing
-                    "options": options,  # Formatted options for display
+                    "option_map": variant.option_map,
+                    "options": options,
                     "created_at": variant.created_at.isoformat() if variant.created_at else None,
                     "updated_at": variant.updated_at.isoformat() if variant.updated_at else None
                 }
                 product_data["variants"].append(variant_data)
             
-            # Reviews with more details
             product_data["reviews"] = [
                 {
                     "id": str(review.id),
-                    "rating": review.rating,
+                    "average_rating": review.average_rating,
                     "comment": review.comment,
                     "customer": {
                         "id": str(review.customer.customer.id) if review.customer and review.customer.customer else None,
@@ -3443,16 +3192,14 @@ class AdminProduct(viewsets.ViewSet):
                 for review in product.reviews.all()
             ]
             
-            # Calculate average rating
             if product.reviews.exists():
-                avg_rating = product.reviews.aggregate(avg=models.Avg('rating'))['avg']
+                avg_rating = product.reviews.aggregate(avg=models.Avg('average_rating'))['avg']
                 product_data["average_rating"] = round(avg_rating, 1) if avg_rating else 0
                 product_data["total_reviews"] = product.reviews.count()
             else:
                 product_data["average_rating"] = 0
                 product_data["total_reviews"] = 0
             
-            # Active boost with more details
             active_boost = product.boost_set.filter(
                 status='active',
                 end_date__gt=timezone.now()
@@ -3482,7 +3229,6 @@ class AdminProduct(viewsets.ViewSet):
             else:
                 product_data["boost"] = None
             
-            # Check if product has any pending boosts
             pending_boost = product.boost_set.filter(
                 status='pending'
             ).first()
@@ -3495,7 +3241,6 @@ class AdminProduct(viewsets.ViewSet):
             else:
                 product_data["pending_boost"] = None
             
-            # Reports summary with more details
             active_reports = product.reports_against.filter(status__in=['pending', 'under_review'])
             resolved_reports = product.reports_against.filter(status__in=['resolved', 'dismissed', 'action_taken'])
             
@@ -3512,11 +3257,10 @@ class AdminProduct(viewsets.ViewSet):
                         "created_at": report.created_at.isoformat(),
                         "reporter": report.reporter.username if report.reporter else None,
                     }
-                    for report in active_reports[:5]  # Limit to 5 most recent active reports
+                    for report in active_reports[:5]
                 ]
             }
             
-            # Issues
             issues = Issues.objects.filter(product=product)
             product_data["issues"] = [
                 {
@@ -3526,7 +3270,6 @@ class AdminProduct(viewsets.ViewSet):
                 for issue in issues
             ]
             
-            # Variant statistics
             active_variants = product.variants.filter(is_active=True)
             product_data["variant_stats"] = {
                 "total_variants": product.total_variants,
@@ -3557,27 +3300,18 @@ class AdminProduct(viewsets.ViewSet):
                 {"success": False, "error": f"An error occurred while fetching product data: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
-
 
     @action(detail=False, methods=['put'])
     def update_product_status(self, request):
-        """
-        Update product status based on the requested action.
-        Actions: publish, deleteDraft, unpublish, archive, restore, 
-                remove, restoreRemoved, suspend, unsuspend
-        """
         print(request.body)
-        # Parse request data
         try:
             data = json.loads(request.body)
             product_id = data.get('product_id')
             action_type = data.get('action_type')
-            user_id = data.get('user_id')  # Get user_id from request data
+            user_id = data.get('user_id')
             reason = data.get('reason', '')
-            suspension_days = data.get('suspension_days', 7)  # Default 7 days
+            suspension_days = data.get('suspension_days', 7)
             
-            # Validate required fields
             if not product_id:
                 return Response(
                     {"error": "product_id is required"},
@@ -3596,7 +3330,6 @@ class AdminProduct(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Validate UUID format
             try:
                 uuid.UUID(product_id)
             except ValueError:
@@ -3613,7 +3346,6 @@ class AdminProduct(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Validate action type
             valid_actions = [
                 'publish', 'deleteDraft', 'unpublish', 'archive', 'restore',
                 'remove', 'restoreRemoved', 'suspend', 'unsuspend'
@@ -3632,13 +3364,10 @@ class AdminProduct(viewsets.ViewSet):
             )
         
         try:
-            # Get product with related data
             product = Product.objects.select_related(
-                'customer',
-                'shop'
+                'customer', 'shop'
             ).get(id=product_id)
             
-            # Get admin user from user_id
             try:
                 admin_user = User.objects.get(id=user_id)
             except User.DoesNotExist:
@@ -3647,24 +3376,20 @@ class AdminProduct(viewsets.ViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Verify user is an admin
             if not admin_user.is_admin:
                 return Response(
                     {"error": "Only admin users can perform this action"},
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # Perform action based on action_type
             with transaction.atomic():
                 if action_type == 'publish':
-                    # Validate product can be published
                     if product.upload_status != 'draft':
                         return Response(
                             {"error": f"Product is not in draft status. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Validate product has required fields
                     if not product.name or not product.description:
                         return Response(
                             {"error": "Product must have name and description before publishing"},
@@ -3677,16 +3402,24 @@ class AdminProduct(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product - set upload_status to 'published' and status to 'Active'
                     product.upload_status = 'published'
-                    product.status = 'Active'  # Set status to Active when publishing
+                    product.status = 'Active'
                     product.save()
                     
-                    # Create log entry
                     Logs.objects.create(
                         user=admin_user,
                         action=f"Published product: {product.name}"
                     )
+                    
+                    if product.customer and product.customer.customer:
+                        notification = Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Published",
+                            type="product_published",
+                            message=f"Your product '{product.name}' has been published and is now live.",
+                            is_read=False
+                        )
+                        self._send_websocket_notification(product.customer.customer.id, notification)
                     
                     return Response({
                         "message": "Product published successfully",
@@ -3696,24 +3429,20 @@ class AdminProduct(viewsets.ViewSet):
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'deleteDraft':
-                    # Validate product can be deleted
                     if product.upload_status != 'draft':
                         return Response(
                             {"error": f"Only draft products can be deleted. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Decrement customer product count
                     if product.customer:
                         product.customer.decrement_product_count()
                     
-                    # Create log entry before deletion
                     Logs.objects.create(
                         user=admin_user,
                         action=f"Deleted draft product: {product.name}"
                     )
                     
-                    # Delete the product
                     product.delete()
                     
                     return Response({
@@ -3722,22 +3451,29 @@ class AdminProduct(viewsets.ViewSet):
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'unpublish':
-                    # Validate product can be unpublished
                     if product.upload_status != 'published':
                         return Response(
                             {"error": f"Only published products can be unpublished. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product - set upload_status back to 'draft'
                     product.upload_status = 'draft'
                     product.save()
                     
-                    # Create log entry
                     Logs.objects.create(
                         user=admin_user,
                         action=f"Unpublished product: {product.name}"
                     )
+                    
+                    if product.customer and product.customer.customer:
+                        notification = Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Unpublished",
+                            type="product_unpublished",
+                            message=f"Your product '{product.name}' has been unpublished and is now in draft mode.",
+                            is_read=False
+                        )
+                        self._send_websocket_notification(product.customer.customer.id, notification)
                     
                     return Response({
                         "message": "Product unpublished successfully",
@@ -3746,22 +3482,29 @@ class AdminProduct(viewsets.ViewSet):
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'archive':
-                    # Validate product can be archived
                     if product.upload_status != 'published' and product.upload_status != 'draft':
                         return Response(
                             {"error": f"Only published or draft products can be archived. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product - set upload_status to 'archived'
                     product.upload_status = 'archived'
                     product.save()
                     
-                    # Create log entry
                     Logs.objects.create(
                         user=admin_user,
                         action=f"Archived product: {product.name}"
                     )
+                    
+                    if product.customer and product.customer.customer:
+                        notification = Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Archived",
+                            type="product_archived",
+                            message=f"Your product '{product.name}' has been archived.",
+                            is_read=False
+                        )
+                        self._send_websocket_notification(product.customer.customer.id, notification)
                     
                     return Response({
                         "message": "Product archived successfully",
@@ -3770,22 +3513,29 @@ class AdminProduct(viewsets.ViewSet):
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'restore':
-                    # Validate product can be restored (from archived)
                     if product.upload_status != 'archived':
                         return Response(
                             {"error": f"Only archived products can be restored. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Default to published, but could be based on previous state if tracked
                     product.upload_status = 'published'
                     product.save()
                     
-                    # Create log entry
                     Logs.objects.create(
                         user=admin_user,
                         action=f"Restored product from archive: {product.name}"
                     )
+                    
+                    if product.customer and product.customer.customer:
+                        notification = Notification.objects.create(
+                            user=product.customer.customer,
+                            title="Product Restored",
+                            type="product_restored",
+                            message=f"Your product '{product.name}' has been restored from archive.",
+                            is_read=False
+                        )
+                        self._send_websocket_notification(product.customer.customer.id, notification)
                     
                     return Response({
                         "message": "Product restored successfully",
@@ -3794,34 +3544,31 @@ class AdminProduct(viewsets.ViewSet):
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'remove':
-                    # Validate product can be removed
                     if product.is_removed:
                         return Response(
                             {"error": "Product is already removed"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product - set is_removed to True
                     product.is_removed = True
                     product.removal_reason = reason
                     product.removed_at = timezone.now()
                     product.save()
                     
-                    # Create log entry
                     Logs.objects.create(
                         user=admin_user,
                         action=f"Removed product: {product.name}. Reason: {reason}"
                     )
                     
-                    # Get user to send notification (customer)
                     if product.customer and product.customer.customer:
-                        Notification.objects.create(
+                        notification = Notification.objects.create(
                             user=product.customer.customer,
-                            title="Product Removal",
+                            title="Product Removed",
                             type="product_removal",
-                            message=f"Your product '{product.name}' has been removed by admin. Reason: {reason}",
+                            message=f"Your product '{product.name}' has been removed. Reason: {reason}",
                             is_read=False
                         )
+                        self._send_websocket_notification(product.customer.customer.id, notification)
                     
                     return Response({
                         "message": "Product removed successfully",
@@ -3832,34 +3579,31 @@ class AdminProduct(viewsets.ViewSet):
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'restoreRemoved':
-                    # Validate product can be restored (from removed)
                     if not product.is_removed:
                         return Response(
                             {"error": "Product is not removed"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product - set is_removed to False
                     product.is_removed = False
                     product.removal_reason = None
                     product.removed_at = None
                     product.save()
                     
-                    # Create log entry
                     Logs.objects.create(
                         user=admin_user,
                         action=f"Restored removed product: {product.name}"
                     )
                     
-                    # Get user to send notification (customer)
                     if product.customer and product.customer.customer:
-                        Notification.objects.create(
+                        notification = Notification.objects.create(
                             user=product.customer.customer,
                             title="Product Restored",
                             type="product_restoration",
-                            message=f"Your product '{product.name}' has been restored by admin.",
+                            message=f"Your product '{product.name}' has been restored.",
                             is_read=False
                         )
+                        self._send_websocket_notification(product.customer.customer.id, notification)
                     
                     return Response({
                         "message": "Product restored successfully",
@@ -3868,7 +3612,6 @@ class AdminProduct(viewsets.ViewSet):
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'suspend':
-                    # Validate product can be suspended
                     if product.status == 'Suspended':
                         return Response(
                             {"error": "Product is already suspended"},
@@ -3887,26 +3630,24 @@ class AdminProduct(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product - set status to 'Suspended'
                     previous_status = product.status
                     product.status = 'Suspended'
                     product.save()
                     
-                    # Create log entry
                     Logs.objects.create(
                         user=admin_user,
                         action=f"Suspended product: {product.name}. Previous status: {previous_status}. Reason: {reason}"
                     )
                     
-                    # Get user to send notification (customer)
                     if product.customer and product.customer.customer:
-                        Notification.objects.create(
+                        notification = Notification.objects.create(
                             user=product.customer.customer,
-                            title="Product Suspension",
+                            title="Product Suspended",
                             type="product_suspension",
                             message=f"Your product '{product.name}' has been suspended for {suspension_days} days. Reason: {reason}",
                             is_read=False
                         )
+                        self._send_websocket_notification(product.customer.customer.id, notification)
                     
                     return Response({
                         "message": "Product suspended successfully",
@@ -3916,32 +3657,29 @@ class AdminProduct(viewsets.ViewSet):
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'unsuspend':
-                    # Validate product can be unsuspended
                     if product.status != 'Suspended':
                         return Response(
                             {"error": f"Product is not suspended. Current status: {product.status}"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Update product - set status back to 'Active'
                     product.status = 'Active'
                     product.save()
                     
-                    # Create log entry
                     Logs.objects.create(
                         user=admin_user,
                         action=f"Unsuspended product: {product.name}"
                     )
                     
-                    # Get user to send notification (customer)
                     if product.customer and product.customer.customer:
-                        Notification.objects.create(
+                        notification = Notification.objects.create(
                             user=product.customer.customer,
                             title="Product Unsuspended",
                             type="product_unsuspension",
-                            message=f"Your product '{product.name}' has been unsuspended by admin.",
+                            message=f"Your product '{product.name}' has been unsuspended.",
                             is_read=False
                         )
+                        self._send_websocket_notification(product.customer.customer.id, notification)
                     
                     return Response({
                         "message": "Product unsuspended successfully",
@@ -3974,13 +3712,38 @@ class AdminProduct(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    def _send_websocket_notification(self, user_id, notification):
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            
+            channel_layer = get_channel_layer()
+            group_name = f'notifications_{user_id}'
+            
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': 'notification',
+                    'notification_id': str(notification.id),
+                    'title': notification.title,
+                    'message': notification.message,
+                    'notification_type': notification.type,
+                    'created_at': str(notification.created_at),
+                    'data': {}
+                }
+            )
+            print(f"WebSocket notification sent to user {user_id}")
+        except Exception as e:
+            print(f"Error sending websocket notification: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
     @action(detail=False, methods=['post'])
     def add_category(self, request):
         try:
             name = request.data.get('name')
             user_id = request.data.get('user')
             
-            # Debug logging
             print(f"Received name: {name}")
             print(f"Received user_id: {user_id}, type: {type(user_id)}")
             
@@ -3998,7 +3761,6 @@ class AdminProduct(viewsets.ViewSet):
                     'message': 'Category name must be 50 characters or less'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Check if category already exists (case-insensitive)
             existing_category = Category.objects.filter(
                 name__iexact=clean_name
             ).first()
@@ -4009,11 +3771,9 @@ class AdminProduct(viewsets.ViewSet):
                     'message': f'Category "{clean_name}" already exists'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get user object if user_id is provided
             user = None
             if user_id:
                 try:
-                    # Convert to UUID if it's a string
                     if isinstance(user_id, str):
                         user_uuid = uuid.UUID(user_id)
                     else:
@@ -4028,7 +3788,6 @@ class AdminProduct(viewsets.ViewSet):
                         'message': f'User with ID {user_id} does not exist or is invalid'
                     }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Create category with transaction for safety
             with transaction.atomic():
                 category = Category.objects.create(
                     name=clean_name,
@@ -4038,7 +3797,6 @@ class AdminProduct(viewsets.ViewSet):
                 
                 print(f"Created category: {category.name}, user: {category.user}")
             
-            # Return success response
             return Response({
                 'success': True,
                 'message': 'Category added successfully',
@@ -4051,28 +3809,20 @@ class AdminProduct(viewsets.ViewSet):
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
-            # Log the full error for debugging
             import traceback
             print(f"Error adding category: {str(e)}")
             print(traceback.format_exc())
             
-            # Return generic error message
             return Response({
                 'success': False,
                 'message': f'An error occurred while adding the category: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    
     @action(detail=False, methods=['get'])
     def get_categories(self, request):
-        """
-        Get all categories
-        """
         try:
-            # Get all categories
             categories = Category.objects.all().order_by('name')
             
-            # Serialize the categories
             categories_data = []
             for category in categories:
                 category_data = {
@@ -4101,7 +3851,7 @@ class AdminProduct(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving categories: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+        
 class AdminShops(viewsets.ViewSet):
     """
     ViewSet for admin shop management with comprehensive endpoints

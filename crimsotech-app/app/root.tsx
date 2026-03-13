@@ -13,12 +13,12 @@ import {
 } from "react-router";
 import { sessionMiddleware } from "./middleware";
 import { Toaster } from "~/components/ui/sonner";
-import { Button } from '~/components/ui/button'
+import { Button } from '~/components/ui/button';
 import type { Route } from "./+types/root";
 import "./app.css";
 import NProgress from "nprogress";
 import "nprogress/nprogress.css";
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback } from "react"; // Removed useState comment since we don't need it
 import { UserProvider } from "./components/providers/user-role-provider";
 import type { User } from "./contexts/user-role";
 
@@ -290,79 +290,99 @@ export function ProgressLink({
   );
 }
 
-export default function App({ loaderData }: Route.ComponentProps) {
-  const { user } = loaderData as LoaderData;
+// Global WebSocket manager that doesn't require any interaction from child components
+function GlobalWebSocketManager({ user }: { user: User | null }) {
   const notificationSocket = useRef<WebSocket | null>(null);
-  
-  useEffect(() => {
-    if (!user) return;
-    
+  const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
+
+  const connectWebSocket = useCallback(() => {
+    if (!user || !mounted.current) return;
+
     const wsUrl = `${import.meta.env.VITE_WEBSOCKET_URL}/ws/notifications/`;
-    notificationSocket.current = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl);
     
-    notificationSocket.current.onopen = () => {
-      console.log('WebSocket connected');
-      notificationSocket.current?.send(JSON.stringify({
-        type: 'authenticate',
-        user_id: user.id
-      }));
+    ws.onopen = () => {
+      console.log('WebSocket connected - Global notifications active');
+      if (mounted.current) {
+        ws.send(JSON.stringify({
+          type: 'authenticate',
+          user_id: user.id
+        }));
+      }
     };
     
-    notificationSocket.current.onmessage = (event) => {
+    ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         
         if (data.type === 'authenticated') {
-          console.log('WebSocket authenticated');
+          console.log('WebSocket authenticated - Ready to receive notifications');
         } else if (data.type === 'new_notification') {
-          console.log('New notification:', data);
-          // You can dispatch an event or update state here
+          console.log('New notification received:', data);
+          // Dispatch custom event for components to listen to
+          window.dispatchEvent(new CustomEvent('new-notification', { 
+            detail: data 
+          }));
         } else if (data.type === 'unread_count') {
-          console.log('Unread count:', data.count);
-          // You can dispatch an event or update state here
+          console.log('Unread count updated:', data.count);
+          // Dispatch custom event for components to listen to
+          window.dispatchEvent(new CustomEvent('unread-count-update', { 
+            detail: { count: data.count } 
+          }));
         }
       } catch (error) {
         console.error('WebSocket message error:', error);
       }
     };
     
-    notificationSocket.current.onclose = () => {
+    ws.onclose = () => {
       console.log('WebSocket disconnected');
-      notificationSocket.current = null;
-      
-      setTimeout(() => {
-        if (user) {
-          const newWs = new WebSocket(wsUrl);
-          newWs.onopen = () => {
-            newWs.send(JSON.stringify({
-              type: 'authenticate',
-              user_id: user.id
-            }));
-          };
-          notificationSocket.current = newWs;
-        }
-      }, 3000);
+      if (mounted.current) {
+        // Attempt to reconnect after 3 seconds
+        reconnectTimeout.current = setTimeout(() => {
+          connectWebSocket();
+        }, 3000);
+      }
     };
     
-    notificationSocket.current.onerror = (error) => {
+    ws.onerror = (error) => {
       console.error('WebSocket error:', error);
     };
+
+    notificationSocket.current = ws;
+  }, [user]);
+
+  useEffect(() => {
+    mounted.current = true;
+    connectWebSocket();
     
     return () => {
+      mounted.current = false;
+      if (reconnectTimeout.current) {
+        clearTimeout(reconnectTimeout.current);
+      }
       if (notificationSocket.current) {
         notificationSocket.current.close();
         notificationSocket.current = null;
       }
     };
-  }, [user]);
+  }, [connectWebSocket]);
+
+  // This component doesn't render anything
+  return null;
+}
+
+export default function App({ loaderData }: Route.ComponentProps) {
+  const { user } = loaderData;
   
   return (
-    <>
-      <UserProvider user={user}>
-        <RouteChangeProgress />
-        <Outlet />
-      </UserProvider>
-    </>
+    <UserProvider user={user}>
+      {/* Global WebSocket manager - works automatically for all child routes */}
+      <GlobalWebSocketManager user={user} />
+      <RouteChangeProgress />
+      <Outlet />
+    </UserProvider>
   );
 }
 
