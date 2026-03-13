@@ -2963,7 +2963,7 @@ export function meta() {
 
 export async function loader({ request, context, params }: { request: Request; context: any; params?: Record<string, string | undefined> }) {
   try {
-    const { registrationMiddleware } = await import('~/middleware/registration.server');
+    ;
     await registrationMiddleware({ request, context: undefined, params: {}, unstable_pattern: undefined } as any);
     const { requireRole } = await import('~/middleware/role-require.server');
     await requireRole(request, undefined, ['isCustomer'] as any);

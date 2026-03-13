@@ -1843,7 +1843,7 @@ function BaseStatusUI({
 export async function loader({ request, context, params }: any) {
   // Basic admin auth middleware
   try {
-    const { registrationMiddleware } = await import('~/middleware/registration.server');
+    ;
     await registrationMiddleware({ request, context: undefined, params: {}, unstable_pattern: undefined } as any);
     const { requireRole } = await import('~/middleware/role-require.server');
     await requireRole(request, undefined, ['isAdmin'] as any);

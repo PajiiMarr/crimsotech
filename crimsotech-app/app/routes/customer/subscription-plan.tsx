@@ -102,7 +102,7 @@ const plans: Plan[] = [
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { registrationMiddleware } = await import("~/middleware/registration.server");
-  await registrationMiddleware({ request, context, params: {}, unstable_pattern: undefined } as any);
+  ;
 
   const { requireAuth } = await import("~/middleware/auth.server");
   const { requireRole } = await import("~/middleware/role-require.server");
