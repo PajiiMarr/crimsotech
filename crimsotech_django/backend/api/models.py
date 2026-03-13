@@ -1031,21 +1031,63 @@ class Review(models.Model):
         blank=True,
         related_name='reviews'
     )
-    rating = models.IntegerField()
+
+    rider = models.ForeignKey(
+        'Rider',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviews'
+    )
+
+     # Product ratings
+    condition_rating = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        null=True,
+        blank=True
+    )
+
+    accuracy_rating = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        null=True,
+        blank=True
+    )
+
+    value_rating = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        null=True,
+        blank=True
+    )
+
+    # Delivery rating
+    delivery_rating = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        null=True,
+        blank=True
+    )
+    
+    average_rating = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Average of condition, accuracy, value, and delivery ratings"
+    )
     comment = models.CharField(max_length=200, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         indexes = [
-            models.Index(fields=['shop', 'rating']),
-            models.Index(fields=['product', 'rating']),
+            models.Index(fields=['shop', 'average_rating']),
+            models.Index(fields=['product', 'average_rating']),
+            models.Index(fields=['rider', 'average_rating']),
             models.Index(fields=['customer', 'created_at']),
             models.Index(fields=['created_at']),
         ]
+        
 
     def __str__(self):
-        return f"Review by {self.customer} - {self.rating} stars"
+        return f"Review by {self.customer} - {self.average_rating} stars"
+
 
 class Delivery(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
