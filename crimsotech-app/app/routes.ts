@@ -35,7 +35,6 @@ export default [
     route('view-completed-order/:id', 'components/customer/view-completed-order.tsx'),
     route('view-cancelled-order/:id', 'components/customer/view-cancelled-order.tsx'),
     route('order-review/:id', 'components/customer/order-review.tsx'),  
-    route('notifications', 'routes/customer/notifications.tsx'),  
     route('arrange-shipment', 'components/customer/arrange-shipment.tsx'), 
     route("customer-create-product", "routes/customer/customer-create-product.tsx"),
     route("customer-create-gift", "routes/customer/customer-create-gift.tsx"), 
@@ -68,6 +67,7 @@ export default [
     route('order-successful/:orderId', 'components/customer/order-successful.tsx'),
     
     route('messages', 'routes/user/messages.tsx'),
+    route('notifications', 'routes/user/notifications.tsx'),
    
     ...prefix("seller", [
         route("dashboard", "routes/seller/dashboard.tsx"), 

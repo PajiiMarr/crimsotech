@@ -18,8 +18,6 @@ interface LoaderData {
 }
 
 export async function loader({ request, context}: Route.LoaderArgs): Promise<LoaderData> {
-    const { registrationMiddleware } = await import("~/middleware/registration.server");
-    ;
     const { requireRole } = await import("~/middleware/role-require.server");
     const { fetchUserRole } = await import("~/middleware/role.server");
 

@@ -6,8 +6,7 @@ import { SidebarTrigger } from "~/components/ui/sidebar";
 import { Bell, User, Home, MessageCircle } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "~/components/ui/dropdown-menu";
 import { Link, useNavigate, useLocation } from "react-router";
-import { useContext, useMemo } from "react";
-// Import the correct context from the provider
+import { useContext, useMemo, useEffect, useState } from "react";
 import { UserContext } from "~/components/providers/user-role-provider";
 
 interface User {
@@ -91,20 +90,60 @@ const generateBreadcrumbs = (pathname: string) => {
 export default function CustomerHeader() {
   const navigate = useNavigate();
   const location = useLocation();
-  // Use the correct context
   const user = useContext(UserContext);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [socket, setSocket] = useState<WebSocket | null>(null);
 
-  // Add this to see what user data is actually coming through
   console.log("CustomerHeader - user from context:", user);
+
+  useEffect(() => {
+    if (!user) return;
+    
+    const wsUrl = `${import.meta.env.VITE_WEBSOCKET_URL}/ws/notifications/`;
+    const ws = new WebSocket(wsUrl);
+    
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+      ws.send(JSON.stringify({
+        type: 'authenticate',
+        user_id: user.user_id || user.id
+      }));
+    };
+    
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'unread_count') {
+          setUnreadCount(data.count);
+        } else if (data.type === 'new_notification') {
+          setUnreadCount(prev => prev + 1);
+        }
+      } catch (error) {
+        console.error('WebSocket message error:', error);
+      }
+    };
+    
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      setSocket(null);
+    };
+    
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+    
+    setSocket(ws);
+    
+    return () => {
+      ws.close();
+    };
+  }, [user]);
 
   const breadcrumbs = useMemo(() => generateBreadcrumbs(location.pathname), [location.pathname]);
 
-  // Check if user is admin OR moderator with proper null checking
   const isAdmin = user?.isAdmin === true;
   const isModerator = user?.isModerator === true;
-  
-  // Shop should be hidden for both admin AND moderator
-  // Only show for customers (when user exists and is a customer)
   const showShop = user !== null && !isAdmin && !isModerator;
 
   return (
@@ -119,10 +158,20 @@ export default function CustomerHeader() {
         </div>
 
         <div className="flex items-center gap-4 px-4">
+          <Link to='/messages' className="p-2 rounded-full hover:bg-gray-100 transition-colors relative">
+            <MessageCircle className="w-5 h-5 text-gray-600" />
+          </Link>
+          
+          <Link to='/notifications' className="p-2 rounded-full hover:bg-gray-100 transition-colors relative">
+            <Bell className="w-5 h-5 text-gray-600" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-medium text-white">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
+          </Link>
+          
           <DropdownMenu>
-              <Link to='/messages' className="p-2 rounded-full hover:bg-gray-100 transition-colors">
-                <MessageCircle className="w-5 h-5 text-gray-600" />
-              </Link>
             <DropdownMenuTrigger asChild>
               <button className="p-2 rounded-full hover:bg-gray-100 transition-colors">
                 <User className="w-5 h-5 text-gray-600" />
@@ -133,7 +182,6 @@ export default function CustomerHeader() {
                 Profile
               </DropdownMenuItem>
 
-              {/* Shop link - only show for customers */}
               {showShop && (
                 <DropdownMenuItem onClick={() => navigate("/shop-list")}>
                   Shop

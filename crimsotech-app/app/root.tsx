@@ -16,7 +16,6 @@ import { Toaster } from "~/components/ui/sonner";
 import { Button } from '~/components/ui/button'
 import type { Route } from "./+types/root";
 import "./app.css";
-// ✅ NProgress
 import NProgress from "nprogress";
 import "nprogress/nprogress.css";
 import { useEffect, useRef, useCallback } from "react";
@@ -41,7 +40,6 @@ export const links: Route.LinksFunction = () => [
     rel: "stylesheet",
     href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
   },
-  // ✅ Add custom NProgress CSS with orange color
   {
     rel: "stylesheet",
     href: "data:text/css," + encodeURIComponent(`
@@ -71,7 +69,6 @@ export const links: Route.LinksFunction = () => [
       #nprogress .spinner {
         display: none !important;
       }
-      /* Smooth animations */
       #nprogress .bar {
         transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       }
@@ -98,12 +95,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Define loader return type
 type LoaderData = {
   user: User | null;
 };
 
-// ✅ Add loader to get user from session
 export async function loader({ request }: Route.LoaderArgs): Promise<LoaderData> {
   const { getSession } = await import("./sessions.server");
   const session = await getSession(request.headers.get("Cookie"));
@@ -112,7 +107,6 @@ export async function loader({ request }: Route.LoaderArgs): Promise<LoaderData>
   const userData = session.get("userData");
   
   if (userId && userData) {
-    // Ensure userData matches the User interface
     const user: User = {
       ...userData,
       id: userId,
@@ -128,7 +122,6 @@ export async function loader({ request }: Route.LoaderArgs): Promise<LoaderData>
   return { user: null };
 }
 
-// ✅ Enhanced NProgress Wrapper that catches all navigation types
 function RouteChangeProgress() {
   const location = useLocation();
   const navigation = useNavigation();
@@ -297,9 +290,71 @@ export function ProgressLink({
   );
 }
 
-// ✅ Wrap the entire app with UserProvider - SINGLE SOURCE OF TRUTH
 export default function App({ loaderData }: Route.ComponentProps) {
   const { user } = loaderData as LoaderData;
+  const notificationSocket = useRef<WebSocket | null>(null);
+  
+  useEffect(() => {
+    if (!user) return;
+    
+    const wsUrl = `${import.meta.env.VITE_WEBSOCKET_URL}/ws/notifications/`;
+    notificationSocket.current = new WebSocket(wsUrl);
+    
+    notificationSocket.current.onopen = () => {
+      console.log('WebSocket connected');
+      notificationSocket.current?.send(JSON.stringify({
+        type: 'authenticate',
+        user_id: user.id
+      }));
+    };
+    
+    notificationSocket.current.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'authenticated') {
+          console.log('WebSocket authenticated');
+        } else if (data.type === 'new_notification') {
+          console.log('New notification:', data);
+          // You can dispatch an event or update state here
+        } else if (data.type === 'unread_count') {
+          console.log('Unread count:', data.count);
+          // You can dispatch an event or update state here
+        }
+      } catch (error) {
+        console.error('WebSocket message error:', error);
+      }
+    };
+    
+    notificationSocket.current.onclose = () => {
+      console.log('WebSocket disconnected');
+      notificationSocket.current = null;
+      
+      setTimeout(() => {
+        if (user) {
+          const newWs = new WebSocket(wsUrl);
+          newWs.onopen = () => {
+            newWs.send(JSON.stringify({
+              type: 'authenticate',
+              user_id: user.id
+            }));
+          };
+          notificationSocket.current = newWs;
+        }
+      }, 3000);
+    };
+    
+    notificationSocket.current.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+    
+    return () => {
+      if (notificationSocket.current) {
+        notificationSocket.current.close();
+        notificationSocket.current = null;
+      }
+    };
+  }, [user]);
   
   return (
     <>
