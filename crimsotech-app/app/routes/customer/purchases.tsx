@@ -576,6 +576,20 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
           >
             <Truck className="w-3 h-3" />
           </Button>
+           {/* Rate button for delivered orders */}
+      {status === 'delivered' && (
+        <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
+            title="Rate Product & Rider"
+            onClick={() => navigate(`/rate/${item.order_id}/${item.product_id}`)}
+
+          >
+            <MessageSquare className="w-3 h-3 mr-1" />
+            <span className="text-xs">Rate</span>
+          </Button>
+        )}
           {item.is_refundable && (
             <Button
               size="sm"
@@ -599,11 +613,12 @@ export default function Purchases({ loaderData }: Route.ComponentProps) {
           variant="ghost"
           className="h-6 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
           title="Rate Product"
-          onClick={() => navigate(`/product-rate?productId=${item.product_id}&orderId=${item.order_id}`)}
+          onClick={() => navigate(`/rate/${item.order_id}/${item.product_id}`)}
         >
           <MessageSquare className="w-3 h-3 mr-1" />
-          <span className="text-xs">Rate</span>
-        </Button>
+            <span className="text-xs">Rate</span>
+          </Button>
+
       );
     }
     

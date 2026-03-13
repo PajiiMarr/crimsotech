@@ -128,7 +128,10 @@ class ShopSerializer(serializers.ModelSerializer):
     def get_avg_rating(self, obj):
         reviews = obj.reviews.all()  # related_name='reviews' in your Review model
         if reviews.exists():
-            return sum(r.rating for r in reviews) / reviews.count()
+            # Filter out reviews with null average_rating
+            valid_reviews = [r for r in reviews if r.average_rating is not None]
+            if valid_reviews:
+                return sum(r.average_rating for r in valid_reviews) / len(valid_reviews)
         return None  # or 0 if you prefer
     
     def get_shop_picture_url(self, obj):
@@ -138,12 +141,120 @@ class ShopFollowSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShopFollow
         fields = '__all__'
-
+        
 class ReviewSerializer(serializers.ModelSerializer):
+    # Add computed field for product average
+    product_average = serializers.SerializerMethodField(read_only=True)
+    
     class Meta:
         model = Review
         fields = '__all__'
+        read_only_fields = ['average_rating', 'created_at', 'updated_at']
 
+    def get_product_average(self, obj):
+        """
+        Calculate average of product-related ratings:
+        condition_rating, accuracy_rating, value_rating
+        """
+        ratings = []
+        if obj.condition_rating:
+            ratings.append(obj.condition_rating)
+        if obj.accuracy_rating:
+            ratings.append(obj.accuracy_rating)
+        if obj.value_rating:
+            ratings.append(obj.value_rating)
+        
+        if ratings:
+            return round(sum(ratings) / len(ratings), 2)
+        return None
+
+    def validate(self, data):
+        # Check if either product or rider is specified
+        if not data.get('product') and not data.get('rider'):
+            raise serializers.ValidationError(
+                "Either product or rider must be specified for a review"
+            )
+        
+        # Validate product ratings if product is provided
+        if data.get('product'):
+            condition = data.get('condition_rating')
+            accuracy = data.get('accuracy_rating')
+            value = data.get('value_rating')
+            delivery = data.get('delivery_rating')
+            
+            # Check if at least one rating is provided
+            if condition is None and accuracy is None and value is None and delivery is None:
+                raise serializers.ValidationError(
+                    "At least one rating must be provided for product review"
+                )
+        
+        # Validate rider ratings if rider is provided
+        if data.get('rider'):
+            # Your model doesn't have rider rating fields, so we'll just validate that
+            # the rider field is present
+            if not data.get('rider'):
+                raise serializers.ValidationError(
+                    "Rider ID must be provided for rider review"
+                )
+            
+            # Remove any rider rating fields that might be in the data
+            # since your model doesn't have them
+            data.pop('attitude_rating', None)
+            data.pop('handling_rating', None)
+            data.pop('safety_rating', None)
+        
+        return data
+
+    def create(self, validated_data):
+        # Collect all ratings for average calculation
+        ratings = []
+        
+        # Add product ratings
+        if validated_data.get('condition_rating'):
+            ratings.append(validated_data['condition_rating'])
+        if validated_data.get('accuracy_rating'):
+            ratings.append(validated_data['accuracy_rating'])
+        if validated_data.get('value_rating'):
+            ratings.append(validated_data['value_rating'])
+        if validated_data.get('delivery_rating'):
+            ratings.append(validated_data['delivery_rating'])
+        
+        # Calculate average if there are ratings
+        if ratings:
+            validated_data['average_rating'] = round(sum(ratings) / len(ratings), 2)
+        else:
+            # For rider-only reviews with no ratings, set a default or leave as None
+            validated_data['average_rating'] = None
+        
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        # Update instance with new values
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        # Collect all ratings for average calculation
+        ratings = []
+        
+        # Add product ratings
+        if instance.condition_rating:
+            ratings.append(instance.condition_rating)
+        if instance.accuracy_rating:
+            ratings.append(instance.accuracy_rating)
+        if instance.value_rating:
+            ratings.append(instance.value_rating)
+        if instance.delivery_rating:
+            ratings.append(instance.delivery_rating)
+        
+        # Calculate and set average
+        if ratings:
+            instance.average_rating = round(sum(ratings) / len(ratings), 2)
+        else:
+            instance.average_rating = None
+        
+        instance.save()
+        return instance
+      
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category

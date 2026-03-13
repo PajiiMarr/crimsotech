@@ -66,7 +66,6 @@ router.register(r'customer-arrange-shipment', CustomerArrangeShipment, basename=
 
 router.register(r'seller-gift', SellerGifts, basename='seller-gift')
 router.register(r'customer-gift', CustomerGiftViewSet, basename='customer-gift')
-router.register(r'reviews', Reviews, basename='reviews')
 
 router.register(r'rider-dashboard', RiderDashboardViewSet, basename='rider-dashboard')
 router.register(r'rider-history', RiderOrderHistoryViewSet, basename='rider-history')
@@ -113,6 +112,8 @@ urlpatterns = [
     
     # DELETE clear entire cart
     path('api/cart/clear/', CartClearView.as_view(), name='cart-clear'),
+
+    path('api/reviews/', ReviewView.as_view(), name='review-list-create'),
     
     
     # ========================================================

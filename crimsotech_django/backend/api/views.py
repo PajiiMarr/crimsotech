@@ -24641,7 +24641,7 @@ class PurchasesBuyer(viewsets.ViewSet):
     # Add: return rider info for an order
     @action(detail=True, methods=['get'], url_path='get-rider-info')
     def get_rider_info(self, request, pk=None):
-        """Return rider(s) assigned to deliveries for an order. URL: /purchases-buyer/{order_id}/get-rider-info/"""
+        """Return rider(s) assigned to deliveries for an order."""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -24652,26 +24652,29 @@ class PurchasesBuyer(viewsets.ViewSet):
         except (User.DoesNotExist, Order.DoesNotExist):
             return Response({'error': 'Order not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
 
-        deliveries = Delivery.objects.filter(order=order).select_related('rider__rider')
+        deliveries = Delivery.objects.filter(order=order).select_related('rider')
         riders_data = []
+        
         for delivery in deliveries:
-            rider_link = getattr(delivery, 'rider', None)
-            if rider_link and getattr(rider_link, 'rider', None):
-                r = rider_link.rider
+            if delivery.rider:
+                rider = delivery.rider
+                # FIXED: Use rider.rider_id instead of rider.rider.id
                 riders_data.append({
-                    "id": str(r.id),
-                    "rider_id": str(r.id),
+                    "id": str(rider.rider_id),  # Rider's ID
+                    "rider_id": str(rider.rider_id),  # Rider's ID
                     "user": {
-                        "id": str(r.id),
-                        "first_name": r.first_name,
-                        "last_name": r.last_name,
-                        "phone": r.contact_number or ""
+                        "id": str(rider.rider.id),  # User's ID (this is correct)
+                        "first_name": rider.rider.first_name if rider.rider else '',
+                        "last_name": rider.rider.last_name if rider.rider else '',
+                        "phone": rider.rider.contact_number if rider.rider else ''
                     }
                 })
 
-        return Response({"success": True, "order_id": str(order.order), "riders": riders_data})
-
-
+        return Response({
+            "success": True, 
+            "order_id": str(order.order), 
+            "riders": riders_data
+    })
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def get_return_products(self, request):
@@ -34569,228 +34572,618 @@ class RiderScheduleViewSet(viewsets.ViewSet):
                 'error': f'An unexpected error occurred: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class ReviewView(APIView):
+    """
+    Comprehensive view for all review operations:
+    - GET: List reviews with filters or get single review
+    - POST: Create new review with multiple rating criteria
+    - PUT: Update review
+    - PATCH: Partial update review
+    - DELETE: Delete review
+    """
+    
+    def get_customer(self, request):
+        """Extract customer from request data or X-User-Id header"""
+        # Try to get from request data first (for POST/PUT/PATCH)
+        user_id = request.data.get('customer_id')
+        
+        # If not in data, try from query params (for GET)
+        if not user_id:
+            user_id = request.query_params.get('customer_id')
+        
+        # If not in data or query, try from headers
+        if not user_id:
+            user_id = request.headers.get('X-User-Id')
+        
+        if user_id:
+            try:
+                # First get the User
+                user = User.objects.get(id=user_id)
+                # Then get the Customer profile (Customer uses customer field as OneToOne to User)
+                return Customer.objects.get(customer=user)
+            except (User.DoesNotExist, Customer.DoesNotExist) as e:
+                print(f"Error getting customer: {e}")
+                return None
+        return None
 
-class Reviews(viewsets.ModelViewSet):
-    """
-    Simple viewset for handling product reviews
-    """
-    queryset = Review.objects.all()
-    serializer_class = ReviewSerializer
-    
-    def get_queryset(self):
+
+    def get(self, request, review_id=None):
         """
-        Simple filtering for reviews
-        """
-        queryset = Review.objects.all()
-        
-        # Filter by product
-        product_id = self.request.query_params.get('product_id')
-        if product_id:
-            queryset = queryset.filter(product_id=product_id)
-        
-        # Filter by shop
-        shop_id = self.request.query_params.get('shop_id')
-        if shop_id:
-            queryset = queryset.filter(shop_id=shop_id)
-        
-        # Order by most recent first
-        return queryset.order_by('-created_at')
-    
-    def create(self, request):
-        """
-        Create a new review - SIMPLE VERSION with user header support
+        Handle GET requests:
+        - If review_id provided: Get specific review
+        - If no review_id: List reviews with filters
         """
         try:
-            # Get customer_id from request data OR from X-User-Id header
-            customer_id = request.data.get('customer_id') or request.headers.get('X-User-Id')
+            # Get single review if review_id provided
+            if review_id:
+                return self._get_single_review(request, review_id)
             
-            if not customer_id:
-                return Response({
-                    "success": False,
-                    "error": "customer_id is required (send in request body or X-User-Id header)"
-                }, status=status.HTTP_400_BAD_REQUEST)
+            # Otherwise list reviews with filters
+            return self._list_reviews(request)
             
-            # Resolve customer: support passing either the User id (X-User-Id) or a Customer primary key
-            try:
-                # First try to find a User with this id
-                user = User.objects.get(id=customer_id)
-                customer = Customer.objects.get(customer=user)
-            except User.DoesNotExist:
-                # If not a User id, try to find Customer by its user pk value if provided directly
-                try:
-                    customer = Customer.objects.get(customer__id=customer_id)
-                except Customer.DoesNotExist:
-                    return Response({
-                        "success": False,
-                        "error": "Customer not found"
-                    }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error in GET request: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': 'Failed to process request',
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_single_review(self, request, review_id):
+        """Get a single review by ID"""
+        try:
+            review = Review.objects.select_related(
+                'customer',
+                'product',
+                'rider',
+                'shop'
+            ).get(id=review_id)
             
-            # Validate required fields
-            required_fields = ['product_id', 'rating']
-            missing_fields = [field for field in required_fields if field not in request.data]
-            if missing_fields:
-                return Response({
-                    "success": False,
-                    "error": f"Missing required fields: {', '.join(missing_fields)}"
-                }, status=status.HTTP_400_BAD_REQUEST)
+            # Get customer info - FIXED: removed get_full_name()
+            customer_info = None
+            if review.customer and review.customer.customer:
+                # Combine first_name and last_name manually
+                first = review.customer.customer.first_name or ''
+                last = review.customer.customer.last_name or ''
+                full_name = f"{first} {last}".strip() or review.customer.customer.username
+                customer_info = {
+                    'id': str(review.customer.customer.id),
+                    'name': full_name,
+                }
             
-            # Validate rating
-            rating = request.data.get('rating')
-            try:
-                rating_int = int(rating)
-                if rating_int < 1 or rating_int > 5:
-                    return Response({
-                        "success": False,
-                        "error": "Rating must be between 1 and 5"
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            except ValueError:
-                return Response({
-                    "success": False,
-                    "error": "Rating must be a valid number (1-5)"
-                }, status=status.HTTP_400_BAD_REQUEST)
+            # Get rider info - FIXED: removed get_full_name()
+            rider_info = None
+            if review.rider and review.rider.rider:
+                first = review.rider.rider.first_name or ''
+                last = review.rider.rider.last_name or ''
+                full_name = f"{first} {last}".strip() or review.rider.rider.username
+                rider_info = {
+                    'id': str(review.rider.rider_id),
+                    'rider_id': str(review.rider.rider_id),
+                    'name': full_name,
+                }
             
-            # Get the product
-            product_id = request.data.get('product_id')
-            try:
-                product = Product.objects.get(id=product_id)
-            except Product.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "error": "Product not found"
-                }, status=status.HTTP_404_NOT_FOUND)
+            # Get product info
+            product_info = None
+            if review.product:
+                product_info = {
+                    'id': str(review.product.id),
+                    'name': review.product.name,
+                    'price': str(review.product.price) if hasattr(review.product, 'price') else None,
+                }
             
-            # Check if customer already reviewed this product
-            existing_review = Review.objects.filter(
-                customer=customer,
-                product=product
-            ).first()
+            # Get shop info
+            shop_info = None
+            if review.shop:
+                shop_info = {
+                    'id': str(review.shop.id),
+                    'name': review.shop.name,
+                }
             
-            if existing_review:
-                return Response({
-                    "success": False,
-                    "error": "You have already reviewed this product"
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get the shop from the product
-            shop = product.shop
-            if not shop:
-                return Response({
-                    "success": False,
-                    "error": "Product does not belong to a shop"
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-# Prepare review data (use User id as customer pk for serializer)
             review_data = {
-                'customer': customer.customer.id,
-                'shop': shop.id,
-                'product': product.id,
-                'rating': rating_int,
-                'comment': request.data.get('comment', '')
+                'id': str(review.id),
+                'average_rating': review.average_rating,
+                'condition_rating': review.condition_rating,
+                'accuracy_rating': review.accuracy_rating,
+                'value_rating': review.value_rating,
+                'delivery_rating': review.delivery_rating,
+                'comment': review.comment,
+                'created_at': review.created_at.isoformat(),
+                'updated_at': review.updated_at.isoformat(),
+                'customer': customer_info,
+                'product': product_info,
+                'rider': rider_info,
+                'shop': shop_info,
             }
             
-            # Create the review
-            serializer = self.get_serializer(data=review_data)
+            return Response({
+                'status': 'success',
+                'message': 'Review retrieved successfully',
+                'data': review_data
+            }, status=status.HTTP_200_OK)
+            
+        except Review.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': f'Review with id {review_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+
+    def _list_reviews(self, request):
+        """List reviews with filters"""
+        # Start with all reviews and select related fields
+        reviews = Review.objects.select_related(
+            'customer',
+            'product',
+            'rider',
+            'shop'
+        ).all()
+        
+        # Apply filters
+        # Filter by product
+        product_id = request.query_params.get('product_id') or request.query_params.get('product')
+        if product_id:
+            reviews = reviews.filter(product_id=product_id)
+        
+        # Filter by rider
+        rider_id = request.query_params.get('rider_id') or request.query_params.get('rider')
+        if rider_id:
+            reviews = reviews.filter(rider_id=rider_id)
+        
+        # Filter by shop
+        shop_id = request.query_params.get('shop_id') or request.query_params.get('shop')
+        if shop_id:
+            reviews = reviews.filter(shop_id=shop_id)
+        
+        # Filter by customer
+        customer_id = request.query_params.get('customer_id') or request.query_params.get('customer')
+        if customer_id:
+            reviews = reviews.filter(customer_id=customer_id)
+        
+        # Filter by average rating
+        min_rating = request.query_params.get('min_rating')
+        if min_rating:
+            reviews = reviews.filter(average_rating__gte=float(min_rating))
+        
+        max_rating = request.query_params.get('max_rating')
+        if max_rating:
+            reviews = reviews.filter(average_rating__lte=float(max_rating))
+        
+        # Filter by specific criteria ratings
+        condition = request.query_params.get('condition_rating')
+        if condition:
+            reviews = reviews.filter(condition_rating=condition)
+        
+        accuracy = request.query_params.get('accuracy_rating')
+        if accuracy:
+            reviews = reviews.filter(accuracy_rating=accuracy)
+        
+        value = request.query_params.get('value_rating')
+        if value:
+            reviews = reviews.filter(value_rating=value)
+        
+        delivery = request.query_params.get('delivery_rating')
+        if delivery:
+            reviews = reviews.filter(delivery_rating=delivery)
+        
+        # Filter by date range
+        days = request.query_params.get('days')
+        if days:
+            date_from = timezone.now() - timedelta(days=int(days))
+            reviews = reviews.filter(created_at__gte=date_from)
+        
+        date_from = request.query_params.get('date_from')
+        if date_from:
+            reviews = reviews.filter(created_at__gte=date_from)
+        
+        date_to = request.query_params.get('date_to')
+        if date_to:
+            reviews = reviews.filter(created_at__lte=date_to)
+        
+        # Search in comments
+        search = request.query_params.get('search')
+        if search:
+            reviews = reviews.filter(comment__icontains=search)
+        
+        # Include statistics if requested
+        include_stats = request.query_params.get('include_stats', '').lower() == 'true'
+        stats = None
+        
+        if include_stats:
+            # Calculate statistics based on filtered queryset
+            stats = reviews.aggregate(
+                average_rating=Avg('average_rating'),
+                total_reviews=Count('id'),
+                avg_condition=Avg('condition_rating'),
+                avg_accuracy=Avg('accuracy_rating'),
+                avg_value=Avg('value_rating'),
+                avg_delivery=Avg('delivery_rating')
+            )
+            
+            # Calculate rating distribution
+            rating_distribution = {}
+            for i in range(1, 6):
+                count = reviews.filter(average_rating__gte=i-0.5, average_rating__lt=i+0.5).count()
+                rating_distribution[str(i)] = count
+            
+            stats['rating_distribution'] = rating_distribution
+        
+        # Ordering
+        order_by = request.query_params.get('order_by', '-created_at')
+        allowed_orders = ['created_at', '-created_at', 'average_rating', '-average_rating']
+        if order_by in allowed_orders:
+            reviews = reviews.order_by(order_by)
+        
+        # Pagination
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 10))
+        start = (page - 1) * page_size
+        end = start + page_size
+        
+        total_count = reviews.count()
+        paginated_reviews = reviews[start:end]
+        
+        # Build response data
+        reviews_data = []
+        for review in paginated_reviews:
+            # Get customer info - FIXED: manually combine first_name and last_name
+            customer_info = None
+            if review.customer and review.customer.customer:
+                first = review.customer.customer.first_name or ''
+                last = review.customer.customer.last_name or ''
+                full_name = f"{first} {last}".strip() or review.customer.customer.username
+                customer_info = {
+                    'id': str(review.customer.customer.id),
+                    'name': full_name,
+                }
+            
+            # Get rider info - FIXED: use rider_id instead of id and manually combine name
+            rider_info = None
+            if review.rider and review.rider.rider:
+                first = review.rider.rider.first_name or ''
+                last = review.rider.rider.last_name or ''
+                full_name = f"{first} {last}".strip() or review.rider.rider.username
+                rider_info = {
+                    'id': str(review.rider.rider_id),  # Changed from review.rider.id
+                    'rider_id': str(review.rider.rider_id),
+                    'name': full_name,
+                }
+            
+            # Get product info
+            product_info = None
+            if review.product:
+                product_info = {
+                    'id': str(review.product.id),
+                    'name': review.product.name,
+                }
+            
+            # Get shop info
+            shop_info = None
+            if review.shop:
+                shop_info = {
+                    'id': str(review.shop.id),
+                    'name': review.shop.name,
+                }
+            
+            review_data = {
+                'id': str(review.id),
+                'average_rating': review.average_rating,
+                'condition_rating': review.condition_rating,
+                'accuracy_rating': review.accuracy_rating,
+                'value_rating': review.value_rating,
+                'delivery_rating': review.delivery_rating,
+                'comment': review.comment,
+                'created_at': review.created_at.isoformat(),
+                'customer': customer_info,
+                'product': product_info,
+                'rider': rider_info,
+                'shop': shop_info,
+            }
+            
+            reviews_data.append(review_data)
+        
+        response_data = {
+            'status': 'success',
+            'message': 'Reviews retrieved successfully',
+            'data': {
+                'pagination': {
+                    'total_count': total_count,
+                    'page': page,
+                    'page_size': page_size,
+                    'total_pages': (total_count + page_size - 1) // page_size if total_count > 0 else 0,
+                },
+                'reviews': reviews_data
+            }
+        }
+        
+        # Add statistics if requested
+        if include_stats and stats:
+            response_data['data']['statistics'] = stats
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        """
+        Handle POST requests to create a new review with multiple rating criteria
+        Allows both product_id and rider_id in the same review
+        """
+        try:
+            # Get customer from request data or header
+            customer = self.get_customer(request)
+            if not customer:
+                return Response({
+                    'status': 'error',
+                    'message': 'Customer not found. Please ensure you have a customer profile.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            data = request.data.copy()  # Make a copy to modify
+            
+            # Set the customer field to the Customer instance
+            data['customer'] = customer
+            
+            # Get product_id and rider_id
+            product_id = data.get('product_id')
+            rider_id = data.get('rider_id')
+            
+            # Check if at least one is provided
+            if not product_id and not rider_id:
+                return Response({
+                    'status': 'error',
+                    'message': 'Either product_id or rider_id must be provided'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle product if provided
+            if product_id:
+                # Check for existing review (optional - you might want to allow multiple?)
+                existing_review = Review.objects.filter(
+                    customer=customer,
+                    product_id=product_id
+                ).first()
+                
+                if existing_review:
+                    return Response({
+                        'status': 'error',
+                        'message': 'You have already reviewed this product',
+                        'data': {
+                            'existing_review_id': str(existing_review.id)
+                        }
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Get product and its shop
+                try:
+                    product = Product.objects.get(id=product_id)
+                    data['product'] = product.id
+                    data['shop'] = product.shop.id if product.shop else None
+                except Product.DoesNotExist:
+                    return Response({
+                        'status': 'error',
+                        'message': f'Product with id {product_id} not found'
+                    }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Handle rider if provided
+            # Handle rider if provided
+            if rider_id:
+                # Check for existing review (optional)
+                existing_rider_review = Review.objects.filter(
+                    customer=customer,
+                    rider_id=rider_id
+                ).first()
+                
+                if existing_rider_review:
+                    return Response({
+                        'status': 'error',
+                        'message': 'You have already reviewed this rider',
+                        'data': {
+                            'existing_review_id': str(existing_rider_review.id)
+                        }
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Get rider instance - FIXED: use rider_id instead of id
+                try:
+                    rider = Rider.objects.get(rider_id=rider_id)  # Changed from id=rider_id
+                    data['rider'] = rider  # Set the Rider instance
+                except Rider.DoesNotExist:
+                    return Response({
+                        'status': 'error',
+                        'message': f'Rider with id {rider_id} not found'
+                    }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Remove any unwanted fields
+            data.pop('attitude_rating', None)
+            data.pop('handling_rating', None)
+            data.pop('safety_rating', None)
+            
+            # Use serializer to create the review
+            serializer = ReviewSerializer(data=data, context={'request': request})
+            
             if serializer.is_valid():
                 review = serializer.save()
                 
-                # Update product's average rating if product has average_rating field
-                try:
-                    self._update_product_rating(product)
-                except Exception as e:
-                    print(f"Note: Could not update product rating: {e}")
-                    # Continue even if rating update fails
+                # Determine message based on what was reviewed
+                if product_id and rider_id:
+                    message = 'Product and rider review created successfully'
+                elif product_id:
+                    message = 'Product review created successfully'
+                else:
+                    message = 'Rider review created successfully'
                 
                 return Response({
-                    "success": True,
-                    "message": "Review created successfully",
-                    "review": serializer.data
+                    'status': 'success',
+                    'message': message,
+                    'data': serializer.data
                 }, status=status.HTTP_201_CREATED)
             else:
                 return Response({
-                    "success": False,
-                    "error": "Validation failed",
-                    "details": serializer.errors
+                    'status': 'error',
+                    'message': 'Validation failed',
+                    'errors': serializer.errors
                 }, status=status.HTTP_400_BAD_REQUEST)
                 
         except Exception as e:
-            print(f"Error creating review: {str(e)}")
+            logger.error(f"Error creating review: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response({
-                "success": False,
-                "error": "Failed to create review",
-                "details": str(e)
+                'status': 'error',
+                'message': 'Failed to create review',
+                'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+    def put(self, request, review_id):
+        """Handle PUT requests for full update"""
+        return self._update_review(request, review_id, partial=False)
     
-    def _update_product_rating(self, product):
+    def patch(self, request, review_id):
+        """Handle PATCH requests for partial update"""
+        return self._update_review(request, review_id, partial=True)
+    
+    def _update_review(self, request, review_id, partial=False):
         """
-        Update product's average rating (optional - only if Product model has these fields)
+        Internal method to handle review updates
         """
         try:
-            # Check if product model has average_rating field
-            if hasattr(product, 'average_rating'):
-                reviews = Review.objects.filter(product=product)
-                if reviews.exists():
-                    avg_rating = reviews.aggregate(Avg('rating'))['rating__avg']
-                    # Round to 1 decimal place
-                    product.average_rating = round(avg_rating, 1)
-                    product.review_count = reviews.count()
-                else:
-                    product.average_rating = 0.0
-                    product.review_count = 0
-                
-                product.save(update_fields=['average_rating', 'review_count'])
-        except Exception as e:
-            print(f"Note: Could not update product rating: {e}")
-            # Silently fail - this is optional functionality
-    
-    def list(self, request):
-        """
-        List reviews with simple response format
-        """
-        try:
-            queryset = self.get_queryset()
+            # Get customer from request data or header
+            customer = self.get_customer(request)
+            if not customer:
+                return Response({
+                    'status': 'error',
+                    'message': 'Customer ID is required (provide in request body as customer_id or X-User-Id header)'
+                }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Simple pagination
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response({
-                    "success": True,
-                    "reviews": serializer.data
-                })
+            # Get review
+            try:
+                review = Review.objects.get(id=review_id)
+            except Review.DoesNotExist:
+                return Response({
+                    'status': 'error',
+                    'message': f'Review with id {review_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
             
-            serializer = self.get_serializer(queryset, many=True)
+            # Check if customer owns this review
+            if str(review.customer.id) != str(customer.id):
+                return Response({
+                    'status': 'error',
+                    'message': 'You do not have permission to update this review'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            data = request.data
+            updated_fields = []
+            
+            # Update ratings if provided
+            rating_fields = ['condition_rating', 'accuracy_rating', 'value_rating', 'delivery_rating']
+            for field in rating_fields:
+                if field in data:
+                    try:
+                        value = int(data[field]) if data[field] is not None else None
+                        if value is not None and (value < 1 or value > 5):
+                            return Response({
+                                'status': 'error',
+                                'message': f'{field} must be between 1 and 5'
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                        setattr(review, field, value)
+                        updated_fields.append(field)
+                    except (TypeError, ValueError):
+                        return Response({
+                            'status': 'error',
+                            'message': f'Invalid {field} value'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Update comment if provided
+            if 'comment' in data:
+                review.comment = data['comment']
+                updated_fields.append('comment')
+            
+            # For full update, validate required fields
+            if not partial:
+                if review.product and not any([
+                    review.condition_rating,
+                    review.accuracy_rating,
+                    review.value_rating
+                ]):
+                    return Response({
+                        'status': 'error',
+                        'message': 'At least one product rating is required'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Save changes (average_rating will be calculated in serializer)
+            review.save()
+            
             return Response({
-                "success": True,
-                "reviews": serializer.data,
-                "count": queryset.count()
+                'status': 'success',
+                'message': 'Review updated successfully',
+                'data': {
+                    'id': str(review.id),
+                    'updated_fields': updated_fields,
+                    'average_rating': review.average_rating,
+                    'condition_rating': review.condition_rating,
+                    'accuracy_rating': review.accuracy_rating,
+                    'value_rating': review.value_rating,
+                    'delivery_rating': review.delivery_rating,
+                    'comment': review.comment,
+                    'updated_at': review.updated_at.isoformat()
+                }
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
-            print(f"Error listing reviews: {str(e)}")
+            logger.error(f"Error updating review: {str(e)}")
             return Response({
-                "success": False,
-                "error": "Failed to fetch reviews"
+                'status': 'error',
+                'message': 'Failed to update review',
+                'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def retrieve(self, request, pk=None):
+    def delete(self, request, review_id):
         """
-        Get a single review
+        Handle DELETE requests to remove a review
         """
         try:
-            review = self.get_object()
-            serializer = self.get_serializer(review)
-            return Response({
-                "success": True,
-                "review": serializer.data
-            }, status=status.HTTP_200_OK)
-        except Exception as e:
-            print(f"Error retrieving review: {str(e)}")
-            return Response({
-                "success": False,
-                "error": "Review not found"
-            }, status=status.HTTP_404_NOT_FOUND)
-
+            # Get customer from request data or header
+            customer = self.get_customer(request)
+            if not customer:
+                return Response({
+                    'status': 'error',
+                    'message': 'Customer ID is required (provide in request body as customer_id or X-User-Id header)'
+                }, status=status.HTTP_400_BAD_REQUEST)
             
+            # Get review
+            try:
+                review = Review.objects.get(id=review_id)
+            except Review.DoesNotExist:
+                return Response({
+                    'status': 'error',
+                    'message': f'Review with id {review_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if customer owns this review
+            if str(review.customer.id) != str(customer.id):
+                return Response({
+                    'status': 'error',
+                    'message': 'You do not have permission to delete this review'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            # Store review info for response
+            review_info = {
+                'id': str(review.id),
+                'average_rating': review.average_rating,
+                'type': 'product' if review.product else 'rider'
+            }
+            
+            # Delete review
+            review.delete()
+            
+            return Response({
+                'status': 'success',
+                'message': 'Review deleted successfully',
+                'data': review_info
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error deleting review: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': 'Failed to delete review',
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)       
 
 
 class ProfileView(APIView):
