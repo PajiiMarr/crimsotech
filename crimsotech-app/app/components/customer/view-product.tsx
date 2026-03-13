@@ -9,13 +9,17 @@ import {
   ChevronRight,
   ShoppingBagIcon,
   MapPin,
+  Package,
   Store,
   User,
   RefreshCw,
   ShieldCheck,
   ShieldOff,
   Gift,
-  X
+  X,
+  MessageCircle,
+  Calendar,
+  ThumbsUp
 } from "lucide-react";
 
 import { useEffect, useState } from "react";
@@ -123,7 +127,7 @@ interface SellerInfo {
   profile_picture?: string | null;
   created_at?: string;
   is_suspended?: boolean;
-  address?: string; // Add address field
+  address?: string;
   // Shop fields
   name?: string;
   avg_rating?: number | null;
@@ -151,6 +155,29 @@ interface Category {
   name: string;
   shop: string | null;
   user: string;
+}
+
+interface Review {
+  id: string;
+  average_rating: number;
+  condition_rating: number;
+  accuracy_rating: number;
+  value_rating: number;
+  delivery_rating: number;
+  comment: string;
+  created_at: string;
+  customer: {
+    id: string;
+    name: string;
+  };
+  product?: {
+    id: string;
+    name: string;
+  };
+  rider?: {
+    id: string;
+    name: string;
+  };
 }
 
 interface Product {
@@ -340,6 +367,16 @@ const getProductDisplayPrice = (product: Product | null): string => {
   return product.price_display || "Price unavailable";
 };
 
+// Helper function to format date
+const formatDate = (dateString: string) => {
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', { 
+    year: 'numeric', 
+    month: 'short', 
+    day: 'numeric' 
+  });
+};
+
 export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const { id } = useParams<{ id: string }>();
   const [product, setProduct] = useState<Product | null>(loaderData?.product || null);
@@ -359,6 +396,20 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const [cartItemCount, setCartItemCount] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  
+  // Reviews state
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loadingReviews, setLoadingReviews] = useState(false);
+  const [reviewStats, setReviewStats] = useState<{
+    average_rating: number;
+    total_reviews: number;
+    avg_condition: number;
+    avg_accuracy: number;
+    avg_value: number;
+    avg_delivery: number;
+    rating_distribution: Record<string, number>;
+  } | null>(null);
+  const [showAllReviews, setShowAllReviews] = useState(false);
 
   const user = loaderData?.user;
 
@@ -391,6 +442,36 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
 
     fetchSellerInfo();
   }, [product?.id, isPersonalListing]);
+
+  // Fetch product reviews
+  useEffect(() => {
+    const fetchReviews = async () => {
+      if (product?.id) {
+        setLoadingReviews(true);
+        try {
+          const response = await AxiosInstance.get('/reviews/', {
+            params: {
+              product_id: product.id,
+              include_stats: 'true',
+              page_size: showAllReviews ? 50 : 5,
+              order_by: '-created_at'
+            }
+          });
+          
+          if (response.data?.data) {
+            setReviews(response.data.data.reviews || []);
+            setReviewStats(response.data.data.statistics || null);
+          }
+        } catch (err) {
+          console.error("Error fetching reviews:", err);
+        } finally {
+          setLoadingReviews(false);
+        }
+      }
+    };
+
+    fetchReviews();
+  }, [product?.id, showAllReviews]);
 
   // Extract variant groups from variants data
   useEffect(() => {
@@ -491,41 +572,50 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
   const maxQuantity = displayStock;
 
   // Build thumbnail list with safety checks
-  const thumbnailUrls: { url: string; type: 'product' | 'variant'; id?: string }[] = [];
-  const seen = new Set<string>();
+  const [thumbnailUrls, setThumbnailUrls] = useState<{ url: string; type: 'product' | 'variant'; id?: string }[]>([]);
 
-  // Add product images first
-  if (product?.media_files && Array.isArray(product.media_files)) {
-    product.media_files.forEach((img) => {
-      const full = resolveImageUrl(img.file_data || img.file_url);
-      if (full && !seen.has(full)) {
-        thumbnailUrls.push({ url: full, type: 'product' });
-        seen.add(full);
-      }
-    });
-  }
+  useEffect(() => {
+    const urls: { url: string; type: 'product' | 'variant'; id?: string }[] = [];
+    const seen = new Set<string>();
 
-  // Add variant images
-  if (product?.variants && Array.isArray(product.variants)) {
-    product.variants.forEach((variant) => {
-      if (variant.image || variant.image_url) {
-        const full = resolveImageUrl(variant.image || variant.image_url);
+    // Add product images first
+    if (product?.media_files && Array.isArray(product.media_files)) {
+      product.media_files.forEach((img) => {
+        const full = resolveImageUrl(img.file_data || img.file_url);
         if (full && !seen.has(full)) {
-          thumbnailUrls.push({ url: full, type: 'variant', id: variant.id });
+          urls.push({ url: full, type: 'product' });
           seen.add(full);
         }
-      }
-    });
-  }
-
-  // Add primary image if not already added
-  if (product?.primary_image?.url) {
-    const full = resolveImageUrl(product.primary_image.url);
-    if (full && !seen.has(full)) {
-      thumbnailUrls.unshift({ url: full, type: 'product' });
-      seen.add(full);
+      });
     }
-  }
+
+    // Add variant images
+    if (product?.variants && Array.isArray(product.variants)) {
+      product.variants.forEach((variant) => {
+        if (variant.image || variant.image_url) {
+          const full = resolveImageUrl(variant.image || variant.image_url);
+          if (full && !seen.has(full)) {
+            urls.push({ url: full, type: 'variant', id: variant.id });
+            seen.add(full);
+          }
+        }
+      });
+    }
+
+    // Add primary image if not already added
+    if (product?.primary_image?.url) {
+      const full = resolveImageUrl(product.primary_image.url);
+      if (full && !seen.has(full)) {
+        urls.unshift({ url: full, type: 'product' });
+        seen.add(full);
+      }
+    }
+
+    setThumbnailUrls(urls);
+    
+    // Reset active image when product changes
+    setActiveImage(0);
+  }, [product]);
 
   // Ensure activeImage is within bounds
   useEffect(() => {
@@ -534,8 +624,21 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
     }
   }, [thumbnailUrls.length, activeImage]);
 
-  const mainImageFromVariant = currentVariant?.image || currentVariant?.image_url ? resolveImageUrl(currentVariant.image || currentVariant.image_url) : null;
-  const displayImageUrl = (mainImageFromVariant ?? (thumbnailUrls.length > 0 ? thumbnailUrls[activeImage]?.url : null)) ?? '/Crimsotech.png';
+  // When variant changes, try to find and select its image
+  useEffect(() => {
+    if (currentVariant?.id && thumbnailUrls.length > 0) {
+      // Find the index of this variant's image in thumbnailUrls
+      const variantImageIndex = thumbnailUrls.findIndex(
+        thumb => thumb.type === 'variant' && thumb.id === currentVariant.id
+      );
+      if (variantImageIndex !== -1) {
+        setActiveImage(variantImageIndex);
+      }
+    }
+  }, [currentVariant, thumbnailUrls]);
+
+  // Simply use the selected thumbnail
+  const displayImageUrl = thumbnailUrls.length > 0 ? thumbnailUrls[activeImage]?.url : '/Crimsotech.png';
 
   // Handle image click to open lightbox
   const handleImageClick = () => {
@@ -1082,95 +1185,196 @@ export default function ViewProduct({ loaderData }: Route.ComponentProps) {
         )
       )}
 
-      {/* Variant Details - Only show for non-gift products */}
-      {currentVariant && !isGift && (
-        <div className="mt-6 border-t pt-4">
-          <h2 className="text-lg font-semibold mb-3">Product Details</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <div className="font-medium">SKU Code:</div>
-                <div className="text-sm text-gray-600">
-                  {currentVariant.sku_code || "No SKU Code"}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="font-medium">Price:</div>
-                <div className="text-lg font-semibold text-orange-600">₱{safeToNumber(currentVariant.price).toFixed(2)}</div>
-              </div>
-              {currentVariant.compare_price && (
-                <div className="flex items-center gap-2">
-                  <div className="font-medium">Compare Price:</div>
-                  <div className="text-sm text-gray-500 line-through">₱{safeToNumber(currentVariant.compare_price).toFixed(2)}</div>
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <div className="font-medium">Stock:</div>
-                <div className="text-sm text-gray-600">{currentVariant.quantity} units</div>
-              </div>
-              {currentVariant.original_price && (
-                <div className="flex items-center gap-2">
-                  <div className="font-medium">Original Price:</div>
-                  <div className="text-sm text-gray-600">₱{safeToNumber(currentVariant.original_price).toFixed(2)}</div>
-                </div>
-              )}
+      {/* Buyer Reviews Section - Vertical Layout with Product Info */}
+      <div className="mt-8 border-t pt-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <MessageCircle className="h-5 w-5 text-orange-600" />
+            Buyer Reviews
+          </h2>
+          {reviewStats && reviewStats.total_reviews > 0 && (
+            <div className="flex items-center gap-1">
+              <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+              <span className="font-medium">{reviewStats.average_rating.toFixed(1)}</span>
+              <span className="text-gray-500 text-sm">({reviewStats.total_reviews})</span>
             </div>
-            
-            {(currentVariant.usage_period || currentVariant.depreciation_rate || currentVariant.weight) && (
-              <div className="space-y-2">
-                <div className="font-medium mb-2">Item Details:</div>
-                {currentVariant.usage_period && currentVariant.usage_unit && (
-                  <div className="text-sm text-gray-600">
-                    Usage: {currentVariant.usage_period} {currentVariant.usage_unit}
-                  </div>
-                )}
-                {currentVariant.depreciation_rate && (
-                  <div className="text-sm text-gray-600">
-                    Depreciation Rate: {currentVariant.depreciation_rate}%
-                  </div>
-                )}
-                {currentVariant.weight && (
-                  <div className="text-sm text-gray-600">
-                    Weight: {currentVariant.weight} {currentVariant.weight_unit || 'g'}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          )}
         </div>
-      )}
 
-      {/* Swap Options - Only show for non-gift products */}
-      {currentVariant && !isGift && currentVariant.allow_swap && (
-        <div className="mt-6 border-t pt-4">
-          <h2 className="text-lg font-semibold mb-3">Swap Options</h2>
-          <div className="text-sm text-gray-700 space-y-2">
-            <div>
-              <span className="font-medium">Type:</span>{" "}
-              <span className="capitalize">
-                {currentVariant.swap_type?.replace('_', ' ') || 'direct swap'}
-              </span>
-            </div>
-            {currentVariant.minimum_additional_payment && safeToNumber(currentVariant.minimum_additional_payment) > 0 && (
-              <div>
-                <span className="font-medium">Minimum Additional Payment:</span>{" "}
-                ₱{safeToNumber(currentVariant.minimum_additional_payment).toFixed(2)}
-              </div>
-            )}
-            {currentVariant.maximum_additional_payment && safeToNumber(currentVariant.maximum_additional_payment) > 0 && (
-              <div>
-                <span className="font-medium">Maximum Additional Payment:</span>{" "}
-                ₱{safeToNumber(currentVariant.maximum_additional_payment).toFixed(2)}
-              </div>
-            )}
-            {currentVariant.swap_description && (
-              <div className="mt-2 p-3 bg-gray-50 rounded">
-                {currentVariant.swap_description}
+        {loadingReviews ? (
+          <div className="text-center py-8">
+            <div className="animate-spin h-6 w-6 border-2 border-orange-500 border-t-transparent rounded-full mx-auto"></div>
+            <p className="text-xs text-gray-500 mt-2">Loading reviews...</p>
+          </div>
+        ) : reviews.length > 0 ? (
+          <div className="space-y-6">
+            {reviews.map((review) => {
+              // Find the variant from the product that matches this review
+              // This assumes the review has some way to identify which variant was purchased
+              // You might need to adjust this based on your actual data structure
+              const reviewedVariant = product?.variants?.find(
+                v => v.id === review.rider?.id // This assumes review.rider.id is actually the variant ID
+              );
+              
+              return (
+                <div key={review.id} className="border-b pb-5 last:border-0">
+                  {/* Reviewer Info */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="h-8 w-8 rounded-full bg-orange-100 flex items-center justify-center">
+                      <User className="h-4 w-4 text-orange-600" />
+                    </div>
+                    <div>
+                      <div className="font-medium text-sm">{review.customer?.name || 'Anonymous'}</div>
+                      <div className="text-xs text-gray-500">{formatDate(review.created_at)}</div>
+                    </div>
+                  </div>
+
+                  {/* Product Ordered - Only show if product info exists */}
+                  {review.product && (
+                    <div className="mb-3 p-2 bg-gray-50 rounded-lg border border-gray-100">
+                      <div className="text-xs font-medium text-gray-700 mb-1">Product Ordered:</div>
+                      <div className="flex items-center gap-2">
+                        {/* Product Image - Use the product's image from the review if available */}
+                        <div className="h-10 w-10 bg-gray-200 rounded overflow-hidden flex-shrink-0">
+                          {product?.primary_image?.url ? (
+                            <img 
+                              src={resolveImageUrl(product.primary_image.url) || undefined} 
+                              alt={review.product.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="h-full w-full flex items-center justify-center text-gray-400">
+                              <Package className="h-4 w-4" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="text-sm font-medium text-gray-800">{review.product.name}</div>
+                          {/* Show variant if available - FIXED: Using actual variant data */}
+                          {reviewedVariant && (
+                            <div className="text-xs text-gray-500 mt-0.5">
+                              Variant: {reviewedVariant.title || 'Default'}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Overall Rating */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-medium text-gray-600">Overall:</span>
+                    <div className="flex items-center gap-1">
+                      {[1,2,3,4,5].map((star) => (
+                        <Star
+                          key={star}
+                          className={`h-3.5 w-3.5 ${
+                            star <= Math.round(review.average_rating) 
+                              ? 'fill-yellow-400 text-yellow-400' 
+                              : 'text-gray-300'
+                          }`}
+                        />
+                      ))}
+                      <span className="text-xs text-gray-500 ml-1">({review.average_rating.toFixed(1)})</span>
+                    </div>
+                  </div>
+
+                  {/* Individual Ratings - Vertical */}
+                  <div className="space-y-1.5 mb-3 text-sm">
+                    <div className="flex items-center">
+                      <span className="text-xs text-gray-500 w-16">Condition:</span>
+                      <div className="flex items-center gap-0.5 ml-2">
+                        {[1,2,3,4,5].map((star) => (
+                          <Star
+                            key={star}
+                            className={`h-3 w-3 ${
+                              star <= review.condition_rating 
+                                ? 'fill-yellow-400 text-yellow-400' 
+                                : 'text-gray-300'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="text-xs text-gray-500 w-16">Accuracy:</span>
+                      <div className="flex items-center gap-0.5 ml-2">
+                        {[1,2,3,4,5].map((star) => (
+                          <Star
+                            key={star}
+                            className={`h-3 w-3 ${
+                              star <= review.accuracy_rating 
+                                ? 'fill-yellow-400 text-yellow-400' 
+                                : 'text-gray-300'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="text-xs text-gray-500 w-16">Value:</span>
+                      <div className="flex items-center gap-0.5 ml-2">
+                        {[1,2,3,4,5].map((star) => (
+                          <Star
+                            key={star}
+                            className={`h-3 w-3 ${
+                              star <= review.value_rating 
+                                ? 'fill-yellow-400 text-yellow-400' 
+                                : 'text-gray-300'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="text-xs text-gray-500 w-16">Delivery:</span>
+                      <div className="flex items-center gap-0.5 ml-2">
+                        {[1,2,3,4,5].map((star) => (
+                          <Star
+                            key={star}
+                            className={`h-3 w-3 ${
+                              star <= review.delivery_rating 
+                                ? 'fill-yellow-400 text-yellow-400' 
+                                : 'text-gray-300'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Comment */}
+                  {review.comment && (
+                    <div className="text-sm text-gray-700 bg-gray-50 p-3 rounded-lg mt-2 border border-gray-100">
+                      "{review.comment}"
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Show More Button */}
+            {!showAllReviews && reviews.length === 5 && (
+              <div className="text-center pt-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowAllReviews(true)}
+                  className="text-orange-600 hover:text-orange-700 text-xs"
+                >
+                  Show More Reviews
+                </Button>
               </div>
             )}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="text-center py-8 bg-gray-50 rounded-lg">
+            <MessageCircle className="h-10 w-10 text-gray-300 mx-auto mb-2" />
+            <p className="text-sm text-gray-500">No reviews yet</p>
+            <p className="text-xs text-gray-400 mt-1">Be the first to leave a review!</p>
+          </div>
+        )}
+      </div>
 
       {/* Image Lightbox Modal */}
       {lightboxOpen && lightboxImage && (
