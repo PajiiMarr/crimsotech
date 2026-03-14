@@ -307,7 +307,7 @@ export default function ShopsPage() {
           <View style={styles.headerLeft}>
             <TouchableOpacity
               style={styles.backButton}
-              onPress={() => router.back()}
+              onPress={() => router.push("/customer/profile")}
             >
               <MaterialIcons name="arrow-back" size={24} color="#111827" />
             </TouchableOpacity>
