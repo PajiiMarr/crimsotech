@@ -1411,8 +1411,9 @@ class WithdrawalRequestSerializer(serializers.ModelSerializer):
         ]
     
     def get_wallet_balance(self, obj):
-        return obj.wallet.available_balance if obj.wallet else 0
-    
+        if obj.wallet:
+            return float(obj.wallet.available_balance)
+        return 0
 
 class WithdrawalRequestUpdateSerializer(serializers.ModelSerializer):
     class Meta:

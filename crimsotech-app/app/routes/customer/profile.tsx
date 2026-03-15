@@ -51,13 +51,17 @@ import {
   EyeOff,
   Eye,
   Store,
-  ShoppingBag
+  ShoppingBag,
+  Landmark,
+  Smartphone,
+  Globe,
+  HelpCircle
 } from "lucide-react";
 
 // ================================
-// Debug logger
+// Debug logger (set to false in production)
 // ================================
-const DEBUG = true;
+const DEBUG = false;
 const log = {
   info: (...args: any[]) => DEBUG && console.log('[Wallet Debug]', ...args),
   error: (...args: any[]) => DEBUG && console.error('[Wallet Error]', ...args),
@@ -185,6 +189,13 @@ interface MonthlyData {
   amount: number;
 }
 
+interface WithdrawalRequest {
+  withdrawal_id: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'rejected' | 'processing' | 'completed';
+  requested_at: string;
+}
+
 // ================================
 // ProfileContent Component
 // ================================
@@ -208,6 +219,14 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
   const [loadingWallet, setLoadingWallet] = useState(false);
   const [showBalance, setShowBalance] = useState(true);
+  
+  // Withdrawal state
+  const [showWithdrawForm, setShowWithdrawForm] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('');
+  const [selectedPaymentMethodDetails, setSelectedPaymentMethodDetails] = useState<PaymentMethod | null>(null);
+  const [withdrawalRequests, setWithdrawalRequests] = useState<WithdrawalRequest[]>([]);
+  const [loadingWithdrawals, setLoadingWithdrawals] = useState(false);
   
   // Address state
   const [addresses, setAddresses] = useState<Address[]>([]);
@@ -262,12 +281,9 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
   const fetchShops = async () => {
     try {
       setLoadingShops(true);
-      log.api('GET', '/customer-shops/', { customer_id: user.user_id });
       const response = await AxiosInstance.get('/customer-shops/', {
         params: { customer_id: user.user_id }
       });
-      
-      log.data('Shops response', response.data);
       
       if (response.data.success && response.data.shops) {
         const fetchedShops = response.data.shops.map((shop: any) => ({
@@ -277,13 +293,11 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
           shop_picture: shop.shop_picture
         }));
         setShops(fetchedShops);
-        log.info(`Loaded ${fetchedShops.length} shops`);
       } else {
         setShops([]);
-        log.info('No shops found');
       }
     } catch (error) {
-      log.error('Error fetching shops:', error);
+      console.error('Error fetching shops:', error);
       setShops([]);
     } finally {
       setLoadingShops(false);
@@ -296,15 +310,11 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
   const fetchWalletData = async () => {
     try {
       setLoadingWallet(true);
-      log.info('=== Starting wallet data fetch ===');
       
       // Get wallet balance
-      log.api('GET', '/wallet/balance/');
       const balanceRes = await AxiosInstance.get('/wallet/balance/', {
         headers: { 'X-User-Id': user.user_id }
       });
-      
-      log.data('Balance response', balanceRes.data);
       
       if (balanceRes.data.success) {
         setWallet({
@@ -317,30 +327,23 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
           pending_withdrawals: balanceRes.data.pending_withdrawals || 0,
           deductions: 0
         });
-        log.info('✅ Wallet balance loaded');
       }
       
-      // Get ALL wallet transactions with shop info
-      log.api('GET', '/wallet/transactions/?limit=100');
+      // Get wallet transactions
       const txRes = await AxiosInstance.get('/wallet/transactions/?limit=100', {
         headers: { 'X-User-Id': user.user_id }
       });
       
-      log.data('All wallet transactions', txRes.data);
-      
       if (txRes.data.success) {
         const apiTransactions = txRes.data.transactions || [];
-        log.info(`✅ Loaded ${apiTransactions.length} wallet transactions`);
         
         // Format transactions for display
         const formattedTransactions: Transaction[] = apiTransactions.map((tx: any) => {
-          // Determine source type
           let source_type: 'personal' | 'shop' = 'personal';
           if (tx.source_type === 'shop_sale') {
             source_type = 'shop';
           }
           
-          // Create description
           let description = '';
           if (tx.source_type === 'personal_sale') description = 'Personal Listing Sale';
           else if (tx.source_type === 'shop_sale') description = tx.shop_name ? `Sale from ${tx.shop_name}` : 'Shop Sale';
@@ -366,16 +369,12 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         
         setTransactions(formattedTransactions);
         setFilteredTransactions(formattedTransactions);
-        log.info(`✅ Formatted ${formattedTransactions.length} transactions`);
       }
       
       // Get transaction summary for monthly data
-      log.api('GET', '/wallet/transaction_summary/');
       const summaryRes = await AxiosInstance.get('/wallet/transaction_summary/', {
         headers: { 'X-User-Id': user.user_id }
       });
-      
-      log.data('Summary response', summaryRes.data);
       
       if (summaryRes.data.success) {
         const monthly = summaryRes.data.summary?.monthly_data || [];
@@ -383,15 +382,100 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
           month: m.month,
           amount: m.credits || 0
         })));
-        log.info(`✅ Loaded ${monthly.length} months of data`);
       }
       
-      log.info('=== Wallet data fetch complete ===');
-      
     } catch (error) {
-      log.error('Error fetching wallet data:', error);
+      console.error('Error fetching wallet data:', error);
     } finally {
       setLoadingWallet(false);
+    }
+  };
+
+  // Fetch withdrawal requests
+  const fetchWithdrawalRequests = async () => {
+    try {
+      setLoadingWithdrawals(true);
+      const response = await AxiosInstance.get('/withdrawal-requests/my_requests/', {
+        headers: { 'X-User-Id': user.user_id }
+      });
+      
+      if (response.data.success) {
+        setWithdrawalRequests(response.data.withdrawal_requests || []);
+      }
+    } catch (error) {
+      console.error('Error fetching withdrawal requests:', error);
+    } finally {
+      setLoadingWithdrawals(false);
+    }
+  };
+
+  // Handle payment method selection
+  useEffect(() => {
+    if (selectedPaymentMethod && paymentMethods.length > 0) {
+      const method = paymentMethods.find(m => m.payment_id === selectedPaymentMethod);
+      setSelectedPaymentMethodDetails(method || null);
+    } else {
+      setSelectedPaymentMethodDetails(null);
+    }
+  }, [selectedPaymentMethod, paymentMethods]);
+
+  // Handle withdrawal request
+  const handleWithdraw = async () => {
+    try {
+      setSaving(true);
+      setError(null);
+      
+      const amount = parseFloat(withdrawAmount);
+      if (isNaN(amount) || amount <= 0) {
+        setError('Please enter a valid amount');
+        return;
+      }
+      
+      if (amount > (wallet?.available_balance || 0)) {
+        setError(`Amount exceeds available balance (${formatCurrency(wallet?.available_balance || 0)})`);
+        return;
+      }
+      
+      if (!selectedPaymentMethod) {
+        setError('Please select a payment method');
+        return;
+      }
+      
+      // Get the selected payment method details
+      const selectedMethod = paymentMethods.find(m => m.payment_id === selectedPaymentMethod);
+      
+      if (!selectedMethod) {
+        setError('Selected payment method not found');
+        return;
+      }
+      
+      // Send withdrawal request
+      const response = await AxiosInstance.post('/withdrawal-requests/', {
+        amount: amount
+        // Note: Payment method is not in the model yet, so we don't send it
+        // The admin will manually process the payment to the user's saved payment method
+      }, {
+        headers: { 'X-User-Id': user.user_id }
+      });
+      
+      if (response.data.success) {
+        setSuccess('Withdrawal request submitted successfully!');
+        setShowWithdrawForm(false);
+        setWithdrawAmount('');
+        setSelectedPaymentMethod('');
+        setSelectedPaymentMethodDetails(null);
+        
+        // Refresh wallet data and withdrawal requests
+        fetchWalletData();
+        fetchWithdrawalRequests();
+      } else {
+        setError(response.data.error || 'Failed to submit withdrawal request');
+      }
+    } catch (error: any) {
+      console.error('Error submitting withdrawal:', error);
+      setError(error.response?.data?.error || 'Failed to submit withdrawal request');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -399,46 +483,17 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
   useEffect(() => {
     if (!transactions.length) return;
     
-    log.info(`Filtering transactions: ${selectedFilter}`);
     let filtered = transactions;
     
     if (selectedFilter === 'personal') {
       filtered = transactions.filter(t => t.source_type === 'personal');
-      log.info(`Filtered to personal: ${filtered.length} transactions`);
     } else if (selectedFilter.startsWith('shop_')) {
       const shopId = selectedFilter.replace('shop_', '');
       filtered = transactions.filter(t => t.shop_id === shopId);
-      log.info(`Filtered to shop ${shopId}: ${filtered.length} transactions`);
-    } else {
-      log.info(`Showing all: ${filtered.length} transactions`);
     }
     
     setFilteredTransactions(filtered);
   }, [selectedFilter, transactions]);
-
-  // Test function to create a test transaction
-  const createTestTransaction = async () => {
-    try {
-      log.info('Creating test transaction...');
-      const response = await AxiosInstance.post('/wallet/credit/', {
-        amount: 1000.00,
-        source_type: 'personal_sale',
-        description: 'Test transaction'
-      }, {
-        headers: { 'X-User-Id': user.user_id }
-      });
-      
-      log.data('Test transaction response', response.data);
-      
-      if (response.data.success) {
-        setSuccess('Test transaction created successfully!');
-        fetchWalletData();
-      }
-    } catch (error: any) {
-      log.error('Error creating test transaction:', error);
-      setError(error.response?.data?.error || 'Failed to create test transaction');
-    }
-  };
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-PH', {
@@ -456,6 +511,32 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const getPaymentMethodIcon = (method: string) => {
+    switch(method?.toLowerCase()) {
+      case 'bank': return <Landmark className="w-4 h-4" />;
+      case 'gcash': return <Smartphone className="w-4 h-4" />;
+      case 'paypal': return <Globe className="w-4 h-4" />;
+      default: return <CreditCard className="w-4 h-4" />;
+    }
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch(status) {
+      case 'pending':
+        return <Badge className="bg-yellow-100 text-yellow-700 text-xs">Pending</Badge>;
+      case 'processing':
+        return <Badge className="bg-blue-100 text-blue-700 text-xs">Processing</Badge>;
+      case 'approved':
+        return <Badge className="bg-purple-100 text-purple-700 text-xs">Approved</Badge>;
+      case 'completed':
+        return <Badge className="bg-green-100 text-green-700 text-xs">Completed</Badge>;
+      case 'rejected':
+        return <Badge className="bg-red-100 text-red-700 text-xs">Rejected</Badge>;
+      default:
+        return <Badge className="bg-gray-100 text-gray-700 text-xs">{status}</Badge>;
+    }
   };
 
   // Simple bar graph component
@@ -484,17 +565,17 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
     try {
       setError(null);
       setLoading(true);
-      log.api('GET', '/profile/');
       const response = await AxiosInstance.get('/profile/', {
         headers: {
           'X-User-Id': user.user_id
         }
       });
-      log.data('Profile response', response.data);
       
       if (response.data) {
         setProfile(response.data);
-        setPaymentMethods(response.data.profile?.payment_methods || []);
+        // Make sure payment methods are properly set from the response
+        const methods = response.data.profile?.payment_methods || [];
+        setPaymentMethods(methods);
         setFormData({
           firstName: response.data.profile?.user?.first_name || '',
           middleName: response.data.profile?.user?.middle_name || '',
@@ -507,7 +588,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         });
       }
     } catch (error) {
-      log.error("Error fetching profile:", error);
+      console.error("Error fetching profile:", error);
       setError("Failed to load profile");
     } finally {
       setLoading(false);
@@ -544,7 +625,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         setTimeout(() => setSuccess(null), 3000);
       }
     } catch (error) {
-      log.error("Error saving profile:", error);
+      console.error("Error saving profile:", error);
       setError("Failed to save profile");
     } finally {
       setSaving(false);
@@ -578,7 +659,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         setAddresses(response.data.shipping_addresses || []);
       }
     } catch (error) {
-      log.error("Error fetching addresses:", error);
+      console.error("Error fetching addresses:", error);
     }
   };
 
@@ -608,7 +689,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         setTimeout(() => setSuccess(null), 3000);
       }
     } catch (error) {
-      log.error("Error adding address:", error);
+      console.error("Error adding address:", error);
       setError("Failed to add address");
     } finally {
       setSaving(false);
@@ -637,7 +718,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         setTimeout(() => setSuccess(null), 3000);
       }
     } catch (error) {
-      log.error("Error updating address:", error);
+      console.error("Error updating address:", error);
       setError("Failed to update address");
     } finally {
       setSaving(false);
@@ -664,7 +745,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         setTimeout(() => setSuccess(null), 3000);
       }
     } catch (error) {
-      log.error("Error deleting address:", error);
+      console.error("Error deleting address:", error);
       setError("Failed to delete address");
     } finally {
       setSaving(false);
@@ -687,7 +768,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         setTimeout(() => setSuccess(null), 3000);
       }
     } catch (error) {
-      log.error("Error setting default address:", error);
+      console.error("Error setting default address:", error);
       setError("Failed to set default address");
     } finally {
       setSaving(false);
@@ -764,8 +845,10 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
       if (response.data) {
         if (response.data.success === true) {
           if (response.data.payment_method) {
+            // Add the new payment method to the list
             setPaymentMethods(prev => {
               const newMethod = response.data.payment_method;
+              // If the new method is default, remove default from others
               if (newMethod.is_default) {
                 return [...prev.map(p => ({ ...p, is_default: false })), newMethod];
               }
@@ -789,7 +872,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         }
       }
     } catch (error: any) {
-      log.error("Error adding payment method:", error);
+      console.error("Error adding payment method:", error);
       setError(error.response?.data?.error || "Failed to add payment method");
     } finally {
       setSaving(false);
@@ -818,7 +901,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         setTimeout(() => setSuccess(null), 3000);
       }
     } catch (error: any) {
-      log.error("Error deleting payment method:", error);
+      console.error("Error deleting payment method:", error);
       setError(error.response?.data?.error || "Failed to delete payment method");
     } finally {
       setSaving(false);
@@ -849,7 +932,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
         setTimeout(() => setSuccess(null), 3000);
       }
     } catch (error: any) {
-      log.error("Error setting default payment:", error);
+      console.error("Error setting default payment:", error);
       setError(error.response?.data?.error || "Failed to set default payment method");
     } finally {
       setSaving(false);
@@ -857,20 +940,21 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
   };
 
   useEffect(() => {
-    log.info('Component mounted, user:', user.user_id);
     if (!initialProfile) {
       fetchProfile();
     } else {
-      setPaymentMethods(initialProfile.profile?.payment_methods || []);
+      // Make sure payment methods are properly set from initialProfile
+      const methods = initialProfile.profile?.payment_methods || [];
+      setPaymentMethods(methods);
     }
     fetchAddresses();
     fetchShops();
+    fetchWithdrawalRequests();
   }, []);
 
   // Fetch wallet data after shops are loaded
   useEffect(() => {
     if (shops.length >= 0) {
-      log.info('Shops loaded, fetching wallet data...');
       fetchWalletData();
     }
   }, [shops]);
@@ -912,34 +996,6 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
 
       {/* Content with horizontal padding */}
       <div className="px-4 py-4 md:px-6 lg:px-8">
-        {/* Debug Buttons */}
-        {DEBUG && (
-          <div className="mb-4 flex justify-end gap-2">
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={createTestTransaction}
-              className="text-xs border-yellow-300 bg-yellow-50"
-            >
-              <DollarSign className="w-3 h-3 mr-1" />
-              Create Test Transaction
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={async () => {
-                const res = await AxiosInstance.get('/wallet/transactions/?limit=100', {
-                  headers: { 'X-User-Id': user.user_id }
-                });
-                console.log('📊 All wallet transactions:', res.data);
-              }}
-              className="text-xs border-gray-300 bg-gray-50"
-            >
-              Log All Transactions
-            </Button>
-          </div>
-        )}
-
         {/* Edit Button Row */}
         <div className="flex justify-end mb-4">
           {!editMode ? (
@@ -1460,15 +1516,14 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
                       <div key={method.payment_id} className="p-3 border rounded-md">
                         <div className="flex justify-between items-start">
                           <div className="flex items-start gap-2">
-                            <CreditCard className="w-4 h-4 text-gray-400 mt-0.5" />
+                            <div className="p-2 bg-gray-100 rounded-lg">
+                              {getPaymentMethodIcon(method.payment_method)}
+                            </div>
                             <div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 mb-1">
                                 <span className="text-xs font-medium capitalize">{method.payment_method}</span>
                                 {method.is_default && (
-                                  <Badge className="bg-green-100 text-green-700 text-[8px] h-4 px-1 flex items-center gap-0.5">
-                                    <Star className="w-2 h-2" />
-                                    Default
-                                  </Badge>
+                                  <Badge className="bg-green-100 text-green-700 text-[8px] h-4 px-1">Default</Badge>
                                 )}
                               </div>
                               {method.bank_name && (
@@ -1494,11 +1549,11 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
                             <Button 
                               variant="ghost" 
                               size="sm"
-                              className="h-6 text-[10px] px-2 text-red-600"
+                              className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
                               onClick={() => handleDeletePaymentMethod(method.payment_id)}
                               disabled={saving}
                             >
-                              <Trash2 className="w-3 h-3" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           </div>
                         </div>
@@ -1641,6 +1696,148 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
                   </CardContent>
                 </Card>
               </div>
+
+              {/* Withdraw Button and Form */}
+              <Card className="border shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">Withdraw Funds</CardTitle>
+                  <CardDescription className="text-xs">
+                    Request a withdrawal to your payment method
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {!showWithdrawForm ? (
+                    <Button
+                      onClick={() => setShowWithdrawForm(true)}
+                      className="w-full"
+                      disabled={!wallet?.available_balance || wallet.available_balance <= 0}
+                    >
+                      <DollarSign className="w-4 h-4 mr-2" />
+                      Request Withdrawal
+                    </Button>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Amount Input */}
+                      <div>
+                        <Label htmlFor="amount" className="text-xs">Amount</Label>
+                        <div className="relative mt-1">
+                          <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-sm text-gray-500">₱</span>
+                          <Input
+                            id="amount"
+                            type="number"
+                            value={withdrawAmount}
+                            onChange={(e) => setWithdrawAmount(e.target.value)}
+                            placeholder="0.00"
+                            className="pl-8"
+                            min="0.01"
+                            step="0.01"
+                          />
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Available: {formatCurrency(wallet?.available_balance || 0)}
+                        </p>
+                      </div>
+
+                      {/* Payment Method Selection */}
+                      <div>
+                        <Label htmlFor="payment_method" className="text-xs">Payment Method</Label>
+                        <select
+                          id="payment_method"
+                          value={selectedPaymentMethod}
+                          onChange={(e) => {
+                            setSelectedPaymentMethod(e.target.value);
+                            const method = paymentMethods.find(m => m.payment_id === e.target.value);
+                            setSelectedPaymentMethodDetails(method || null);
+                          }}
+                          className="w-full h-9 text-sm border rounded-md px-3 mt-1"
+                        >
+                          <option value="">Select payment method</option>
+                          {paymentMethods.map((method) => (
+                            <option key={method.payment_id} value={method.payment_id}>
+                              {method.payment_method === 'bank' && method.bank_name ? `${method.bank_name} - ` : ''}
+                              {method.account_name} ({method.account_number})
+                              {method.is_default ? ' (Default)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {paymentMethods.length === 0 && (
+                          <p className="text-xs text-red-500 mt-1">
+                            Please add a payment method first in the Payments tab
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Selected Payment Method Details */}
+                      {selectedPaymentMethodDetails && (
+                        <div className="p-2 bg-gray-50 rounded-md">
+                          <p className="text-xs font-medium mb-1">Selected Payment Method:</p>
+                          <div className="flex items-center gap-2">
+                            <div className="p-1 bg-white rounded">
+                              {getPaymentMethodIcon(selectedPaymentMethodDetails.payment_method)}
+                            </div>
+                            <div>
+                              <p className="text-xs">
+                                <span className="font-medium capitalize">{selectedPaymentMethodDetails.payment_method}</span>
+                                {selectedPaymentMethodDetails.bank_name && ` - ${selectedPaymentMethodDetails.bank_name}`}
+                              </p>
+                              <p className="text-xs text-gray-600">
+                                {selectedPaymentMethodDetails.account_name} • {selectedPaymentMethodDetails.account_number}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div className="flex gap-2">
+                        <Button 
+                          onClick={handleWithdraw}
+                          disabled={saving || !selectedPaymentMethod || !withdrawAmount || parseFloat(withdrawAmount) <= 0}
+                          className="flex-1"
+                        >
+                          {saving ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : null}
+                          Submit Request
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          onClick={() => {
+                            setShowWithdrawForm(false);
+                            setWithdrawAmount('');
+                            setSelectedPaymentMethod('');
+                            setSelectedPaymentMethodDetails(null);
+                          }}
+                          className="flex-1"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Withdrawal Requests History */}
+              {withdrawalRequests.length > 0 && (
+                <Card className="border shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium">Withdrawal History</CardTitle>
+                    <CardDescription className="text-xs">Your recent withdrawal requests</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {withdrawalRequests.slice(0, 5).map((request) => (
+                        <div key={request.withdrawal_id} className="flex items-center justify-between p-2 border rounded-md">
+                          <div>
+                            <p className="text-sm font-medium">{formatCurrency(request.amount)}</p>
+                            <p className="text-xs text-gray-500">{formatDate(request.requested_at)}</p>
+                          </div>
+                          {getStatusBadge(request.status)}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Transaction History and Graph - 70/30 split */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">

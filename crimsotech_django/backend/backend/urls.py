@@ -52,6 +52,7 @@ router.register(r'return-address', ReturnAddressViewSet, basename='return-addres
 router.register(r'return-refund', RefundViewSet, basename='return-refund')
 router.register(r'disputes', DisputeViewSet, basename='disputes')
 router.register(r'personal-refunds', PersonalRefundViewSet, basename='my-refund')
+router.register(r'withdrawal-requests', WithdrawalRequestViewSet, basename='withdrawal-requests')
 
 router.register(r'order-successful', OrderSuccessful, basename='order-successful')
 router.register(r'user-payment-methods', UserPaymentMethodViewSet, basename='userpaymentmethod')
