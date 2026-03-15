@@ -11,25 +11,29 @@ import { Switch } from "~/components/ui/switch";
 import { Separator } from "~/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
-import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles, Calculator, ChevronDown, ChevronUp, Info, GripVertical, Percent, Clock, Camera } from "lucide-react";
+import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles, Calculator, ChevronDown, ChevronUp, Info, GripVertical, Percent, Clock, Camera, Shield } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
 import { useFetcher } from "react-router"
+
 interface User {
   id: string;
   username: string;
 }
+
 interface Category {
   id: string;
   name: string;
   shop: string | null;
   user: User;
 }
+
 interface Shop {
   id: string;
   name: string;
   description: string;
 }
+
 interface FormErrors {
   message?: string;
   name?: string;
@@ -42,17 +46,20 @@ interface FormErrors {
   category_admin_id?: string;
   [key: string]: string | undefined;
 }
+
 interface MediaPreview {
   file: File;
   preview: string;
   type: 'image' | 'video';
 }
+
 interface ShippingZone {
   id: string;
   name: 'Local' | 'Nearby City' | 'Far Province';
   fee: number | '';
   freeShipping: boolean;
 }
+
 interface Depreciation {
   originalPrice: number | '';
   usagePeriod: number | '';
@@ -60,6 +67,7 @@ interface Depreciation {
   depreciationRate: number | '';
   calculatedPrice: number | '';
 }
+
 interface Variant {
   id: string;
   title: string;
@@ -69,6 +77,8 @@ interface Variant {
   sku_code?: string;
   image?: File | null;
   imagePreview?: string;
+  proofImage?: File | null;
+  proofImagePreview?: string;
   length?: number | '';
   width?: number | '';
   height?: number | '';
@@ -80,23 +90,27 @@ interface Variant {
   depreciation: Depreciation;
   attributes?: Record<string, string>;
 }
+
 interface CreateProductFormProps {
   selectedShop: Shop | null;
   globalCategories: Category[];
   modelClasses: string[];
   errors: FormErrors;
 }
+
 interface PredictedCategory {
   id?: string;
   uuid?: string;
   name?: string;
   [key: string]: any;
 }
+
 interface ImagePredictions {
   predicted_class?: string;
   confidence?: number;
   [key: string]: any;
 }
+
 interface PredictionResult {
   success?: boolean;
   predictions?: ImagePredictions;
@@ -112,14 +126,19 @@ interface PredictionResult {
   predicted_class?: string;
   [key: string]: any;
 }
+
 export default function CreateProductForm({ selectedShop, globalCategories, modelClasses, errors }: CreateProductFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const mediaFilesRef = useRef<File[]>([]);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const variantImageInputRefs = useRef<Record<string, HTMLInputElement>>({});
+  const proofImageInputRefs = useRef<Record<string, HTMLInputElement>>({});
   const fetcher = useFetcher();
+
   const generateId = () => {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
   };
+
   const [productName, setProductName] = useState('');
   const [productDescription, setProductDescription] = useState('');
   const [productCondition, setProductCondition] = useState('');
@@ -159,6 +178,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
   const predictionAbortController = useRef<AbortController | null>(null);
   const [closestMatch, setClosestMatch] = useState<{ name: string; score: number } | null>(null);
   const [appliedCategory, setAppliedCategory] = useState<Category | null>(null);
+
   useEffect(() => {
     if (variants.length > 0) {
       setVariants(prev => prev.map((variant, index) =>
@@ -166,6 +186,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       ));
     }
   }, [productName]);
+
   const calculateDepreciatedPrice = (originalPrice: number, usagePeriod: number, usageUnit: string, depreciationRate: number): number => {
     if (!originalPrice || !usagePeriod || !depreciationRate) return originalPrice;
     let years = usagePeriod;
@@ -178,6 +199,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     const depreciatedValue = originalPrice * Math.pow((1 - rate), years);
     return Math.max(0, Math.round(depreciatedValue * 100) / 100);
   };
+
   const handleDepreciationChange = (variantId: string, field: keyof Depreciation, value: any) => {
     setVariants(prev => prev.map(v => {
       if (v.id === variantId) {
@@ -197,9 +219,11 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       return v;
     }));
   };
+
   const normalizeText = (s: string) => {
     return s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).join(' ');
   };
+
   const tokenSimilarity = (a: string, b: string) => {
     const ta = new Set(normalizeText(a).split(' '));
     const tb = new Set(normalizeText(b).split(' '));
@@ -208,6 +232,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     const union = new Set([...ta, ...tb]).size;
     return union === 0 ? 0 : inter / union;
   };
+
   const findBestCategoryMatch = (predictedName: string) => {
     const scores = globalCategories.map((gc) => ({
       category: gc,
@@ -216,6 +241,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     scores.sort((a, b) => b.score - a.score);
     return scores[0] || null;
   };
+
   const handleCategoryChange = (value: string) => {
     setClosestMatch(null);
     setAppliedCategory(null);
@@ -230,6 +256,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     }
     setSelectedCategoryName(stringValue);
   };
+
   const analyzeImages = async (files: File[]) => {
     const imageFiles = (files || []).filter(f => f && f.type && f.type.startsWith('image/')) as File[];
     if (imageFiles.length === 0) {
@@ -315,16 +342,22 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       predictionAbortController.current = null;
     }
   };
+
   useEffect(() => {
     return () => {
       if (predictionAbortController.current) predictionAbortController.current.abort();
       mainMedia.forEach(item => URL.revokeObjectURL(item.preview));
-      variants.forEach(variant => { if (variant.imagePreview) URL.revokeObjectURL(variant.imagePreview); });
+      variants.forEach(variant => { 
+        if (variant.imagePreview) URL.revokeObjectURL(variant.imagePreview);
+        if (variant.proofImagePreview) URL.revokeObjectURL(variant.proofImagePreview);
+      });
     };
   }, []);
+
   const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
     setShippingZones(prev => prev.map(zone => zone.id === zoneId ? { ...zone, fee } : zone));
   };
+
   const handleCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     const maxMedia = 9;
@@ -347,11 +380,13 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     }
     if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
+
   const removeMainMedia = (index: number) => {
     URL.revokeObjectURL(mainMedia[index].preview);
     mediaFilesRef.current = mediaFilesRef.current.filter((_, i) => i !== index);
     setMainMedia(prev => prev.filter((_, i) => i !== index));
   };
+
   const toggleZoneFreeShipping = (zoneId: string) => {
     setShippingZones(prev => prev.map(zone => {
       if (zone.id === zoneId) {
@@ -361,6 +396,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       return zone;
     }));
   };
+
   const addVariant = () => {
     setVariants(prev => [
       ...prev,
@@ -383,6 +419,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       }
     ]);
   };
+
   const removeVariant = (variantId: string) => {
     if (variants.length <= 1) {
       alert("Products must have at least one variant.");
@@ -390,12 +427,15 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     }
     const variant = variants.find(v => v.id === variantId);
     if (variant?.imagePreview) URL.revokeObjectURL(variant.imagePreview);
+    if (variant?.proofImagePreview) URL.revokeObjectURL(variant.proofImagePreview);
     setVariants(prev => prev.filter(v => v.id !== variantId));
   };
+
   const updateVariantField = (variantId: string, field: keyof Variant, value: any) => {
     if (field === 'price') return;
     setVariants(prev => prev.map(v => v.id === variantId ? { ...v, [field]: value } : v));
   };
+
   const handleVariantImageChange = (variantId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && file.type.startsWith('image/')) {
@@ -404,6 +444,24 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     }
     e.target.value = '';
   };
+
+  const handleVariantProofImageChange = (variantId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      const preview = URL.createObjectURL(file);
+      setVariants(prev => prev.map(v => v.id === variantId ? { ...v, proofImage: file, proofImagePreview: preview } : v));
+    }
+    e.target.value = '';
+  };
+
+  const openVariantCamera = (variantId: string) => {
+    variantImageInputRefs.current[variantId]?.click();
+  };
+
+  const openProofCamera = (variantId: string) => {
+    proofImageInputRefs.current[variantId]?.click();
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formRef.current) return;
@@ -419,7 +477,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     const formData = new FormData();
     const basicFormData = new FormData(formRef.current);
     for (const [key, value] of basicFormData.entries()) {
-      if (key !== 'media_files' && !key.startsWith('variant_image_')) {
+      if (key !== 'media_files' && !key.startsWith('variant_image_') && !key.startsWith('proof_image_')) {
         if (value instanceof File) {
           formData.append(key, value);
         } else {
@@ -465,10 +523,14 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       attributes: v.attributes || {},
     }));
     formData.append('variants', JSON.stringify(variantsPayload));
-    variants.forEach(v => { if (v.image) formData.append(`variant_image_${v.id}`, v.image); });
+    variants.forEach(v => { 
+      if (v.image) formData.append(`variant_image_${v.id}`, v.image);
+      if (v.proofImage) formData.append(`proof_image_${v.id}`, v.proofImage);
+    });
     if (selectedShop) formData.append('shop', selectedShop.id);
     fetcher.submit(formData, { method: 'post', encType: 'multipart/form-data' });
   };
+
   useEffect(() => {
     if (fetcher && fetcher.data) {
       if (fetcher.data.errors) {
@@ -481,6 +543,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       }
     }
   }, [fetcher.data]);
+
   useEffect(() => {
     if (predictionResult && predictionResult.predicted_category) {
       const predictedName = predictionResult.predicted_category.category_name || '';
@@ -489,10 +552,12 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       }
     }
   }, [predictionResult, selectedCategoryName]);
+
   const formatPrice = (price: number | ''): string => {
     if (typeof price === 'number') return price.toFixed(2);
     return '0.00';
   };
+
   return (
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
       {/* Progress Steps */}
@@ -511,6 +576,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
           4. Details
         </Badge>
       </div>
+
       {/* STEP 1: Basic Information */}
       <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <div className="flex items-center gap-3 mb-6">
@@ -571,6 +637,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
           </div>
         </div>
       </div>
+
       {/* STEP 2: Product Media & Category */}
       <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between mb-6">
@@ -612,6 +679,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
               />
             </div>
           </div>
+
           {/* Media Preview Grid */}
           {mainMedia.length > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
@@ -644,6 +712,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
               )}
             </div>
           )}
+
           {/* AI Analysis Section */}
           <Collapsible className="border border-gray-200 rounded-lg">
             <CollapsibleTrigger className="flex w-full items-center justify-between p-4 hover:bg-orange-50 transition-colors">
@@ -717,6 +786,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
           </Collapsible>
         </div>
       </div>
+
       {/* STEP 3: Variants */}
       <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between mb-6">
@@ -754,8 +824,10 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                   <X className="h-4 w-4" />
                 </Button>
               </div>
+
               {/* Variant Image */}
               <div className="mb-5">
+                <Label className="text-xs font-medium text-gray-700 mb-2 block">Variant Image</Label>
                 <div className="flex items-center gap-4">
                   <div className={`relative w-24 h-24 border-2 rounded-lg overflow-hidden transition-all ${variant.imagePreview ? 'border-orange-400 shadow-sm' : 'border-dashed border-gray-300 hover:border-orange-400 bg-gray-50'}`}>
                     {variant.imagePreview ? (
@@ -774,24 +846,33 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                         </Button>
                       </>
                     ) : (
-                      <label htmlFor={`variant-image-${variant.id}`} className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-orange-100 transition-colors">
-                        <Camera className="h-6 w-6 text-gray-400 mb-1" />
-                        <span className="text-[10px] text-gray-500">Photo</span>
+                      <div className="flex flex-col items-center justify-center w-full h-full">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openVariantCamera(variant.id)}
+                          className="flex flex-col items-center justify-center w-full h-full hover:bg-orange-100 transition-colors"
+                        >
+                          <Camera className="h-6 w-6 text-gray-400 mb-1" />
+                          <span className="text-[10px] text-gray-500">Add Photo</span>
+                        </Button>
                         <Input
+                          ref={(el) => {
+                            if (el) variantImageInputRefs.current[variant.id] = el;
+                          }}
                           id={`variant-image-${variant.id}`}
                           type="file" accept="image/*" capture="environment"
                           onChange={(e) => handleVariantImageChange(variant.id, e)}
                           className="hidden"
                         />
-                      </label>
+                      </div>
                     )}
                   </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-700 mb-1">Variant Image</p>
-                    <p className="text-xs text-gray-500">Take a photo for this variant</p>
-                  </div>
+                  <p className="text-xs text-gray-500">Main product image for this variant</p>
                 </div>
               </div>
+
               {/* Main Variant Fields */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                 <div className="space-y-1.5">
@@ -840,6 +921,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                   />
                 </div>
               </div>
+
               {/* Depreciation Section */}
               <div className="mb-4 p-4 bg-orange-50 rounded-lg border border-orange-200">
                 <div className="flex items-center gap-2 mb-3">
@@ -918,6 +1000,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                   </div>
                 )}
               </div>
+
               {/* Status Toggles */}
               <div className="flex items-center gap-6 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                 <div className="flex items-center gap-3">
@@ -939,58 +1022,111 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                   <Label htmlFor={`refundable-${variant.id}`} className="text-sm text-gray-700 cursor-pointer">Refundable</Label>
                 </div>
               </div>
-              {/* Advanced Options */}
-              <Collapsible>
-                <CollapsibleTrigger className="flex items-center gap-2 text-sm text-gray-600 hover:text-orange-600 transition-colors group">
-                  <div className="p-1 rounded-full group-hover:bg-orange-100">
-                    <ChevronDown className="h-4 w-4" />
-                  </div>
-                  <span>Additional Details</span>
-                  <Badge variant="outline" className="ml-2 text-xs border-gray-300 text-gray-600">Optional</Badge>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="mt-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="space-y-3">
-                      <Label className="text-xs font-medium text-gray-700 block">Weight</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          type="number" min="0" step="0.01"
-                          value={variant.weight || ''}
-                          onChange={(e) => updateVariantField(variant.id, 'weight', parseFloat(e.target.value) || '')}
-                          placeholder="0.00"
-                          className="h-8 text-xs flex-1 border-gray-300 focus:border-orange-500 focus:ring-orange-500"
-                        />
-                        <Select
-                          value={variant.weight_unit || 'g'}
-                          onValueChange={(value: 'g' | 'kg' | 'lb' | 'oz') => updateVariantField(variant.id, 'weight_unit', value)}
-                        >
-                          <SelectTrigger className="w-16 h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="g">g</SelectItem>
-                            <SelectItem value="kg">kg</SelectItem>
-                            <SelectItem value="lb">lb</SelectItem>
-                            <SelectItem value="oz">oz</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      <Label className="text-xs font-medium text-gray-700 block">Low Stock Alert</Label>
+
+              {/* Additional Details - Always Visible */}
+              <div className="space-y-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <Info className="h-4 w-4 text-orange-600" />
+                  <span className="text-sm font-medium text-gray-700">Additional Details</span>
+                </div>
+
+                {/* Weight and Stock Alert - First Row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Weight */}
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium text-gray-700 block">Weight</Label>
+                    <div className="flex gap-2">
                       <Input
-                        type="number" min="1"
-                        value={variant.critical_trigger || ''}
-                        onChange={(e) => updateVariantField(variant.id, 'critical_trigger', parseInt(e.target.value) || '')}
-                        placeholder="Alert when stock below"
-                        className="h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                        type="number" min="0" step="0.01"
+                        value={variant.weight || ''}
+                        onChange={(e) => updateVariantField(variant.id, 'weight', parseFloat(e.target.value) || '')}
+                        placeholder="0.00"
+                        className="h-8 text-xs flex-1 border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                       />
+                      <Select
+                        value={variant.weight_unit || 'g'}
+                        onValueChange={(value: 'g' | 'kg' | 'lb' | 'oz') => updateVariantField(variant.id, 'weight_unit', value)}
+                      >
+                        <SelectTrigger className="w-16 h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="g">g</SelectItem>
+                          <SelectItem value="kg">kg</SelectItem>
+                          <SelectItem value="lb">lb</SelectItem>
+                          <SelectItem value="oz">oz</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
-                </CollapsibleContent>
-              </Collapsible>
+
+                  {/* Low Stock Alert */}
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium text-gray-700 block">Low Stock Alert</Label>
+                    <Input
+                      type="number" min="1"
+                      value={variant.critical_trigger || ''}
+                      onChange={(e) => updateVariantField(variant.id, 'critical_trigger', parseInt(e.target.value) || '')}
+                      placeholder="Alert when stock below"
+                      className="h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Proof Image - Second Row */}
+                <div>
+                  <Label className="text-xs font-medium text-gray-700 mb-2 block flex items-center gap-1">
+                    <Shield className="h-3 w-3 text-orange-600" />
+                    Proof Image
+                  </Label>
+                  <div className="flex items-center gap-4">
+                    <div className={`relative w-24 h-24 border-2 rounded-lg overflow-hidden transition-all ${variant.proofImagePreview ? 'border-green-400 shadow-sm' : 'border-dashed border-gray-300 hover:border-orange-400 bg-gray-50'}`}>
+                      {variant.proofImagePreview ? (
+                        <>
+                          <img src={variant.proofImagePreview} alt="Proof" className="w-full h-full object-cover" />
+                          <Button
+                            type="button" variant="destructive" size="sm"
+                            className="absolute top-1 right-1 h-5 w-5 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 hover:bg-red-600"
+                            onClick={() => {
+                              URL.revokeObjectURL(variant.proofImagePreview!);
+                              updateVariantField(variant.id, 'proofImage', null);
+                              updateVariantField(variant.id, 'proofImagePreview', undefined);
+                            }}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center w-full h-full">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openProofCamera(variant.id)}
+                            className="flex flex-col items-center justify-center w-full h-full hover:bg-orange-100 transition-colors"
+                          >
+                            <Camera className="h-6 w-6 text-gray-400 mb-1" />
+                            <span className="text-[10px] text-gray-500">Add Proof</span>
+                          </Button>
+                          <Input
+                            ref={(el) => {
+                              if (el) proofImageInputRefs.current[variant.id] = el;
+                            }}
+                            id={`proof-image-${variant.id}`}
+                            type="file" accept="image/*" capture="environment"
+                            onChange={(e) => handleVariantProofImageChange(variant.id, e)}
+                            className="hidden"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500">Upload proof of authenticity or condition (receipt, certificate, etc.)</p>
+                  </div>
+                </div>
+              </div>
             </div>
           ))}
+
           <Button
             type="button" onClick={addVariant} variant="outline"
             className="w-full py-6 border-2 border-dashed border-gray-300 hover:border-orange-500 hover:bg-orange-50 text-gray-700 hover:text-orange-600 transition-colors"
@@ -998,12 +1134,14 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
             <Plus className="h-5 w-5 mr-2" />
             Add Another Variant
           </Button>
+
           <div className="flex items-center justify-between text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-200">
             <span>Total Variants: {variants.length}</span>
             <span>Total Stock: {variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units</span>
           </div>
         </div>
       </div>
+
       {/* Submit */}
       <div className="sticky bottom-6 bg-white border border-gray-200 rounded-lg shadow-lg p-6">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">

@@ -17089,6 +17089,9 @@ class SellerProducts(viewsets.ModelViewSet):
                 provided_id = variant_data.get('id')
                 file_key = f"variant_image_{provided_id}" if provided_id else None
                 
+                # Handle proof image
+                proof_file_key = f"proof_image_{provided_id}" if provided_id else None
+                
                 # Create the variant
                 variant = Variants.objects.create(**variant_fields)
                 created_variants.append(variant)
@@ -17100,6 +17103,14 @@ class SellerProducts(viewsets.ModelViewSet):
                         variant.save(update_fields=['image'])
                     except Exception as e:
                         logger.error(f'Failed to save variant image: {e}')
+                
+                # Handle proof image after creation
+                if proof_file_key and proof_file_key in files:
+                    try:
+                        variant.proof_image = files[proof_file_key]
+                        variant.save(update_fields=['proof_image'])
+                    except Exception as e:
+                        logger.error(f'Failed to save proof image: {e}')
                 
                 logger.info(f"Created variant: {variant.id} for product: {product.id}")
             
@@ -17141,6 +17152,7 @@ class SellerProducts(viewsets.ModelViewSet):
                 "critical_trigger": variant.critical_trigger,
                 "critical_stock": variant.critical_stock,
                 "image": variant.image.url if variant.image and hasattr(variant.image, 'url') else None,
+                "proof_image": variant.proof_image.url if variant.proof_image and hasattr(variant.proof_image, 'url') else None,
                 "original_price": str(variant.original_price) if variant.original_price else None,
                 "usage_period": variant.usage_period,
                 "usage_unit": variant.usage_unit,
@@ -17248,6 +17260,7 @@ class SellerProducts(viewsets.ModelViewSet):
                         "critical_trigger": variant.critical_trigger,
                         "critical_stock": variant.critical_stock,
                         "image": variant.image.url if variant.image and hasattr(variant.image, 'url') else None,
+                        "proof_image": variant.proof_image.url if variant.proof_image and hasattr(variant.proof_image, 'url') else None,
                         "original_price": str(variant.original_price) if variant.original_price else None,
                         "usage_period": variant.usage_period,
                         "usage_unit": variant.usage_unit,
@@ -17536,6 +17549,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     "swap_description": variant.swap_description,
                     "critical_stock": variant.critical_stock,
                     "image": get_media_url(variant.image) if variant.image else None,
+                    "proof_image": get_media_url(variant.proof_image) if variant.proof_image else None,
                     "option_title": variant.option_title,
                     "option_ids": variant.option_ids,
                     "option_map": variant.option_map,
@@ -17692,7 +17706,7 @@ class SellerProducts(viewsets.ModelViewSet):
             return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
