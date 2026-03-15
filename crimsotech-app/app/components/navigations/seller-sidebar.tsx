@@ -1,3 +1,4 @@
+// app/components/navigations/seller-sidebar.tsx
 "use client";
 
 import {
@@ -17,7 +18,6 @@ import {
 } from "lucide-react";
 
 import { Link, useLocation } from 'react-router'
-
 
 import {
   Sidebar,
@@ -56,7 +56,7 @@ export default function SellerSidebar() {
       group: "Refund & Return",
       children: [
         { title: "Return/Refund/Cancel", url: "/seller/seller-return-refund-cancel", icon: RotateCcw },
-        { title: "Manage Return Address", url: "/seller/return-address", icon: MapPin  },
+        { title: "Manage Return Address", url: "/seller/return-address", icon: MapPin },
       ],
     },
     {

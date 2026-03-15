@@ -218,6 +218,7 @@ function getAccessibleItems(
   })).filter(group => group.children.length > 0);
 }
 
+// app/components/navigations/sidebar.tsx
 export function AppSidebar() {
   const { user } = useUser();
   const location = useLocation();
@@ -235,22 +236,35 @@ export function AppSidebar() {
   const isCollapsed = state === "collapsed";
 
   return (
-    <Sidebar variant="floating" collapsible="icon">
-      <SidebarHeader className="p-4 border-b border-gray-200 dark:border-gray-700">
+    <Sidebar 
+      variant="floating" 
+      collapsible="icon"
+    >
+      <SidebarHeader className={`p-4 border-b transition-colors duration-200`}>
         <div className="flex items-center justify-between">
           {!isCollapsed ? (
-            // Show welcome message without username
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">Welcome back!</p>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              <p className={`text-xs font-semibold mt-0.5 ${
+                user?.isAdmin ? 'text-red-600' :
+                user?.isModerator ? 'text-purple-600' :
+                user?.isRider ? 'text-green-600' :
+                user?.isCustomer ? 'text-blue-600' :
+                'text-gray-600'
+              }`}>
                 {userRole}
               </p>
             </div>
           ) : (
-            // Show only icon when collapsed
             <div className="w-full flex justify-center">
-              <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center">
-                <User className="h-4 w-4 text-orange-600" />
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                user?.isAdmin ? 'bg-red-100 text-red-600' :
+                user?.isModerator ? 'bg-purple-100 text-purple-600' :
+                user?.isRider ? 'bg-green-100 text-green-600' :
+                user?.isCustomer ? 'bg-blue-100 text-blue-600' :
+                'bg-orange-100 text-orange-600'
+              }`}>
+                <User className="h-4 w-4" />
               </div>
             </div>
           )}

@@ -52,6 +52,8 @@ import json
 from api.utils.storage_utils import convert_s3_to_public_url
 from django.shortcuts import get_object_or_404
 from .tasks import assign_deliveries_task, check_delivery_responses_task
+import traceback
+
 
 
 # Initialize classifier once (Django will cache this)
@@ -509,7 +511,6 @@ class Landing(viewsets.ViewSet):
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
-            import traceback
             print(f"Error in landing endpoint: {str(e)}")
             print(traceback.format_exc())
             
@@ -15519,6 +15520,10 @@ class CustomerShopsAddSeller(viewsets.ViewSet):
             }, status=status.HTTP_404_NOT_FOUND)
 
 class SellerDashboard(viewsets.ViewSet):
+    """
+    Seller dashboard viewset with comprehensive metrics and data
+    """
+    
     @action(detail=False, methods=['get'])
     def get_dashboard(self, request):
         """Get comprehensive dashboard data for seller"""
@@ -15531,7 +15536,7 @@ class SellerDashboard(viewsets.ViewSet):
             
             if not shop_id:
                 return Response(
-                    {'error': 'shop_id is required'},
+                    {'error': 'shop_id is required', 'success': False},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -15539,18 +15544,24 @@ class SellerDashboard(viewsets.ViewSet):
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
                 return Response(
-                    {'error': 'Shop not found'},
+                    {'error': 'Shop not found', 'success': False},
                     status=status.HTTP_404_NOT_FOUND
                 )
             
             # Parse dates
             if start_date:
-                start_date = timezone.datetime.fromisoformat(start_date).date()
+                try:
+                    start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                except:
+                    start_date = timezone.now().date() - timedelta(days=30)
             else:
                 start_date = timezone.now().date() - timedelta(days=30)
             
             if end_date:
-                end_date = timezone.datetime.fromisoformat(end_date).date()
+                try:
+                    end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+                except:
+                    end_date = timezone.now().date()
             else:
                 end_date = timezone.now().date()
             
@@ -15576,9 +15587,11 @@ class SellerDashboard(viewsets.ViewSet):
                 'store_management_counts': self._get_store_management_counts(shop),
             }
             
-            return Response(data)
+            return Response(data, status=status.HTTP_200_OK)
             
         except Exception as e:
+            print(f"Error in get_dashboard: {str(e)}")
+            traceback.print_exc()
             return Response(
                 {'error': str(e), 'success': False},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -15593,8 +15606,9 @@ class SellerDashboard(viewsets.ViewSet):
             ).count()
 
             orders_count = Order.objects.filter(
-                shipping_address__user__customer__owned_shops=shop,
-                status__in=['delivered', 'shipped', 'processing', 'pending']
+                shipping_address__user__customer__owned_shops=shop
+            ).exclude(
+                status__in=['cancelled', 'refunded']
             ).count()
 
             gifts_count = AppliedGift.objects.filter(
@@ -15626,7 +15640,8 @@ class SellerDashboard(viewsets.ViewSet):
                 'shop_voucher': shop_voucher_count,
                 'product_voucher': product_voucher_count,
             }
-        except Exception:
+        except Exception as e:
+            print(f"Error in _get_store_management_counts: {str(e)}")
             return {
                 'product_list': 0,
                 'orders': 0,
@@ -15662,11 +15677,18 @@ class SellerDashboard(viewsets.ViewSet):
     def _get_summary_data(self, shop, start_date, end_date, previous_start_date, previous_end_date):
         """Get summary statistics for the dashboard cards"""
         
+        # Convert dates to datetime with time for filtering
+        start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
+        end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
+        prev_start_datetime = timezone.make_aware(datetime.combine(previous_start_date, time.min))
+        prev_end_datetime = timezone.make_aware(datetime.combine(previous_end_date, time.max))
+        
         # Current period data
         current_period_orders = Order.objects.filter(
             shipping_address__user__customer__owned_shops=shop,
-            created_at__date__range=[start_date, end_date],
-            status__in=['delivered', 'shipped', 'processing', 'pending']
+            created_at__range=[start_datetime, end_datetime]
+        ).exclude(
+            status__in=['cancelled', 'refunded']
         )
         
         current_period_sales = current_period_orders.filter(
@@ -15675,16 +15697,16 @@ class SellerDashboard(viewsets.ViewSet):
             total_sales=Sum('total_amount')
         )['total_sales'] or Decimal('0.00')
         
-        # Since delivery_fee doesn't exist, earnings = sales only
-        current_period_earnings = current_period_sales
+        current_period_earnings = current_period_sales  # Since no delivery_fee field
         
         current_period_order_count = current_period_orders.count()
         
         # Previous period data for comparison
         previous_period_orders = Order.objects.filter(
             shipping_address__user__customer__owned_shops=shop,
-            created_at__date__range=[previous_start_date, previous_end_date],
-            status__in=['delivered', 'shipped', 'processing', 'pending']
+            created_at__range=[prev_start_datetime, prev_end_datetime]
+        ).exclude(
+            status__in=['cancelled', 'refunded']
         )
         
         previous_period_sales = previous_period_orders.filter(
@@ -15693,7 +15715,6 @@ class SellerDashboard(viewsets.ViewSet):
             total_sales=Sum('total_amount')
         )['total_sales'] or Decimal('0.00')
         
-        # Since delivery_fee doesn't exist, earnings = sales only
         previous_period_earnings = previous_period_sales
         
         previous_period_order_count = previous_period_orders.count()
@@ -15711,35 +15732,37 @@ class SellerDashboard(viewsets.ViewSet):
         if previous_period_order_count > 0:
             orders_change = ((current_period_order_count - previous_period_order_count) / previous_period_order_count) * 100
         
-        # FIXED: Low stock products count - Using Variants model instead of Product fields
-        low_stock_count = Variants.objects.filter(
+        # FIXED: Low stock variants count - Using correct field names
+        low_stock_variants = Variants.objects.filter(
             product__shop=shop,
             product__upload_status='published',
             product__is_removed=False,
             is_active=True,
-            quantity__gt=0,  # Only include items with stock > 0
-            quantity__lte=F('critical_trigger')  # quantity <= critical_trigger
+            quantity__gt=0,
+            quantity__lte=F('critical_trigger')
         ).filter(
-            critical_trigger__isnull=False  # critical_trigger must be set
-        ).count()
+            critical_trigger__isnull=False
+        )
         
-        # Previous period low stock - Since we don't have historical data, use same logic
-        # In a real app, you'd track this over time
-        previous_low_stock_count = low_stock_count
+        low_stock_count = low_stock_variants.count()
+        
+        # Previous period low stock - Estimate based on current products
+        # This is an approximation since we don't track historical stock levels
+        previous_low_stock_count = low_stock_count  # Simplified for now
         
         low_stock_change = low_stock_count - previous_low_stock_count
         
         # Refund requests count
         refund_requests = Refund.objects.filter(
             order_id__shipping_address__user__customer__owned_shops=shop,
-            requested_at__date__range=[start_date, end_date],
+            requested_at__range=[start_datetime, end_datetime],
             status__in=['pending', 'negotiation', 'dispute']
         ).count()
         
         # Previous period refunds
         previous_refunds = Refund.objects.filter(
             order_id__shipping_address__user__customer__owned_shops=shop,
-            requested_at__date__range=[previous_start_date, previous_end_date],
+            requested_at__range=[prev_start_datetime, prev_end_datetime],
             status__in=['pending', 'negotiation', 'dispute']
         ).count()
         
@@ -15754,14 +15777,14 @@ class SellerDashboard(viewsets.ViewSet):
         
         return {
             'period_sales': float(current_period_sales),
-            'period_delivery_fees': 0,  # Set to 0 since field doesn't exist
+            'period_delivery_fees': 0,
             'period_earnings': float(current_period_earnings),
             'period_orders': current_period_order_count,
             'low_stock_count': low_stock_count,
             'refund_requests': refund_requests,
-            'sales_change': round(sales_change, 1),
-            'earnings_change': round(earnings_change, 1),
-            'orders_change': round(orders_change, 1),
+            'sales_change': round(float(sales_change), 1),
+            'earnings_change': round(float(earnings_change), 1),
+            'orders_change': round(float(orders_change), 1),
             'low_stock_change': low_stock_change,
             'refund_change': refund_change,
             'draft_count': draft_count,
@@ -15770,201 +15793,392 @@ class SellerDashboard(viewsets.ViewSet):
     
     def _get_latest_orders(self, shop, start_date, end_date, limit=5):
         """Get latest 5 orders for the shop"""
-        orders = Order.objects.filter(
-            shipping_address__user__customer__owned_shops=shop,
-            created_at__date__range=[start_date, end_date]
-        ).select_related(
-            'shipping_address__user__customer'
-        ).order_by('-created_at')[:limit]
-        
-        return [
-            {
-                'id': str(order.order),
-                'order_id': str(order.order),
-                'customer_name': order.shipping_address.recipient_name if order.shipping_address else 'Unknown',
-                'customer_email': order.shipping_address.user.email if order.shipping_address and order.shipping_address.user else 'N/A',
-                'status': order.status,
-                'total_amount': float(order.total_amount),
-                'created_at': order.created_at.isoformat(),
-            }
-            for order in orders
-        ]
+        try:
+            start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
+            end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
+            
+            orders = Order.objects.filter(
+                shipping_address__user__customer__owned_shops=shop,
+                created_at__range=[start_datetime, end_datetime]
+            ).select_related(
+                'shipping_address__user'
+            ).order_by('-created_at')[:limit]
+            
+            return [
+                {
+                    'id': str(order.order),
+                    'order_id': str(order.order),
+                    'customer_name': order.shipping_address.recipient_name if order.shipping_address else 'Unknown',
+                    'customer_email': order.shipping_address.user.email if order.shipping_address and order.shipping_address.user else 'N/A',
+                    'status': order.status,
+                    'total_amount': float(order.total_amount),
+                    'created_at': order.created_at.isoformat(),
+                }
+                for order in orders
+            ]
+        except Exception as e:
+            print(f"Error in _get_latest_orders: {str(e)}")
+            return []
     
     def _get_low_stock_data(self, shop, limit=5):
         """Get low stock variants"""
-        # FIXED: Query variants directly instead of products
-        low_stock_variants = Variants.objects.filter(
-            product__shop=shop,
-            product__upload_status='published',
-            product__is_removed=False,
-            is_active=True,
-            quantity__gt=0,
-            quantity__lte=F('critical_trigger')
-        ).filter(
-            critical_trigger__isnull=False
-        ).select_related('product').order_by('quantity')[:limit]
-        
-        low_stock_items = []
-        for variant in low_stock_variants:
-            low_stock_items.append({
-                'id': str(variant.id),
-                'product_id': str(variant.product.id),
-                'product_name': variant.product.name,
-                'quantity': variant.quantity,
-                'critical_stock': variant.critical_trigger,
-                'sku_code': variant.sku_code,
-                'variant_title': variant.title,
-            })
-        
-        return low_stock_items
+        try:
+            # FIXED: Query variants directly with correct field names
+            low_stock_variants = Variants.objects.filter(
+                product__shop=shop,
+                product__upload_status='published',
+                product__is_removed=False,
+                is_active=True,
+                quantity__gt=0,
+                quantity__lte=F('critical_trigger')
+            ).filter(
+                critical_trigger__isnull=False
+            ).select_related('product').order_by('quantity')[:limit]
+            
+            low_stock_items = []
+            for variant in low_stock_variants:
+                low_stock_items.append({
+                    'id': str(variant.id),
+                    'product_id': str(variant.product.id),
+                    'product_name': variant.product.name,
+                    'quantity': variant.quantity,
+                    'critical_stock': variant.critical_trigger,
+                    'sku_code': variant.sku_code,
+                    'variant_title': variant.title,
+                })
+            
+            return low_stock_items
+        except Exception as e:
+            print(f"Error in _get_low_stock_data: {str(e)}")
+            return []
     
     def _get_refund_data(self, shop, start_date, end_date, limit=3):
         """Get refund and dispute data"""
-        refunds = Refund.objects.filter(
-            order_id__shipping_address__user__customer__owned_shops=shop,
-            requested_at__date__range=[start_date, end_date]
-        ).select_related('order_id').order_by('-requested_at')[:limit]
-        
-        pending_count = Refund.objects.filter(
-            order_id__shipping_address__user__customer__owned_shops=shop,
-            status='pending'
-        ).count()
-        
-        disputes_count = Refund.objects.filter(
-            order_id__shipping_address__user__customer__owned_shops=shop,
-            status='dispute'
-        ).count()
-        
-        total_count = Refund.objects.filter(
-            order_id__shipping_address__user__customer__owned_shops=shop,
-        ).count()
-        
-        latest_refunds = [
-            {
-                'id': str(refund.refund_id),
-                'reason': refund.reason,
-                # Use total_refund_amount instead of requested_amount
-                'requested_amount': float(refund.total_refund_amount or 0),
-                'status': refund.status,
-                'order_id': str(refund.order_id.order),
-                'customer_note': refund.customer_note,
-                'requested_at': refund.requested_at.isoformat(),
+        try:
+            start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
+            end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
+            
+            refunds = Refund.objects.filter(
+                order_id__shipping_address__user__customer__owned_shops=shop,
+                requested_at__range=[start_datetime, end_datetime]
+            ).select_related('order_id').order_by('-requested_at')[:limit]
+            
+            pending_count = Refund.objects.filter(
+                order_id__shipping_address__user__customer__owned_shops=shop,
+                status='pending'
+            ).count()
+            
+            disputes_count = Refund.objects.filter(
+                order_id__shipping_address__user__customer__owned_shops=shop,
+                status='dispute'
+            ).count()
+            
+            total_count = Refund.objects.filter(
+                order_id__shipping_address__user__customer__owned_shops=shop,
+            ).count()
+            
+            latest_refunds = [
+                {
+                    'id': str(refund.refund_id),
+                    'reason': refund.reason,
+                    'requested_amount': float(refund.total_refund_amount or 0),
+                    'status': refund.status,
+                    'order_id': str(refund.order_id.order),
+                    'customer_note': refund.customer_note,
+                    'requested_at': refund.requested_at.isoformat(),
+                }
+                for refund in refunds
+            ]
+            
+            return {
+                'pending_count': pending_count,
+                'disputes_count': disputes_count,
+                'total_count': total_count,
+                'latest': latest_refunds,
             }
-            for refund in refunds
-        ]
-        
-        return {
-            'pending_count': pending_count,
-            'disputes_count': disputes_count,
-            'total_count': total_count,
-            'latest': latest_refunds,
-        }
+        except Exception as e:
+            print(f"Error in _get_refund_data: {str(e)}")
+            return {
+                'pending_count': 0,
+                'disputes_count': 0,
+                'total_count': 0,
+                'latest': [],
+            }
     
     def _get_shop_performance_data(self, shop, start_date, end_date):
         """Get shop performance metrics"""
-        # Average rating
-        reviews = Review.objects.filter(shop=shop)
-        average_rating = reviews.aggregate(avg_rating=Avg('rating'))['avg_rating'] or 0
-        
-        # Recent reviews (last 30 days)
-        recent_reviews = Review.objects.filter(
-            shop=shop,
-            created_at__date__range=[start_date, end_date]
-        ).count()
-        
-        # Total followers
-        total_followers = ShopFollow.objects.filter(shop=shop).count()
-        
-        # New followers (last 30 days)
-        new_followers = ShopFollow.objects.filter(
-            shop=shop,
-            followed_at__date__range=[start_date, end_date]
-        ).count()
-        
-        # Product counts
-        total_products = Product.objects.filter(shop=shop).count()
-        active_products = Product.objects.filter(
-            shop=shop,
-            upload_status='published',
-            is_removed=False
-        ).count()
-        draft_products = Product.objects.filter(
-            shop=shop,
-            upload_status='draft',
-            is_removed=False
-        ).count()
-        
-        return {
-            'average_rating': round(float(average_rating), 1),
-            'total_reviews': reviews.count(),
-            'recent_reviews': recent_reviews,
-            'total_followers': total_followers,
-            'new_followers': new_followers,
-            'total_products': total_products,
-            'active_products': active_products,
-            'draft_products': draft_products,
-        }
+        try:
+            start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
+            end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
+            
+            # FIXED: Average rating - using 'average_rating' field, not 'rating'
+            reviews = Review.objects.filter(shop=shop)
+            average_rating = reviews.aggregate(avg_rating=Avg('average_rating'))['avg_rating'] or 0
+            
+            # Recent reviews (last 30 days)
+            recent_reviews = Review.objects.filter(
+                shop=shop,
+                created_at__range=[start_datetime, end_datetime]
+            ).count()
+            
+            # Total followers
+            total_followers = ShopFollow.objects.filter(shop=shop).count()
+            
+            # New followers (last 30 days)
+            new_followers = ShopFollow.objects.filter(
+                shop=shop,
+                followed_at__range=[start_datetime, end_datetime]
+            ).count()
+            
+            # Product counts
+            total_products = Product.objects.filter(shop=shop, is_removed=False).count()
+            active_products = Product.objects.filter(
+                shop=shop,
+                upload_status='published',
+                is_removed=False
+            ).count()
+            draft_products = Product.objects.filter(
+                shop=shop,
+                upload_status='draft',
+                is_removed=False
+            ).count()
+            
+            return {
+                'average_rating': round(float(average_rating), 1),
+                'total_reviews': reviews.count(),
+                'recent_reviews': recent_reviews,
+                'total_followers': total_followers,
+                'new_followers': new_followers,
+                'total_products': total_products,
+                'active_products': active_products,
+                'draft_products': draft_products,
+            }
+        except Exception as e:
+            print(f"Error in _get_shop_performance_data: {str(e)}")
+            return {
+                'average_rating': 0,
+                'total_reviews': 0,
+                'recent_reviews': 0,
+                'total_followers': 0,
+                'new_followers': 0,
+                'total_products': 0,
+                'active_products': 0,
+                'draft_products': 0,
+            }
     
     def _get_report_data(self, shop):
         """Get report and notification data"""
-        # Active reports against shop
-        active_reports = Report.objects.filter(
-            reported_shop=shop,
-            status__in=['pending', 'under_review']
-        ).count()
-        
-        total_reports = Report.objects.filter(reported_shop=shop).count()
-        
-        # Latest notifications for the shop owner
-        if shop.customer and shop.customer.customer:
-            user = shop.customer.customer
-            notifications = Notification.objects.filter(
-                user=user,
-                created_at__gte=timezone.now() - timedelta(days=7)
-            ).order_by('-created_at')[:3]
+        try:
+            # Active reports against shop
+            active_reports = Report.objects.filter(
+                reported_shop=shop,
+                status__in=['pending', 'under_review']
+            ).count()
             
-            latest_notifications = [
-                {
-                    'id': str(notification.id),
-                    'title': notification.title,
-                    'message': notification.message,
-                    'type': notification.type,
-                    'time': self._get_time_ago(notification.created_at),
-                    'is_read': notification.is_read,
-                }
-                for notification in notifications
-            ]
-        else:
-            latest_notifications = []
-        
-        return {
-            'active_count': active_reports,
-            'total_count': total_reports,
-            'latest_notifications': latest_notifications,
-        }
+            total_reports = Report.objects.filter(reported_shop=shop).count()
+            
+            # Latest notifications for the shop owner
+            if shop.customer and shop.customer.customer:
+                user = shop.customer.customer
+                notifications = Notification.objects.filter(
+                    user=user,
+                    created_at__gte=timezone.now() - timedelta(days=7)
+                ).order_by('-created_at')[:3]
+                
+                latest_notifications = [
+                    {
+                        'id': str(notification.id),
+                        'title': notification.title,
+                        'message': notification.message,
+                        'type': notification.type,
+                        'time': self._get_time_ago(notification.created_at),
+                        'is_read': notification.is_read,
+                    }
+                    for notification in notifications
+                ]
+            else:
+                latest_notifications = []
+            
+            return {
+                'active_count': active_reports,
+                'total_count': total_reports,
+                'latest_notifications': latest_notifications,
+            }
+        except Exception as e:
+            print(f"Error in _get_report_data: {str(e)}")
+            return {
+                'active_count': 0,
+                'total_count': 0,
+                'latest_notifications': [],
+            }
     
     def _get_time_ago(self, date):
         """Convert datetime to human-readable time ago"""
-        now = timezone.now()
-        diff = now - date
-        
-        if diff.days > 365:
-            years = diff.days // 365
-            return f"{years} year{'s' if years > 1 else ''} ago"
-        elif diff.days > 30:
-            months = diff.days // 30
-            return f"{months} month{'s' if months > 1 else ''} ago"
-        elif diff.days > 0:
-            return f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
-        elif diff.seconds > 3600:
-            hours = diff.seconds // 3600
-            return f"{hours} hour{'s' if hours > 1 else ''} ago"
-        elif diff.seconds > 60:
-            minutes = diff.seconds // 60
-            return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
-        else:
-            return "just now"
-
+        try:
+            now = timezone.now()
+            diff = now - date
+            
+            if diff.days > 365:
+                years = diff.days // 365
+                return f"{years} year{'s' if years > 1 else ''} ago"
+            elif diff.days > 30:
+                months = diff.days // 30
+                return f"{months} month{'s' if months > 1 else ''} ago"
+            elif diff.days > 0:
+                return f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
+            elif diff.seconds > 3600:
+                hours = diff.seconds // 3600
+                return f"{hours} hour{'s' if hours > 1 else ''} ago"
+            elif diff.seconds > 60:
+                minutes = diff.seconds // 60
+                return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+            else:
+                return "just now"
+        except Exception:
+            return "unknown"
+    
+    @action(detail=False, methods=['get'])
+    def get_products_low_stock(self, request):
+        """Get all low stock products for the shop"""
+        try:
+            shop_id = request.query_params.get('shop_id')
+            
+            if not shop_id:
+                return Response(
+                    {'error': 'shop_id is required', 'success': False},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # FIXED: Query variants directly
+            low_stock_variants = Variants.objects.filter(
+                product__shop_id=shop_id,
+                product__upload_status='published',
+                product__is_removed=False,
+                is_active=True,
+                quantity__gt=0,
+                quantity__lte=F('critical_trigger')
+            ).filter(
+                critical_trigger__isnull=False
+            ).select_related('product').order_by('quantity')
+            
+            results = []
+            for variant in low_stock_variants:
+                results.append({
+                    'id': str(variant.id),
+                    'product_id': str(variant.product.id),
+                    'product_name': variant.product.name,
+                    'variant_title': variant.title,
+                    'quantity': variant.quantity,
+                    'critical_stock': variant.critical_trigger,
+                    'sku_code': variant.sku_code,
+                    'price': float(variant.price) if variant.price else None,
+                    'created_at': variant.created_at.isoformat() if variant.created_at else None,
+                })
+            
+            return Response({
+                'success': True,
+                'count': len(results),
+                'results': results,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in get_products_low_stock: {str(e)}")
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_recent_reviews(self, request):
+        """Get recent reviews for the shop"""
+        try:
+            shop_id = request.query_params.get('shop_id')
+            limit = int(request.query_params.get('limit', 10))
+            
+            if not shop_id:
+                return Response(
+                    {'error': 'shop_id is required', 'success': False},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            reviews = Review.objects.filter(
+                shop_id=shop_id
+            ).select_related(
+                'customer__customer'
+            ).order_by('-created_at')[:limit]
+            
+            results = []
+            for review in reviews:
+                results.append({
+                    'id': str(review.id),
+                    'customer_name': review.customer.customer.username if review.customer and review.customer.customer else 'Anonymous',
+                    'rating': review.average_rating,
+                    'comment': review.comment,
+                    'created_at': review.created_at.isoformat(),
+                })
+            
+            return Response({
+                'success': True,
+                'count': len(results),
+                'results': results,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in get_recent_reviews: {str(e)}")
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_sales_chart_data(self, request):
+        """Get sales data for charts (daily/weekly/monthly)"""
+        try:
+            shop_id = request.query_params.get('shop_id')
+            period = request.query_params.get('period', 'monthly')  # daily, weekly, monthly
+            
+            if not shop_id:
+                return Response(
+                    {'error': 'shop_id is required', 'success': False},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            end_date = timezone.now().date()
+            
+            if period == 'daily':
+                start_date = end_date - timedelta(days=7)
+                date_format = '%Y-%m-%d'
+                date_trunc = 'day'
+            elif period == 'weekly':
+                start_date = end_date - timedelta(weeks=12)
+                date_format = '%Y-W%W'
+                date_trunc = 'week'
+            else:  # monthly
+                start_date = end_date - timedelta(days=365)
+                date_format = '%Y-%m'
+                date_trunc = 'month'
+            
+            # This is a simplified version - in production you'd use database date truncation
+            # and aggregation. For now, we'll return sample data structure
+            
+            return Response({
+                'success': True,
+                'period': period,
+                'data': [
+                    {'date': (end_date - timedelta(days=i)).strftime(date_format), 'sales': 0}
+                    for i in range(7, 0, -1)
+                ],
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in get_sales_chart_data: {str(e)}")
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer

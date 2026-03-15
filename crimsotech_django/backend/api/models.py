@@ -2179,7 +2179,9 @@ class WalletTransaction(models.Model):
     source_type = models.CharField(max_length=20, choices=SOURCE_TYPES)
     status = models.CharField(max_length=30, default='completed')
     created_at = models.DateTimeField(auto_now_add=True)
-
+    shop = models.ForeignKey('Shop', on_delete=models.SET_NULL, null=True, blank=True, related_name='wallet_transactions')
+    order = models.ForeignKey(Order,on_delete=models.SET_NULL,null=True,blank=True,related_name='wallet_transactions')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='wallet_transactions', null=True, blank=True)
     def __str__(self):
         return f"Transaction {self.transaction_id} - {self.transaction_type}"
 
