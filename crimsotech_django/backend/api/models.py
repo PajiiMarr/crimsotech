@@ -530,6 +530,7 @@ class Variants(models.Model):
     maximum_additional_payment = models.DecimalField(max_digits=9, decimal_places=2, default=Decimal('0.00'))
     swap_description = models.TextField(blank=True, null=True)
     image = models.ImageField(upload_to='product/variants/', null=True, blank=True)
+    proof_image = models.ImageField(upload_to='product/variants/proof/', null=True, blank=True)
     critical_stock = models.IntegerField(null=True,blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

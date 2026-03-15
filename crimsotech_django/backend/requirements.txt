@@ -4,6 +4,7 @@ aiohttp==3.13.2
 aiohttp-retry==2.9.1
 aiosignal==1.4.0
 amqp==5.3.1
+anyio==4.12.1
 appnope==0.1.4
 asgiref==3.10.0
 asttokens==3.0.1
@@ -51,6 +52,7 @@ grpcio==1.76.0
 gunicorn==24.1.1
 h11==0.16.0
 h5py==3.15.1
+httptools==0.7.1
 hyperlink==21.0.0
 idna==3.11
 Incremental==24.11.0
@@ -106,6 +108,7 @@ pyparsing==3.2.5
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 pytz==2025.2
+PyYAML==6.0.3
 pyzmq==27.1.0
 qrcode==8.2
 redis==7.2.1
@@ -141,8 +144,11 @@ tzlocal==5.3.1
 ujson==5.11.0
 urllib3==2.5.0
 uvicorn==0.41.0
+uvloop==0.22.1
 vine==5.1.0
+watchfiles==1.1.1
 wcwidth==0.2.14
+websockets==16.0
 Werkzeug==3.1.4
 wheel==0.45.1
 whitenoise==6.11.0

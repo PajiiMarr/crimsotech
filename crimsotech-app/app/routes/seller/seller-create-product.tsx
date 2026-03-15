@@ -19,8 +19,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const { getSession, commitSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
-
-
   const { requireAuth } = await import("~/middleware/auth.server");
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
@@ -153,6 +151,28 @@ export async function action({ request }: Route.ActionArgs) {
     errors.condition = "Condition is required";
   }
 
+  // Validate media files - require at least 3 images
+  const validImageFiles = media_files.filter(file => 
+    file.size > 0 && file.type.startsWith('image/')
+  );
+  
+  if (validImageFiles.length < 3) {
+    errors.media = "Please upload at least 3 product images";
+  }
+
+  // Validate each media file
+  media_files.forEach((file, index) => {
+    if (file.size > 0) {
+      const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4'];
+      if (!validTypes.includes(file.type)) {
+        errors[`media_${index}`] = "Please upload images or MP4 videos only (JPEG, PNG, GIF, WebP, MP4)";
+      }
+      if (file.size > 50 * 1024 * 1024) {
+        errors[`media_${index}`] = "File size should be less than 50MB";
+      }
+    }
+  });
+
   // Validate variants
   const variantsRaw = formData.get('variants');
   if (!variantsRaw) {
@@ -176,6 +196,21 @@ export async function action({ request }: Route.ActionArgs) {
             errors[`variant_${index}_quantity`] = "Variant quantity must be greater than 0";
           }
           
+          // Validate weight is required
+          if (!variant.weight || variant.weight === '' || Number(variant.weight) <= 0) {
+            errors[`variant_${index}_weight`] = "Weight is required";
+          }
+          
+          // Validate weight_unit is required
+          if (!variant.weight_unit) {
+            errors[`variant_${index}_weight_unit`] = "Weight unit is required";
+          }
+          
+          // Validate critical_trigger is required
+          if (!variant.critical_trigger || variant.critical_trigger === '' || Number(variant.critical_trigger) <= 0) {
+            errors[`variant_${index}_critical_trigger`] = "Low stock alert is required";
+          }
+          
           // Validate depreciation fields if present
           if (variant.original_price || variant.usage_period || variant.depreciation_rate) {
             if (variant.original_price && Number(variant.original_price) <= 0) {
@@ -194,19 +229,6 @@ export async function action({ request }: Route.ActionArgs) {
       errors.variants = "Invalid variants format";
     }
   }
-
-  // Validate media files
-  media_files.forEach((file, index) => {
-    if (file.size > 0) {
-      const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4'];
-      if (!validTypes.includes(file.type)) {
-        errors[`media_${index}`] = "Please upload images or MP4 videos only (JPEG, PNG, GIF, WebP, MP4)";
-      }
-      if (file.size > 50 * 1024 * 1024) {
-        errors[`media_${index}`] = "File size should be less than 50MB";
-      }
-    }
-  });
 
   if (Object.keys(errors).length > 0) {
     console.log("Product validation errors:", errors);
@@ -270,9 +292,16 @@ export async function action({ request }: Route.ActionArgs) {
       apiFormData.append('variants', JSON.stringify(processedVariants));
     }
 
-    // Handle variant images
+    // Handle variant images and proof images
     for (const [key, value] of formData.entries()) {
       if (key.startsWith('variant_image_')) {
+        const file = value as File;
+        if (file && file.size > 0) {
+          apiFormData.append(key, file);
+        }
+      }
+      // Add support for proof_image field
+      if (key.startsWith('proof_image_')) {
         const file = value as File;
         if (file && file.size > 0) {
           apiFormData.append(key, file);
@@ -343,6 +372,7 @@ interface FormErrors {
   shop?: string;
   category_admin_id?: string;
   variants?: string;
+  media?: string;
   [key: string]: string | undefined;
 }
 

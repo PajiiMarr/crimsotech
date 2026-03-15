@@ -174,6 +174,7 @@ interface ProductData {
     swap_description: string | null;
     critical_stock: number | null;
     image: string | null;
+    proof_image: string | null;
     option_title: string | null;
     option_ids: Array<any>;
     option_map: any;
@@ -407,6 +408,7 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
   const [suspensionDays, setSuspensionDays] = useState(7);
   const [processing, setProcessing] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedProofImage, setSelectedProofImage] = useState<string | null>(null);
   // State for selected variant
   const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
   const isMobile = useIsMobile();
@@ -1303,7 +1305,11 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                         <img 
                                           src={variant.image} 
                                           alt={variant.title}
-                                          className="w-full h-full object-cover rounded-md"
+                                          className="w-full h-full object-cover rounded-md cursor-pointer"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedImage(variant.image);
+                                          }}
                                           onError={(e) => {
                                             (e.target as HTMLImageElement).src = '/api/placeholder/200/200';
                                           }}
@@ -1384,6 +1390,34 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                           </Badge>
                                         )}
                                       </div>
+
+                                      {/* Proof Image */}
+                                      {variant.proof_image && (
+                                        <div className="mt-2 flex items-center gap-2">
+                                          <Shield className="w-3 h-3 text-green-600" />
+                                          <span className="text-xs text-muted-foreground">Proof Image:</span>
+                                          <img 
+                                            src={variant.proof_image} 
+                                            alt="Proof"
+                                            className="w-8 h-8 object-cover rounded cursor-pointer border border-gray-200"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedProofImage(variant.proof_image);
+                                            }}
+                                          />
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-6 px-2 text-xs"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedProofImage(variant.proof_image);
+                                            }}
+                                          >
+                                            View
+                                          </Button>
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
                                 </div>
@@ -1827,6 +1861,33 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                 >
                   <XCircle className="w-4 h-4" />
                 </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Proof Image Modal */}
+          {selectedProofImage && (
+            <div 
+              className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+              onClick={() => setSelectedProofImage(null)}
+            >
+              <div className="relative max-w-4xl max-h-[90vh]">
+                <img 
+                  src={selectedProofImage} 
+                  alt="Proof" 
+                  className="w-full h-full object-contain"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="absolute top-2 right-2 bg-white"
+                  onClick={() => setSelectedProofImage(null)}
+                >
+                  <XCircle className="w-4 h-4" />
+                </Button>
+                <div className="absolute top-2 left-2">
+                  <Badge className="bg-green-600">Proof Image</Badge>
+                </div>
               </div>
             </div>
           )}

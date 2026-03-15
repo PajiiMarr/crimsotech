@@ -1,4 +1,5 @@
 from asyncio.log import logger
+from asgiref.sync import async_to_sync
 from email import parser
 from django.http import JsonResponse
 import re
@@ -32,6 +33,7 @@ from django.utils.decorators import method_decorator
 from django.utils.dateparse import parse_date
 import uuid
 from django.db.models import Min, Max
+from channels.layers import get_channel_layer
 from dateutil.relativedelta import relativedelta
 
 from rest_framework import viewsets, status
@@ -2564,10 +2566,55 @@ class AdminAnalytics(viewsets.ViewSet):
         }
         return stages.get(stage, f'Stage {stage or 0}')
         
-
 class AdminProduct(viewsets.ViewSet):
+    """
+    Admin viewset for managing products with comprehensive data
+    """
+    
+    def _send_websocket_notification(self, user_id, notification):
+        """
+        Send real-time notification via WebSocket to specific user
+        """
+        try:
+            channel_layer = get_channel_layer()
+            group_name = f'notifications_{user_id}'
+            
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': 'notification',
+                    'notification_id': str(notification.id),
+                    'title': notification.title,
+                    'message': notification.message,
+                    'notification_type': notification.type,
+                    'created_at': str(notification.created_at),
+                    'data': {}
+                }
+            )
+            
+            unread_count = Notification.objects.filter(
+                user_id=user_id,
+                is_read=False
+            ).count()
+            
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': 'unread_count',
+                    'count': unread_count
+                }
+            )
+            
+            print(f"WebSocket notification sent to user {user_id}")
+        except Exception as e:
+            print(f"Error sending websocket notification: {str(e)}")
+            traceback.print_exc()
+
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
+        """
+        Get product metrics for admin dashboard
+        """
         try:
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
@@ -2593,11 +2640,13 @@ class AdminProduct(viewsets.ViewSet):
             
             total_products = Product.objects.filter(**date_filters).count()
             
-            low_stock_count = 0
-            products = Product.objects.filter(is_removed=False, upload_status='published')
-            for product in products:
-                if product.total_stock < 5:
-                    low_stock_count += 1
+            low_stock_count = Variants.objects.filter(
+                product__is_removed=False,
+                product__upload_status='published',
+                is_active=True,
+                quantity__gt=0,
+                quantity__lt=5
+            ).count()
             
             active_boosts_count = Boost.objects.filter(
                 product__isnull=False,
@@ -2735,16 +2784,15 @@ class AdminProduct(viewsets.ViewSet):
                         created_at__lte=prev_end_datetime
                     ).count()
                     
-                    prev_low_stock = 0
-                    prev_products = Product.objects.filter(
-                        created_at__gte=prev_start_datetime,
-                        created_at__lte=prev_end_datetime,
-                        is_removed=False,
-                        upload_status='published'
-                    )
-                    for product in prev_products:
-                        if product.total_stock < 5:
-                            prev_low_stock += 1
+                    prev_low_stock = Variants.objects.filter(
+                        product__created_at__gte=prev_start_datetime,
+                        product__created_at__lte=prev_end_datetime,
+                        product__is_removed=False,
+                        product__upload_status='published',
+                        is_active=True,
+                        quantity__gt=0,
+                        quantity__lt=5
+                    ).count()
                     
                     product_growth = ((total_products - prev_total_products) / prev_total_products * 100) if prev_total_products > 0 else (100 if total_products > 0 else 0)
                     low_stock_growth = ((low_stock_count - prev_low_stock) / prev_low_stock * 100) if prev_low_stock > 0 else (100 if low_stock_count > 0 else 0)
@@ -2789,7 +2837,6 @@ class AdminProduct(viewsets.ViewSet):
             
         except Exception as e:
             print(f"Error retrieving metrics: {str(e)}")
-            import traceback
             traceback.print_exc()
             return Response(
                 {'success': False, 'error': f'Error retrieving metrics: {str(e)}'}, 
@@ -2798,6 +2845,9 @@ class AdminProduct(viewsets.ViewSet):
         
     @action(detail=False, methods=['get'])
     def get_products_list(self, request):
+        """
+        Get paginated list of products with filters and comprehensive variant data
+        """
         try:
             search = request.query_params.get('search', '')
             category = request.query_params.get('category', 'all')
@@ -2806,7 +2856,9 @@ class AdminProduct(viewsets.ViewSet):
             range_type = request.query_params.get('range_type', 'weekly')
             
             products = Product.objects.all().order_by('-created_at').select_related(
-                'shop', 'category', 'category_admin'
+                'shop', 'category', 'category_admin', 'customer__customer'
+            ).prefetch_related(
+                Prefetch('variants', queryset=Variants.objects.all())
             )
             
             start_datetime = None
@@ -2874,22 +2926,27 @@ class AdminProduct(viewsets.ViewSet):
                     engagement_map[product_id]['favorites'] = count
             
             variants_data = Variants.objects.filter(
-                product__in=product_ids,
-                is_active=True
+                product__in=product_ids
             ).values('product').annotate(
                 variants_count=Count('id'),
+                active_variants=Count('id', filter=Q(is_active=True)),
                 min_price=Min('price'),
                 max_price=Max('price'),
-                total_quantity=Sum('quantity')
+                total_quantity=Sum('quantity'),
+                low_stock_variants=Count('id', filter=Q(quantity__gt=0, quantity__lt=5, is_active=True)),
+                out_of_stock_variants=Count('id', filter=Q(quantity=0, is_active=True))
             )
             
             variants_map = {}
             for vd in variants_data:
                 variants_map[vd['product']] = {
                     'variants_count': vd['variants_count'],
-                    'min_price': vd['min_price'],
-                    'max_price': vd['max_price'],
-                    'total_quantity': vd['total_quantity'] or 0
+                    'active_variants': vd['active_variants'],
+                    'min_price': str(vd['min_price']) if vd['min_price'] else None,
+                    'max_price': str(vd['max_price']) if vd['max_price'] else None,
+                    'total_quantity': vd['total_quantity'] or 0,
+                    'low_stock_variants': vd['low_stock_variants'],
+                    'out_of_stock_variants': vd['out_of_stock_variants']
                 }
             
             issues_data = Issues.objects.filter(
@@ -2908,27 +2965,48 @@ class AdminProduct(viewsets.ViewSet):
             boost_map = {}
             for boost in boost_data:
                 if boost.boost_plan and boost.product_id:
-                    boost_map[boost.product_id] = boost.boost_plan.name
+                    boost_map[boost.product_id] = {
+                        'name': boost.boost_plan.name,
+                        'status': boost.status,
+                        'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                        'end_date': boost.end_date.isoformat() if boost.end_date else None
+                    }
             
             review_data = Review.objects.filter(
                 product__in=product_ids
             ).values('product').annotate(
-                avg_rating=Avg('average_rating')
+                avg_rating=Avg('average_rating'),
+                total_reviews=Count('id')
             )
             
-            rating_map = {rd['product']: rd['avg_rating'] or 0.0 for rd in review_data}
+            rating_map = {
+                rd['product']: {
+                    'avg_rating': rd['avg_rating'] or 0.0,
+                    'total_reviews': rd['total_reviews']
+                } for rd in review_data
+            }
+            
+            favorites_count = Favorites.objects.filter(
+                product__in=product_ids
+            ).values('product').annotate(
+                count=Count('id')
+            )
+            
+            favorites_map = {fc['product']: fc['count'] for fc in favorites_count}
             
             products_data = []
             for product in all_products:
                 product_id = product.id
                 engagement = engagement_map.get(product_id, {'views': 0, 'purchases': 0, 'favorites': 0})
-                product_rating = rating_map.get(product_id, 0.0)
+                rating_info = rating_map.get(product_id, {'avg_rating': 0.0, 'total_reviews': 0})
                 variant_info = variants_map.get(product_id, {
-                    'variants_count': 0, 'min_price': None, 'max_price': None, 'total_quantity': 0
+                    'variants_count': 0, 'active_variants': 0, 'min_price': None, 
+                    'max_price': None, 'total_quantity': 0, 'low_stock_variants': 0,
+                    'out_of_stock_variants': 0
                 })
                 issues_count = issues_map.get(product_id, 0)
-                boost_plan = boost_map.get(product_id, 'None')
-                low_stock = variant_info['total_quantity'] < 5 if variant_info['total_quantity'] else True
+                boost_info = boost_map.get(product_id)
+                favorites = favorites_map.get(product_id, 0)
                 
                 category_name = 'Uncategorized'
                 if product.category_admin:
@@ -2941,35 +3019,53 @@ class AdminProduct(viewsets.ViewSet):
                 
                 if min_price and max_price:
                     if min_price == max_price:
-                        price_display = f"₱{min_price:,.2f}"
+                        price_display = f"₱{float(min_price):,.2f}"
                     else:
-                        price_display = f"₱{min_price:,.2f} - ₱{max_price:,.2f}"
+                        price_display = f"₱{float(min_price):,.2f} - ₱{float(max_price):,.2f}"
                 elif min_price:
-                    price_display = f"₱{min_price:,.2f}"
+                    price_display = f"₱{float(min_price):,.2f}"
                 else:
                     price_display = "No price"
                 
                 product_data = {
                     'id': str(product_id),
                     'name': product.name,
+                    'description': product.description,
                     'category': category_name,
                     'shop': product.shop.name if product.shop else 'No Shop',
                     'price': price_display,
-                    'quantity': variant_info['total_quantity'],
+                    'min_price': min_price,
+                    'max_price': max_price,
+                    'total_stock': variant_info['total_quantity'],
                     'condition': product.condition,
                     'status': product.status,
                     'upload_status': product.upload_status,
                     'views': engagement['views'],
                     'purchases': engagement['purchases'],
-                    'favorites': engagement['favorites'],
-                    'rating': round(product_rating, 1),
-                    'boostPlan': boost_plan,
-                    'variants': variant_info['variants_count'],
-                    'issues': issues_count,
-                    'lowStock': low_stock,
+                    'favorites': favorites,
+                    'rating': round(rating_info['avg_rating'], 1),
+                    'total_reviews': rating_info['total_reviews'],
+                    'boost': boost_info,
+                    'variants_count': variant_info['variants_count'],
+                    'active_variants': variant_info['active_variants'],
+                    'low_stock_variants': variant_info['low_stock_variants'],
+                    'out_of_stock_variants': variant_info['out_of_stock_variants'],
+                    'issues_count': issues_count,
+                    'low_stock': variant_info['low_stock_variants'] > 0,
                     'is_removed': product.is_removed,
+                    'is_refundable': product.is_refundable,
+                    'refund_days': product.refund_days,
                     'created_at': product.created_at.isoformat() if product.created_at else None,
-                    'updated_at': product.updated_at.isoformat() if product.updated_at else None
+                    'updated_at': product.updated_at.isoformat() if product.updated_at else None,
+                    'removed_at': product.removed_at.isoformat() if product.removed_at else None,
+                    'removal_reason': product.removal_reason,
+                    'customer': {
+                        'id': str(product.customer.customer.id) if product.customer else None,
+                        'username': product.customer.customer.username if product.customer else None,
+                        'email': product.customer.customer.email if product.customer else None,
+                        'first_name': product.customer.customer.first_name if product.customer else None,
+                        'last_name': product.customer.customer.last_name if product.customer else None
+                    } if product.customer else None
                 }
                 products_data.append(product_data)
             
@@ -2990,7 +3086,6 @@ class AdminProduct(viewsets.ViewSet):
             
         except Exception as e:
             print(f"Error retrieving products: {str(e)}")
-            import traceback
             traceback.print_exc()
             return Response(
                 {'success': False, 'error': f'Error retrieving products: {str(e)}'}, 
@@ -2999,6 +3094,9 @@ class AdminProduct(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'])    
     def get_product(self, request):
+        """
+        Get detailed product information by ID with all variant data including proof images
+        """
         product_id = request.query_params.get('product_id')
         
         if not product_id:
@@ -3153,20 +3251,21 @@ class AdminProduct(viewsets.ViewSet):
                     "weight": str(variant.weight) if variant.weight else None,
                     "weight_unit": variant.weight_unit,
                     "critical_trigger": variant.critical_trigger,
+                    "critical_stock": variant.critical_stock,
                     "is_active": variant.is_active,
                     "is_refundable": variant.is_refundable,
                     "refund_days": variant.refund_days,
                     "allow_swap": variant.allow_swap,
                     "swap_type": variant.swap_type,
+                    "swap_description": variant.swap_description,
                     "original_price": str(variant.original_price) if variant.original_price else None,
                     "usage_period": variant.usage_period,
                     "usage_unit": variant.usage_unit,
                     "depreciation_rate": variant.depreciation_rate,
                     "minimum_additional_payment": str(variant.minimum_additional_payment),
                     "maximum_additional_payment": str(variant.maximum_additional_payment),
-                    "swap_description": variant.swap_description,
-                    "critical_stock": variant.critical_stock,
                     "image": convert_s3_to_public_url(variant.image.url) if variant.image else None,
+                    "proof_image": convert_s3_to_public_url(variant.proof_image.url) if variant.proof_image else None,
                     "option_title": variant.option_title,
                     "option_ids": option_ids,
                     "option_map": variant.option_map,
@@ -3179,7 +3278,7 @@ class AdminProduct(viewsets.ViewSet):
             product_data["reviews"] = [
                 {
                     "id": str(review.id),
-                    "average_rating": review.average_rating,
+                    "rating": review.average_rating,
                     "comment": review.comment,
                     "customer": {
                         "id": str(review.customer.customer.id) if review.customer and review.customer.customer else None,
@@ -3278,8 +3377,9 @@ class AdminProduct(viewsets.ViewSet):
                 "total_stock": product.total_stock,
                 "min_price": str(product.min_price) if product.min_price else None,
                 "max_price": str(product.max_price) if product.max_price else None,
-                "low_stock_variants": active_variants.filter(quantity__lt=5).count(),
+                "low_stock_variants": active_variants.filter(quantity__gt=0, quantity__lt=5).count(),
                 "out_of_stock_variants": active_variants.filter(quantity=0).count(),
+                "variants_with_proof": active_variants.filter(proof_image__isnull=False).count()
             }
             
             return Response({
@@ -3295,7 +3395,6 @@ class AdminProduct(viewsets.ViewSet):
             )
         except Exception as e:
             print(f"Error fetching product: {str(e)}")
-            import traceback
             traceback.print_exc()
             return Response(
                 {"success": False, "error": f"An error occurred while fetching product data: {str(e)}"},
@@ -3304,6 +3403,9 @@ class AdminProduct(viewsets.ViewSet):
 
     @action(detail=False, methods=['put'])
     def update_product_status(self, request):
+        """
+        Update product status with admin actions and send notifications
+        """
         print(request.body)
         try:
             data = json.loads(request.body)
@@ -3705,42 +3807,18 @@ class AdminProduct(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            import traceback
+            traceback.print_exc()
             print(f"Error updating product status: {str(e)}")
-            print(traceback.format_exc())
             return Response(
                 {"error": "An error occurred while updating product status"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    def _send_websocket_notification(self, user_id, notification):
-        try:
-            from channels.layers import get_channel_layer
-            from asgiref.sync import async_to_sync
-            
-            channel_layer = get_channel_layer()
-            group_name = f'notifications_{user_id}'
-            
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {
-                    'type': 'notification',
-                    'notification_id': str(notification.id),
-                    'title': notification.title,
-                    'message': notification.message,
-                    'notification_type': notification.type,
-                    'created_at': str(notification.created_at),
-                    'data': {}
-                }
-            )
-            print(f"WebSocket notification sent to user {user_id}")
-        except Exception as e:
-            print(f"Error sending websocket notification: {str(e)}")
-            import traceback
-            traceback.print_exc()
-
     @action(detail=False, methods=['post'])
     def add_category(self, request):
+        """
+        Add a new global category
+        """
         try:
             name = request.data.get('name')
             user_id = request.data.get('user')
@@ -3810,9 +3888,8 @@ class AdminProduct(viewsets.ViewSet):
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
-            import traceback
+            traceback.print_exc()
             print(f"Error adding category: {str(e)}")
-            print(traceback.format_exc())
             
             return Response({
                 'success': False,
@@ -3821,8 +3898,11 @@ class AdminProduct(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def get_categories(self, request):
+        """
+        Get all categories with their details
+        """
         try:
-            categories = Category.objects.all().order_by('name')
+            categories = Category.objects.all().order_by('name').select_related('shop', 'user')
             
             categories_data = []
             for category in categories:
@@ -3833,7 +3913,9 @@ class AdminProduct(viewsets.ViewSet):
                     'shop_name': category.shop.name if category.shop else None,
                     'user_id': str(category.user.id) if category.user else None,
                     'username': category.user.username if category.user else None,
-                    'created_at': category.created_at.isoformat() if hasattr(category, 'created_at') else None
+                    'created_at': category.created_at.isoformat() if hasattr(category, 'created_at') else None,
+                    'product_count': category.products.count() if hasattr(category, 'products') else 0,
+                    'admin_product_count': category.admin_products.count() if hasattr(category, 'admin_products') else 0
                 }
                 categories_data.append(category_data)
             
@@ -3848,6 +3930,7 @@ class AdminProduct(viewsets.ViewSet):
             
         except Exception as e:
             print(f"Error retrieving categories: {str(e)}")
+            traceback.print_exc()
             return Response(
                 {'success': False, 'error': f'Error retrieving categories: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -17089,6 +17172,9 @@ class SellerProducts(viewsets.ModelViewSet):
                 provided_id = variant_data.get('id')
                 file_key = f"variant_image_{provided_id}" if provided_id else None
                 
+                # Handle proof image
+                proof_file_key = f"proof_image_{provided_id}" if provided_id else None
+                
                 # Create the variant
                 variant = Variants.objects.create(**variant_fields)
                 created_variants.append(variant)
@@ -17100,6 +17186,14 @@ class SellerProducts(viewsets.ModelViewSet):
                         variant.save(update_fields=['image'])
                     except Exception as e:
                         logger.error(f'Failed to save variant image: {e}')
+                
+                # Handle proof image after creation
+                if proof_file_key and proof_file_key in files:
+                    try:
+                        variant.proof_image = files[proof_file_key]
+                        variant.save(update_fields=['proof_image'])
+                    except Exception as e:
+                        logger.error(f'Failed to save proof image: {e}')
                 
                 logger.info(f"Created variant: {variant.id} for product: {product.id}")
             
@@ -17141,6 +17235,7 @@ class SellerProducts(viewsets.ModelViewSet):
                 "critical_trigger": variant.critical_trigger,
                 "critical_stock": variant.critical_stock,
                 "image": variant.image.url if variant.image and hasattr(variant.image, 'url') else None,
+                "proof_image": variant.proof_image.url if variant.proof_image and hasattr(variant.proof_image, 'url') else None,
                 "original_price": str(variant.original_price) if variant.original_price else None,
                 "usage_period": variant.usage_period,
                 "usage_unit": variant.usage_unit,
@@ -17248,6 +17343,7 @@ class SellerProducts(viewsets.ModelViewSet):
                         "critical_trigger": variant.critical_trigger,
                         "critical_stock": variant.critical_stock,
                         "image": variant.image.url if variant.image and hasattr(variant.image, 'url') else None,
+                        "proof_image": variant.proof_image.url if variant.proof_image and hasattr(variant.proof_image, 'url') else None,
                         "original_price": str(variant.original_price) if variant.original_price else None,
                         "usage_period": variant.usage_period,
                         "usage_unit": variant.usage_unit,
@@ -17536,6 +17632,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     "swap_description": variant.swap_description,
                     "critical_stock": variant.critical_stock,
                     "image": get_media_url(variant.image) if variant.image else None,
+                    "proof_image": get_media_url(variant.proof_image) if variant.proof_image else None,
                     "option_title": variant.option_title,
                     "option_ids": variant.option_ids,
                     "option_map": variant.option_map,
@@ -17692,7 +17789,7 @@ class SellerProducts(viewsets.ModelViewSet):
             return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
