@@ -141,7 +141,7 @@ class ShopFollowSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShopFollow
         fields = '__all__'
-        
+
 class ReviewSerializer(serializers.ModelSerializer):
     # Add computed field for product average
     product_average = serializers.SerializerMethodField(read_only=True)
@@ -1358,3 +1358,68 @@ class ProofSerializer(serializers.ModelSerializer):
             validated_data['file_type'] = ext
         
         return super().create(validated_data)
+
+# ================================
+# Wallet Serializers
+# ================================
+
+class UserWalletSerializer(serializers.ModelSerializer):
+    total_balance = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = UserWallet
+        fields = [
+            'wallet_id', 'user', 'available_balance', 'pending_balance', 
+            'total_balance', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['wallet_id', 'user', 'created_at', 'updated_at']
+    
+    def get_total_balance(self, obj):
+        return obj.available_balance + obj.pending_balance
+
+
+class WalletTransactionSerializer(serializers.ModelSerializer):
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+    shop_id = serializers.UUIDField(source='shop.id', read_only=True)
+    order_id = serializers.UUIDField(source='order.order', read_only=True)
+    user_id = serializers.UUIDField(source='user.id', read_only=True)
+    user_name = serializers.CharField(source='user.username', read_only=True)
+    
+    class Meta:
+        model = WalletTransaction
+        fields = [
+            'transaction_id', 'wallet', 'user', 'user_id', 'user_name',
+            'shop', 'shop_id', 'shop_name', 'order', 'order_id', 
+            'amount', 'transaction_type', 'source_type', 'status', 'created_at'
+        ]
+        read_only_fields = ['transaction_id', 'created_at']
+
+class WithdrawalRequestSerializer(serializers.ModelSerializer):
+    user_username = serializers.CharField(source='user.username', read_only=True)
+    wallet_balance = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = WithdrawalRequest
+        fields = [
+            'withdrawal_id', 'user', 'user_username', 'wallet', 'wallet_balance',
+            'amount', 'status', 'requested_at', 'approved_by', 'approved_at',
+            'completed_at', 'admin_proof'
+        ]
+        read_only_fields = [
+            'withdrawal_id', 'user', 'wallet', 'requested_at',
+            'approved_by', 'approved_at', 'completed_at'
+        ]
+    
+    def get_wallet_balance(self, obj):
+        return obj.wallet.available_balance if obj.wallet else 0
+    
+
+class WithdrawalRequestUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WithdrawalRequest
+        fields = ['status', 'admin_proof', 'approved_by', 'approved_at', 'completed_at']
+        extra_kwargs = {
+            'approved_by': {'read_only': True},
+            'approved_at': {'read_only': True},
+            'completed_at': {'read_only': True}
+        }

@@ -6738,6 +6738,8 @@ class AdminOrders(viewsets.ViewSet):
         order_id = request.data.get('order_id')
         new_approval = request.data.get('approval')
         
+        print(f"🔍 DEBUG - update_order_approval called with order_id: {order_id}, new_approval: {new_approval}")
+        
         if not order_id or not new_approval:
             return Response({
                 'success': False,
@@ -6753,8 +6755,219 @@ class AdminOrders(viewsets.ViewSet):
         
         try:
             order = Order.objects.get(order=order_id)
+            old_approval = order.approval
             order.approval = new_approval
             order.save()
+            
+            print(f"✅ Order approval updated from {old_approval} to {new_approval}")
+            
+            # ===== CREATE WALLET TRANSACTION WHEN APPROVAL IS ACCEPTED =====
+            if new_approval == 'accepted' and old_approval != 'accepted':
+                print(f"💰 Creating wallet transaction for order {order_id}")
+                
+                try:
+                    from decimal import Decimal
+                    from django.db.models import Sum
+                    
+                    # Get all checkouts for this order
+                    checkouts = Checkout.objects.filter(order=order)
+                    print(f"📦 Found {checkouts.count()} checkouts for this order")
+                    
+                    if not checkouts.exists():
+                        print("⚠️ No checkouts found for this order")
+                        return Response({
+                            'success': True,
+                            'message': f'Order approval updated to {new_approval} but no items found'
+                        })
+                    
+                    # Check if this is a shop sale or personal listing
+                    # Look at the first checkout to determine
+                    first_checkout = checkouts.first()
+                    product = first_checkout.cart_item.product if first_checkout and first_checkout.cart_item else None
+                    
+                    if not product:
+                        print("⚠️ No product found in checkout")
+                        return Response({
+                            'success': True,
+                            'message': f'Order approval updated to {new_approval}'
+                        })
+                    
+                    # Check if product has a shop
+                    if product.shop:
+                        print(f"🏪 This is a SHOP sale - Shop ID: {product.shop.id}, Name: {product.shop.name}")
+                        
+                        # Handle shop sales - group by shop
+                        # Get unique shops in this order
+                        shop_ids = checkouts.values_list(
+                            'cart_item__product__shop', 
+                            flat=True
+                        ).distinct()
+                        
+                        print(f"🏪 Found {len(shop_ids)} unique shops in this order")
+                        
+                        for shop_id in shop_ids:
+                            if not shop_id:
+                                continue
+                                
+                            try:
+                                shop = Shop.objects.get(id=shop_id)
+                                print(f"🏪 Processing shop: {shop.name} (ID: {shop.id})")
+                                
+                                # Get the shop owner from customer field
+                                shop_owner = shop.customer.customer if shop.customer else None
+                                
+                                if not shop_owner:
+                                    print(f"⚠️ Shop {shop.name} has no customer/owner")
+                                    continue
+                                
+                                print(f"👤 Shop owner: {shop_owner.username} (ID: {shop_owner.id})")
+                                
+                                # Calculate total for this shop - use aggregate to keep as Decimal
+                                shop_checkouts = checkouts.filter(
+                                    cart_item__product__shop=shop
+                                )
+                                
+                                # Use aggregate to get Decimal directly
+                                total_amount = shop_checkouts.aggregate(
+                                    total=Sum('total_amount')
+                                )['total'] or Decimal('0')
+                                
+                                print(f"💰 Total amount for shop {shop.name}: ₱{total_amount}")
+                                
+                                if total_amount > 0:
+                                    # Get or create wallet for shop owner
+                                    wallet, created = UserWallet.objects.get_or_create(user=shop_owner)
+                                    print(f"💳 Wallet {'created' if created else 'found'} for shop owner")
+                                    
+                                    # Check if transaction already exists
+                                    existing_tx = WalletTransaction.objects.filter(
+                                        wallet=wallet,
+                                        order=order,
+                                        shop=shop
+                                    ).first()
+                                    
+                                    if not existing_tx:
+                                        # Determine status based on 30-day rule
+                                        transaction_status = 'pending'
+                                        
+                                        print(f"📝 Creating wallet transaction: amount={total_amount}, status={transaction_status}")
+                                        
+                                        # Create transaction with user field
+                                        wallet_transaction = WalletTransaction.objects.create(
+                                            wallet=wallet,
+                                            user=shop_owner,
+                                            shop=shop,
+                                            order=order,
+                                            amount=total_amount,
+                                            transaction_type='credit',
+                                            source_type='shop_sale',
+                                            status=transaction_status,
+                                            created_at=order.created_at
+                                        )
+                                        
+                                        # Update wallet balance (add to pending balance)
+                                        wallet.pending_balance += total_amount
+                                        wallet.save()
+                                        
+                                        print(f"✅ Wallet transaction created: {wallet_transaction.transaction_id}")
+                                        print(f"💰 Wallet new pending balance: {wallet.pending_balance}")
+                                        
+                                        # Create notification for seller
+                                        try:
+                                            Notification.objects.create(
+                                                user=shop_owner,
+                                                title='Payment Approved',
+                                                type='wallet',
+                                                message=f'Your payment of ₱{total_amount:,.2f} for order #{str(order.order)[:8]} has been approved',
+                                                is_read=False
+                                            )
+                                            print(f"📨 Notification created for shop owner")
+                                        except Exception as notif_error:
+                                            print(f"⚠️ Failed to create notification: {notif_error}")
+                                    else:
+                                        print(f"⚠️ Transaction already exists for this order and shop")
+                                else:
+                                    print(f"⚠️ Total amount is zero for shop {shop.name}")
+                                    
+                            except Shop.DoesNotExist:
+                                print(f"⚠️ Shop with ID {shop_id} not found")
+                            except Exception as shop_error:
+                                print(f"❌ Error processing shop {shop_id}: {shop_error}")
+                    else:
+                        print(f"👤 This is a PERSONAL LISTING sale")
+                        
+                        # Handle personal listing (no shop)
+                        # Find the seller (customer who owns the product)
+                        if product.customer and hasattr(product.customer, 'customer'):
+                            seller = product.customer.customer
+                            print(f"👤 Seller: {seller.username} (ID: {seller.id})")
+                            
+                            # Calculate total amount - use order.total_amount as Decimal
+                            total_amount = order.total_amount
+                            print(f"💰 Total amount: ₱{total_amount}")
+                            
+                            if total_amount > 0:
+                                # Get or create wallet for seller
+                                wallet, created = UserWallet.objects.get_or_create(user=seller)
+                                print(f"💳 Wallet {'created' if created else 'found'} for seller")
+                                
+                                # Check if transaction already exists
+                                existing_tx = WalletTransaction.objects.filter(
+                                    wallet=wallet,
+                                    order=order,
+                                    shop__isnull=True
+                                ).first()
+                                
+                                if not existing_tx:
+                                    # Determine status based on 30-day rule
+                                    transaction_status = 'pending'
+                                    
+                                    print(f"📝 Creating wallet transaction: amount={total_amount}, status={transaction_status}")
+                                    
+                                    # Create transaction (no shop) with user field
+                                    wallet_transaction = WalletTransaction.objects.create(
+                                        wallet=wallet,
+                                        user=seller,
+                                        order=order,
+                                        amount=total_amount,
+                                        transaction_type='credit',
+                                        source_type='personal_sale',
+                                        status=transaction_status,
+                                        created_at=order.created_at
+                                    )
+                                    
+                                    # Update wallet balance (add to pending balance)
+                                    wallet.pending_balance += total_amount
+                                    wallet.save()
+                                    
+                                    print(f"✅ Wallet transaction created: {wallet_transaction.transaction_id}")
+                                    print(f"💰 Wallet new pending balance: {wallet.pending_balance}")
+                                    
+                                    # Create notification for seller
+                                    try:
+                                        Notification.objects.create(
+                                            user=seller,
+                                            title='Payment Approved',
+                                            type='wallet',
+                                            message=f'Your payment of ₱{total_amount:,.2f} for order #{str(order.order)[:8]} has been approved',
+                                            is_read=False
+                                        )
+                                        print(f"📨 Notification created for seller")
+                                    except Exception as notif_error:
+                                        print(f"⚠️ Failed to create notification: {notif_error}")
+                                else:
+                                    print(f"⚠️ Transaction already exists for this order")
+                            else:
+                                print(f"⚠️ Total amount is zero")
+                        else:
+                            print(f"⚠️ Product has no customer/seller")
+                    
+                except Exception as e:
+                    print(f"❌ Failed to create wallet transaction: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    # Don't fail the approval, just log the error
+            # ===== END OF WALLET TRANSACTION CODE =====
             
             return Response({
                 'success': True,
@@ -6762,16 +6975,20 @@ class AdminOrders(viewsets.ViewSet):
             })
             
         except Order.DoesNotExist:
+            print(f"❌ Order not found: {order_id}")
             return Response({
                 'success': False,
                 'error': 'Order not found'
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            print(f"❌ Error updating order approval: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response({
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+        
     @action(detail=False, methods=['get'])
     def get_order_stats(self, request):
         """Get additional order statistics with date range support"""
@@ -22075,6 +22292,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "message": f"Waybill generation failed: {str(e)}"
             }, status=500)
 
+    
 class CheckoutOrder(viewsets.ViewSet):
     @action(detail=False, methods=['GET'])
     def get_checkout_items(self, request):
@@ -40530,4 +40748,506 @@ class PersonalRefundViewSet(viewsets.ViewSet):
             # Common actions
             actions.append('contact_support')
         
-        return list(set(actions))  # Remove duplicates
+        return list(set(actions)) 
+
+
+
+
+class UserWalletViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for UserWallet operations.
+    Handles wallet balance and transactions.
+    """
+    queryset = UserWallet.objects.all()
+    serializer_class = UserWalletSerializer
+    
+    def get_queryset(self):
+        user_id = self.request.headers.get('X-User-Id')
+        if user_id:
+            return UserWallet.objects.filter(user_id=user_id)
+        return UserWallet.objects.none()
+    
+    def get_user_from_header(self, request):
+        """Helper to get user from header"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return None, Response(
+                {'error': 'X-User-Id header is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+            return user, None
+        except User.DoesNotExist:
+            return None, Response(
+                {'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=False, methods=['get'])
+    def my_wallet(self, request):
+        """Get or create wallet for the user"""
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        wallet, created = UserWallet.objects.get_or_create(user=user)
+        serializer = self.get_serializer(wallet)
+        
+        return Response({
+            'success': True,
+            'wallet': serializer.data,
+            'created': created
+        })
+    
+    @action(detail=False, methods=['get'])
+    def balance(self, request):
+        """Get wallet balance summary"""
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        try:
+            wallet = UserWallet.objects.get(user=user)
+        except UserWallet.DoesNotExist:
+            wallet = UserWallet.objects.create(user=user)
+        
+        # Get transaction summary
+        transactions = WalletTransaction.objects.filter(wallet=wallet)
+        
+        total_credits = transactions.filter(
+            transaction_type='credit'
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        
+        total_debits = transactions.filter(
+            transaction_type='debit'
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        
+        # Get pending withdrawals
+        pending_withdrawals = WithdrawalRequest.objects.filter(
+            user=user,
+            status__in=['pending', 'processing', 'approved']
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        
+        return Response({
+            'success': True,
+            'wallet_id': str(wallet.wallet_id),
+            'available_balance': float(wallet.available_balance),
+            'pending_balance': float(wallet.pending_balance),
+            'total_balance': float(wallet.available_balance + wallet.pending_balance),
+            'lifetime_earnings': float(total_credits),
+            'lifetime_withdrawals': float(total_debits),
+            'pending_withdrawals': float(pending_withdrawals)
+        })
+    
+    @action(detail=False, methods=['post'])
+    def credit(self, request):
+        """
+        Credit amount to wallet (add money)
+        Expected data: 
+            - amount: decimal
+            - source_type: 'personal_sale', 'shop_sale', 'refund', etc.
+            - shop_id: optional, for shop sales
+            - order_id: optional, to link to order
+            - description: optional description
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        amount = request.data.get('amount')
+        source_type = request.data.get('source_type')
+        shop_id = request.data.get('shop_id')
+        order_id = request.data.get('order_id')
+        description = request.data.get('description', '')
+        
+        if not amount or not source_type:
+            return Response({
+                'error': 'amount and source_type are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            amount = Decimal(str(amount))
+            if amount <= 0:
+                return Response({
+                    'error': 'Amount must be greater than zero'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        except:
+            return Response({'error': 'Invalid amount'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate source_type
+        valid_source_types = ['personal_sale', 'shop_sale', 'refund', 'dispute', 'release']
+        if source_type not in valid_source_types:
+            return Response({
+                'error': f'source_type must be one of: {", ".join(valid_source_types)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get shop if provided
+        shop = None
+        if shop_id:
+            try:
+                from api.models import Shop
+                shop = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                return Response({
+                    'error': 'Shop not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get order if provided
+        order = None
+        if order_id:
+            try:
+                from api.models import Order
+                order = Order.objects.get(order=order_id)
+            except Order.DoesNotExist:
+                return Response({
+                    'error': 'Order not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+        
+        with transaction.atomic():
+            wallet, _ = UserWallet.objects.get_or_create(user=user)
+            
+            # Update pending balance
+            wallet.pending_balance += amount
+            wallet.save()
+            
+            # Create transaction record
+            transaction_data = {
+                'wallet': wallet,
+                'amount': amount,
+                'transaction_type': 'credit',
+                'source_type': source_type,
+                'status': 'completed'
+            }
+            
+            # Add optional fields
+            if shop:
+                transaction_data['shop'] = shop
+            if order:
+                transaction_data['order'] = order
+            
+            wallet_transaction = WalletTransaction.objects.create(**transaction_data)
+            
+            logger.info(f"Credit of {amount} to user {user.id} for {source_type}")
+        
+        serializer = WalletTransactionSerializer(wallet_transaction)
+        
+        return Response({
+            'success': True,
+            'message': 'Amount credited successfully',
+            'wallet': {
+                'available_balance': float(wallet.available_balance),
+                'pending_balance': float(wallet.pending_balance),
+                'total_balance': float(wallet.available_balance + wallet.pending_balance)
+            },
+            'transaction': serializer.data
+        })
+    
+    @action(detail=False, methods=['post'])
+    def debit(self, request):
+        """
+        Debit amount from wallet (withdraw money)
+        Expected data: 
+            - amount: decimal
+            - source_type: 'withdrawal', 'refund', etc.
+            - description: optional description
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        amount = request.data.get('amount')
+        source_type = request.data.get('source_type')
+        description = request.data.get('description', '')
+        
+        if not amount or not source_type:
+            return Response({
+                'error': 'amount and source_type are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            amount = Decimal(str(amount))
+            if amount <= 0:
+                return Response({
+                    'error': 'Amount must be greater than zero'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        except:
+            return Response({'error': 'Invalid amount'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate source_type
+        valid_source_types = ['withdrawal', 'refund', 'dispute', 'fee']
+        if source_type not in valid_source_types:
+            return Response({
+                'error': f'source_type must be one of: {", ".join(valid_source_types)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            wallet = UserWallet.objects.get(user=user)
+        except UserWallet.DoesNotExist:
+            return Response({
+                'error': 'Wallet not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if enough balance
+        total_balance = wallet.available_balance + wallet.pending_balance
+        if amount > total_balance:
+            return Response({
+                'error': f'Insufficient balance. Available: {total_balance}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        with transaction.atomic():
+            # For now, debit from available balance first, then pending if needed
+            if amount <= wallet.available_balance:
+                wallet.available_balance -= amount
+            else:
+                remaining = amount - wallet.available_balance
+                wallet.available_balance = 0
+                wallet.pending_balance -= remaining
+            
+            wallet.save()
+            
+            # Create transaction record
+            wallet_transaction = WalletTransaction.objects.create(
+                wallet=wallet,
+                amount=amount,
+                transaction_type='debit',
+                source_type=source_type,
+                status='completed'
+            )
+            
+            logger.info(f"Debit of {amount} from user {user.id} for {source_type}")
+        
+        serializer = WalletTransactionSerializer(wallet_transaction)
+        
+        return Response({
+            'success': True,
+            'message': 'Amount debited successfully',
+            'wallet': {
+                'available_balance': float(wallet.available_balance),
+                'pending_balance': float(wallet.pending_balance),
+                'total_balance': float(wallet.available_balance + wallet.pending_balance)
+            },
+            'transaction': serializer.data
+        })
+    
+    @action(detail=False, methods=['post'])
+    def release_pending(self, request):
+        """
+        Release pending balance to available
+        Expected data: 
+            - amount: optional (if not provided, release all)
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        try:
+            wallet = UserWallet.objects.get(user=user)
+        except UserWallet.DoesNotExist:
+            return Response({'error': 'Wallet not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        amount = request.data.get('amount')
+        
+        with transaction.atomic():
+            if amount:
+                try:
+                    amount = Decimal(str(amount))
+                    if amount > wallet.pending_balance:
+                        return Response({
+                            'error': 'Amount exceeds pending balance'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    wallet.pending_balance -= amount
+                    wallet.available_balance += amount
+                    
+                except:
+                    return Response({'error': 'Invalid amount'}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                # Release all pending
+                amount = wallet.pending_balance
+                wallet.available_balance += wallet.pending_balance
+                wallet.pending_balance = 0
+            
+            wallet.save()
+            
+            # Create transaction record for the release
+            wallet_transaction = WalletTransaction.objects.create(
+                wallet=wallet,
+                amount=amount,
+                transaction_type='credit',
+                source_type='release',
+                status='completed'
+            )
+            
+            logger.info(f"Released {amount} from pending to available for user {user.id}")
+        
+        serializer = WalletTransactionSerializer(wallet_transaction)
+        
+        return Response({
+            'success': True,
+            'message': 'Pending balance released to available',
+            'wallet': {
+                'available_balance': float(wallet.available_balance),
+                'pending_balance': float(wallet.pending_balance),
+                'total_balance': float(wallet.available_balance + wallet.pending_balance)
+            },
+            'transaction': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def transactions(self, request):
+        """
+        Get transaction history with filters
+        Query params:
+            - source_type: filter by source type
+            - transaction_type: 'credit' or 'debit'
+            - shop_id: filter by specific shop
+            - start_date: YYYY-MM-DD
+            - end_date: YYYY-MM-DD
+            - limit: number of transactions (default 50)
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        try:
+            wallet = UserWallet.objects.get(user=user)
+        except UserWallet.DoesNotExist:
+            return Response({
+                'success': True,
+                'transactions': [],
+                'count': 0
+            })
+        
+        # Base queryset
+        transactions = WalletTransaction.objects.filter(wallet=wallet).select_related('shop', 'order')
+        
+        # Apply filters
+        source_type = request.GET.get('source_type')
+        if source_type:
+            transactions = transactions.filter(source_type=source_type)
+        
+        transaction_type = request.GET.get('transaction_type')
+        if transaction_type:
+            transactions = transactions.filter(transaction_type=transaction_type)
+        
+        # Filter by shop
+        shop_id = request.GET.get('shop_id')
+        if shop_id:
+            transactions = transactions.filter(shop_id=shop_id)
+        
+        start_date = request.GET.get('start_date')
+        if start_date:
+            try:
+                start = datetime.strptime(start_date, '%Y-%m-%d')
+                transactions = transactions.filter(created_at__date__gte=start.date())
+            except ValueError:
+                pass
+        
+        end_date = request.GET.get('end_date')
+        if end_date:
+            try:
+                end = datetime.strptime(end_date, '%Y-%m-%d')
+                transactions = transactions.filter(created_at__date__lte=end.date())
+            except ValueError:
+                pass
+        
+        # Order by date (newest first)
+        transactions = transactions.order_by('-created_at')
+        
+        # Apply limit
+        limit = request.GET.get('limit', 50)
+        try:
+            limit = int(limit)
+            transactions = transactions[:limit]
+        except ValueError:
+            pass
+        
+        # Serialize
+        serializer = WalletTransactionSerializer(transactions, many=True)
+        
+        return Response({
+            'success': True,
+            'transactions': serializer.data,
+            'count': len(serializer.data)
+        })
+    
+    @action(detail=False, methods=['get'])
+    def transaction_summary(self, request):
+        """
+        Get transaction summary statistics
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        try:
+            wallet = UserWallet.objects.get(user=user)
+        except UserWallet.DoesNotExist:
+            return Response({
+                'success': True,
+                'summary': {
+                    'total_credits': 0,
+                    'total_debits': 0,
+                    'net_balance': 0,
+                    'by_source': {}
+                }
+            })
+        
+        transactions = WalletTransaction.objects.filter(wallet=wallet)
+        
+        # Total credits and debits - use Decimal
+        total_credits = transactions.filter(
+            transaction_type='credit'
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        
+        total_debits = transactions.filter(
+            transaction_type='debit'
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        
+        # Breakdown by source
+        source_totals = {}
+        for source_type, _ in WalletTransaction.SOURCE_TYPES:
+            amount = transactions.filter(
+                source_type=source_type
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+            if amount > 0:
+                source_totals[source_type] = float(amount)
+        
+        # Monthly data for graph (last 6 months)
+        six_months_ago = timezone.now() - timedelta(days=180)
+        monthly_data = []
+        
+        from django.db.models.functions import TruncMonth
+        monthly_query = transactions.filter(
+            created_at__gte=six_months_ago
+        ).annotate(
+            month=TruncMonth('created_at')
+        ).values('month').annotate(
+            credits=Sum('amount', filter=Q(transaction_type='credit')),
+            debits=Sum('amount', filter=Q(transaction_type='debit'))
+        ).order_by('month')
+        
+        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        
+        for item in monthly_query:
+            if item['month']:
+                monthly_data.append({
+                    'month': month_names[item['month'].month - 1],
+                    'credits': float(item['credits'] or 0),
+                    'debits': float(item['debits'] or 0),
+                    'net': float((item['credits'] or 0) - (item['debits'] or 0))
+                })
+        
+        return Response({
+            'success': True,
+            'summary': {
+                'total_credits': float(total_credits),
+                'total_debits': float(total_debits),
+                'net_balance': float(total_credits - total_debits),
+                'by_source': source_totals,
+                'monthly_data': monthly_data
+            }
+        })

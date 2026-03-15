@@ -76,6 +76,8 @@ router.register(r'proof-management', ProofManagementViewSet, basename='proof-man
 router.register(r'rider-proof', RiderProofViewSet, basename='rider-proof')
 router.register(r'rider-profile', RiderProfileViewSet, basename='rider-profile')
 router.register(r'conversation', ConversationViewSet, basename='conversation')
+router.register(r'wallet', UserWalletViewSet, basename='wallet')
+
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -89,6 +91,7 @@ urlpatterns = [
     path('api/profile/', ProfileView.as_view(), name='profile'),
     # path('profile/payment-methods/', UserPaymentMethodsView.as_view(), name='payment-methods'),
     # path('profile/payment-methods/<uuid:method_id>/', UserPaymentMethodsView.as_view(), name='payment-method-detail'),
+
 
     # ==================== CART ENDPOINTS ====================
     
