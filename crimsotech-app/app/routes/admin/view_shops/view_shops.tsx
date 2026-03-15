@@ -41,7 +41,8 @@ import {
   ShieldAlert,
   Menu,
   TrendingUp,
-  Heart
+  Heart,
+  Clock
 } from 'lucide-react'
 import { DataTable } from '~/components/ui/data-table'
 import type { ColumnDef } from '@tanstack/react-table'
@@ -325,24 +326,6 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
 
 // Action configurations
 const actionConfigs = {
-  suspend: {
-    title: "Suspend Shop",
-    description: "This will suspend the shop temporarily. Customers won't be able to view or purchase from it.",
-    confirmText: "Suspend",
-    variant: "outline" as const,
-    icon: Ban,
-    needsReason: true,
-    needsSuspensionDays: true,
-  },
-  unsuspend: {
-    title: "Unsuspend Shop",
-    description: "This will unsuspend the shop and make it available to customers again.",
-    confirmText: "Unsuspend",
-    variant: "outline" as const,
-    icon: CheckCircle,
-    needsReason: false,
-    needsSuspensionDays: false,
-  },
   verify: {
     title: "Verify Shop",
     description: "This will verify the shop and add a verification badge.",
@@ -358,6 +341,42 @@ const actionConfigs = {
     confirmText: "Remove Verification",
     variant: "outline" as const,
     icon: ShieldAlert,
+    needsReason: false,
+    needsSuspensionDays: false,
+  },
+  approve: {
+    title: "Approve Shop",
+    description: "This will approve the shop and set its status to Active.",
+    confirmText: "Approve",
+    variant: "default" as const,
+    icon: CheckCircle,
+    needsReason: false,
+    needsSuspensionDays: false,
+  },
+  reject: {
+    title: "Reject Shop",
+    description: "This will reject the shop application.",
+    confirmText: "Reject",
+    variant: "destructive" as const,
+    icon: XCircle,
+    needsReason: true,
+    needsSuspensionDays: false,
+  },
+  suspend: {
+    title: "Suspend Shop",
+    description: "This will suspend the shop temporarily. Customers won't be able to view or purchase from it.",
+    confirmText: "Suspend",
+    variant: "outline" as const,
+    icon: Ban,
+    needsReason: true,
+    needsSuspensionDays: true,
+  },
+  unsuspend: {
+    title: "Unsuspend Shop",
+    description: "This will unsuspend the shop and make it available to customers again.",
+    confirmText: "Unsuspend",
+    variant: "outline" as const,
+    icon: CheckCircle,
     needsReason: false,
     needsSuspensionDays: false,
   },
@@ -649,42 +668,61 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
 
     const [columns, setColumns] = useState(getColumns())
 
-    // Determine available actions
+    // Determine available actions based on shop status
     const getAvailableActions = () => {
         const actions = []
         
-        if (shop.is_suspended) {
+        // Add approve/reject actions if shop is pending
+        if (shop.status === 'Pending') {
             actions.push({
-                id: "unsuspend",
-                label: "Unsuspend Shop",
+                id: "approve",
+                label: "Approve Shop",
                 icon: CheckCircle,
-                variant: "outline" as const,
-            })
-        } else {
-            actions.push({
-                id: "suspend",
-                label: "Suspend Shop",
-                icon: Ban,
-                variant: "outline" as const,
-            })
-        }
-        
-        if (shop.verified) {
-            actions.push({
-                id: "unverify",
-                label: "Remove Verification",
-                icon: ShieldAlert,
-                variant: "outline" as const,
-            })
-        } else {
-            actions.push({
-                id: "verify",
-                label: "Verify Shop",
-                icon: Shield,
                 variant: "default" as const,
             })
+            actions.push({
+                id: "reject",
+                label: "Reject Shop",
+                icon: XCircle,
+                variant: "destructive" as const,
+            })
+        } else {
+            // Add verification actions
+            if (shop.verified) {
+                actions.push({
+                    id: "unverify",
+                    label: "Remove Verification",
+                    icon: ShieldAlert,
+                    variant: "outline" as const,
+                })
+            } else {
+                actions.push({
+                    id: "verify",
+                    label: "Verify Shop",
+                    icon: Shield,
+                    variant: "default" as const,
+                })
+            }
+            
+            // Add suspension actions
+            if (shop.is_suspended) {
+                actions.push({
+                    id: "unsuspend",
+                    label: "Unsuspend Shop",
+                    icon: CheckCircle,
+                    variant: "outline" as const,
+                })
+            } else {
+                actions.push({
+                    id: "suspend",
+                    label: "Suspend Shop",
+                    icon: Ban,
+                    variant: "outline" as const,
+                })
+            }
         }
         
+        // Always add delete action
         actions.push({
             id: "delete",
             label: "Delete Shop",
@@ -708,8 +746,9 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
     const handleConfirm = async () => {
         if (!activeAction || !shop) return
         
-        // Validate required reason
-        if ((activeAction === 'suspend' || activeAction === 'delete') && !reason.trim()) {
+        // Validate required reason for actions that need it
+        const needsReason = ['suspend', 'reject', 'delete'].includes(activeAction)
+        if (needsReason && !reason.trim()) {
             toast({
                 title: "Validation Error",
                 description: "Please provide a reason for this action",
@@ -720,10 +759,12 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
         
         setProcessing(true)
         try {
+            // Include the user ID in the request to identify who performed the action
             const response = await AxiosInstance.post(`/admin-shops/${shop.id}/execute_action/`, {
                 action: activeAction,
                 reason: reason,
                 suspension_days: suspensionDays,
+                user_id: user?.user_id || user?.id // Send the current admin's user ID
             })
             
             toast({
@@ -779,6 +820,12 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                     <div className="bg-muted/50 rounded-lg p-3">
                         <p className="text-sm font-medium">Shop: {shop.name}</p>
                         <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            {shop.status === 'Pending' && (
+                                <Badge variant="secondary" className="text-xs bg-yellow-100 text-yellow-800">
+                                    <Clock className="w-3 h-3 mr-1" />
+                                    Pending Approval
+                                </Badge>
+                            )}
                             <Badge variant={shop.verified ? "default" : "secondary"} className="text-xs">
                                 {shop.verified ? "Verified" : "Unverified"}
                             </Badge>
@@ -791,17 +838,17 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                         </div>
                     </div>
                     
-                    {/* Reason input for suspend and delete actions */}
-                    {(activeAction === 'suspend' || activeAction === 'delete') && (
+                    {/* Reason input for actions that need it */}
+                    {(activeAction === 'suspend' || activeAction === 'reject' || activeAction === 'delete') && (
                         <div className="space-y-2">
                             <Label htmlFor="reason" className="text-sm font-medium">
-                                Reason for {activeAction === 'suspend' ? 'Suspension' : 'Deletion'} <span className="text-red-500">*</span>
+                                Reason for {activeAction === 'suspend' ? 'Suspension' : activeAction === 'reject' ? 'Rejection' : 'Deletion'} <span className="text-red-500">*</span>
                             </Label>
                             <Input
                                 id="reason"
                                 value={reason}
                                 onChange={(e) => setReason(e.target.value)}
-                                placeholder={`Please provide a reason for ${activeAction === 'suspend' ? 'suspending' : 'deleting'} this shop...`}
+                                placeholder={`Please provide a reason for ${activeAction === 'suspend' ? 'suspending' : activeAction === 'reject' ? 'rejecting' : 'deleting'} this shop...`}
                                 className="h-10"
                                 required
                             />
@@ -894,30 +941,41 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                         </span>
                     </nav>
 
-                    {/* Mobile Actions Dropdown */}
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="outline" size="sm" className="ml-auto">
-                                <Menu className="w-4 h-4" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-48">
-                            {availableActions.map((action, index) => (
-                                <DropdownMenuItem
-                                    key={index}
-                                    onClick={() => handleActionClick(action.id)}
-                                    className={`flex items-center gap-2 ${
-                                        action.variant === "destructive" 
-                                            ? "text-destructive focus:text-destructive" 
-                                            : ""
-                                    }`}
-                                >
-                                    <action.icon className="w-4 h-4" />
-                                    {action.label}
-                                </DropdownMenuItem>
-                            ))}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
+                    {/* Admin Actions Dropdown */}
+                    {availableActions.length > 0 && (
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="outline" size="sm" className="ml-auto">
+                                    <MoreVertical className="w-4 h-4 mr-2" />
+                                    Actions
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-56">
+                                {availableActions.map((action, index) => {
+                                    const isDestructive = action.variant === "destructive";
+                                    const prevAction = availableActions[index - 1];
+                                    const needsSeparator = isDestructive && prevAction && prevAction.variant !== "destructive";
+
+                                    return (
+                                        <div key={action.id}>
+                                            {needsSeparator && <DropdownMenuSeparator />}
+                                            <DropdownMenuItem
+                                                onClick={() => handleActionClick(action.id)}
+                                                className={`flex items-center gap-2 cursor-pointer ${
+                                                    isDestructive 
+                                                        ? "text-destructive focus:text-destructive" 
+                                                        : ""
+                                                }`}
+                                            >
+                                                <action.icon className="w-4 h-4" />
+                                                {action.label}
+                                            </DropdownMenuItem>
+                                        </div>
+                                    );
+                                })}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    )}
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
@@ -940,8 +998,14 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                                     {shop.name}
                                                 </h1>
                                                 <div className="flex flex-wrap justify-center sm:justify-start gap-1">
+                                                    {shop.status === 'Pending' && (
+                                                        <Badge variant="secondary" className="gap-1 text-xs bg-yellow-100 text-yellow-800">
+                                                            <Clock className="h-3 w-3" />
+                                                            Pending
+                                                        </Badge>
+                                                    )}
                                                     {shop.verified && (
-                                                        <Badge className="gap-1 text-xs">
+                                                        <Badge className="gap-1 text-xs bg-green-100 text-green-800">
                                                             <Shield className="h-3 w-3" />
                                                             Verified
                                                         </Badge>
@@ -1196,15 +1260,15 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                             <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
                                 <div className="grid grid-cols-2 gap-3">
                                     <div className="flex flex-col items-center justify-center p-3 border rounded-lg bg-muted/50">
-                                        <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Verification</span>
-                                        <Badge variant={shop.verified ? "default" : "secondary"}>
-                                            {shop.verified ? "Verified" : "Unverified"}
+                                        <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Approval Status</span>
+                                        <Badge variant={shop.status === "Active" ? "default" : "secondary"} className={shop.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' : ''}>
+                                            {shop.status}
                                         </Badge>
                                     </div>
                                     <div className="flex flex-col items-center justify-center p-3 border rounded-lg bg-muted/50">
-                                        <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Status</span>
-                                        <Badge variant={shop.status === "Active" ? "default" : "destructive"}>
-                                            {shop.status}
+                                        <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">Verification</span>
+                                        <Badge variant={shop.verified ? "default" : "secondary"}>
+                                            {shop.verified ? "Verified" : "Unverified"}
                                         </Badge>
                                     </div>
                                     <div className="flex flex-col items-center justify-center p-3 border rounded-lg bg-muted/50">
@@ -1555,7 +1619,7 @@ export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) 
                                             : ""
                                     }`
                                 }
-                                disabled={processing || ((activeAction === 'suspend' || activeAction === 'delete') && !reason.trim())}
+                                disabled={processing || ((activeAction === 'suspend' || activeAction === 'reject' || activeAction === 'delete') && !reason.trim())}
                             >
                                 {processing ? (
                                     <>

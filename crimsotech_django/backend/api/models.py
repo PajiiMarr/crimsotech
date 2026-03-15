@@ -220,7 +220,7 @@ class Shop(models.Model):
     street = models.CharField(max_length=50)
     contact_number = models.CharField(max_length=20, blank=True, default='')
     verified = models.BooleanField(default=False)
-    status = models.CharField(max_length=10, default="Active")
+    status = models.CharField(max_length=10, default="Pending")
     total_sales = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

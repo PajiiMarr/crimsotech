@@ -4037,9 +4037,9 @@ class AdminShops(viewsets.ViewSet):
             # Calculate total followers
             total_followers = ShopFollow.objects.count()
             
-            # Calculate average rating
+            # FIX: Changed from 'rating' to 'average_rating'
             rating_agg = Review.objects.aggregate(
-                avg_rating=Avg('rating'),
+                avg_rating=Avg('average_rating'),
                 total_reviews=Count('id')
             )
             avg_rating = rating_agg['avg_rating'] or 0.0
@@ -4048,9 +4048,9 @@ class AdminShops(viewsets.ViewSet):
             verified_shops = all_shops_qs.filter(verified=True).count()
             verified_shops_in_period = new_shops_qs.filter(verified=True).count()
             
-            # Get top shop by rating
+            # FIX: Changed from 'rating' to 'average_rating'
             top_shop = all_shops_qs.annotate(
-                avg_rating=Avg('reviews__rating'),
+                avg_rating=Avg('reviews__average_rating'),
                 followers_count=Count('followers')
             ).filter(avg_rating__isnull=False).order_by('-avg_rating').first()
             
@@ -4170,11 +4170,11 @@ class AdminShops(viewsets.ViewSet):
             )
             favorites_map = {str(fd['product__shop']): fd['total_favorites'] for fd in favorites_data}
             
-            # Compute ratings
+            # FIX: Changed from 'rating' to 'average_rating'
             ratings_data = Review.objects.filter(
                 shop__in=shop_ids
             ).values('shop').annotate(
-                avg_rating=Avg('rating'),
+                avg_rating=Avg('average_rating'),
                 total_ratings=Count('id')
             )
             ratings_map = {str(rd['shop']): rd for rd in ratings_data}
@@ -4531,11 +4531,11 @@ class AdminShops(viewsets.ViewSet):
                 if boost.boost_plan and boost.product_id:
                     boost_map[boost.product_id] = boost.boost_plan.name
             
-            # Get reviews for rating calculation
+            # FIX: Changed from 'rating' to 'average_rating'
             review_data = Review.objects.filter(
                 product__in=product_ids
             ).values('product').annotate(
-                avg_rating=Avg('rating')
+                avg_rating=Avg('average_rating')
             )
             
             rating_map = {rd['product']: rd['avg_rating'] or 0.0 for rd in review_data}
@@ -4772,6 +4772,7 @@ class AdminShops(viewsets.ViewSet):
                         'contact_number': user.contact_number
                     }
                 
+                # FIX: Changed from 'rating' to 'average_rating'
                 reviews_data.append({
                     'id': str(review.id),
                     'customer': {
@@ -4779,13 +4780,13 @@ class AdminShops(viewsets.ViewSet):
                         'product_limit': customer.product_limit if customer else None,
                         'current_product_count': customer.current_product_count if customer else None
                     } if customer else None,
-                    'rating': review.rating,
+                    'rating': review.average_rating,
                     'comment': review.comment,
                     'created_at': review.created_at.isoformat() if review.created_at else None
                 })
             
-            # Calculate average rating
-            avg_rating = reviews.aggregate(avg=Avg('rating'))['avg'] or 0
+            # FIX: Changed from 'rating' to 'average_rating'
+            avg_rating = reviews.aggregate(avg=Avg('average_rating'))['avg'] or 0
             
             return Response({
                 'success': True,
@@ -4949,13 +4950,14 @@ class AdminShops(viewsets.ViewSet):
     @action(detail=True, methods=['post'], url_path='execute_action')
     def execute_action(self, request, pk=None):
         """
-        Execute admin actions on a shop (suspend, unsuspend, verify, unverify, delete)
+        Execute admin actions on a shop (suspend, unsuspend, verify, unverify, delete, approve, reject)
         """
         try:
             shop = Shop.objects.get(pk=pk)
             action = request.data.get('action')
             reason = request.data.get('reason', '')
             suspension_days = request.data.get('suspension_days')
+            user_id = request.data.get('user_id')  # Get user_id from request data
             
             if not action:
                 return Response({
@@ -4963,8 +4965,19 @@ class AdminShops(viewsets.ViewSet):
                     'error': 'Action is required'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Validate reason for suspend and delete actions
-            if action in ['suspend', 'delete'] and not reason:
+            # Get the admin user from the provided user_id
+            admin_user = None
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id)
+                except User.DoesNotExist:
+                    return Response({
+                        'success': False,
+                        'error': 'Admin user not found'
+                    }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Validate reason for suspend, reject, and delete actions
+            if action in ['suspend', 'reject', 'delete'] and not reason:
                 return Response({
                     'success': False,
                     'error': f'Reason is required for {action} action'
@@ -5028,11 +5041,36 @@ class AdminShops(viewsets.ViewSet):
                         message=f'Verification has been removed from your shop "{shop.name}".'
                     )
                 
+            elif action == 'approve':
+                shop.status = 'Active'
+                
+                # Create notification for shop owner
+                if shop.customer and shop.customer.customer:
+                    Notification.objects.create(
+                        user=shop.customer.customer,
+                        title='Shop Approved',
+                        type='shop_approval',
+                        message=f'Your shop "{shop.name}" has been approved and is now active!'
+                    )
+                
+            elif action == 'reject':
+                shop.status = 'Rejected'
+                shop.suspension_reason = reason
+                
+                # Create notification for shop owner
+                if shop.customer and shop.customer.customer:
+                    Notification.objects.create(
+                        user=shop.customer.customer,
+                        title='Shop Rejected',
+                        type='shop_rejection',
+                        message=f'Your shop "{shop.name}" has been rejected. Reason: {reason}'
+                    )
+                
             elif action == 'delete':
-                # Log the deletion
-                if request.user:
+                # Log the deletion if admin user exists
+                if admin_user:
                     Logs.objects.create(
-                        user=request.user,
+                        user=admin_user,
                         action=f'Deleted shop: {shop.name} (ID: {shop.id}) - Reason: {reason}'
                     )
                 
@@ -5062,10 +5100,10 @@ class AdminShops(viewsets.ViewSet):
             
             shop.save()
             
-            # Log the action
-            if request.user:
+            # Log the action if admin user exists
+            if admin_user:
                 Logs.objects.create(
-                    user=request.user,
+                    user=admin_user,
                     action=f'{action} on shop: {shop.name} (ID: {shop.id})'
                 )
             
@@ -5091,11 +5129,13 @@ class AdminShops(viewsets.ViewSet):
                 'error': 'Shop not found'
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            print(f"Error executing action: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response({
                 'success': False,
                 'error': f'Error executing action: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 class AdminBoosting(viewsets.ViewSet):
     def parse_date(self, date_str):
