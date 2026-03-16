@@ -152,10 +152,16 @@ export default function Home() {
             <View style={styles.headerActions}>
               <TouchableOpacity
                 style={styles.iconBtn}
+                onPress={() => router.push("/rider/message")}
+              >
+                <Feather name="message-square" size={22} color={COLORS.secondary} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.iconBtn}
                 onPress={() => router.push("/rider/notification")}
               >
                 <Feather name="bell" size={22} color={COLORS.secondary} />
-                <View style={styles.notifBadge} />
               </TouchableOpacity>
 
               {/* FIXED ROUTE: Points to /rider/settings instead of /settings */}
