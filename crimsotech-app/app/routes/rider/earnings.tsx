@@ -24,7 +24,8 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  Download
+  Download,
+  Send
 } from 'lucide-react';
 
 import AxiosInstance from '~/components/axios/Axios';
@@ -240,6 +241,11 @@ export default function Earnings({ loaderData }: { loaderData: LoaderData }) {
     }
   };
 
+  // Navigate to remit amount page
+  const handleRemitNow = () => {
+    navigate('/rider/remit-amount');
+  };
+
   useEffect(() => {
     fetchTodayData();
   }, []);
@@ -292,6 +298,15 @@ export default function Earnings({ loaderData }: { loaderData: LoaderData }) {
               >
                 <Download className="w-4 h-4 mr-2" />
                 {isExporting ? 'Exporting...' : 'Export'}
+              </Button>
+              <Button 
+                size="sm"
+                onClick={handleRemitNow}
+                disabled={todayToRemit <= 0}
+                className="bg-orange-600 hover:bg-orange-700"
+              >
+                <Send className="w-4 h-4 mr-2" />
+                Remit Now
               </Button>
             </div>
           </div>

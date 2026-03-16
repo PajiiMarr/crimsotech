@@ -141,6 +141,7 @@ export default [
             route('orders/history', 'routes/rider/history.tsx'),
             route('schedule', 'routes/rider/schedule.tsx'),
             route('earnings', 'routes/rider/earnings.tsx'),
+            route('remit-amount', 'routes/rider/remit-amount.tsx'),
             route("profile", "routes/rider/profile.tsx"),
             route("wallet", "routes/rider/wallet.tsx"),
         ]),
