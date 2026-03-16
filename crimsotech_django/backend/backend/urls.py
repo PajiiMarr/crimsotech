@@ -25,6 +25,7 @@ router.register(r'admin-users', AdminUsers, basename='admin-users')
 router.register(r'admin-team', AdminTeam, basename='admin-team')
 router.register(r'admin-reports', AdminReports, basename='admin-reports')
 router.register(r'admin-logs', AdminLogs, basename='admin-logs')
+router.register(r'admin-withdrawals', AdminWithdrawalViewSet, basename='admin-withdrawals')
 
 router.register(r'moderator-dashboard', ModeratorDashboard, basename='moderator-dashboard')
 router.register(r'moderator-analytics', ModeratorAnalytics, basename='moderator-analytics')

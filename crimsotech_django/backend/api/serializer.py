@@ -1393,27 +1393,55 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
             'amount', 'transaction_type', 'source_type', 'status', 'created_at'
         ]
         read_only_fields = ['transaction_id', 'created_at']
-
 class WithdrawalRequestSerializer(serializers.ModelSerializer):
-    user_username = serializers.CharField(source='user.username', read_only=True)
-    wallet_balance = serializers.SerializerMethodField()
-    
+    user = serializers.SerializerMethodField()
+    wallet = serializers.SerializerMethodField()
+    approved_by = serializers.SerializerMethodField()
+
     class Meta:
         model = WithdrawalRequest
         fields = [
-            'withdrawal_id', 'user', 'user_username', 'wallet', 'wallet_balance',
-            'amount', 'status', 'requested_at', 'approved_by', 'approved_at',
-            'completed_at', 'admin_proof'
+            "withdrawal_id",
+            "user",
+            "wallet",
+            "amount",
+            "status",
+            "requested_at",
+            "approved_by",
+            "approved_at",
+            "completed_at",
+            "admin_proof",
         ]
-        read_only_fields = [
-            'withdrawal_id', 'user', 'wallet', 'requested_at',
-            'approved_by', 'approved_at', 'completed_at'
-        ]
-    
-    def get_wallet_balance(self, obj):
+
+    def get_user(self, obj):
+        if obj.user:
+            return {
+                "id": obj.user.id,
+                "username": getattr(obj.user, "username", None),
+                "email": getattr(obj.user, "email", None),
+            }
+        return None
+
+    def get_wallet(self, obj):
         if obj.wallet:
-            return float(obj.wallet.available_balance)
-        return 0
+            return {
+                "id": str(obj.wallet.wallet_id),  # Use wallet_id instead of id
+                "balance": float(obj.wallet.available_balance) if obj.wallet.available_balance else 0,  # Use available_balance instead of balance
+            }
+        return None
+
+    def get_approved_by(self, obj):
+        if obj.approved_by:
+            return {
+                "id": obj.approved_by.id,
+                "username": getattr(obj.approved_by, "username", None),
+            }
+        return None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["id"] = str(instance.withdrawal_id)
+        return data
 
 class WithdrawalRequestUpdateSerializer(serializers.ModelSerializer):
     class Meta:

@@ -42044,3 +42044,116 @@ class WithdrawalRequestViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+class WithdrawalRequestSerializer(serializers.ModelSerializer):
+    user = serializers.SerializerMethodField()
+    wallet = serializers.SerializerMethodField()
+    approved_by = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WithdrawalRequest
+        fields = [
+            "withdrawal_id",
+            "user",
+            "wallet",
+            "amount",
+            "status",
+            "requested_at",
+            "approved_by",
+            "approved_at",
+            "completed_at",
+            "admin_proof",
+        ]
+
+    def get_user(self, obj):
+        if obj.user:
+            return {
+                "id": obj.user.id,
+                "username": getattr(obj.user, "username", None),
+                "email": getattr(obj.user, "email", None),
+            }
+        return None
+
+    def get_wallet(self, obj):
+        if obj.wallet:
+            return {
+                "id": str(obj.wallet.wallet_id),  # Use wallet_id instead of id
+                "balance": float(obj.wallet.available_balance) if obj.wallet.available_balance else 0,  # Use available_balance instead of balance
+            }
+        return None
+
+
+    def get_approved_by(self, obj):
+        if obj.approved_by:
+            return {
+                "id": obj.approved_by.id,
+                "username": getattr(obj.approved_by, "username", None),
+            }
+        return None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["id"] = str(instance.withdrawal_id)  # Add id for frontend
+        # Convert amount to string to match frontend interface
+        data["amount"] = str(instance.amount)
+        return data
+
+class AdminWithdrawalViewSet(viewsets.ViewSet):
+    
+    def list(self, request):
+        try:
+            withdrawals = WithdrawalRequest.objects.select_related(
+                "user",
+                "wallet",
+                "approved_by"
+            ).all().order_by("-requested_at")
+
+            # filters
+            status_filter = request.GET.get("status")
+            search = request.GET.get("search")
+
+            if status_filter:
+                withdrawals = withdrawals.filter(status=status_filter)
+
+            if search:
+                withdrawals = withdrawals.filter(
+                    Q(user__username__icontains=search) |
+                    Q(user__email__icontains=search)
+                )
+
+            # Calculate statistics
+            total_count = withdrawals.count()
+            
+            # Calculate metrics for the frontend
+            metrics = {
+                'total_pending': withdrawals.filter(status='pending').count(),
+                'total_processing': withdrawals.filter(status='processing').count(),
+                'total_approved': withdrawals.filter(status='approved').count(),
+                'total_completed': withdrawals.filter(status='completed').count(),
+                'total_rejected': withdrawals.filter(status='rejected').count(),
+                'total_amount_pending': float(withdrawals.filter(status='pending').aggregate(total=Sum('amount'))['total'] or 0),
+                'total_amount_processing': float(withdrawals.filter(status='processing').aggregate(total=Sum('amount'))['total'] or 0),
+                'total_amount_approved': float(withdrawals.filter(status='approved').aggregate(total=Sum('amount'))['total'] or 0),
+                'total_amount_completed': float(withdrawals.filter(status='completed').aggregate(total=Sum('amount'))['total'] or 0),
+                'total_amount_rejected': float(withdrawals.filter(status='rejected').aggregate(total=Sum('amount'))['total'] or 0),
+            }
+
+            serializer = WithdrawalRequestSerializer(withdrawals, many=True)
+
+            return Response({
+                "success": True,
+                "data": serializer.data,  # Keep as "data" since frontend now looks for this
+                "stats": metrics,
+                "total_count": total_count
+            })
+
+        except Exception as e:
+            import traceback
+            print(f"Error in list: {str(e)}")
+            print(traceback.format_exc())
+            return Response({
+                "success": False,
+                "error": str(e)
+            }, status=500)

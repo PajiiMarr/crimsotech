@@ -1,7 +1,7 @@
 // app/components/navigations/sidebar.tsx
 "use client";
 import { 
-  Home, ShoppingCart, TicketCheck, Star, Gift, Handshake, Package,
+  Home, ShoppingCart, TicketCheck, Star, Gift, Handshake, Package, ArrowUpRight,
   Store, CreditCard, List, MessageSquare, Users, 
   Shield, AlertCircle, FileText, Settings, Bell,
   BarChart, Bike, MapPin, Calendar, ClipboardList,
@@ -66,6 +66,7 @@ const menuItems = [
     children: [
       { title: "Vouchers", url: "/admin/vouchers", icon: BadgePercent, roles: ["admin"] },
       { title: "Refunds", url: "/admin/refunds", icon: RotateCcw, roles: ["admin"] },
+      { title: "Withdrawals", url: "/admin/withdrawals", icon: ArrowUpRight, roles: ["admin"] },
     ]
   },
   {
