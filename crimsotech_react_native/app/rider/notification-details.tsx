@@ -91,7 +91,7 @@ export default function NotificationDetailsPage() {
           {type === "delivery" && (
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={() => router.push("/rider/orders")}
+              onPress={() => router.push("/rider/active-orders")}
               activeOpacity={0.8}
             >
               <Text style={styles.primaryButtonText}>View Order</Text>

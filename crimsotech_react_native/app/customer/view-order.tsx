@@ -321,7 +321,7 @@ export default function ViewTrackOrderPage() {
   };
 
   const handleReviewProduct = (productId: string) => {
-    // router.push(`/review/${productId}?orderId=${orderId}`);
+    router.push(`/customer/order-review?productId=${productId}&orderId=${orderId}`);
   };
 
   const handleReturnProduct = (checkoutId: string) => {
@@ -329,7 +329,7 @@ export default function ViewTrackOrderPage() {
   };
 
   const handleContactSeller = (shopId: string) => {
-    // router.push(`/chat/${shopId}`);
+    router.push(`/customer/messages?shopId=${shopId}`);
   };
 
   const handleTrackOrder = () => {

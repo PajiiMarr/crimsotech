@@ -47,7 +47,7 @@ export default function CustomerHeader({
             <View style={styles.profileIconsContainer}>
               <TouchableOpacity 
                 style={styles.iconBtn} 
-                onPress={() => router.push('/customer/notification')}
+                onPress={() => router.push('/customer/messages')}
               >
                 <View style={styles.iconBadgeContainer}>
                   <Ionicons name="chatbubble-outline" size={24} color="#111" />
@@ -80,7 +80,7 @@ export default function CustomerHeader({
             <View style={styles.iconsContainer}>
               <TouchableOpacity 
                 style={styles.iconBtn} 
-                onPress={() => router.push('/customer/notification')}
+                onPress={() => router.push('/customer/messages')}
               >
                 <Ionicons name="chatbubble-outline" size={24} color="#111" />
               </TouchableOpacity>

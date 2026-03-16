@@ -9,8 +9,10 @@ import {
   FlatList,
   Image,
   ActivityIndicator,
+  SafeAreaView,
   Platform,
-  ScrollView
+  ScrollView,
+  StatusBar
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -31,22 +33,46 @@ interface SearchBarProps {
 export function SearchBar({ searchQuery, setSearchQuery, onFocus, onPressFilter, onPressSearch, disableInput }: SearchBarProps) {
   const modal = useFilterModalSafe();
 
+  if (disableInput) {
+    return (
+      <View style={styles.searchContainer}>
+        <TouchableOpacity
+          style={styles.searchInputContainer}
+          activeOpacity={0.7}
+          onPress={onPressSearch}
+        >
+          <Ionicons name="search" size={20} color="#999" />
+          <View style={styles.searchInputWrapper} pointerEvents="none">
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search products..."
+              value={searchQuery}
+              editable={false}
+            />
+          </View>
+          <TouchableOpacity
+            style={styles.filterButton}
+            onPress={() => { console.log('[SearchBar] filter pressed', !!modal); (onPressFilter ? onPressFilter() : modal?.openFilter?.()); }}
+          >
+            <MaterialIcons name="filter-list" size={20} color="#666" />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.searchContainer}>
-      <TouchableOpacity
-        style={styles.searchInputContainer}
-        activeOpacity={0.7}
-        onPress={onPressSearch}
-      >
+      <View style={styles.searchInputContainer}>
         <Ionicons name="search" size={20} color="#999" />
-        <View style={styles.searchInputWrapper} pointerEvents={disableInput ? 'none' : 'auto'}>
+        <View style={styles.searchInputWrapper}>
           <TextInput
             style={styles.searchInput}
             placeholder="Search products..."
             value={searchQuery}
             onChangeText={setSearchQuery}
             onFocus={onFocus}
-            editable={!disableInput}
+            editable
             returnKeyType="search"
           />
         </View>
@@ -61,7 +87,7 @@ export function SearchBar({ searchQuery, setSearchQuery, onFocus, onPressFilter,
         >
           <MaterialIcons name="filter-list" size={20} color="#666" />
         </TouchableOpacity>
-      </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -129,7 +155,7 @@ const CompactProductCard = ({ product, onPress }: { product: Product; onPress: (
   );
 };
 
-export default function SearchPage() {
+function SearchPageContent() {
   const params = useLocalSearchParams();
   const showFiltersParam = String(params.showFilters) === '1';
   const { user } = useAuth();
@@ -195,48 +221,59 @@ export default function SearchPage() {
 
   if (loading) {
     return (
-      <RoleGuard allowedRoles={["customer"]}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#6366F1" />
-          <Text style={styles.loadingText}>Loading products...</Text>
-        </View>
-      </RoleGuard>
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#6366F1" />
+        <Text style={styles.loadingText}>Loading products...</Text>
+      </View>
     );
   }
 
   return (
-    <RoleGuard allowedRoles={["customer"]}>
-      <FilterModalProvider>
-        <View style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
-          <SearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} onFocus={() => router.push('/customer/includes/search')} onPressFilter={() => openFilter()} />
+    <View style={{ flex: 1, backgroundColor: '#F8F9FA' }}>
+      <SearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} onPressFilter={() => openFilter()} />
 
-          {/* Results */}
-          <View style={styles.resultsContainer}>
-            {filteredProducts.length > 0 ? (
-              <FlatList
-                data={filteredProducts}
-                renderItem={({ item }) => (
-                  <CompactProductCard product={item} onPress={() => router.push({ pathname: '/customer/view-product', params: { productId: item.id } })} />
-                )}
-                keyExtractor={(item) => item.id}
-                numColumns={2}
-                columnWrapperStyle={styles.productGrid}
-                contentContainerStyle={styles.productGridContent}
-              />
-            ) : (
-              <View style={styles.emptyContainer}>
-                <MaterialIcons name="inventory" size={48} color="#E0E0E0" />
-                <Text style={styles.emptyText}>No products match your filters</Text>
-              </View>
+      {/* Results */}
+      <View style={styles.resultsContainer}>
+        {filteredProducts.length > 0 ? (
+          <FlatList
+            data={filteredProducts}
+            renderItem={({ item }) => (
+              <CompactProductCard product={item} onPress={() => router.push({ pathname: '/customer/view-product', params: { productId: item.id } })} />
             )}
+            keyExtractor={(item) => item.id}
+            numColumns={2}
+            columnWrapperStyle={styles.productGrid}
+            contentContainerStyle={styles.productGridContent}
+          />
+        ) : (
+          <View style={styles.emptyContainer}>
+            <MaterialIcons name="inventory" size={48} color="#E0E0E0" />
+            <Text style={styles.emptyText}>No products match your filters</Text>
           </View>
-        </View>
-      </FilterModalProvider>
+        )}
+      </View>
+    </View>
+  );
+}
+
+export default function SearchPage() {
+  return (
+    <RoleGuard allowedRoles={["customer"]}>
+      <SafeAreaView style={styles.safeArea}>
+        <FilterModalProvider>
+          <SearchPageContent />
+        </FilterModalProvider>
+      </SafeAreaView>
     </RoleGuard>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0,
+  },
   searchContainer: { paddingHorizontal: 3, paddingVertical: 12, backgroundColor: '#fff' },
   searchInputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F5F5', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
   searchInputWrapper: { flex: 1 },

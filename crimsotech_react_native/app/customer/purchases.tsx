@@ -506,7 +506,7 @@ export default function PurchasesPage() {
             {(item.status === 'to_ship' || item.status === 'to_receive' || item.status === 'delivered') && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.trackButton]}
-                // onPress={() => router.push(`/customer/track-order?orderId=${item.order_id}`)}
+                onPress={() => router.push(`/customer/track-order?orderId=${item.order_id}&status=${item.status}`)}
               >
                 <MaterialIcons name="location-on" size={14} color="#3B82F6" />
                 <Text style={styles.trackButtonText}>Track</Text>
@@ -528,7 +528,7 @@ export default function PurchasesPage() {
             {item.status === 'completed' && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.rateButton]}
-                // onPress={() => router.push(`/customer/product-rate?productId=${item.product_id}&orderId=${item.order_id}`)}
+                onPress={() => router.push(`/customer/order-review?productId=${item.product_id}&orderId=${item.order_id}&productName=${encodeURIComponent(item.product_name)}`)}
               >
                 <MaterialIcons name="star" size={14} color="#F97316" />
                 <Text style={styles.rateButtonText}>Rate</Text>

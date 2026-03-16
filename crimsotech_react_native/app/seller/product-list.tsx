@@ -413,7 +413,7 @@ export default function ProductList() {
                 style={styles.actionItem}
                 onPress={() => {
                   setShowActionModal(false);
-                  // router.push(`/seller/product/${selectedProduct.id}?shopId=${shopId}`);
+                  router.push(`/seller/view-product?productId=${selectedProduct.id}&shopId=${shopId}`);
                 }}
               >
                 <Ionicons name="eye-outline" size={22} color="#0F172A" />

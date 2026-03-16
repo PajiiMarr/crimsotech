@@ -55,6 +55,15 @@ interface Delivery {
   is_late: boolean;
 }
 
+interface ActiveOrderMetrics {
+  total_active_orders: number;
+  pending_pickup: number;
+  in_transit: number;
+  completed_deliveries: number;
+  expected_earnings: number;
+  declined_orders: number;
+}
+
 // Status badges configuration
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
   pending: { 
@@ -106,6 +115,14 @@ export default function ActiveOrders() {
   
   // State for data
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [metrics, setMetrics] = useState<ActiveOrderMetrics>({
+    total_active_orders: 0,
+    pending_pickup: 0,
+    in_transit: 0,
+    completed_deliveries: 0,
+    expected_earnings: 0,
+    declined_orders: 0,
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
@@ -136,20 +153,47 @@ export default function ActiveOrders() {
   const fetchDeliveryData = async () => {
     try {
       setIsLoading(true);
-      
-      const deliveriesResponse = await AxiosInstance.get('/rider-orders-active/get_deliveries/?page=1&page_size=50&status=all', {
-        headers: {
-          'X-User-Id': user?.user_id
-        }
-      });
 
-      if (deliveriesResponse.data.success) {
-        setDeliveries(deliveriesResponse.data.deliveries);
+      const [metricsResponse, deliveriesResponse] = await Promise.all([
+        AxiosInstance.get('/rider-orders-active/get_metrics/', {
+          headers: {
+            'X-User-Id': user?.user_id
+          }
+        }),
+        AxiosInstance.get('/rider-orders-active/get_deliveries/?page=1&page_size=50&status=all', {
+          headers: {
+            'X-User-Id': user?.user_id
+          }
+        })
+      ]);
+
+      if (metricsResponse.data?.success && metricsResponse.data?.metrics) {
+        const m = metricsResponse.data.metrics;
+        setMetrics({
+          total_active_orders: Number(m.total_active_orders || 0),
+          pending_pickup: Number(m.pending_pickup || 0),
+          in_transit: Number(m.in_transit || 0),
+          completed_deliveries: Number(m.completed_deliveries || 0),
+          expected_earnings: Number(m.expected_earnings || 0),
+          declined_orders: Number(m.declined_orders || 0),
+        });
+      }
+
+      if (deliveriesResponse.data?.success) {
+        setDeliveries(deliveriesResponse.data.deliveries || []);
       }
 
     } catch (error) {
       console.error('Error fetching delivery data:', error);
       setDeliveries([]);
+      setMetrics({
+        total_active_orders: 0,
+        pending_pickup: 0,
+        in_transit: 0,
+        completed_deliveries: 0,
+        expected_earnings: 0,
+        declined_orders: 0,
+      });
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -333,7 +377,7 @@ export default function ActiveOrders() {
   };
 
   // Handle decline delivery
-  const handleDeclineDelivery = async (deliveryId: string) => {
+  const handleDeclineDelivery = async (delivery: Delivery) => {
     Alert.alert(
       'Decline Delivery',
       'Are you sure you want to decline this delivery?',
@@ -343,18 +387,43 @@ export default function ActiveOrders() {
           text: 'Decline',
           style: 'destructive',
           onPress: async () => {
-            setDeliveries(prev => prev.filter(d => d.id !== deliveryId));
             try {
+              setIsActionLoading(true);
+              const formData = new FormData();
+              formData.append('order_id', delivery.id);
+
+              const response = await AxiosInstance.post('/rider-orders-active/decline_order/', formData, {
+                headers: {
+                  'X-User-Id': user?.user_id
+                }
+              });
+
+              if (!response.data?.success) {
+                Alert.alert('Error', response.data?.error || 'Failed to decline order');
+                return;
+              }
+
               await fetchDeliveryData();
               Alert.alert('Success', 'Order declined');
-            } catch (err) {
-              console.warn('Decline refresh failed', err);
-              Alert.alert('Success', 'Order declined (local)');
+            } catch (err: any) {
+              console.error('Decline failed:', err);
+              Alert.alert('Error', err?.response?.data?.error || 'Failed to decline order');
+            } finally {
+              setIsActionLoading(false);
             }
           }
         }
       ]
     );
+  };
+
+  const handleOpenDetails = (delivery: Delivery) => {
+    router.push({
+      pathname: '/rider/active-order-details',
+      params: {
+        deliveryId: delivery.id,
+      }
+    });
   };
 
   // Handle mark as failed
@@ -491,6 +560,25 @@ export default function ActiveOrders() {
           <View style={{ marginBottom: 16 }}>
             <Text style={{ fontSize: 20, fontWeight: 'bold' }}>Active Orders</Text>
             <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>Manage your deliveries</Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 }}>
+            <View style={{ width: '48%', backgroundColor: 'white', borderRadius: 10, padding: 10, marginRight: '4%', marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB' }}>
+              <Text style={{ fontSize: 10, color: '#6B7280' }}>Active</Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{metrics.total_active_orders}</Text>
+            </View>
+            <View style={{ width: '48%', backgroundColor: 'white', borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB' }}>
+              <Text style={{ fontSize: 10, color: '#6B7280' }}>In Transit</Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{metrics.in_transit}</Text>
+            </View>
+            <View style={{ width: '48%', backgroundColor: 'white', borderRadius: 10, padding: 10, marginRight: '4%', borderWidth: 1, borderColor: '#E5E7EB' }}>
+              <Text style={{ fontSize: 10, color: '#6B7280' }}>Declined</Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{metrics.declined_orders}</Text>
+            </View>
+            <View style={{ width: '48%', backgroundColor: 'white', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: '#E5E7EB' }}>
+              <Text style={{ fontSize: 10, color: '#6B7280' }}>Expected</Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{formatCurrency(metrics.expected_earnings)}</Text>
+            </View>
           </View>
 
           {/* Deliveries Card */}
@@ -650,7 +738,7 @@ export default function ActiveOrders() {
 
                         {/* Actions */}
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6' }}>
-                          <TouchableOpacity onPress={() => toggleDeliveryExpansion(delivery.id)} style={{ padding: 4 }}>
+                          <TouchableOpacity onPress={() => handleOpenDetails(delivery)} style={{ padding: 4 }}>
                             <Text style={{ fontSize: 10, color: '#6B7280' }}>{isExpanded ? 'Show Less' : 'View Details'}</Text>
                           </TouchableOpacity>
                           
@@ -658,7 +746,8 @@ export default function ActiveOrders() {
                             {delivery.status === 'pending' ? (
                               <>
                                 <TouchableOpacity
-                                  onPress={() => handleDeclineDelivery(delivery.id)}
+                                  onPress={() => handleDeclineDelivery(delivery)}
+                                  disabled={isActionLoading}
                                   style={{ paddingHorizontal: 8, paddingVertical: 4, marginRight: 8 }}
                                 >
                                   <Text style={{ fontSize: 10, color: '#DC2626' }}>Decline</Text>
@@ -719,6 +808,12 @@ export default function ActiveOrders() {
                               </TouchableOpacity>
                             ) : delivery.status === 'delivered' && (
                               <TouchableOpacity
+                                onPress={() =>
+                                  router.push({
+                                    pathname: '/rider/add-delivery-media',
+                                    params: { deliveryId: delivery.id }
+                                  })
+                                }
                                 style={{ backgroundColor: '#6B7280', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 16, flexDirection: 'row', alignItems: 'center' }}
                               >
                                 <Text style={{ fontSize: 10, color: 'white' }}>

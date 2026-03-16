@@ -126,7 +126,13 @@ export default function CreateProduct() {
         {/* Back Button */}
         <TouchableOpacity 
           style={styles.backButton}
-          onPress={() => router.back()}
+          onPress={() => {
+            if (shopId) {
+              router.replace(`/seller/product-list?shopId=${shopId}`);
+            } else {
+              router.back();
+            }
+          }}
         >
           <Ionicons name="arrow-back" size={24} color="#374151" />
           <Text style={styles.backButtonText}>Back to Product List</Text>
@@ -165,11 +171,20 @@ const styles = StyleSheet.create({
   backButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     gap: 8,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
   },
   backButtonText: {
-    fontSize: 16,
+    fontSize: 14,
+    fontWeight: '600',
     color: '#374151',
   },
   title: {

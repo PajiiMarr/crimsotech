@@ -69,12 +69,12 @@ export default function CreateShopPage() {
           'Shop created successfully!',
           [
             {
-              text: 'View Shop',
-              onPress: () => router.push(`/customer/shops?shopId=${response.data.id}`),
+              text: 'Start Selling',
+              onPress: () => router.replace('/seller/home' as any),
             },
             {
-              text: 'Go to Dashboard',
-              onPress: () => router.back(),
+              text: 'View Shop',
+              onPress: () => router.push(`/customer/shops?shopId=${response.data.id}`),
             },
           ]
         );
