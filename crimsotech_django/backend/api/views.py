@@ -55,6 +55,7 @@ from api.utils.storage_utils import convert_s3_to_public_url
 from django.shortcuts import get_object_or_404
 from .tasks import assign_deliveries_task, check_delivery_responses_task
 import traceback
+import base64
 
 
 
@@ -19706,11 +19707,6 @@ class AddToCartView(APIView):
 
 
 class CartListView(APIView):
-    """
-    Returns all cart items for a given session user.
-    Frontend passes user_id from loader session.
-    Latest items first with product images included.
-    """
     def get(self, request):
         user_id = request.GET.get("user_id")
         if not user_id:
@@ -19729,25 +19725,15 @@ class CartListView(APIView):
             serializer = CartItemSerializer(cart_items, many=True, context={"request": request})
             return Response({"success": True, "cart_items": serializer.data})
         except Exception as e:
-            import traceback
-            print("Error in CartListView.get:", str(e))
-            print(traceback.format_exc())
             return Response({"success": False, "error": "Failed to fetch cart items", "details": str(e)}, status=500)
 
     def put(self, request, item_id):
-        """
-        Update quantity of a specific cart item
-        URL: /view-cart/update/<item_id>/
-        """
         user_id = request.data.get("user_id")
         quantity_raw = request.data.get("quantity")
-
-        print(f"CartListView.put called: item_id={item_id}, user_id={user_id}, quantity_raw={quantity_raw}")
 
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
 
-        # Validate quantity
         try:
             quantity = int(quantity_raw)
         except (TypeError, ValueError):
@@ -19757,33 +19743,26 @@ class CartListView(APIView):
             return Response({"error": "Quantity must be at least 1"}, status=400)
 
         try:
-            # Get cart item with related product and variant
             cart_item = CartItem.objects.select_related("product", "variant").get(
-                id=item_id, 
+                id=item_id,
                 user_id=user_id,
                 is_ordered=False
             )
         except CartItem.DoesNotExist:
             return Response({"error": "Cart item not found"}, status=404)
 
-        # Check stock availability
         try:
-            available_quantity = 0
-            
             if cart_item.variant:
-                # If item has a variant, check that variant's stock
-                available_quantity = cart_item.variant.quantity
-                
-                # Check if variant is still active
                 if not cart_item.variant.is_active:
                     return Response({
                         "error": "This variant is no longer available",
                         "can_remove": True
                     }, status=400)
-                    
+                available_quantity = cart_item.variant.quantity
             elif cart_item.product:
-                # If no variant, check total stock from all active variants
                 available_quantity = cart_item.product.total_stock
+            else:
+                return Response({"error": "Cart item has no product or variant"}, status=400)
 
             if quantity > available_quantity:
                 return Response({
@@ -19792,76 +19771,52 @@ class CartListView(APIView):
                     "current_quantity": cart_item.quantity
                 }, status=400)
 
-            # Update quantity
             cart_item.quantity = quantity
             cart_item.save()
 
-            # Return updated item with full details
             serializer = CartItemSerializer(cart_item, context={"request": request})
             return Response({
                 "success": True,
                 "message": "Quantity updated successfully",
                 "cart_item": serializer.data
             })
-            
+
         except Exception as e:
-            import traceback
-            print("Error updating cart quantity:", str(e))
-            print(traceback.format_exc())
-            return Response({
-                "success": False,
-                "error": "Failed to update quantity",
-                "details": str(e)
-            }, status=500)
+            return Response({"success": False, "error": "Failed to update quantity", "details": str(e)}, status=500)
 
     def delete(self, request, item_id):
-        """
-        Remove a specific item from cart
-        URL: /view-cart/delete/<item_id>/
-        """
-        user_id = request.data.get("user_id")
-        
-        print(f"CartListView.delete called: item_id={item_id}, user_id={user_id}")
-        
+        # Use GET params instead of request.data — more reliable for DELETE requests
+        user_id = request.GET.get("user_id")
+
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
-        
+
         try:
-            # Get and delete the cart item
-            cart_item = CartItem.objects.get(
-                id=item_id, 
+            cart_item = CartItem.objects.select_related("product", "variant").get(
+                id=item_id,
                 user_id=user_id,
                 is_ordered=False
             )
-            
-            # Store item info for response
+
             item_info = {
                 "id": str(cart_item.id),
                 "product_id": str(cart_item.product.id) if cart_item.product else None,
                 "variant_id": str(cart_item.variant.id) if cart_item.variant else None,
                 "name": cart_item.product.name if cart_item.product else "Unknown Product"
             }
-            
+
             cart_item.delete()
-            
+
             return Response({
                 "success": True,
                 "message": "Item removed from cart",
                 "removed_item": item_info
             })
-            
+
         except CartItem.DoesNotExist:
             return Response({"error": "Cart item not found"}, status=404)
         except Exception as e:
-            import traceback
-            print("Error removing cart item:", str(e))
-            print(traceback.format_exc())
-            return Response({
-                "success": False,
-                "error": "Failed to remove item",
-                "details": str(e)
-            }, status=500)
-
+            return Response({"success": False, "error": "Failed to remove item", "details": str(e)}, status=500)
 
 # Add this separate view for bulk operations if needed
 class CartBulkUpdateView(APIView):
@@ -22643,14 +22598,9 @@ class SellerOrderList(viewsets.ViewSet):
                 "message": f"Waybill generation failed: {str(e)}"
             }, status=500)
 
-    
 class CheckoutOrder(viewsets.ViewSet):
-    @action(detail=False, methods=['GET'])
+    @action(detail=False, methods=['GET'], url_path='get_checkout_items')
     def get_checkout_items(self, request):
-        """
-        Get checkout items based on selected cart item IDs.
-        URL: /api/checkout/get-checkout-items/?selected=id1,id2,id3&user_id=user_uuid
-        """
         user_id = request.GET.get("user_id")
         selected_ids_str = request.GET.get("selected", "")
         
@@ -22672,7 +22622,7 @@ class CheckoutOrder(viewsets.ViewSet):
             ).select_related(
                 "product",
                 "product__shop",
-                "variant"  # Changed from 'sku' to 'variant'
+                "variant"
             ).prefetch_related(
                 'product__productmedia_set'
             )
@@ -22981,11 +22931,11 @@ class CheckoutOrder(viewsets.ViewSet):
         
         return desc
     
-    @action(detail=False, methods=['GET'])
+    @action(detail=False, methods=['GET'], url_path='get_shipping_addresses')
     def get_shipping_addresses(self, request):
         """
         Get user's shipping addresses.
-        URL: /api/checkout/get-shipping-addresses/?user_id=user_uuid
+        URL: /api/checkout-order/get_shipping_addresses/?user_id=user_uuid
         """
         user_id = request.GET.get("user_id")
         
@@ -23058,11 +23008,11 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @action(detail=False, methods=['GET'])
+    @action(detail=False, methods=['GET'], url_path='get_vouchers_by_amount')
     def get_vouchers_by_amount(self, request):
         """
         Get available vouchers based on purchase amount.
-        URL: /api/checkout/get-vouchers-by-amount/?user_id=user_uuid&amount=1500.00
+        URL: /api/checkout-order/get_vouchers_by_amount/?user_id=user_uuid&amount=1500.00
         """
         user_id = request.GET.get("user_id")
         amount = float(request.GET.get("amount", 0))
@@ -23128,7 +23078,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @action(detail=False, methods=['POST'])
+    @action(detail=False, methods=['POST'], url_path='validate_voucher')
     def validate_voucher(self, request):
         """
         Validate a voucher code for checkout.
@@ -23206,7 +23156,7 @@ class CheckoutOrder(viewsets.ViewSet):
             return min(voucher_value, subtotal)
         return Decimal('0')
     
-    @action(detail=False, methods=['POST'])
+    @action(detail=False, methods=['POST'], url_path='create_order')
     def create_order(self, request):
         """
         Create an order from selected cart items.
@@ -23398,7 +23348,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    
     @action(detail=False, methods=['get'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
         """
@@ -23449,8 +23398,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-    @action(detail=False, methods=['POST'])
+    
+    @action(detail=False, methods=['POST'], url_path='add_receipt')
     def add_receipt(self, request):
         try:
             order_id = request.data.get('order_id')
@@ -23478,7 +23427,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 'error': str(e)
             }, status=500)
     
-    @action(detail=False, methods=['POST'])
+    @action(detail=False, methods=['POST'], url_path='confirm_payment')
     def confirm_payment(self, request):
         try:
             order_id = request.data.get('order_id')
@@ -23510,7 +23459,296 @@ class CheckoutOrder(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=500)
+    
+    @action(detail=False, methods=['POST'], url_path='initiate_maya_payment')
+    def initiate_maya_payment(self, request):
+        """
+        Initiate Maya payment for an order.
+        Only accessible when ENABLE_SANDBOX=True in .env
+        Expected data: {
+            "order_id": "order_uuid",
+            "user_id": "user_uuid"
+        }
+        """
+        enable_sandbox = getattr(settings, 'ENABLE_SANDBOX', False)
+        if not enable_sandbox:
+            return Response({
+                'success': False,
+                'error': 'Maya sandbox payment is not enabled'
+            }, status=status.HTTP_403_FORBIDDEN)
 
+        order_id = request.data.get('order_id')
+        user_id = request.data.get('user_id')
+
+        if not order_id or not user_id:
+            return Response({
+                'success': False,
+                'error': 'order_id and user_id are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order = get_object_or_404(Order, order=order_id, user_id=user_id)
+
+            if order.status != 'pending':
+                return Response({
+                    'success': False,
+                    'error': f'Order cannot be processed for payment. Current status: {order.status}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if order.payment_method.lower() != 'maya':
+                return Response({
+                    'success': False,
+                    'error': 'This order is not set for Maya payment'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            checkout_items = Checkout.objects.filter(
+                order=order
+            ).select_related('cart_item__product', 'cart_item__variant')
+
+            if not checkout_items.exists():
+                return Response({
+                    'success': False,
+                    'error': 'No checkout items found for this order'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Prepare items for Maya
+            items = []
+            for checkout_item in checkout_items:
+                cart_item = checkout_item.cart_item
+                if cart_item:
+                    product = cart_item.product
+                    variant = cart_item.variant
+
+                    item_name = product.name if product else "Unknown Product"
+                    if variant and variant.title:
+                        item_name = f"{item_name} - {variant.title}"
+
+                    unit_price = 0.0
+                    if checkout_item.total_amount and checkout_item.quantity > 0:
+                        unit_price = float(checkout_item.total_amount) / checkout_item.quantity
+                    elif variant and variant.price:
+                        unit_price = float(variant.price)
+                    elif product and product.price:
+                        unit_price = float(product.price)
+
+                    items.append({
+                        "name": item_name[:128],
+                        "quantity": str(checkout_item.quantity),
+                        "totalAmount": {
+                            "value": float(checkout_item.total_amount),
+                            "currency": "PHP"
+                        }
+                    })
+
+            reference = str(uuid.uuid4())
+
+            checkout_data = {
+                "totalAmount": {
+                    "value": float(order.total_amount),
+                    "currency": "PHP"
+                },
+                "items": items,
+                "requestReferenceNumber": reference,
+                "redirectUrl": {
+                    "success": f"{request.build_absolute_uri('/')}api/checkout-order/maya-success?order_id={order_id}",
+                    "failure": f"{request.build_absolute_uri('/')}api/checkout-order/maya-failure?order_id={order_id}",
+                    "cancel": f"{request.build_absolute_uri('/')}api/checkout-order/maya-cancel?order_id={order_id}"
+                },
+                "metadata": {
+                    "order_id": str(order.order),
+                    "user_id": str(user_id)
+                }
+            }
+
+            # Store reference on order
+            order.metadata = order.metadata or {}
+            order.metadata['maya_reference'] = reference
+            order.save(update_fields=['metadata'])
+
+            # Call Maya PWM (Pay with Maya) wallet API
+            # PWM uses PUBLIC key with Basic Auth
+            maya_public_key = settings.MAYA_SANDBOX.get('PUBLIC_KEY', '')
+            credentials = base64.b64encode(f"{maya_public_key}:".encode()).decode()
+
+            payment_data = {
+                "totalAmount": {
+                    "value": float(order.total_amount),
+                    "currency": "PHP"
+                },
+                "requestReferenceNumber": reference,
+                "redirectUrl": {
+                    "success": f"{request.build_absolute_uri('/')}api/checkout-order/maya-success?order_id={order_id}",
+                    "failure": f"{request.build_absolute_uri('/')}api/checkout-order/maya-failure?order_id={order_id}",
+                    "cancel": f"{request.build_absolute_uri('/')}api/checkout-order/maya-cancel?order_id={order_id}"
+                }
+            }
+
+            import requests as http_requests
+            maya_api_response = http_requests.post(
+                f"{settings.MAYA_SANDBOX['BASE_URL']}/payby/v2/paymaya/payments",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Basic {credentials}"
+                },
+                json=payment_data,
+                timeout=30
+            )
+
+            if maya_api_response.status_code not in [200, 201]:
+                logger.error(f"Maya API error: {maya_api_response.status_code} - {maya_api_response.text}")
+                return Response({
+                    'success': False,
+                    'error': 'Maya API error',
+                    'details': maya_api_response.text
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            maya_response = maya_api_response.json()
+
+            return Response({
+                'success': True,
+                'message': 'Maya payment initiated successfully',
+                'order_id': str(order.order),
+                'maya_checkout_id': maya_response.get('paymentId'),
+                'redirect_url': maya_response.get('redirectUrl'),
+                'reference_number': reference,
+                'total_amount': float(order.total_amount),
+                'items': items,
+                'sandbox_mode': True,
+                'test_card': {
+                    'message': 'For sandbox testing, use:',
+                    'card_number': '5123450000000008',
+                    'expiry': '12/25',
+                    'cvv': '123',
+                    'otp': '123456'
+                }
+            })
+
+        except Order.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Order not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error initiating Maya payment: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response({
+                'success': False,
+                'error': 'Failed to initiate Maya payment',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['GET'], url_path='maya-success')
+    def maya_success(self, request):
+        order_id = request.GET.get('order_id')
+
+        if not order_id:
+            return Response({
+                'success': False,
+                'error': 'Order ID not provided'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order = get_object_or_404(Order, order=order_id)
+
+            order.status = 'processing'
+            order.save(update_fields=['status'])
+
+            payment, created = Payment.objects.get_or_create(
+                order=order,
+                defaults={
+                    'amount': order.total_amount,
+                    'method': 'Maya',
+                    'status': 'success'
+                }
+            )
+
+            if not created:
+                payment.status = 'success'
+                payment.save(update_fields=['status'])
+
+            self._process_seller_payments(order)
+
+            # Redirect to React frontend order success page
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+            from django.shortcuts import redirect
+            return redirect(f"{frontend_url}/order-successful/{order_id}")
+
+        except Exception as e:
+            logger.error(f"Error in Maya success callback: {str(e)}")
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+            from django.shortcuts import redirect
+            return redirect(f"{frontend_url}/order-successful/{order_id}?error=payment_failed")
+        
+    @action(detail=False, methods=['GET'], url_path='maya-failure')
+    def maya_failure(self, request):
+        order_id = request.GET.get('order_id')
+        if order_id:
+            try:
+                order = Order.objects.get(order=order_id)
+                order.status = 'pending'
+                order.save(update_fields=['status'])
+            except Order.DoesNotExist:
+                pass
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+        from django.shortcuts import redirect
+        return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=failed")
+
+    @action(detail=False, methods=['GET'], url_path='maya-cancel')
+    def maya_cancel(self, request):
+        order_id = request.GET.get('order_id')
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+        from django.shortcuts import redirect
+        return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=cancelled")
+
+    def _process_seller_payments(self, order):
+        """
+        Process payments to sellers when order is paid
+        """
+        try:
+            checkout_items = Checkout.objects.filter(order=order).select_related(
+                'cart_item__product__shop__customer__customer'
+            )
+            
+            for checkout_item in checkout_items:
+                cart_item = checkout_item.cart_item
+                if cart_item and cart_item.product and cart_item.product.shop:
+                    shop = cart_item.product.shop
+                    
+                    # Get shop owner (customer)
+                    if shop.customer:
+                        seller_user = shop.customer.customer
+                        
+                        # Get or create seller wallet
+                        wallet, created = UserWallet.objects.get_or_create(
+                            user=seller_user,
+                            defaults={
+                                'available_balance': Decimal('0'),
+                                'pending_balance': Decimal('0')
+                            }
+                        )
+                        
+                        # Add to pending balance (will be available after delivery)
+                        amount = checkout_item.total_amount
+                        wallet.pending_balance += amount
+                        wallet.save(update_fields=['pending_balance'])
+                        
+                        # Create transaction record
+                        WalletTransaction.objects.create(
+                            wallet=wallet,
+                            amount=amount,
+                            transaction_type='credit',
+                            source_type='shop_sale',
+                            status='pending',
+                            shop=shop,
+                            order=order,
+                            user=seller_user
+                        )
+                        
+                        logger.info(f"Added ₱{amount} to pending balance for seller {seller_user.username}")
+                        
+        except Exception as e:
+            logger.error(f"Error processing seller payments: {str(e)}")
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])

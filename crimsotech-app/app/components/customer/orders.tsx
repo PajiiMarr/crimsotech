@@ -21,8 +21,6 @@ export function meta(): Route.MetaDescriptors {
 }
 
 export async function loader({ request, context}: Route.LoaderArgs) {
-    const { registrationMiddleware } = await import("~/middleware/registration.server");
-    ;
     const { requireRole } = await import("~/middleware/role-require.server");
     const { fetchUserRole } = await import("~/middleware/role.server");
 

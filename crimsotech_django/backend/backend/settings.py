@@ -1,11 +1,13 @@
 """
 Django settings for backend project.
 """
+import os
 from pathlib import Path
 import environ
 import dj_database_url
 from corsheaders.defaults import default_headers
 import redis  # Added for Redis connection pooling
+import base64  # <--- ADD THIS MISSING IMPORT
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -295,3 +297,21 @@ CSRF_COOKIE_SAMESITE = 'Lax'
 
 import gc
 gc.set_threshold(700, 10, 5)
+
+ENABLE_SANDBOX = env.bool('ENABLE_SANDBOX', default=False)
+
+# AFTER - uses django-environ like everything else in your settings
+MAYA_SANDBOX = {
+    'BASE_URL': 'https://pg-sandbox.paymaya.com',
+    'PUBLIC_KEY': env.str('MAYA_PUBLIC_KEY', default=''),
+    'SECRET_KEY': env.str('MAYA_SECRET_KEY', default=''),
+}
+
+def get_maya_auth_header(use_secret=False):
+    """
+    Generate Basic Auth header for Maya API requests
+    """
+    key = MAYA_SANDBOX['SECRET_KEY'] if use_secret else MAYA_SANDBOX['PUBLIC_KEY']
+    credentials = f"{key}:"
+    encoded = base64.b64encode(credentials.encode()).decode()
+    return f"Basic {encoded}"
