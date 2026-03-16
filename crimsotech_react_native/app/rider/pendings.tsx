@@ -46,7 +46,7 @@ interface PendingOrder {
 }
 
 export default function PendingsPage() {
-  const { user } = useAuth();
+  const { userId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
@@ -59,7 +59,7 @@ export default function PendingsPage() {
       const response = await AxiosInstance.get(
         "/rider-orders-active/get_deliveries/?status=pending&page=1&page_size=50",
         {
-          headers: { "X-User-Id": user?.id || user?.user_id },
+          headers: { "X-User-Id": userId },
         }
       );
 
@@ -86,13 +86,13 @@ export default function PendingsPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user]);
+  }, [userId]);
 
   useEffect(() => {
-    if (user?.id || user?.user_id) {
+    if (userId) {
       fetchPendingOrders();
     }
-  }, [user, fetchPendingOrders]);
+  }, [userId, fetchPendingOrders]);
 
   const handleBidOrder = async (orderId: string) => {
     try {
@@ -101,7 +101,7 @@ export default function PendingsPage() {
         "/rider-orders-active/accept_order/",
         { delivery_id: orderId },
         {
-          headers: { "X-User-Id": user?.id || user?.user_id },
+          headers: { "X-User-Id": userId },
         }
       );
 

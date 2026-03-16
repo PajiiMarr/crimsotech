@@ -86,6 +86,17 @@ interface ScheduleDataResponse {
   scheduled_deliveries?: ScheduledDelivery[];
 }
 
+interface WeeklyViewResponse {
+  success: boolean;
+  week_start?: string;
+  week_end?: string;
+  week_days?: Array<{
+    date?: string;
+    day_name?: string;
+    deliveries_count?: number;
+  }>;
+}
+
 const DAYS_OF_WEEK = [
   'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
 ];
@@ -326,6 +337,8 @@ export default function RiderSchedule() {
   
   // State for data
   const [scheduleData, setScheduleData] = useState<ScheduleDataResponse | null>(null);
+  const [weeklyView, setWeeklyView] = useState<WeeklyViewResponse | null>(null);
+  const [weekOffset, setWeekOffset] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   
@@ -376,13 +389,22 @@ export default function RiderSchedule() {
   const fetchAllData = useCallback(async () => {
     try {
       setIsLoading(true);
-      
-      const response = await AxiosInstance.get('/rider-schedule/get_schedule_data/', {
-        headers: { 'X-User-Id': userId }
-      });
-      
-      if (response.data.success) {
-        setScheduleData(response.data);
+
+      const [scheduleResponse, weeklyResponse] = await Promise.all([
+        AxiosInstance.get('/rider-schedule/get_schedule_data/', {
+          headers: { 'X-User-Id': userId }
+        }),
+        AxiosInstance.get(`/rider-schedule/get_weekly_view/?week_offset=${weekOffset}`, {
+          headers: { 'X-User-Id': userId }
+        })
+      ]);
+
+      if (scheduleResponse.data.success) {
+        setScheduleData(scheduleResponse.data);
+      }
+
+      if (weeklyResponse.data?.success) {
+        setWeeklyView(weeklyResponse.data);
       }
     } catch (error: any) {
       console.error('Error fetching schedule data:', error);
@@ -391,7 +413,7 @@ export default function RiderSchedule() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  }, [userId]);
+  }, [userId, weekOffset]);
 
   // Initial load
   useEffect(() => {
@@ -488,6 +510,22 @@ export default function RiderSchedule() {
     }
   };
 
+  const handleResetDay = async (dayOfWeek: number) => {
+    try {
+      setIsLoading(true);
+      await AxiosInstance.delete(`/rider-schedule/delete_schedule/?day_of_week=${dayOfWeek}`, {
+        headers: { 'X-User-Id': userId }
+      });
+      await fetchAllData();
+      Alert.alert('Success', 'Day schedule reset.');
+    } catch (error: any) {
+      console.error('Error resetting day schedule:', error);
+      Alert.alert('Error', error?.response?.data?.error || 'Failed to reset day schedule');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Format time for display with AM/PM
   const formatTimeWithAMPM = (timeString: string) => {
     const [hours, minutes] = timeString.split(':').map(Number);
@@ -553,6 +591,41 @@ export default function RiderSchedule() {
                 trackColor={{ false: '#D1D5DB', true: '#34D399' }}
                 thumbColor={online ? '#059669' : '#9CA3AF'}
               />
+            </View>
+          </View>
+
+          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', padding: 12, marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <TouchableOpacity
+                onPress={() => setWeekOffset((prev) => prev - 1)}
+                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#F3F4F6' }}
+              >
+                <Text style={{ fontSize: 12, color: '#374151' }}>Prev Week</Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>
+                {weeklyView?.week_start && weeklyView?.week_end
+                  ? `${weeklyView.week_start} - ${weeklyView.week_end}`
+                  : 'Weekly Overview'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setWeekOffset((prev) => prev + 1)}
+                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#F3F4F6' }}
+              >
+                <Text style={{ fontSize: 12, color: '#374151' }}>Next Week</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+              {(weeklyView?.week_days || []).map((item, idx) => (
+                <View
+                  key={`${item.date || idx}`}
+                  style={{ width: '32%', marginRight: idx % 3 === 2 ? 0 : '2%', marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 8, backgroundColor: '#FAFAFA' }}
+                >
+                  <Text style={{ fontSize: 11, color: '#374151', fontWeight: '600' }}>{item.day_name || DAYS_OF_WEEK[idx] || 'Day'}</Text>
+                  <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>{item.date || ''}</Text>
+                  <Text style={{ fontSize: 13, color: '#111827', fontWeight: '700', marginTop: 4 }}>{item.deliveries_count || 0} deliveries</Text>
+                </View>
+              ))}
             </View>
           </View>
 
@@ -707,6 +780,13 @@ export default function RiderSchedule() {
                             </View>
                           </TouchableOpacity>
                         </View>
+
+                        <TouchableOpacity
+                          onPress={() => handleResetDay(day.day_of_week)}
+                          style={{ marginTop: 12, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', paddingVertical: 10, borderRadius: 10, alignItems: 'center' }}
+                        >
+                          <Text style={{ fontSize: 12, color: '#B91C1C', fontWeight: '600' }}>Reset This Day</Text>
+                        </TouchableOpacity>
                       </View>
                     )}
                   </View>

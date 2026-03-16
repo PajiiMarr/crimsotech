@@ -102,7 +102,7 @@ export default function RiderLayout() {
             }}
           />
           <Tabs.Screen
-            name="orders"
+            name="active-orders"
             options={{
               headerShown: false,
             }}
@@ -155,6 +155,13 @@ export default function RiderLayout() {
           />
           <Tabs.Screen
             name="delivery-details"
+            options={{
+              headerShown: false,
+              href: null,
+            }}
+          />
+          <Tabs.Screen
+            name="active-order-details"
             options={{
               headerShown: false,
               href: null,

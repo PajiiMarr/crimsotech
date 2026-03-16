@@ -36,7 +36,7 @@ export default function RiderNotificationPage() {
       message: "You have a new delivery request nearby.",
       timeLabel: "Just now",
       isRead: false,
-      route: "/rider/orders",
+      route: "/rider/active-orders",
     },
     {
       id: "n2",
