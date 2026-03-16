@@ -16,50 +16,6 @@ const AxiosInstance = axios.create({
   },
 });
 
-const truncateString = (value: string, maxLength = 300) => {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, maxLength)}... [truncated]`;
-};
-
-const sanitizeErrorData = (data: unknown) => {
-  if (typeof data === 'string') {
-    return truncateString(data);
-  }
-
-  if (Array.isArray(data)) {
-    return data;
-  }
-
-  if (data && typeof data === 'object') {
-    try {
-      return JSON.parse(truncateString(JSON.stringify(data), 800));
-    } catch {
-      return '[unserializable error payload]';
-    }
-  }
-
-  return data;
-};
-
-const hasNoCategoriesMessage = (data: unknown) => {
-  if (typeof data === 'string') {
-    return data.toLowerCase().includes('no categories found in database');
-  }
-
-  if (data && typeof data === 'object') {
-    try {
-      const raw = JSON.stringify(data).toLowerCase();
-      return raw.includes('no categories found in database');
-    } catch {
-      return false;
-    }
-  }
-
-  return false;
-};
-
 // Add request interceptor for debugging
 AxiosInstance.interceptors.request.use(
   (config) => {
@@ -87,28 +43,12 @@ AxiosInstance.interceptors.response.use(
     return response;
   },
   (error) => {
-    const endpoint = error.config?.url || '';
-    const status = error.response?.status;
-    const responseData = error.response?.data;
-    const isNoCategoriesError = hasNoCategoriesMessage(responseData);
-    const isClassesUnavailable = endpoint.includes('/classes/') && status === 500 && isNoCategoriesError;
-    const isPredictUnavailable = endpoint.includes('/predict/') && status === 500 && isNoCategoriesError;
-
-    if (isClassesUnavailable) {
-      return Promise.reject(error);
-    }
-
-    if (isPredictUnavailable) {
-      return Promise.reject(error);
-    }
-
     console.error('📥 Response Error:', {
       message: error.message,
-      status,
-      data: sanitizeErrorData(error.response?.data),
+      status: error.response?.status,
+      data: error.response?.data,
       url: error.config?.baseURL + error.config?.url,
     });
-
     return Promise.reject(error);
   }
 );

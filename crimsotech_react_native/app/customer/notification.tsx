@@ -1,12 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView, View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, FlatList } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import CustomerLayout from './CustomerLayout';
 import { MaterialIcons } from '@expo/vector-icons';
-import AxiosInstance from '../../contexts/axios';
 
-type NotificationType = 'order' | 'promo' | 'system' | 'message' | 'shipping' | 'payment' | 'review';
+type NotificationType = 'order' | 'promo' | 'system';
 
 type AppNotification = {
   id: string;
@@ -18,169 +17,46 @@ type AppNotification = {
   route?: string;
 };
 
-const wsUrlFromApiBase = (apiBaseUrl?: string): string | null => {
-  if (!apiBaseUrl) return null;
-  const trimmed = apiBaseUrl.trim();
-  if (!trimmed) return null;
-
-  const noApiSuffix = trimmed.replace(/\/api\/?$/i, '');
-  if (noApiSuffix.startsWith('https://')) return noApiSuffix.replace(/^https:\/\//, 'wss://');
-  if (noApiSuffix.startsWith('http://')) return noApiSuffix.replace(/^http:\/\//, 'ws://');
-  return null;
-};
-
-const mapType = (raw?: string): NotificationType => {
-  const value = String(raw || '').toLowerCase();
-  if (value.includes('message') || value.includes('chat')) return 'message';
-  if (value.includes('ship') || value.includes('deliver')) return 'shipping';
-  if (value.includes('payment') || value.includes('payout')) return 'payment';
-  if (value.includes('promo') || value.includes('voucher')) return 'promo';
-  if (value.includes('review') || value.includes('rating')) return 'review';
-  if (value.includes('order')) return 'order';
-  return 'system';
-};
-
-const toTimeLabel = (value?: string) => {
-  if (!value) return 'Just now';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  const diff = Date.now() - parsed.getTime();
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  if (diff < minute) return 'Just now';
-  if (diff < hour) return `${Math.floor(diff / minute)}m ago`;
-  if (diff < day) return `${Math.floor(diff / hour)}h ago`;
-  return parsed.toLocaleDateString();
-};
-
-const getRouteForNotification = (type: NotificationType, data?: Record<string, any>) => {
-  if (typeof data?.link === 'string' && data.link.startsWith('/')) {
-    return data.link;
-  }
-
-  switch (type) {
-    case 'message':
-      return '/customer/messages';
-    case 'promo':
-      return '/customer/my-vouchers';
-    case 'review':
-      return '/customer/purchases';
-    case 'shipping':
-    case 'payment':
-    case 'order':
-      return '/customer/purchases';
-    default:
-      return '/customer/home';
-  }
-};
-
 export default function NotificationPage() {
   const { userId, loading: authLoading, userRole } = useAuth();
-  const wsRef = useRef<WebSocket | null>(null);
 
   const [activeTab, setActiveTab] = useState<'all' | 'unread'>('all');
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [connecting, setConnecting] = useState(true);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-
-  const wsBaseUrl = useMemo(() => {
-    const envWs = process.env.EXPO_PUBLIC_WEBSOCKET_URL;
-    if (envWs && envWs.trim()) return envWs.trim().replace(/\/$/, '');
-    return wsUrlFromApiBase(process.env.EXPO_PUBLIC_API_URL) || wsUrlFromApiBase(AxiosInstance.defaults.baseURL);
-  }, []);
+  const [notifications, setNotifications] = useState<AppNotification[]>([
+    {
+      id: 'n1',
+      type: 'order',
+      title: 'Order update',
+      message: 'Your order has been confirmed and is being prepared.',
+      timeLabel: 'Just now',
+      isRead: false,
+      route: '/customer/purchases',
+    },
+    {
+      id: 'n2',
+      type: 'promo',
+      title: 'Limited-time deal',
+      message: 'Save more on selected items today only.',
+      timeLabel: '2h ago',
+      isRead: false,
+      route: '/customer/products',
+    },
+    {
+      id: 'n3',
+      type: 'system',
+      title: 'Account tip',
+      message: 'Complete your profile to get faster checkout.',
+      timeLabel: 'Yesterday',
+      isRead: true,
+      route: '/customer/account',
+    },
+  ]);
 
   useEffect(() => {
-    if (authLoading || !userId || !wsBaseUrl) {
-      if (!authLoading) setConnecting(false);
-      return;
-    }
+    // optional forced redirect:
+    // if (!authLoading && !userId) router.replace('/(auth)/login');
+  }, [authLoading, userId]);
 
-    const socket = new WebSocket(`${wsBaseUrl}/ws/notifications/`);
-    wsRef.current = socket;
-
-    socket.onopen = () => {
-      setConnectionError(null);
-      socket.send(JSON.stringify({ type: 'authenticate', user_id: userId }));
-    };
-
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'authenticated') {
-          const mapped = (data.notifications || []).map((item: any) => {
-            const type = mapType(item.type);
-            return {
-              id: String(item.id),
-              type,
-              title: String(item.title || 'Notification'),
-              message: String(item.message || ''),
-              timeLabel: toTimeLabel(item.created_at),
-              isRead: Boolean(item.is_read),
-              route: getRouteForNotification(type, item.data),
-            } as AppNotification;
-          });
-          setNotifications(mapped);
-          setConnecting(false);
-          return;
-        }
-
-        if (data.type === 'new_notification') {
-          const type = mapType(data.notification_type);
-          setNotifications((prev) => [
-            {
-              id: String(data.notification_id),
-              type,
-              title: String(data.title || 'Notification'),
-              message: String(data.message || ''),
-              timeLabel: toTimeLabel(data.created_at),
-              isRead: false,
-              route: getRouteForNotification(type, data.data),
-            },
-            ...prev,
-          ]);
-          return;
-        }
-
-        if (data.type === 'marked_read') {
-          setNotifications((prev) => prev.map((item) => item.id === String(data.notification_id) ? { ...item, isRead: true } : item));
-          return;
-        }
-
-        if (data.type === 'marked_all_read') {
-          setNotifications((prev) => prev.map((item) => ({ ...item, isRead: true })));
-        }
-      } catch (error) {
-        console.error('Failed to parse notification websocket payload:', error);
-      }
-    };
-
-    socket.onerror = () => {
-      setConnectionError('Live notifications are unavailable right now.');
-      setConnecting(false);
-    };
-
-    socket.onclose = () => {
-      setConnecting(false);
-    };
-
-    return () => {
-      socket.close();
-      wsRef.current = null;
-    };
-  }, [authLoading, userId, wsBaseUrl]);
-
-  const unreadCount = useMemo(
-    () => notifications.reduce((count, n) => (n.isRead ? count : count + 1), 0),
-    [notifications]
-  );
-
-  const visibleNotifications = useMemo(() => {
-    if (activeTab === 'unread') return notifications.filter((n) => !n.isRead);
-    return notifications;
-  }, [activeTab, notifications]);
-
-  if (authLoading || connecting) {
+  if (authLoading) {
     return (
       <SafeAreaView style={styles.center}>
         <ActivityIndicator size="large" color="#6366F1" />
@@ -207,6 +83,16 @@ export default function NotificationPage() {
     );
   }
 
+  const unreadCount = useMemo(
+    () => notifications.reduce((count, n) => (n.isRead ? count : count + 1), 0),
+    [notifications]
+  );
+
+  const visibleNotifications = useMemo(() => {
+    if (activeTab === 'unread') return notifications.filter((n) => !n.isRead);
+    return notifications;
+  }, [activeTab, notifications]);
+
   const iconForType = (type: NotificationType) => {
     switch (type) {
       case 'order':
@@ -221,9 +107,6 @@ export default function NotificationPage() {
 
   const markAsRead = (id: string) => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'mark_read', notification_id: id }));
-    }
   };
 
   const handleOpenNotification = (n: AppNotification) => {
@@ -233,9 +116,6 @@ export default function NotificationPage() {
 
   const handleMarkAllRead = () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'mark_all_read' }));
-    }
   };
 
   return (
@@ -246,7 +126,7 @@ export default function NotificationPage() {
           <View style={styles.headerLeft}>
             <Text style={styles.title}>Notifications</Text>
             <Text style={styles.subtitle}>
-              {connectionError ? connectionError : unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
+              {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
             </Text>
           </View>
 

@@ -14920,8 +14920,7 @@ class CustomerShops(APIView):
     def get(self, request):
         # Get customer_id from query parameters
         customer_id = request.query_params.get('customer_id')
-        view_mode = (request.query_params.get('view') or 'owned').lower()
-
+        
         if not customer_id:
             return Response({
                 "success": False,
@@ -14931,47 +14930,25 @@ class CustomerShops(APIView):
         try:
             # Get the customer object
             customer = Customer.objects.get(customer_id=customer_id)
-
-            # view=followed returns shops the customer follows, default is owned shops
-            if view_mode == 'followed':
-                follow_qs = ShopFollow.objects.filter(customer=customer).select_related('shop').order_by('-followed_at')
-                shop_ids = [follow.shop_id for follow in follow_qs if follow.shop_id]
-                shops_queryset = Shop.objects.filter(id__in=shop_ids).order_by('name')
-            else:
-                shops_queryset = Shop.objects.filter(customer=customer).order_by('name')
-
+            
+            # Filter shops by this customer
+            shops_queryset = Shop.objects.filter(customer=customer).order_by('name')
             serializer = ShopSerializer(shops_queryset, many=True, context={'request': request})
-
-            # Add derived fields used by web/mobile shop cards
-            shops_data = []
-            for item in serializer.data:
-                shop_id = item.get('id')
-                follower_count = 0
-                is_following = False
-                if shop_id:
-                    follower_count = ShopFollow.objects.filter(shop_id=shop_id).count()
-                    is_following = ShopFollow.objects.filter(shop_id=shop_id, customer=customer).exists()
-
-                item['follower_count'] = follower_count
-                item['is_following'] = is_following
-                shops_data.append(item)
-
-            message = "Followed shops retrieved successfully" if view_mode == 'followed' else "Shops retrieved successfully"
-
+            
             return Response({
                 "success": True,
-                "shops": shops_data,
-                "message": message,
+                "shops": serializer.data,
+                "message": "Shops retrieved successfully",
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
-
+            
         except Customer.DoesNotExist:
             return Response({
                 "success": True,
                 "shops": [],
                 "message": "No customer found with this ID",
                 "data_source": "database"
-            }, status=status.HTTP_200_OK)
+            }, status=status.HTTP_200_OK) 
             
     def post(self, request):
             """

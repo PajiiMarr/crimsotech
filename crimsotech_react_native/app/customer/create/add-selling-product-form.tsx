@@ -335,18 +335,8 @@ export default function CreateProductFormMobile() {
         Alert.alert('Prediction failed', 'Unable to predict category from image.');
       }
     } catch (err: any) {
-      const backendMessage = err?.response?.data?.error || 'Unable to predict category.';
-      const noCategoriesYet = String(backendMessage)
-        .toLowerCase()
-        .includes('no categories found in database');
-
-      console.warn('Prediction unavailable:', err?.message || err);
-      Alert.alert(
-        'Prediction unavailable',
-        noCategoriesYet
-          ? 'AI prediction is temporarily unavailable because categories are not seeded yet. Please choose a category manually.'
-          : backendMessage
-      );
+      console.error('Prediction error:', err);
+      Alert.alert('Prediction failed', err?.response?.data?.error || 'Unable to predict category.');
     } finally {
       setIsPredicting(false);
     }

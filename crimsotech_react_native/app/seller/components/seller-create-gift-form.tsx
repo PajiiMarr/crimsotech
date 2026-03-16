@@ -100,35 +100,6 @@ const conditionOptions = [
   'Used - Good'
 ];
 
-const guessMimeType = (uri: string) => {
-  const ext = (uri.split('?')[0].match(/\.([a-zA-Z0-9]+)$/)?.[1] || 'jpg').toLowerCase();
-  const map: Record<string, string> = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-    gif: 'image/gif',
-    mp4: 'video/mp4',
-    mov: 'video/quicktime',
-  };
-  return map[ext] || 'image/jpeg';
-};
-
-const normalizeUploadPart = (file: any, fallbackBase: string) => {
-  const uri = String(file?.uri || '').trim();
-  if (!uri) {
-    return null;
-  }
-
-  const derivedName = uri.split('/').pop() || `${fallbackBase}_${Date.now()}.jpg`;
-  const safeName = (String(file?.name || derivedName).trim() || derivedName).replace(/\s+/g, '_');
-  const type = (typeof file?.type === 'string' && file.type.includes('/'))
-    ? file.type
-    : guessMimeType(uri);
-
-  return { uri, name: safeName, type };
-};
-
 export default function CreateGiftForm({ 
   selectedShop, 
   globalCategories, 
@@ -261,17 +232,11 @@ export default function CreateGiftForm({
       setMainMedia(prev => [...prev, newMedia]);
 
       // Auto-analyze images for category prediction
-      const capturedImage = {
+      analyzeImages([{
         uri: asset.uri,
         name: fileName,
         type: 'image/jpeg',
-      };
-
-      setTimeout(() => {
-        analyzeImages([capturedImage]).catch(() => {
-          // Keep media add flow non-blocking when AI prediction fails.
-        });
-      }, 0);
+      }]);
     }
   };
 
@@ -371,17 +336,7 @@ export default function CreateGiftForm({
       if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
         return;
       }
-
-      let errorMsg = 'Prediction request failed';
-      if (error.response?.status === 404) {
-        errorMsg = 'Prediction endpoint not found.';
-      } else if (error.response?.data?.error) {
-        errorMsg = error.response.data.error;
-      } else if (error.message) {
-        errorMsg = error.message;
-      }
-
-      setPredictionError(errorMsg);
+      setPredictionError('Prediction request failed');
     } finally {
       setIsPredicting(false);
       predictionAbortController.current = null;
@@ -578,9 +533,12 @@ export default function CreateGiftForm({
 
       // Add media files
       mainMedia.forEach(file => {
-        const uploadPart = normalizeUploadPart(file.file, 'media');
-        if (uploadPart) {
-          formData.append('media_files', uploadPart as any);
+        if (file.file.size > 0) {
+          formData.append('media_files', {
+            uri: file.file.uri,
+            name: file.file.name,
+            type: file.file.type,
+          } as any);
         }
       });
 
@@ -599,10 +557,11 @@ export default function CreateGiftForm({
       // Add variant images
       variants.forEach(v => {
         if (v.image) {
-          const uploadPart = normalizeUploadPart(v.image, 'variant');
-          if (uploadPart) {
-            formData.append(`variant_image_${v.id}`, uploadPart as any);
-          }
+          formData.append(`variant_image_${v.id}`, {
+            uri: v.image.uri,
+            name: v.image.name,
+            type: v.image.type,
+          } as any);
         }
       });
 

@@ -51,17 +51,10 @@ const fetchInitialData = async () => {
       setGlobalCategories(categoriesResponse.data.categories || []);
     }
     
-    // Get model classes (non-blocking if backend has no seeded categories yet)
-    try {
-      const classesResponse = await AxiosInstance.get('/classes/');
-      if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
-        setModelClasses(classesResponse.data.classes);
-      }
-    } catch {
-      const fallbackClasses = (categoriesResponse.data?.categories || [])
-        .map((category: Category) => category.name)
-        .filter((name: string) => !!name);
-      setModelClasses(fallbackClasses);
+    // Get model classes
+    const classesResponse = await AxiosInstance.get('/classes/');
+    if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
+      setModelClasses(classesResponse.data.classes);
     }
     
     setError(null);

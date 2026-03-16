@@ -629,7 +629,9 @@ export default function ProfileScreen() {
 
               <TouchableOpacity
                 style={styles.accountGridItem}
-                onPress={() => pushRoute("/customer/shipping-address")}
+                onPress={() =>
+                  pushRoute("/customer/components/shipping-address")
+                }
                 activeOpacity={0.7}
               >
                 <View
@@ -651,32 +653,6 @@ export default function ProfileScreen() {
                   <MaterialIcons name="local-offer" size={22} color="#374151" />
                 </View>
                 <Text style={styles.accountGridLabel}>Vouchers</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.accountGridItem}
-                onPress={() => pushRoute('/customer/trade')}
-                activeOpacity={0.7}
-              >
-                <View
-                  style={[styles.accountIconBg, { backgroundColor: '#EEF2FF' }]}
-                >
-                  <MaterialIcons name="swap-horiz" size={22} color="#4338CA" />
-                </View>
-                <Text style={styles.accountGridLabel}>Trade</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.accountGridItem}
-                onPress={() => pushRoute('/customer/shops')}
-                activeOpacity={0.7}
-              >
-                <View
-                  style={[styles.accountIconBg, { backgroundColor: '#F3F4F6' }]}
-                >
-                  <MaterialIcons name="storefront" size={22} color="#111827" />
-                </View>
-                <Text style={styles.accountGridLabel}>Shops</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1004,12 +980,10 @@ const styles = StyleSheet.create({
   // Account Grid
   accountGrid: {
     flexDirection: "row",
-    flexWrap: "wrap",
   },
   accountGridItem: {
     width: "33%",
     alignItems: "center",
-    marginBottom: 16,
   },
   accountIconBg: {
     width: 44,
