@@ -118,10 +118,9 @@ export async function action({ request }: Route.ActionArgs) {
       const shopId = response.data.id || response.data.shop?.id;
       console.log(" Shop created successfully, ID:", shopId);
 
-      return redirect("/shop-list", {
-  headers: { "Set-Cookie": await commitSession(session) },
-});
-
+      return redirect("/pending-approval-shop", {
+        headers: { "Set-Cookie": await commitSession(session) },
+      });
     } else {
       throw new Error(response.data.message || "Shop creation failed");
     }

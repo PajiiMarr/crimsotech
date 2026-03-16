@@ -20,6 +20,8 @@ export default [
     route("orders", "components/customer/orders.tsx"),
     route('shop-list', 'routes/customer/shop-list.tsx'),
     route('create-shop', 'routes/customer/create-shop.tsx'),
+    route('pending-approval', 'routes/customer/pending-approval-shop.tsx'),
+    
     route('personal-listing', 'routes/customer/personal-listing.tsx'),
     route("product/:id", "components/customer/view-product.tsx"),
     route("favorites", "routes/customer/favorites.tsx"),
