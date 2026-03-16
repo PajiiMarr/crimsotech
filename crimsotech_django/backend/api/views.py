@@ -5204,6 +5204,50 @@ class AdminBoosting(viewsets.ViewSet):
         
         return start_date, end_date
     
+    def calculate_growth_metrics(self, current_start, current_end):
+        """Calculate growth metrics compared to previous period"""
+        # Calculate previous period (same duration before current_start)
+        period_duration = current_end - current_start
+        previous_start = current_start - period_duration
+        previous_end = current_start
+        
+        # Current period boosts
+        current_boosts = Boost.objects.filter(
+            created_at__range=[current_start, current_end]
+        )
+        current_boost_count = current_boosts.count()
+        current_revenue = sum(
+            float(boost.boost_plan.price) if boost.boost_plan else 0
+            for boost in current_boosts.select_related('boost_plan')
+        )
+        
+        # Previous period boosts
+        previous_boosts = Boost.objects.filter(
+            created_at__range=[previous_start, previous_end]
+        )
+        previous_boost_count = previous_boosts.count()
+        previous_revenue = sum(
+            float(boost.boost_plan.price) if boost.boost_plan else 0
+            for boost in previous_boosts.select_related('boost_plan')
+        )
+        
+        # Calculate growth percentages
+        boost_growth = 0
+        if previous_boost_count > 0:
+            boost_growth = ((current_boost_count - previous_boost_count) / previous_boost_count) * 100
+        
+        revenue_growth = 0
+        if previous_revenue > 0:
+            revenue_growth = ((current_revenue - previous_revenue) / previous_revenue) * 100
+        
+        return {
+            'boost_growth': round(boost_growth, 1),
+            'revenue_growth': round(revenue_growth, 1),
+            'previous_period_total': previous_boost_count,
+            'previous_period_revenue': round(previous_revenue, 2),
+            'period_days': period_duration.days
+        }
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """
@@ -5212,6 +5256,7 @@ class AdminBoosting(viewsets.ViewSet):
         try:
             start_date_str = request.GET.get('start_date')
             end_date_str = request.GET.get('end_date')
+            range_type = request.GET.get('range_type', 'weekly')
             
             # Get date range
             try:
@@ -5240,7 +5285,6 @@ class AdminBoosting(viewsets.ViewSet):
             active_boosts_in_period = date_filtered_boosts_qs.filter(status='active').count()
             
             # Calculate revenue from boosts in the date range
-            # Note: Since Boost model doesn't store price, we need to get it from BoostPlan
             boosts_in_period = date_filtered_boosts_qs.select_related('boost_plan')
             total_revenue_in_period = sum(
                 float(boost.boost_plan.price) if boost.boost_plan else 0
@@ -5281,6 +5325,9 @@ class AdminBoosting(viewsets.ViewSet):
                 for boost in all_boosts_qs.select_related('boost_plan')
             )
             
+            # Calculate growth metrics
+            growth_metrics = self.calculate_growth_metrics(start_date, end_date)
+            
             response_data = {
                 'success': True,
                 'metrics': {
@@ -5294,14 +5341,16 @@ class AdminBoosting(viewsets.ViewSet):
                     'new_boosts_in_period': new_boosts_in_period,
                     'pending_boosts': pending_boosts_in_period,
                     'cancelled_boosts': cancelled_boosts_in_period,
-                    'all_time_revenue': float(all_boosts_revenue)
+                    'all_time_revenue': float(all_boosts_revenue),
+                    'growth_metrics': growth_metrics
                 },
                 'message': 'Metrics retrieved successfully',
                 'date_range': {
                     'start_date': start_date_str or start_date.isoformat(),
                     'end_date': end_date_str or end_date.isoformat(),
                     'actual_start': start_date.isoformat() if start_date else None,
-                    'actual_end': end_date.isoformat() if end_date else None
+                    'actual_end': end_date.isoformat() if end_date else None,
+                    'range_type': range_type
                 }
             }
             
@@ -5338,7 +5387,7 @@ class AdminBoosting(viewsets.ViewSet):
                     queryset=BoostPlanFeature.objects.select_related('feature'),
                     to_attr='plan_features'
                 )
-            )
+            ).order_by('-created_at')
             
             # Get boosts for usage calculation within date range
             boosts_qs = Boost.objects.all()
@@ -5351,13 +5400,13 @@ class AdminBoosting(viewsets.ViewSet):
             plan_usage = boosts_qs.values('boost_plan').annotate(
                 usage_count=Count('id')
             )
-            usage_map = {item['boost_plan']: item['usage_count'] for item in plan_usage}
+            usage_map = {str(item['boost_plan']): item['usage_count'] for item in plan_usage if item['boost_plan']}
             
             # Calculate revenue for each plan within date range
             plan_revenue = boosts_qs.values('boost_plan').annotate(
                 revenue=Sum('boost_plan__price')
             )
-            revenue_map = {item['boost_plan']: float(item['revenue'] or 0) for item in plan_revenue}
+            revenue_map = {str(item['boost_plan']): float(item['revenue'] or 0) for item in plan_revenue if item['boost_plan']}
             
             plans_data = []
             for plan in boost_plans:
@@ -5365,10 +5414,15 @@ class AdminBoosting(viewsets.ViewSet):
                 features_data = []
                 for plan_feature in getattr(plan, 'plan_features', []):
                     features_data.append({
+                        'id': str(plan_feature.id),
+                        'feature_id': str(plan_feature.feature.id),
                         'name': plan_feature.feature.name,
                         'description': plan_feature.feature.description,
                         'value': plan_feature.value
                     })
+                
+                # Check if plan is removed (if you have is_removed field, otherwise use status)
+                is_removed = plan.status == 'archived'
                 
                 plan_data = {
                     'boost_plan_id': str(plan.id),
@@ -5376,13 +5430,14 @@ class AdminBoosting(viewsets.ViewSet):
                     'price': float(plan.price),
                     'duration': plan.duration,
                     'time_unit': plan.time_unit,
-                    'status': plan.status,
+                    'status': 'removed' if is_removed else plan.status,
+                    'is_removed': is_removed,
                     'user_id': str(plan.user.id) if plan.user else None,
                     'user_name': plan.user.username if plan.user else 'System',
                     'user_email': plan.user.email if plan.user else None,
                     'features': features_data,
-                    'usage_count': usage_map.get(plan.id, 0),
-                    'revenue': revenue_map.get(plan.id, 0),
+                    'usage_count': usage_map.get(str(plan.id), 0),
+                    'revenue': revenue_map.get(str(plan.id), 0),
                     'created_at': plan.created_at.isoformat(),
                     'updated_at': plan.updated_at.isoformat(),
                 }
@@ -5472,6 +5527,9 @@ class AdminBoosting(viewsets.ViewSet):
                 if boost.start_date and boost.end_date:
                     duration_days = (boost.end_date - boost.start_date).days
                 
+                # Check if boost is removed (if you have is_removed field, otherwise use status)
+                is_removed = boost.status == 'cancelled' or boost.status == 'expired'
+                
                 boost_data = {
                     'boost_id': str(boost.id),
                     'product_id': product_id,
@@ -5480,7 +5538,7 @@ class AdminBoosting(viewsets.ViewSet):
                     'boost_plan_name': boost_plan_name,
                     'shop_id': shop_id,
                     'shop_name': shop_name,
-                    'customer_id': str(boost.customer.customer) if boost.customer else None,
+                    'customer_id': str(boost.customer.customer.id) if boost.customer and boost.customer.customer else None,
                     'customer_name': customer_name,
                     'customer_email': customer_email,
                     'status': boost.status,
@@ -5490,6 +5548,7 @@ class AdminBoosting(viewsets.ViewSet):
                     'duration_days': duration_days,
                     'created_at': boost.created_at.isoformat(),
                     'updated_at': boost.updated_at.isoformat(),
+                    'is_removed': is_removed
                 }
                 boosts_data.append(boost_data)
             
@@ -5564,14 +5623,34 @@ class AdminBoosting(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            # Get user from request
+            user = request.user if request.user.is_authenticated else None
+            
             boost_plan = BoostPlan.objects.create(
                 name=request.data['name'],
                 price=request.data['price'],
                 duration=request.data['duration'],
                 time_unit=request.data['time_unit'],
                 status=request.data.get('status', 'active'),
-                user=request.user if request.user.is_authenticated else None
+                user=user
             )
+            
+            # Add features if provided
+            features = request.data.get('features', [])
+            for feature_data in features:
+                feature_id = feature_data.get('feature_id')
+                value = feature_data.get('value', '')
+                
+                if feature_id:
+                    try:
+                        feature = BoostFeature.objects.get(id=feature_id)
+                        BoostPlanFeature.objects.create(
+                            boost_plan=boost_plan,
+                            feature=feature,
+                            value=value
+                        )
+                    except BoostFeature.DoesNotExist:
+                        print(f"Feature {feature_id} not found")
             
             response_data = {
                 'success': True,
@@ -5643,6 +5722,77 @@ class AdminBoosting(viewsets.ViewSet):
         except Exception as e:
             return Response(
                 {'success': False, 'error': f'Error updating boost plan: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['put'], url_path='update_boost_plan_status')
+    def update_boost_plan_status(self, request):
+        """
+        Update boost plan status (activate, deactivate, archive, restore)
+        """
+        try:
+            boost_plan_id = request.data.get('boost_plan_id')
+            action_type = request.data.get('action_type')
+            
+            if not boost_plan_id:
+                return Response(
+                    {'success': False, 'error': 'boost_plan_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not action_type:
+                return Response(
+                    {'success': False, 'error': 'action_type is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate action type
+            valid_actions = ['activate', 'deactivate', 'archive', 'restore']
+            if action_type not in valid_actions:
+                return Response(
+                    {'success': False, 'error': f'Invalid action_type. Must be one of: {valid_actions}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                boost_plan = BoostPlan.objects.get(id=boost_plan_id)
+            except BoostPlan.DoesNotExist:
+                return Response(
+                    {'success': False, 'error': 'Boost plan not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Process based on action type
+            message = ""
+            
+            if action_type == 'activate':
+                boost_plan.status = 'active'
+                message = "Boost plan activated successfully"
+            elif action_type == 'deactivate':
+                boost_plan.status = 'inactive'
+                message = "Boost plan deactivated successfully"
+            elif action_type == 'archive':
+                boost_plan.status = 'archived'
+                message = "Boost plan archived successfully"
+            elif action_type == 'restore':
+                boost_plan.status = 'active'
+                message = "Boost plan restored successfully"
+            
+            boost_plan.save()
+            
+            return Response({
+                'success': True,
+                'message': message,
+                'boost_plan': {
+                    'id': str(boost_plan.id),
+                    'status': boost_plan.status,
+                    'updated_at': boost_plan.updated_at.isoformat()
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error updating boost plan status: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -5722,14 +5872,14 @@ class AdminBoosting(viewsets.ViewSet):
                     'email': user.email,
                     'first_name': user.first_name,
                     'last_name': user.last_name,
-                    'contact_number': user.contact_number,
+                    'contact_number': getattr(user, 'contact_number', None),
                 }
             
             # Get shop info with image from S3
             shop_data = None
             if boost.shop:
                 shop_picture_url = None
-                if boost.shop.shop_picture:
+                if hasattr(boost.shop, 'shop_picture') and boost.shop.shop_picture:
                     # Use the utility to convert S3 URL to public URL
                     shop_picture_url = convert_s3_to_public_url(boost.shop.shop_picture.url)
                 
@@ -5852,7 +6002,7 @@ class AdminBoosting(viewsets.ViewSet):
             
             # Get receipt image with S3 URL
             receipt_url = None
-            if boost.receipt_image:
+            if hasattr(boost, 'receipt_image') and boost.receipt_image:
                 receipt_url = convert_s3_to_public_url(boost.receipt_image.url)
             
             # Build response
@@ -5862,7 +6012,7 @@ class AdminBoosting(viewsets.ViewSet):
                 'status': boost.status,
                 'payment_method': boost.payment_method,
                 'payment_verified': boost.payment_verified,
-                'has_receipt': bool(boost.receipt_image),
+                'has_receipt': bool(hasattr(boost, 'receipt_image') and boost.receipt_image),
                 'receipt_url': receipt_url,
                 'start_date': boost.start_date.isoformat() if boost.start_date else None,
                 'end_date': boost.end_date.isoformat() if boost.end_date else None,
@@ -5915,7 +6065,7 @@ class AdminBoosting(viewsets.ViewSet):
             # Validate required fields
             boost_id = request.data.get('boost_id')
             action_type = request.data.get('action_type')
-            admin_user_id = request.data.get('user_id')
+            admin_user_id = request.data.get('user_id') or request.headers.get('X-User-Id')
             
             if not boost_id:
                 return Response(
@@ -6071,7 +6221,7 @@ class AdminBoosting(viewsets.ViewSet):
                     'hours': timedelta(hours=boost.boost_plan.duration),
                     'days': timedelta(days=boost.boost_plan.duration),
                     'weeks': timedelta(weeks=boost.boost_plan.duration),
-                    'months': timedelta(days=boost.boost_plan.duration * 30)
+                    'months': timedelta(days=boost.boost_plan.duration * 30)  # Approximate
                 }
                 
                 boost.status = 'active'
@@ -6117,6 +6267,7 @@ class AdminBoosting(viewsets.ViewSet):
                 {'success': False, 'error': f'Error updating boost status: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 
 class AdminOrders(viewsets.ViewSet):
     def parse_date(self, date_str):
