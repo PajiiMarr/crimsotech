@@ -824,7 +824,7 @@ const pickMedia = async () => {
           </View>
 
           <TouchableOpacity
-            style={styles.nextButton}
+            style={[styles.nextButton, styles.singleStepButton]}
             onPress={() => setCurrentStep(2)}
           >
             <Text style={styles.nextButtonText}>Next: Media</Text>
@@ -968,7 +968,7 @@ const pickMedia = async () => {
 
           <View style={styles.navigationButtons}>
             <TouchableOpacity
-              style={styles.backButton}
+              style={[styles.backButton, styles.navButton]}
               onPress={() => setCurrentStep(1)}
             >
               <Ionicons name="arrow-back" size={20} color="#6B7280" />
@@ -976,7 +976,7 @@ const pickMedia = async () => {
             </TouchableOpacity>
             
             <TouchableOpacity
-              style={styles.nextButton}
+              style={[styles.nextButton, styles.navButton]}
               onPress={() => setCurrentStep(3)}
             >
               <Text style={styles.nextButtonText}>Next: Variants</Text>
@@ -1309,7 +1309,7 @@ const pickMedia = async () => {
 
           <View style={styles.navigationButtons}>
             <TouchableOpacity
-              style={styles.backButton}
+              style={[styles.backButton, styles.navButton]}
               onPress={() => setCurrentStep(2)}
             >
               <Ionicons name="arrow-back" size={20} color="#6B7280" />
@@ -1317,7 +1317,7 @@ const pickMedia = async () => {
             </TouchableOpacity>
             
             <TouchableOpacity
-              style={styles.nextButton}
+              style={[styles.nextButton, styles.navButton]}
               onPress={() => setCurrentStep(4)}
             >
               <Text style={styles.nextButtonText}>Next: Details</Text>
@@ -1400,9 +1400,9 @@ const pickMedia = async () => {
           <View style={styles.submitContainer}>
             <TouchableOpacity
               style={styles.cancelButton}
-              onPress={() => router.back()}
+              onPress={() => setCurrentStep(3)}
             >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={styles.cancelButtonText}>Back</Text>
             </TouchableOpacity>
             
             <TouchableOpacity
@@ -1722,16 +1722,19 @@ const styles = StyleSheet.create({
   },
   nextButton: {
     backgroundColor: '#3B82F6',
-    borderRadius: 8,
-    padding: 16,
+    borderRadius: 10,
+    minHeight: 50,
+    paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 20,
     gap: 8,
   },
+  singleStepButton: {
+    marginTop: 20,
+  },
   nextButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
   },
@@ -1741,15 +1744,18 @@ const styles = StyleSheet.create({
     marginTop: 20,
     gap: 12,
   },
-  backButton: {
+  navButton: {
     flex: 1,
+  },
+  backButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 14,
+    borderRadius: 10,
+    minHeight: 50,
+    paddingHorizontal: 14,
     gap: 8,
     backgroundColor: '#FFFFFF',
   },

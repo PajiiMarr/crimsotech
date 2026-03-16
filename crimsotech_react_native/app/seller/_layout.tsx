@@ -72,6 +72,7 @@ export default function SellerLayout() {
             <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="shop-vouchers" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="view-order" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="view-product" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="view-refund-details" options={{ animation: 'slide_from_right' }} />
           </Stack>
         </View>

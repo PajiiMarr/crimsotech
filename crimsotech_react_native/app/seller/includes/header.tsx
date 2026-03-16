@@ -81,6 +81,14 @@ export default function Header({ shopId }: HeaderProps) {
     }
   };
 
+  const handleNotifications = () => {
+    if (shopId) {
+      router.push(`/seller/notification?shopId=${shopId}`);
+    } else {
+      router.push('/seller/notification');
+    }
+  };
+
   const handleSettings = () => {
     if (shopId) {
       router.push(`/seller/settings?shopId=${shopId}`);
@@ -219,6 +227,17 @@ export default function Header({ shopId }: HeaderProps) {
 
         {/* Right side - Icons */}
         <View style={styles.rightContainer}>
+          <TouchableOpacity
+            onPress={handleNotifications}
+            style={styles.iconButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="notifications-outline" size={24} color="#374151" />
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>3</Text>
+            </View>
+          </TouchableOpacity>
+
           <TouchableOpacity 
             onPress={handleMessages} 
             style={styles.iconButton}
