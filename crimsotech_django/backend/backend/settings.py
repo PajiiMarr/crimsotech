@@ -32,6 +32,7 @@ ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",     # web
     "0.0.0.0",        # technically optional, safe to include
+    "192.168.254.104",   # current PC LAN IP for mobile
     "192.168.254.105",   # your PC LAN IP for mobile
     ".ngrok-free.app",
     "10.207.168.15",
@@ -263,28 +264,40 @@ LOGGING = {
     },
 }
 
-STORAGES = {
-    "default": {
-        "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
-        "OPTIONS": {
-            "access_key": env.str("SUPABASE_ACCESS_KEY"),
-            "secret_key": env.str("SUPABASE_SECRET_KEY"),
-            "bucket_name": env.str("SUPABASE_STORAGE_BUCKET"),
-            "endpoint_url": env.str("SUPABASE_ENDPOINT"),
-            "region_name": env.str("SUPABASE_REGION", default="ap-south-1"),
-            "signature_version": "s3v4",
-            "addressing_style": "path",
-            "default_acl": None,
-            "querystring_auth": False,
-            # "max_pool_connections": 10,
-        },
-    },
-    "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
-    },
-}
+USE_S3_MEDIA = env.bool("USE_S3_MEDIA", default=not DEBUG)
 
-MEDIA_URL = f"{env.str('SUPABASE_ENDPOINT')}/{env.str('SUPABASE_STORAGE_BUCKET')}/"
+if USE_S3_MEDIA:
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "OPTIONS": {
+                "access_key": env.str("SUPABASE_ACCESS_KEY"),
+                "secret_key": env.str("SUPABASE_SECRET_KEY"),
+                "bucket_name": env.str("SUPABASE_STORAGE_BUCKET"),
+                "endpoint_url": env.str("SUPABASE_ENDPOINT"),
+                "region_name": env.str("SUPABASE_REGION", default="ap-south-1"),
+                "signature_version": "s3v4",
+                "addressing_style": "path",
+                "default_acl": None,
+                "querystring_auth": False,
+            },
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
+    MEDIA_URL = f"{env.str('SUPABASE_ENDPOINT')}/{env.str('SUPABASE_STORAGE_BUCKET')}/"
+else:
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
+    MEDIA_URL = "/media/"
+    MEDIA_ROOT = BASE_DIR / "media"
 
 CHAT_MESSAGE_HISTORY_DAYS = env.int("CHAT_MESSAGE_HISTORY_DAYS", default=30)
 MAX_UPLOAD_SIZE = env.int("MAX_UPLOAD_SIZE", default=10485760)

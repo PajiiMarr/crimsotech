@@ -118,6 +118,35 @@ const conditionOptions = [
   'Used - Good'
 ];
 
+const guessMimeType = (uri: string) => {
+  const ext = (uri.split('?')[0].match(/\.([a-zA-Z0-9]+)$/)?.[1] || 'jpg').toLowerCase();
+  const map: Record<string, string> = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+  };
+  return map[ext] || 'image/jpeg';
+};
+
+const normalizeUploadPart = (file: any, fallbackBase: string) => {
+  const uri = String(file?.uri || '').trim();
+  if (!uri) {
+    return null;
+  }
+
+  const derivedName = uri.split('/').pop() || `${fallbackBase}_${Date.now()}.jpg`;
+  const safeName = (String(file?.name || derivedName).trim() || derivedName).replace(/\s+/g, '_');
+  const type = (typeof file?.type === 'string' && file.type.includes('/'))
+    ? file.type
+    : guessMimeType(uri);
+
+  return { uri, name: safeName, type };
+};
+
 const weightUnitOptions = ['g', 'kg', 'lb', 'oz'];
 
 const usageUnitOptions = [
@@ -325,12 +354,12 @@ const pickMedia = async () => {
 
     setMainMedia(prev => [...prev, newMedia]);
 
-    // Auto-analyze images for category prediction
-    analyzeImages([{
-      uri: asset.uri,
-      name: fileName,
-      type: 'image/jpeg',
-    }]);
+    // Match web behavior: render media first, then run AI analysis in background.
+    setTimeout(() => {
+      analyzeImages([newMedia.file]).catch(() => {
+        // Keep media add flow non-blocking even when AI endpoint is unavailable.
+      });
+    }, 0);
   }
 };
 
@@ -433,7 +462,17 @@ const pickMedia = async () => {
       if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
         return;
       }
-      setPredictionError('Prediction request failed');
+
+      let errorMsg = 'Prediction request failed';
+      if (error.response?.status === 404) {
+        errorMsg = 'Prediction endpoint not found.';
+      } else if (error.response?.data?.error) {
+        errorMsg = error.response.data.error;
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+
+      setPredictionError(errorMsg);
     } finally {
       setIsPredicting(false);
       predictionAbortController.current = null;
@@ -565,6 +604,10 @@ const pickMedia = async () => {
       Alert.alert('Validation Error', 'Condition is required');
       return false;
     }
+    if (mainMedia.length < 3) {
+      Alert.alert('Validation Error', 'Please upload at least 3 product images');
+      return false;
+    }
     if (variants.length === 0) {
       Alert.alert('Validation Error', 'At least one variant is required');
       return false;
@@ -582,6 +625,18 @@ const pickMedia = async () => {
       }
       if (!v.quantity || Number(v.quantity) <= 0) {
         Alert.alert('Validation Error', `Variant ${i + 1} quantity must be greater than 0`);
+        return false;
+      }
+      if (!v.weight || Number(v.weight) <= 0) {
+        Alert.alert('Validation Error', `Variant ${i + 1} weight is required`);
+        return false;
+      }
+      if (!v.weight_unit) {
+        Alert.alert('Validation Error', `Variant ${i + 1} weight unit is required`);
+        return false;
+      }
+      if (!v.critical_trigger || Number(v.critical_trigger) <= 0) {
+        Alert.alert('Validation Error', `Variant ${i + 1} low stock alert is required`);
         return false;
       }
     }
@@ -632,12 +687,9 @@ const pickMedia = async () => {
 
       // Add media files
       mainMedia.forEach(file => {
-        if (file.file.size > 0) {
-          formData.append('media_files', {
-            uri: file.file.uri,
-            name: file.file.name,
-            type: file.file.type,
-          } as any);
+        const uploadPart = normalizeUploadPart(file.file, 'media');
+        if (uploadPart) {
+          formData.append('media_files', uploadPart as any);
         }
       });
 
@@ -670,11 +722,10 @@ const pickMedia = async () => {
       // Add variant images
       variants.forEach(v => {
         if (v.image) {
-          formData.append(`variant_image_${v.id}`, {
-            uri: v.image.uri,
-            name: v.image.name,
-            type: v.image.type,
-          } as any);
+          const uploadPart = normalizeUploadPart(v.image, 'variant');
+          if (uploadPart) {
+            formData.append(`variant_image_${v.id}`, uploadPart as any);
+          }
         }
       });
 
@@ -856,15 +907,13 @@ const pickMedia = async () => {
               </View>
             </View>
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
-             {/* In the Media section, update the add media button text */}
-<TouchableOpacity style={styles.addMediaButton} onPress={pickMedia}>
-  <Ionicons name="camera" size={32} color="#9CA3AF" />
-  <Text style={styles.addMediaText}>Take Photo</Text>
-</TouchableOpacity>
+            <Text style={styles.mediaHint}>Take photos with your camera (max 9). First photo is the cover.</Text>
 
-{/* Update the hint text */}
-<Text style={styles.mediaHint}>Take photos with your camera (max 9). First photo is the cover.</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
+              <TouchableOpacity style={styles.addMediaButton} onPress={pickMedia}>
+                <Ionicons name="camera" size={32} color="#9CA3AF" />
+                <Text style={styles.addMediaText}>Take Photo</Text>
+              </TouchableOpacity>
 
               {mainMedia.map((item, index) => (
                 <View key={index} style={styles.mediaItem}>

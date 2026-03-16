@@ -71,6 +71,7 @@ export default function Home() {
     avg_rating: 0,
     active_deliveries: 0,
   };
+  const growthMetrics = dashboardData?.metrics?.growth_metrics || {};
 
   const activeDeliveries = dashboardData?.deliveries || [];
   const riderData = dashboardData?.rider || null;
@@ -291,6 +292,36 @@ export default function Home() {
                 </View>
               </View>
             </View>
+
+            {/* Growth Metrics */}
+            {!loading && (growthMetrics.deliveries_growth !== undefined || growthMetrics.earnings_growth !== undefined) && (
+              <View style={{ flexDirection: 'row', marginTop: -4, marginBottom: 16, gap: 10 }}>
+                {growthMetrics.deliveries_growth !== undefined && (
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: growthMetrics.deliveries_growth >= 0 ? '#ECFDF5' : '#FEF2F2', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
+                    <MaterialIcons
+                      name={growthMetrics.deliveries_growth >= 0 ? 'trending-up' : 'trending-down'}
+                      size={14}
+                      color={growthMetrics.deliveries_growth >= 0 ? '#059669' : '#DC2626'}
+                    />
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: growthMetrics.deliveries_growth >= 0 ? '#059669' : '#DC2626', marginLeft: 4 }}>
+                      {growthMetrics.deliveries_growth >= 0 ? '+' : ''}{growthMetrics.deliveries_growth.toFixed(1)}% deliveries
+                    </Text>
+                  </View>
+                )}
+                {growthMetrics.earnings_growth !== undefined && (
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: growthMetrics.earnings_growth >= 0 ? '#ECFDF5' : '#FEF2F2', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
+                    <MaterialIcons
+                      name={growthMetrics.earnings_growth >= 0 ? 'trending-up' : 'trending-down'}
+                      size={14}
+                      color={growthMetrics.earnings_growth >= 0 ? '#059669' : '#DC2626'}
+                    />
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: growthMetrics.earnings_growth >= 0 ? '#059669' : '#DC2626', marginLeft: 4 }}>
+                      {growthMetrics.earnings_growth >= 0 ? '+' : ''}{growthMetrics.earnings_growth.toFixed(1)}% earnings
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
 
             {/* Active Deliveries List */}
             <View style={styles.section}>

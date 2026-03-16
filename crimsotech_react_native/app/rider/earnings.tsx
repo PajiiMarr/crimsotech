@@ -5,13 +5,17 @@ import {
   ScrollView,
   RefreshControl,
   ActivityIndicator,
-  Dimensions
+  Dimensions,
+  TouchableOpacity,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
 import { SafeAreaView } from 'react-native-safe-area-context';
+const BASE_URL = AxiosInstance.defaults.baseURL || '';
+
 
 interface EarningsMetrics {
   total_deliveries?: number;
@@ -26,6 +30,8 @@ export default function Earnings() {
   const { user } = useAuth();
   const { width } = Dimensions.get('window');
   
+  const userId = user?.user_id || user?.id;
+  const [activeTab, setActiveTab] = useState<'today' | 'all'>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [metrics, setMetrics] = useState<EarningsMetrics | null>(null);
@@ -40,12 +46,21 @@ export default function Earnings() {
   };
 
   // Fetch earnings data
-  const fetchEarningsData = async () => {
+  const fetchEarningsData = async (tab?: 'today' | 'all') => {
+    const currentTab = tab ?? activeTab;
     try {
       setIsLoading(true);
-      
+
+      const today = new Date().toISOString().split('T')[0];
+      const params: Record<string, string> = {};
+      if (currentTab === 'today') {
+        params.start_date = today;
+        params.end_date = today;
+      }
+
       const res = await AxiosInstance.get('/rider-history/order_history/', {
-        headers: { 'X-User-Id': user?.user_id || user?.id }
+        headers: { 'X-User-Id': userId },
+        params,
       });
 
       if (res.data && res.data.success) {
@@ -70,13 +85,13 @@ export default function Earnings() {
 
   // Initial load
   useEffect(() => {
-    fetchEarningsData();
-  }, []);
+    fetchEarningsData(activeTab);
+  }, [activeTab]);
 
   // Refresh control
   const onRefresh = () => {
     setRefreshing(true);
-    fetchEarningsData();
+    fetchEarningsData(activeTab);
   };
 
   // Metric Card Component
@@ -156,10 +171,33 @@ export default function Earnings() {
         <View style={{ padding: 16 }}>
           {/* Header */}
           <View style={{ marginBottom: 20 }}>
-            <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#111827' }}>Earnings</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#111827' }}>Earnings</Text>
+              <TouchableOpacity
+                onPress={() => Linking.openURL(`${BASE_URL}/rider-history/export_history/?format=csv&user_id=${userId}`)}
+                style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+              >
+                <Ionicons name="download-outline" size={16} color="#374151" />
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151', marginLeft: 4 }}>Export</Text>
+              </TouchableOpacity>
+            </View>
             <Text style={{ fontSize: 14, color: '#6B7280', marginTop: 4 }}>
               Quick summary of your delivery performance
             </Text>
+            {/* Tab Toggle */}
+            <View style={{ flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 10, padding: 3, marginTop: 14 }}>
+              {(['all', 'today'] as const).map((tab) => (
+                <TouchableOpacity
+                  key={tab}
+                  onPress={() => setActiveTab(tab)}
+                  style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', backgroundColor: activeTab === tab ? 'white' : 'transparent' }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: activeTab === tab ? '#111827' : '#9CA3AF' }}>
+                    {tab === 'all' ? 'All Time' : "Today"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
 
           {/* Earnings Summary Card */}

@@ -23,8 +23,7 @@ export default function CustomerHeader({
   const isProfilePage = pathname === '/customer/profile';
   
   // Don't show switch button on certain pages
-  const showSwitchButton = !pathname.includes('/customer/notification') && 
-                          !pathname.includes('/customer/settings') &&
+  const showSwitchButton = !pathname.includes('/customer/settings') &&
                           !pathname.includes('/customer/view-product') &&
                           !pathname.includes('/customer/includes/search') &&
                           !isProfilePage; // Also hide on profile
@@ -45,6 +44,13 @@ export default function CustomerHeader({
             </View>
             
             <View style={styles.profileIconsContainer}>
+              <TouchableOpacity 
+                style={styles.iconBtn} 
+                onPress={() => router.push('/customer/notification')}
+              >
+                <Ionicons name="notifications-outline" size={22} color="#111" />
+              </TouchableOpacity>
+
               <TouchableOpacity 
                 style={styles.iconBtn} 
                 onPress={() => router.push('/customer/messages')}
@@ -78,6 +84,13 @@ export default function CustomerHeader({
 
             {/* Icons */}
             <View style={styles.iconsContainer}>
+              <TouchableOpacity 
+                style={styles.iconBtn} 
+                onPress={() => router.push('/customer/notification')}
+              >
+                <Ionicons name="notifications-outline" size={24} color="#111" />
+              </TouchableOpacity>
+
               <TouchableOpacity 
                 style={styles.iconBtn} 
                 onPress={() => router.push('/customer/messages')}

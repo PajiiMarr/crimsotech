@@ -49,10 +49,17 @@ export default function CreateGiftPage() {
         setGlobalCategories(categoriesResponse.data.categories || []);
       }
       
-      // Fetch model classes
-      const classesResponse = await AxiosInstance.get('/classes/');
-      if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
-        setModelClasses(classesResponse.data.classes);
+      // Fetch model classes (non-blocking if backend has no seeded categories yet)
+      try {
+        const classesResponse = await AxiosInstance.get('/classes/');
+        if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
+          setModelClasses(classesResponse.data.classes);
+        }
+      } catch {
+        const fallbackClasses = (categoriesResponse.data?.categories || [])
+          .map((category: Category) => category.name)
+          .filter((name: string) => !!name);
+        setModelClasses(fallbackClasses);
       }
       
       setError(null);

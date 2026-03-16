@@ -582,6 +582,17 @@ export default function ActiveOrders() {
           </View>
 
           {/* Deliveries Card */}
+                    {/* Decline Warning */}
+                    {metrics.declined_orders >= 2 && (
+                      <View style={{ backgroundColor: '#FEF3C7', borderRadius: 10, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'flex-start' }}>
+                        <Ionicons name="warning-outline" size={18} color="#D97706" style={{ marginTop: 1 }} />
+                        <Text style={{ fontSize: 13, color: '#92400E', marginLeft: 8, flex: 1, lineHeight: 18 }}>
+                          Warning: You have {metrics.declined_orders} declined orders. Excessive declines may affect your account standing.
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Deliveries Card */}
           <View style={{ backgroundColor: 'white', borderRadius: 12, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
             {/* Tabs */}
             <View style={{ flexDirection: 'row', marginBottom: 16 }}>

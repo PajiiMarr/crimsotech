@@ -277,11 +277,15 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
 
       // Auto-analyze images for category prediction
       if (!isVideo) {
-        analyzeImages([{
+        const capturedImage = {
           uri: asset.uri,
           name: fileName,
           type: 'image/jpeg',
-        }]);
+        };
+
+        analyzeImages([capturedImage]).catch(() => {
+          // Keep media add flow non-blocking when AI prediction fails.
+        });
       }
     }
   };
@@ -377,8 +381,16 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
       }
 
     } catch (error: any) {
-      setPredictionError('Prediction request failed');
-      console.error('Image prediction failed:', error);
+      const noCategoriesYet = String(error?.response?.data?.error || error?.response?.data || '')
+        .toLowerCase()
+        .includes('no categories found in database');
+
+      setPredictionError(
+        noCategoriesYet
+          ? 'AI prediction is temporarily unavailable. Please choose a category manually.'
+          : 'Prediction request failed'
+      );
+      console.warn('Image prediction unavailable:', error?.message || error);
     } finally {
       setIsPredicting(false);
     }

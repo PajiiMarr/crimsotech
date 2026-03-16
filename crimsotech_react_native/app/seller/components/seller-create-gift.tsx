@@ -50,6 +50,8 @@ export default function CreateGift() {
 
   const fetchInitialData = async () => {
     try {
+      let fetchedCategories: Category[] = [];
+
       // Fetch shop details
       if (shopId) {
         try {
@@ -68,7 +70,8 @@ export default function CreateGift() {
       try {
         const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
         if (categoriesResponse.data.success) {
-          setGlobalCategories(categoriesResponse.data.categories || []);
+          fetchedCategories = categoriesResponse.data.categories || [];
+          setGlobalCategories(fetchedCategories);
         }
       } catch (error) {
         console.error('Failed to fetch categories:', error);
@@ -80,8 +83,12 @@ export default function CreateGift() {
         if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
           setModelClasses(classesResponse.data.classes);
         }
-      } catch (error) {
-        console.error('Failed to fetch model classes:', error);
+      } catch {
+        const fallbackClasses = fetchedCategories
+          .map((category) => category.name)
+          .filter((name) => !!name);
+        setModelClasses(fallbackClasses);
+        console.warn('Classes endpoint unavailable, using fallback category names.');
       }
 
     } catch (error) {
