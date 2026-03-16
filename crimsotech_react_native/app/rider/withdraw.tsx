@@ -1,585 +1,380 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   SafeAreaView,
   View,
   Text,
-  StyleSheet,
   TouchableOpacity,
-  FlatList,
-  StatusBar,
   ScrollView,
+  ActivityIndicator,
+  RefreshControl,
   Alert,
-} from "react-native";
-import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+  Modal,
+  TextInput,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import AxiosInstance from '../../contexts/axios';
+import { useAuth } from '../../contexts/AuthContext';
 
-// --- Colors ---
-const COLORS = {
-  primary: "#111827",
-  secondary: "#374151",
-  muted: "#9CA3AF",
-  bg: "#FFFFFF",
-  cardBg: "#FFFFFF",
-  accent: "#F3F4F6",
-  green: "#10B981",
-  blue: "#3B82F6",
-  purple: "#8B5CF6",
-  border: "#E5E7EB",
-};
-
-// --- Withdrawal Methods ---
-interface WithdrawalMethod {
-  id: string;
-  name: string;
-  icon: string;
-  iconLib: string;
-  description: string;
-  color: string;
-  processingTime: string;
-  minAmount: number;
-  fee: string;
+interface WalletData {
+  wallet_id: string;
+  available_balance: number;
+  pending_balance: number;
+  total_balance: number;
 }
 
-const WITHDRAWAL_METHODS: WithdrawalMethod[] = [
-  {
-    id: "1",
-    name: "GCash",
-    icon: "wallet",
-    iconLib: "feather",
-    description: "Mobile wallet transfer",
-    color: "#111827",
-    processingTime: "Instant",
-    minAmount: 100,
-    fee: "Free",
-  },
-  {
-    id: "2",
-    name: "PayMaya",
-    icon: "credit-card",
-    iconLib: "feather",
-    description: "Digital wallet",
-    color: "#111827",
-    processingTime: "1-2 hours",
-    minAmount: 100,
-    fee: "Free",
-  },
-  {
-    id: "3",
-    name: "Local Cash Pickup",
-    icon: "map-pin",
-    iconLib: "feather",
-    description: "Pick up at partner stores",
-    color: "#111827",
-    processingTime: "30 mins - 1 hour",
-    minAmount: 100,
-    fee: "Free",
-  },
-];
+interface WalletTransaction {
+  transaction_id: string;
+  amount: number;
+  transaction_type: 'credit' | 'debit';
+  source_type?: string;
+  status?: string;
+  created_at?: string;
+}
 
-export default function WithdrawPage() {
-  const [selectedMethod, setSelectedMethod] = useState<WithdrawalMethod | null>(
-    null,
-  );
-  const [amount, setAmount] = useState("1000");
-  const availableBalance = 28350.0;
+interface PaymentMethod {
+  payment_id: string;
+  payment_method: 'bank' | 'gcash' | 'paypal' | 'card';
+  bank_name?: string;
+  account_name: string;
+  account_number: string;
+  is_default: boolean;
+}
 
-  const handleSelectMethod = (method: WithdrawalMethod) => {
-    if (parseFloat(amount) < method.minAmount) {
-      Alert.alert(
-        "Insufficient Amount",
-        `Minimum amount for ${method.name} is ₱${method.minAmount}`,
-      );
+interface WithdrawModalProps {
+  visible: boolean;
+  onClose: () => void;
+  availableBalance: number;
+  paymentMethods: PaymentMethod[];
+  userId?: string;
+  onSuccess: () => void;
+}
+
+function WithdrawModal({ visible, onClose, availableBalance, paymentMethods, userId, onSuccess }: WithdrawModalProps) {
+  const [amount, setAmount] = useState('');
+  const [selectedPaymentId, setSelectedPaymentId] = useState<string>('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      const defaultMethod = paymentMethods.find((m) => m.is_default);
+      setSelectedPaymentId(defaultMethod?.payment_id || paymentMethods[0]?.payment_id || '');
+      setAmount('');
+    }
+  }, [visible, paymentMethods]);
+
+  const quickAmounts = [500, 1000, 2000, 5000];
+
+  const submitWithdraw = async () => {
+    const parsedAmount = Number(amount);
+    if (!parsedAmount || parsedAmount <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter a valid withdrawal amount.');
       return;
     }
-    setSelectedMethod(method);
-  };
-
-  const handleConfirmWithdraw = () => {
-    if (!selectedMethod) {
-      Alert.alert("Error", "Please select a payment method");
+    if (parsedAmount > availableBalance) {
+      Alert.alert('Insufficient Balance', 'Your available balance is not enough.');
+      return;
+    }
+    if (!selectedPaymentId) {
+      Alert.alert('Payment Method Required', 'Please select a payment method.');
       return;
     }
 
-    if (parseFloat(amount) < selectedMethod.minAmount) {
-      Alert.alert("Error", `Minimum amount is ₱${selectedMethod.minAmount}`);
-      return;
-    }
-
-    if (parseFloat(amount) > availableBalance) {
-      Alert.alert("Error", "Insufficient balance");
-      return;
-    }
-
-    Alert.alert(
-      "Confirm Withdrawal",
-      `Withdraw ₱${parseFloat(amount).toFixed(2)} via ${selectedMethod.name}?\n\nProcessing time: ${selectedMethod.processingTime}`,
-      [
-        { text: "Cancel", style: "cancel" },
+    try {
+      setSubmitting(true);
+      const res = await AxiosInstance.post(
+        '/withdrawal-requests/',
         {
-          text: "Confirm",
-          onPress: () => {
-            Alert.alert(
-              "Success",
-              "Withdrawal request submitted! Check your account shortly.",
-              [{ text: "OK", onPress: () => router.back() }],
-            );
-          },
+          amount: parsedAmount,
+          payment_method_id: selectedPaymentId,
+          notes: 'Requested from rider mobile app',
         },
-      ],
-    );
+        { headers: { 'X-User-Id': userId } },
+      );
+
+      if (res.data?.success) {
+        Alert.alert('Success', 'Withdrawal request submitted successfully.');
+        onClose();
+        onSuccess();
+      } else {
+        Alert.alert('Request Failed', res.data?.message || 'Could not submit withdrawal request.');
+      }
+    } catch (error: any) {
+      Alert.alert('Request Failed', error?.response?.data?.message || 'Could not submit withdrawal request.');
+    } finally {
+      setSubmitting(false);
+    }
   };
-
-  const renderMethod = ({ item }: { item: WithdrawalMethod }) => (
-    <TouchableOpacity
-      style={[
-        styles.methodCard,
-        selectedMethod?.id === item.id && styles.methodCardSelected,
-      ]}
-      onPress={() => handleSelectMethod(item)}
-    >
-      <View
-        style={[
-          styles.methodIconContainer,
-          { backgroundColor: item.color + "20" },
-        ]}
-      >
-        {item.iconLib === "feather" && (
-          <Feather name={item.icon as any} size={24} color={item.color} />
-        )}
-        {item.iconLib === "material" && (
-          <MaterialCommunityIcons
-            name={item.icon as any}
-            size={24}
-            color={item.color}
-          />
-        )}
-      </View>
-
-      <View style={styles.methodContent}>
-        <Text style={styles.methodName}>{item.name}</Text>
-        <Text style={styles.methodDescription}>{item.description}</Text>
-        <View style={styles.methodDetails}>
-          <View style={styles.detailBadge}>
-            <Feather name="clock" size={12} color={COLORS.muted} />
-            <Text style={styles.detailText}>{item.processingTime}</Text>
-          </View>
-          <View style={styles.detailBadge}>
-            <Text style={styles.detailText}>Min: ₱{item.minAmount}</Text>
-          </View>
-          <View style={[styles.detailBadge, { backgroundColor: "#D1FAE5" }]}>
-            <Text style={[styles.detailText, { color: COLORS.green }]}>
-              {item.fee}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {selectedMethod?.id === item.id && (
-        <View style={styles.checkmark}>
-          <Ionicons name="checkmark-circle" size={24} color={item.color} />
-        </View>
-      )}
-    </TouchableOpacity>
-  );
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: 'white', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, maxHeight: '85%' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: '#111827' }}>Withdraw Funds</Text>
+            <TouchableOpacity onPress={onClose}>
+              <Ionicons name="close" size={24} color="#6B7280" />
+            </TouchableOpacity>
+          </View>
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Feather name="arrow-left" size={24} color={COLORS.primary} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Withdraw Earnings</Text>
-        <View style={{ width: 24 }} />
+          <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 8 }}>
+            Available Balance: PHP {availableBalance.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </Text>
+
+          <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6 }}>Amount</Text>
+          <TextInput
+            value={amount}
+            onChangeText={setAmount}
+            keyboardType="numeric"
+            placeholder="Enter amount"
+            style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10 }}
+          />
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 14 }}>
+            {quickAmounts.map((value) => (
+              <TouchableOpacity
+                key={value}
+                onPress={() => setAmount(String(value))}
+                style={{ backgroundColor: '#F3F4F6', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, marginRight: 8, marginBottom: 8 }}
+              >
+                <Text style={{ color: '#374151', fontWeight: '600', fontSize: 12 }}>PHP {value}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6 }}>Payment Method</Text>
+          <ScrollView style={{ maxHeight: 180 }}>
+            {paymentMethods.length === 0 ? (
+              <TouchableOpacity
+                onPress={() => {
+                  onClose();
+                  router.push('/rider/payment-methods');
+                }}
+                style={{ borderWidth: 1, borderColor: '#D1D5DB', borderStyle: 'dashed', borderRadius: 10, padding: 12 }}
+              >
+                <Text style={{ fontSize: 13, color: '#374151', textAlign: 'center' }}>No payment methods yet. Tap to add one.</Text>
+              </TouchableOpacity>
+            ) : (
+              paymentMethods.map((m) => (
+                <TouchableOpacity
+                  key={m.payment_id}
+                  onPress={() => setSelectedPaymentId(m.payment_id)}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: selectedPaymentId === m.payment_id ? '#1F2937' : '#E5E7EB',
+                    borderRadius: 10,
+                    padding: 12,
+                    marginBottom: 8,
+                    backgroundColor: selectedPaymentId === m.payment_id ? '#F9FAFB' : 'white',
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#111827' }}>{m.account_name}</Text>
+                  <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
+                    {(m.bank_name || m.payment_method).toUpperCase()} | {m.account_number}
+                  </Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+
+          <TouchableOpacity
+            onPress={submitWithdraw}
+            disabled={submitting}
+            style={{ backgroundColor: '#1F2937', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 14 }}
+          >
+            {submitting ? <ActivityIndicator color="white" /> : <Text style={{ color: 'white', fontWeight: '700' }}>Submit Withdrawal</Text>}
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+export default function WalletWithdraw() {
+  const { user } = useAuth();
+  const userId = user?.user_id || user?.id;
+
+  const [wallet, setWallet] = useState<WalletData | null>(null);
+  const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [showBalance, setShowBalance] = useState(true);
+  const [filter, setFilter] = useState<'all' | 'credit' | 'debit'>('all');
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [walletRes, profileRes] = await Promise.all([
+        AxiosInstance.get('/rider-wallet/?limit=30&offset=0', {
+          headers: { 'X-User-Id': userId },
+        }),
+        AxiosInstance.get('/profile/', {
+          headers: { 'X-User-Id': userId },
+        }),
+      ]);
+
+      if (walletRes.data?.success) {
+        setWallet(walletRes.data.wallet || null);
+        setTransactions(walletRes.data.transactions || []);
+      } else {
+        setWallet(null);
+        setTransactions([]);
+      }
+
+      if (profileRes.data?.success && profileRes.data.profile?.payment_methods) {
+        setPaymentMethods(profileRes.data.profile.payment_methods);
+      } else {
+        setPaymentMethods([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch wallet data:', error);
+      setWallet(null);
+      setTransactions([]);
+      setPaymentMethods([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchData();
+  };
+
+  const filteredTransactions = useMemo(() => {
+    if (filter === 'all') return transactions;
+    return transactions.filter((t) => t.transaction_type === filter);
+  }, [transactions, filter]);
+
+  const formatAmount = (amount: number) =>
+    `PHP ${Number(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
+      <View style={{ backgroundColor: '#1F2937', paddingHorizontal: 16, paddingVertical: 14 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View>
+            <Text style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>Wallet</Text>
+            <Text style={{ color: '#D1D5DB', fontSize: 12, marginTop: 2 }}>Manage balance, withdrawals, and remittance</Text>
+          </View>
+          <TouchableOpacity onPress={() => router.push('/rider/payment-methods')} style={{ marginLeft: 10 }}>
+            <Ionicons name="settings-outline" size={22} color="white" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ backgroundColor: 'white', borderRadius: 14, padding: 16, marginTop: 12, borderWidth: 1, borderColor: '#E5E7EB' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Available Balance</Text>
+            <TouchableOpacity onPress={() => setShowBalance((prev) => !prev)}>
+              <Ionicons name={showBalance ? 'eye-off-outline' : 'eye-outline'} size={18} color="#6B7280" />
+            </TouchableOpacity>
+          </View>
+          <Text style={{ fontSize: 30, fontWeight: '800', color: '#111827', marginTop: 4 }}>
+            {showBalance ? formatAmount(wallet?.available_balance || 0) : '******'}
+          </Text>
+          <Text style={{ fontSize: 12, color: '#9CA3AF', marginTop: 4 }}>
+            Pending: {formatAmount(wallet?.pending_balance || 0)}
+          </Text>
+
+          <View style={{ flexDirection: 'row', marginTop: 14 }}>
+            <TouchableOpacity
+              onPress={() => setShowWithdrawModal(true)}
+              style={{ flex: 1, backgroundColor: '#1F2937', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginRight: 6 }}
+            >
+              <Text style={{ color: 'white', fontWeight: '700' }}>Withdraw</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => router.push('/rider/remit-amount')}
+              style={{ flex: 1, backgroundColor: '#EA580C', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginLeft: 6 }}
+            >
+              <Text style={{ color: 'white', fontWeight: '700' }}>Remit Amount</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
 
       <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 30 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* Balance Info */}
-        <View style={styles.balanceCard}>
-          <View>
-            <Text style={styles.balanceLabel}>Available Balance</Text>
-            <Text style={styles.balanceAmount}>
-              ₱{availableBalance.toFixed(2)}
-            </Text>
-          </View>
-          <MaterialCommunityIcons
-            name="wallet"
-            size={32}
-            color={COLORS.primary}
-          />
+        <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+          {(['all', 'credit', 'debit'] as const).map((tab) => (
+            <TouchableOpacity
+              key={tab}
+              onPress={() => setFilter(tab)}
+              style={{
+                marginRight: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: 16,
+                backgroundColor: filter === tab ? '#111827' : '#F3F4F6',
+              }}
+            >
+              <Text style={{ color: filter === tab ? 'white' : '#4B5563', fontSize: 12, fontWeight: '600' }}>
+                {tab === 'all' ? 'All' : tab === 'credit' ? 'Credits' : 'Debits'}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        {/* Amount Input */}
-        {!selectedMethod ? (
-          <View style={styles.amountSection}>
-            <Text style={styles.sectionTitle}>Select Withdrawal Amount</Text>
-            <View style={styles.amountInputContainer}>
-              <Text style={styles.currencySymbol}>₱</Text>
-              <Text style={styles.amountInput}>{amount}</Text>
-            </View>
+        <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 10 }}>Transactions</Text>
 
-            <View style={styles.quickAmounts}>
-              {[500, 1000, 2000, 5000].map((val) => (
-                <TouchableOpacity
-                  key={val}
-                  style={[
-                    styles.quickAmountBtn,
-                    parseFloat(amount) === val && styles.quickAmountBtnActive,
-                  ]}
-                  onPress={() => setAmount(val.toString())}
-                >
-                  <Text
-                    style={[
-                      styles.quickAmountText,
-                      parseFloat(amount) === val &&
-                        styles.quickAmountTextActive,
-                    ]}
-                  >
-                    ₱{val}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.sectionTitle}>Payment Method</Text>
+        {loading ? (
+          <ActivityIndicator size="large" color="#111827" style={{ marginTop: 30 }} />
+        ) : filteredTransactions.length === 0 ? (
+          <View style={{ alignItems: 'center', paddingVertical: 30 }}>
+            <Ionicons name="receipt-outline" size={38} color="#D1D5DB" />
+            <Text style={{ color: '#9CA3AF', marginTop: 8 }}>No transactions yet</Text>
           </View>
         ) : (
-          <View style={styles.selectedMethodSection}>
-            <Text style={styles.sectionTitle}>Withdrawal Details</Text>
-            <View style={styles.detailsCard}>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Amount</Text>
-                <Text style={styles.detailValue}>
-                  ₱{parseFloat(amount).toFixed(2)}
-                </Text>
-              </View>
-              <View style={styles.detailDivider} />
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Payment Method</Text>
-                <Text style={styles.detailValue}>{selectedMethod.name}</Text>
-              </View>
-              <View style={styles.detailDivider} />
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Processing Time</Text>
-                <Text style={styles.detailValue}>
-                  {selectedMethod.processingTime}
-                </Text>
-              </View>
-              <View style={styles.detailDivider} />
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Transaction Fee</Text>
-                <Text style={styles.detailValue}>{selectedMethod.fee}</Text>
+          filteredTransactions.map((txn) => (
+            <View
+              key={txn.transaction_id}
+              style={{ backgroundColor: 'white', borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: '#E5E7EB' }}
+            >
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#111827' }}>
+                    {(txn.source_type || 'Wallet transaction').replace('_', ' ')}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 3 }}>
+                    {txn.created_at ? new Date(txn.created_at).toLocaleString() : 'Unknown time'}
+                  </Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: '700',
+                      color: txn.transaction_type === 'credit' ? '#059669' : '#DC2626',
+                    }}
+                  >
+                    {txn.transaction_type === 'credit' ? '+' : '-'}{formatAmount(txn.amount)}
+                  </Text>
+                  <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 3 }}>{txn.status || 'pending'}</Text>
+                </View>
               </View>
             </View>
-
-            <TouchableOpacity
-              style={styles.changeMethodBtn}
-              onPress={() => setSelectedMethod(null)}
-            >
-              <Feather name="edit-2" size={16} color={COLORS.primary} />
-              <Text style={styles.changeMethodText}>Change Method</Text>
-            </TouchableOpacity>
-          </View>
+          ))
         )}
-
-        {/* Methods List */}
-        <FlatList
-          data={WITHDRAWAL_METHODS}
-          renderItem={renderMethod}
-          keyExtractor={(item) => item.id}
-          scrollEnabled={false}
-          contentContainerStyle={styles.methodsList}
-        />
       </ScrollView>
 
-      {/* Action Button */}
-      <View style={styles.footer}>
-        <TouchableOpacity
-          style={[
-            styles.withdrawBtn,
-            !selectedMethod && styles.withdrawBtnDisabled,
-          ]}
-          onPress={handleConfirmWithdraw}
-          disabled={!selectedMethod}
-        >
-          <Feather name="send" size={18} color="#FFF" />
-          <Text style={styles.withdrawBtnText}>
-            {selectedMethod
-              ? `Withdraw ₱${parseFloat(amount).toFixed(2)}`
-              : "Select Payment Method"}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <WithdrawModal
+        visible={showWithdrawModal}
+        onClose={() => setShowWithdrawModal(false)}
+        availableBalance={wallet?.available_balance || 0}
+        paymentMethods={paymentMethods}
+        userId={userId}
+        onSuccess={fetchData}
+      />
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.bg,
-  },
-  scrollContent: {
-    paddingBottom: 100,
-  },
-
-  // Header
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 12,
-    backgroundColor: COLORS.cardBg,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-
-  // Balance Card
-  balanceCard: {
-    margin: 12,
-    padding: 16,
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 12,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  balanceLabel: {
-    fontSize: 12,
-    color: COLORS.muted,
-    marginBottom: 4,
-  },
-  balanceAmount: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-
-  // Amount Section
-  amountSection: {
-    marginHorizontal: 12,
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: COLORS.primary,
-    marginBottom: 10,
-  },
-  amountInputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  currencySymbol: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: COLORS.primary,
-    marginRight: 4,
-  },
-  amountInput: {
-    fontSize: 48,
-    fontWeight: "700",
-    color: COLORS.primary,
-  },
-  quickAmounts: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 20,
-  },
-  quickAmountBtn: {
-    flex: 1,
-    padding: 10,
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
-    alignItems: "center",
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  quickAmountBtnActive: {
-    backgroundColor: COLORS.primary + "10",
-    borderColor: COLORS.primary,
-  },
-  quickAmountText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: COLORS.primary,
-  },
-  quickAmountTextActive: {
-    color: COLORS.primary,
-  },
-
-  // Selected Method Section
-  selectedMethodSection: {
-    marginHorizontal: 12,
-    marginBottom: 12,
-  },
-  detailsCard: {
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  detailRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 8,
-  },
-  detailLabel: {
-    fontSize: 12,
-    color: COLORS.muted,
-  },
-  detailValue: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: COLORS.primary,
-  },
-  detailDivider: {
-    height: 1,
-    backgroundColor: COLORS.accent,
-  },
-  changeMethodBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 10,
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  changeMethodText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: COLORS.primary,
-  },
-
-  // Methods List
-  methodsList: {
-    paddingHorizontal: 12,
-    gap: 10,
-  },
-  methodCard: {
-    backgroundColor: COLORS.cardBg,
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  methodCardSelected: {
-    backgroundColor: COLORS.primary + "08",
-  },
-  methodIconContainer: {
-    width: 52,
-    height: 52,
-    borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  methodContent: {
-    flex: 1,
-  },
-  methodName: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: COLORS.primary,
-    marginBottom: 2,
-  },
-  methodDescription: {
-    fontSize: 11,
-    color: COLORS.muted,
-    marginBottom: 6,
-  },
-  methodDetails: {
-    flexDirection: "row",
-    gap: 6,
-  },
-  detailBadge: {
-    backgroundColor: COLORS.accent,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  detailText: {
-    fontSize: 10,
-    color: COLORS.muted,
-    fontWeight: "500",
-  },
-  checkmark: {
-    padding: 4,
-  },
-
-  // Footer
-  footer: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: COLORS.cardBg,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    padding: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  withdrawBtn: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 14,
-    borderRadius: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  withdrawBtnDisabled: {
-    backgroundColor: COLORS.muted,
-    shadowOpacity: 0,
-  },
-  withdrawBtnText: {
-    color: "#FFF",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-});
