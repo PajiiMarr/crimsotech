@@ -143,13 +143,13 @@ export default function Header({ shopId }: HeaderProps) {
 
           {/* Right side - Settings and Switch icons */}
           <View style={styles.rightContainer}>
-            <TouchableOpacity 
+            {/* <TouchableOpacity 
               onPress={handleSettings} 
               style={styles.iconButton}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Ionicons name="settings-outline" size={24} color="#374151" />
-            </TouchableOpacity>
+            </TouchableOpacity> */}
             
             <TouchableOpacity 
               onPress={handleSwitch} 

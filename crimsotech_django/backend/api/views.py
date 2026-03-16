@@ -41462,12 +41462,11 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
             }, status=500)
 
 
-
 class RiderWalletView(APIView):
     """
     Unified view for rider wallet operations:
     - GET: Get wallet balance and transaction history
-    - POST: Add delivery fee or process withdrawal
+    - POST: Handle delivery status changes and withdrawals
     """
     
     def get_user_from_header(self, request):
@@ -41602,8 +41601,8 @@ class RiderWalletView(APIView):
     def post(self, request):
         """
         Handle wallet operations:
-        1. Add delivery fee (credit) - triggered when delivery is marked as delivered
-        2. Process withdrawal (debit)
+        1. handle_delivery_status - Called when delivery status changes
+        2. process_withdrawal - Process withdrawal request
         """
         user, error_response = self.get_user_from_header(request)
         if error_response:
@@ -41612,8 +41611,8 @@ class RiderWalletView(APIView):
         action = request.data.get('action')
 
         try:
-            if action == 'add_delivery_fee':
-                return self.add_delivery_fee(request, user)
+            if action == 'handle_delivery_status':
+                return self.handle_delivery_status(request, user)
             elif action == 'process_withdrawal':
                 return self.process_withdrawal(request, user)
             else:
@@ -41630,17 +41629,19 @@ class RiderWalletView(APIView):
             )
 
     @transaction.atomic
-    def add_delivery_fee(self, request, user):
+    def handle_delivery_status(self, request, user):
         """
-        Add delivery fee to rider wallet based on delivery status:
-        - If status = 'delivered' → transaction status = 'pending', add to pending_balance
-        - If status = 'completed' → transaction status = 'completed', add to available_balance
+        Handle delivery status changes for wallet transactions:
+        - When delivery.status = 'accepted' → Create transaction with status 'accepted' (no balance update)
+        - When delivery.status = 'delivered' → Update transaction to 'pending', add to pending_balance
+        - When delivery.status = 'completed' → Update transaction to 'completed', move to available_balance
         """
         delivery_id = request.data.get('delivery_id')
+        new_status = request.data.get('status')
         
-        if not delivery_id:
+        if not delivery_id or not new_status:
             return Response(
-                {'success': False, 'error': 'Delivery ID is required'},
+                {'success': False, 'error': 'Delivery ID and status are required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -41658,57 +41659,123 @@ class RiderWalletView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Check if delivery is in a valid state for adding fee
-            if delivery.status not in ['delivered', 'completed']:
-                return Response(
-                    {'success': False, 'error': f'Cannot add fee for delivery with status: {delivery.status}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Check if transaction already exists for this delivery
-            existing = WalletTransaction.objects.filter(
-                order=delivery.order,
-                source_type='delivery_fee'
-            ).exists()
-
-            if existing:
-                return Response(
-                    {'success': False, 'error': 'Delivery fee already recorded'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
             # Get or create wallet
             wallet, _ = UserWallet.objects.get_or_create(user=user)
 
-            # Determine transaction status and balance update based on delivery status
-            if delivery.status == 'delivered':
-                transaction_status = 'pending'
-                # Add to pending balance only
-                wallet.pending_balance += delivery.delivery_fee
-            else:  # completed
-                transaction_status = 'completed'
-                # Add to available balance
-                wallet.available_balance += delivery.delivery_fee
-
-            # Save wallet with updated balances
-            wallet.save()
-
-            # Create transaction record
-            transaction = WalletTransaction.objects.create(
-                wallet=wallet,
-                amount=delivery.delivery_fee,
-                transaction_type='credit',
-                source_type='delivery_fee',
-                status=transaction_status,
+            # Check if transaction already exists
+            existing_transaction = WalletTransaction.objects.filter(
                 order=delivery.order,
-                user=user
-            )
+                source_type='delivery_fee'
+            ).first()
 
-            logger.info(f"Delivery fee added for delivery {delivery_id}: ₱{delivery.delivery_fee} ({transaction_status})")
+            # Handle based on new status
+            if new_status == 'accepted':
+                # Check if transaction already exists
+                if existing_transaction:
+                    return Response(
+                        {'success': False, 'error': 'Transaction already exists for this delivery'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                # Create new accepted transaction (no balance update)
+                transaction = WalletTransaction.objects.create(
+                    wallet=wallet,
+                    amount=delivery.delivery_fee,
+                    transaction_type='credit',
+                    source_type='delivery_fee',
+                    status='accepted',
+                    order=delivery.order,
+                    user=user
+                )
+
+                message = 'Delivery accepted - transaction recorded'
+
+            elif new_status == 'delivered':
+                if not existing_transaction:
+                    # If no transaction exists, create one as pending
+                    transaction = WalletTransaction.objects.create(
+                        wallet=wallet,
+                        amount=delivery.delivery_fee,
+                        transaction_type='credit',
+                        source_type='delivery_fee',
+                        status='pending',
+                        order=delivery.order,
+                        user=user
+                    )
+                    
+                    # Add to pending balance
+                    wallet.pending_balance += delivery.delivery_fee
+                    wallet.save()
+                    
+                    message = 'Delivery delivered - pending transaction created'
+                    
+                elif existing_transaction.status == 'accepted':
+                    # Update existing accepted to pending
+                    existing_transaction.status = 'pending'
+                    existing_transaction.save()
+                    
+                    # Add to pending balance
+                    wallet.pending_balance += delivery.delivery_fee
+                    wallet.save()
+                    
+                    transaction = existing_transaction
+                    message = 'Delivery delivered - transaction updated to pending'
+                    
+                else:
+                    return Response(
+                        {'success': False, 'error': f'Cannot update delivery with status {existing_transaction.status} to delivered'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+            elif new_status == 'completed':
+                if not existing_transaction:
+                    return Response(
+                        {'success': False, 'error': 'No transaction found for this delivery'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                    
+                if existing_transaction.status == 'pending':
+                    # Update pending to completed
+                    existing_transaction.status = 'completed'
+                    existing_transaction.save()
+                    
+                    # Move from pending to available
+                    wallet.pending_balance -= delivery.delivery_fee
+                    wallet.available_balance += delivery.delivery_fee
+                    wallet.save()
+                    
+                    transaction = existing_transaction
+                    message = 'Delivery completed - funds moved to available balance'
+                    
+                elif existing_transaction.status == 'accepted':
+                    # Direct from accepted to completed (should not happen normally)
+                    existing_transaction.status = 'completed'
+                    existing_transaction.save()
+                    
+                    # Add directly to available balance
+                    wallet.available_balance += delivery.delivery_fee
+                    wallet.save()
+                    
+                    transaction = existing_transaction
+                    message = 'Delivery completed - funds added to available balance'
+                    
+                else:
+                    return Response(
+                        {'success': False, 'error': f'Cannot update delivery with status {existing_transaction.status} to completed'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+            else:
+                return Response(
+                    {'success': False, 'error': f'Unsupported status: {new_status}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            logger.info(f"Delivery status updated for delivery {delivery_id}: {new_status} - ₱{delivery.delivery_fee}")
 
             return Response({
                 'success': True,
-                'message': f'Delivery fee added successfully ({transaction_status})',
+                'message': message,
                 'transaction': {
                     'id': str(transaction.transaction_id),
                     'amount': float(transaction.amount),
@@ -41723,7 +41790,7 @@ class RiderWalletView(APIView):
                     'formatted_available': f"₱{wallet.available_balance:,.2f}",
                     'formatted_pending': f"₱{wallet.pending_balance:,.2f}",
                 }
-            }, status=status.HTTP_201_CREATED)
+            }, status=status.HTTP_200_OK)
 
         except Delivery.DoesNotExist:
             return Response(
@@ -41731,9 +41798,9 @@ class RiderWalletView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            logger.error(f"Error adding delivery fee: {str(e)}", exc_info=True)
+            logger.error(f"Error handling delivery status: {str(e)}", exc_info=True)
             return Response(
-                {'success': False, 'error': 'Failed to add delivery fee'},
+                {'success': False, 'error': 'Failed to handle delivery status'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
