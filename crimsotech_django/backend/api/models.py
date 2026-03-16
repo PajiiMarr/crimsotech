@@ -957,6 +957,7 @@ class Order(models.Model):
     receipt = models.FileField(upload_to="receipt/", null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     metadata = models.JSONField(null=True, blank=True, default=None)
+    pickup_date = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [

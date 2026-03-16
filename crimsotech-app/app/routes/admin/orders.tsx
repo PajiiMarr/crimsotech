@@ -886,14 +886,6 @@ const columns: ColumnDef<any>[] = [
     ),
   },
   {
-    accessorKey: "status",
-    header: "Item Status",
-    cell: ({ row }: { row: any}) => {
-      const status = row.getValue("status") as string;
-      return <OrderStatusBadge status={status} />;
-    },
-  },
-  {
     accessorKey: "order_status",
     header: "Order Status",
     cell: ({ row }: { row: any}) => {
