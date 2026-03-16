@@ -6125,77 +6125,56 @@ class AdminOrders(viewsets.ViewSet):
             return None
             
         try:
-            # Try ISO format with timezone (2025-12-07T03:21:09.209Z)
             if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
                 if date_str.endswith('Z'):
                     return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
                 return datetime.fromisoformat(date_str)
-            
-            # Try simple date format (2025-12-07)
             elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
                 return datetime.strptime(date_str, '%Y-%m-%d')
-            
-            # Try other common formats
             for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
                 try:
                     return datetime.strptime(date_str, fmt)
                 except ValueError:
                     continue
-                    
             return None
-            
         except (ValueError, TypeError) as e:
             print(f"Date parsing error for '{date_str}': {e}")
             return None
     
     def get_date_range_filter(self, start_date_str, end_date_str):
         """Get date range filter or return default (last 30 days)"""
-        # Default to last 30 days if no date range provided
         if not start_date_str and not end_date_str:
             end_date = timezone.now()
             start_date = end_date - timedelta(days=30)
             return start_date, end_date
         
-        # Parse provided dates
         start_date = self.parse_date(start_date_str) if start_date_str else None
         end_date = self.parse_date(end_date_str) if end_date_str else None
         
-        # Validate dates
         if start_date_str and not start_date:
             raise ValueError(f"Invalid start_date format: {start_date_str}")
-        
         if end_date_str and not end_date:
             raise ValueError(f"Invalid end_date format: {end_date_str}")
         
-        # Make dates timezone aware if needed
         if start_date and not timezone.is_aware(start_date):
             start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
-        
         if end_date and not timezone.is_aware(end_date):
             end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
         
-        # If only start date provided, end date defaults to now
         if start_date and not end_date:
             end_date = timezone.now()
-        
-        # If only end date provided, start date defaults to 30 days before end date
         if end_date and not start_date:
             start_date = end_date - timedelta(days=30)
         
         return start_date, end_date
     
     def _get_product_media(self, product):
-        """
-        Helper method to get product media URLs with S3 conversion
-        """
+        """Helper method to get product media URLs with S3 conversion"""
         media_files = []
         try:
-            # Get all media for this product
-            product_media = ProductMedia.objects.filter(product=product).order_by('created_at')
-            
+            product_media = ProductMedia.objects.filter(product=product)
             for media in product_media:
                 if media.file_data:
-                    # Convert S3 URL to public URL
                     file_url = convert_s3_to_public_url(media.file_data.url)
                     media_files.append({
                         "id": str(media.id),
@@ -6204,102 +6183,220 @@ class AdminOrders(viewsets.ViewSet):
                     })
         except Exception as e:
             print(f"Error getting product media: {e}")
-        
         return media_files
     
     def _get_variant_media(self, variant):
-        """
-        Helper method to get variant image URL with S3 conversion
-        """
+        """Helper method to get variant image URL with S3 conversion"""
         if variant and variant.image:
             return convert_s3_to_public_url(variant.image.url)
         return None
     
     def _get_product_price(self, product, variant=None):
-        """
-        Helper method to safely get product price from variant
-        """
-        # Try to get price from variant first (since Product model no longer has price field)
+        """Helper method to safely get product price from variant"""
         if variant and hasattr(variant, 'price') and variant.price:
             return float(variant.price)
-        
-        # Try to get price from product's variants
         if product and hasattr(product, 'variants'):
             first_variant = product.variants.filter(is_active=True).first()
             if first_variant and first_variant.price:
                 return float(first_variant.price)
-        
-        # Fallback to 0
         return 0
-    
-    def _get_order_receipt(self, order):
-        """
-        Helper method to get order receipt URL with S3 conversion
-        """
-        if order.receipt and hasattr(order.receipt, 'url'):
-            return convert_s3_to_public_url(order.receipt.url)
-        return None
-    
+
+    def _serialize_order(self, order):
+        """Shared helper to serialize an order object consistently"""
+        checkouts = order.checkout_set.select_related(
+            'cart_item__product__shop',
+            'cart_item__product__category',
+            'cart_item__variant',
+            'cart_item__user',
+            'voucher'
+        ).all()
+
+        items = []
+        for checkout in checkouts:
+            cart_item = checkout.cart_item
+            product = cart_item.product if cart_item else None
+            variant = cart_item.variant if cart_item else None
+            shop = product.shop if product else None
+            user = cart_item.user if cart_item else None
+
+            price = self._get_product_price(product, variant)
+            product_media = self._get_product_media(product) if product else []
+            variant_image_url = self._get_variant_media(variant) if variant else None
+
+            item_data = {
+                'id': str(checkout.id),
+                'cart_item': {
+                    'id': str(cart_item.id) if cart_item else None,
+                    'product': {
+                        'id': str(product.id) if product else None,
+                        'name': product.name if product else 'Unknown Product',
+                        'description': product.description if product else '',
+                        'price': price,
+                        'condition': product.condition if product else '',
+                        'is_refundable': product.is_refundable if product else None,
+                        'refund_days': product.refund_days if product else 0,
+                        'upload_status': product.upload_status if product else '',
+                        'created_at': product.created_at.isoformat() if product and product.created_at else None,
+                        'updated_at': product.updated_at.isoformat() if product and product.updated_at else None,
+                        'shop': {
+                            'id': str(shop.id) if shop else None,
+                            'name': shop.name if shop else 'Unknown Shop',
+                            'contact_number': shop.contact_number if shop else '',
+                            'verified': shop.verified if shop else False,
+                            'status': shop.status if shop else ''
+                        } if shop else None,
+                        'category': {
+                            'id': str(product.category.id) if product and product.category else None,
+                            'name': product.category.name if product and product.category else None,
+                        } if product and product.category else None,
+                        'media': product_media,
+                        'primary_image': product_media[0] if product_media else None
+                    },
+                    'variant': {
+                        'id': str(variant.id),
+                        'title': variant.title,
+                        'sku_code': variant.sku_code,
+                        'price': float(variant.price) if variant.price else None,
+                        'compare_price': float(variant.compare_price) if variant.compare_price else None,
+                        'quantity': variant.quantity,
+                        'weight': float(variant.weight) if variant.weight else None,
+                        'weight_unit': variant.weight_unit,
+                        'is_active': variant.is_active,
+                        'is_refundable': variant.is_refundable,
+                        'refund_days': variant.refund_days,
+                        'allow_swap': variant.allow_swap,
+                        'swap_type': variant.swap_type,
+                        'swap_description': variant.swap_description,
+                        'original_price': float(variant.original_price) if variant.original_price else None,
+                        'usage_period': float(variant.usage_period) if variant.usage_period else None,
+                        'usage_unit': variant.usage_unit,
+                        'depreciation_rate': float(variant.depreciation_rate) if variant.depreciation_rate else None,
+                        'minimum_additional_payment': float(variant.minimum_additional_payment) if variant.minimum_additional_payment else 0,
+                        'maximum_additional_payment': float(variant.maximum_additional_payment) if variant.maximum_additional_payment else 0,
+                        'image_url': variant_image_url,
+                        'critical_stock': variant.critical_stock,
+                        'created_at': variant.created_at.isoformat() if variant.created_at else None,
+                        'updated_at': variant.updated_at.isoformat() if variant.updated_at else None,
+                    } if variant else None,
+                    'quantity': cart_item.quantity if cart_item else 0,
+                    'is_ordered': cart_item.is_ordered if cart_item else False,
+                    'added_at': cart_item.added_at.isoformat() if cart_item and cart_item.added_at else None,
+                    'user': {
+                        'id': str(user.id) if user else None,
+                        'username': user.username if user else 'Unknown',
+                        'email': user.email if user else '',
+                        'first_name': user.first_name if user else '',
+                        'last_name': user.last_name if user else '',
+                        'contact_number': user.contact_number if user else ''
+                    } if user else None
+                },
+                'voucher': {
+                    'id': str(checkout.voucher.id),
+                    'name': checkout.voucher.name,
+                    'code': checkout.voucher.code,
+                    'discount_type': checkout.voucher.discount_type,
+                    'value': float(checkout.voucher.value),
+                    'minimum_spend': float(checkout.voucher.minimum_spend) if checkout.voucher.minimum_spend else 0,
+                    'valid_until': checkout.voucher.valid_until.isoformat() if checkout.voucher.valid_until else None,
+                    'is_active': checkout.voucher.is_active
+                } if checkout.voucher else None,
+                'total_amount': float(checkout.total_amount),
+                'status': checkout.status,
+                'remarks': checkout.remarks or '',
+                'created_at': checkout.created_at.isoformat() if checkout.created_at else None,
+            }
+            items.append(item_data)
+
+        shipping_address_info = None
+        if order.shipping_address:
+            shipping_address_info = {
+                'id': str(order.shipping_address.id),
+                'recipient_name': order.shipping_address.recipient_name,
+                'recipient_phone': order.shipping_address.recipient_phone,
+                'street': order.shipping_address.street,
+                'barangay': order.shipping_address.barangay,
+                'city': order.shipping_address.city,
+                'province': order.shipping_address.province,
+                'state': order.shipping_address.state,
+                'zip_code': order.shipping_address.zip_code,
+                'country': order.shipping_address.country,
+                'full_address': order.shipping_address.get_full_address(),
+                'address_type': order.shipping_address.address_type,
+                'is_default': order.shipping_address.is_default,
+                'building_name': order.shipping_address.building_name,
+                'floor_number': order.shipping_address.floor_number,
+                'unit_number': order.shipping_address.unit_number,
+                'landmark': order.shipping_address.landmark,
+                'instructions': order.shipping_address.instructions,
+                'created_at': order.shipping_address.created_at.isoformat() if order.shipping_address.created_at else None,
+                'updated_at': order.shipping_address.updated_at.isoformat() if order.shipping_address.updated_at else None,
+            }
+
+        return {
+            'order_id': str(order.order),
+            'user': {
+                'id': str(order.user.id),
+                'username': order.user.username,
+                'email': order.user.email,
+                'first_name': order.user.first_name,
+                'last_name': order.user.last_name,
+                'contact_number': order.user.contact_number,
+            },
+            'status': order.status,
+            'total_amount': float(order.total_amount),
+            'payment_method': order.payment_method,
+            'delivery_method': order.delivery_method,
+            'delivery_address': order.delivery_address_text or (
+                order.shipping_address.get_full_address() if order.shipping_address else ''
+            ),
+            'shipping_address': shipping_address_info,
+            'created_at': order.created_at.isoformat() if order.created_at else None,
+            'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+            'completed_at': order.completed_at.isoformat() if order.completed_at else None,
+            'items': items
+        }
+
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """Get order metrics data for admin dashboard with date range support"""
         try:
-            # FIX: Accept both parameter names for compatibility
             start_date_str = request.GET.get('start_date') or request.GET.get('start')
             end_date_str = request.GET.get('end_date') or request.GET.get('end')
             
-            # Get date range
             try:
                 start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
             except ValueError as e:
-                return Response(
-                    {'success': False, 'error': str(e)}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
             
-            # DEBUG: Print date range for troubleshooting
             print(f"Order metrics date range filter: {start_date} to {end_date}")
-            print(f"Start date string: {start_date_str}, End date string: {end_date_str}")
             
-            # Base queryset with date filter applied - ONLY if dates are provided
             date_filtered_orders_qs = Order.objects.all()
             filter_applied = bool(start_date_str and end_date_str)
             
             if filter_applied and start_date and end_date:
-                # Set end_date to end of day to include all orders on the end date
                 end_of_day = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
                 date_filtered_orders_qs = date_filtered_orders_qs.filter(
                     created_at__gte=start_date,
                     created_at__lte=end_of_day
                 )
-                print(f"Applied date filter: {date_filtered_orders_qs.count()} orders in range")
-            else:
-                print(f"No date filter applied, showing all {date_filtered_orders_qs.count()} orders")
             
-            # All metrics should be calculated within the date range for consistency
             total_orders_in_period = date_filtered_orders_qs.count()
             completed_orders_in_period = date_filtered_orders_qs.filter(status='completed').count()
             pending_orders_in_period = date_filtered_orders_qs.filter(status='pending').count()
             cancelled_orders_in_period = date_filtered_orders_qs.filter(status='cancelled').count()
             
-            # Calculate revenue from orders in the date range
             revenue_data_in_period = date_filtered_orders_qs.filter(status='completed').aggregate(
                 total_revenue=Sum('total_amount')
             )
             total_revenue_in_period = revenue_data_in_period['total_revenue'] or Decimal('0')
             
-            # Today's orders within the date range (not necessarily actual today)
-            today_orders_in_period = 0
-            
-            # Check if "today" is within the date range or if no date filter
             today = timezone.now().date()
+            today_orders_in_period = 0
             
             if filter_applied and start_date and end_date:
                 start_date_date = start_date.date()
                 end_date_date = end_date.date()
-                
                 if start_date_date <= today <= end_date_date:
-                    # Today is within the date range, calculate today's orders
                     today_start = timezone.make_aware(datetime.combine(today, datetime.min.time()))
                     today_end = timezone.make_aware(datetime.combine(today, datetime.max.time()))
                     today_orders_in_period = Order.objects.filter(
@@ -6307,52 +6404,35 @@ class AdminOrders(viewsets.ViewSet):
                         created_at__lte=min(end_date, today_end)
                     ).count()
             else:
-                # No date filter, show actual today's orders
-                today_orders_in_period = Order.objects.filter(
-                    created_at__date=today
-                ).count()
+                today_orders_in_period = Order.objects.filter(created_at__date=today).count()
             
-            # Monthly orders within the date range
             monthly_orders_in_period = 0
-            
             if filter_applied and start_date and end_date:
-                # Calculate the start and end of the current month within the date range
                 current_month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                
-                # Determine the overlapping period between the date range and current month
                 month_range_start = max(start_date, current_month_start)
                 month_range_end = min(end_date, timezone.now())
-                
                 if month_range_start <= month_range_end:
                     monthly_orders_in_period = Order.objects.filter(
                         created_at__gte=month_range_start,
                         created_at__lte=month_range_end
                     ).count()
             else:
-                # No date filter, show current month's orders
                 current_month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                monthly_orders_in_period = Order.objects.filter(
-                    created_at__gte=current_month_start
-                ).count()
+                monthly_orders_in_period = Order.objects.filter(created_at__gte=current_month_start).count()
             
-            # Average order value for the period
             avg_order_value_in_period = Decimal('0')
             if completed_orders_in_period > 0:
                 avg_order_value_in_period = total_revenue_in_period / completed_orders_in_period
             
-            # Success rate for the period
             success_rate_in_period = Decimal('0')
             if total_orders_in_period > 0:
                 success_rate_in_period = (completed_orders_in_period / total_orders_in_period) * 100
             
-            # For frontend compatibility, also include all-time total orders
             all_time_total_orders = Order.objects.all().count()
-            all_time_revenue_data = Order.objects.filter(status='completed').aggregate(
+            all_time_revenue = Order.objects.filter(status='completed').aggregate(
                 total_revenue=Sum('total_amount')
-            )
-            all_time_revenue = all_time_revenue_data['total_revenue'] or Decimal('0')
+            )['total_revenue'] or Decimal('0')
             
-            # Compile metrics - use date-filtered values for consistency
             order_metrics = {
                 'total_orders': total_orders_in_period,
                 'pending_orders': pending_orders_in_period,
@@ -6363,15 +6443,13 @@ class AdminOrders(viewsets.ViewSet):
                 'monthly_orders': monthly_orders_in_period,
                 'avg_order_value': float(avg_order_value_in_period),
                 'success_rate': float(success_rate_in_period),
-                # Include all-time stats for reference if needed
                 'all_time_total_orders': all_time_total_orders,
                 'all_time_revenue': float(all_time_revenue)
             }
             
-            # Get recent orders with related data - pass None if no dates to get all orders
             recent_orders = self._get_recent_orders()
             
-            response_data = {
+            return Response({
                 'success': True,
                 'metrics': order_metrics,
                 'orders': recent_orders,
@@ -6382,21 +6460,16 @@ class AdminOrders(viewsets.ViewSet):
                     'actual_end': end_date.isoformat() if end_date else None,
                     'filter_applied': filter_applied
                 }
-            }
-            
-            return Response(response_data)
+            })
             
         except Exception as e:
             import traceback
             print(f"Error in get_metrics: {str(e)}")
             print(traceback.format_exc())
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _get_recent_orders(self, start_date=None, end_date=None):
-        """Get recent orders with all related data with date range support"""
+        """Get recent orders with all related data"""
         orders_qs = Order.objects.select_related(
             'user',
             'shipping_address'
@@ -6409,421 +6482,59 @@ class AdminOrders(viewsets.ViewSet):
             'checkout_set__voucher'
         ).order_by('-created_at')
         
-        # Apply date filter only if both dates are provided
         if start_date and end_date:
-            # Set end_date to end of day to include all orders on the end date
             end_of_day = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
             orders_qs = orders_qs.filter(
                 created_at__gte=start_date,
                 created_at__lte=end_of_day
             )
         
-        # Get ALL orders (removed any limit)
         orders = orders_qs.all()
-        
         print(f"Retrieved {orders.count()} orders from database")
         
-        order_list = []
-        
-        for order in orders:
-            # Get all checkouts for this order
-            order_checkouts = order.checkout_set.select_related(
-                'cart_item',
-                'cart_item__product',
-                'cart_item__variant',
-                'cart_item__product__shop',
-                'cart_item__user',
-                'voucher'
-            ).all()
-            
-            # Process items in the order
-            items = []
-            for checkout in order_checkouts:
-                cart_item = checkout.cart_item
-                product = cart_item.product if cart_item else None
-                variant = cart_item.variant if cart_item else None
-                shop = product.shop if product else None
-                user = cart_item.user if cart_item else None
-                
-                # Get price safely using helper method
-                price = self._get_product_price(product, variant)
-                
-                # Get product media with S3 conversion
-                product_media = self._get_product_media(product) if product else []
-                
-                # Get variant image with S3 conversion
-                variant_image_url = self._get_variant_media(variant) if variant else None
-                
-                item_data = {
-                    'id': str(checkout.id),
-                    'cart_item': {
-                        'id': str(cart_item.id) if cart_item else None,
-                        'product': {
-                            'id': str(product.id) if product else None,
-                            'name': product.name if product else 'Unknown Product',
-                            'description': product.description if product else '',
-                            'price': price,
-                            'condition': product.condition if product else '',
-                            'is_refundable': product.is_refundable if product else None,
-                            'refund_days': product.refund_days if product else 0,
-                            'upload_status': product.upload_status if product else '',
-                            'created_at': product.created_at.isoformat() if product and product.created_at else None,
-                            'updated_at': product.updated_at.isoformat() if product and product.updated_at else None,
-                            'shop': {
-                                'id': str(shop.id) if shop else None,
-                                'name': shop.name if shop else 'Unknown Shop',
-                                'contact_number': shop.contact_number if shop else '',
-                                'verified': shop.verified if shop else False,
-                                'status': shop.status if shop else ''
-                            },
-                            'media': product_media,
-                            'primary_image': product_media[0] if product_media else None
-                        },
-                        'variant': {
-                            'id': str(variant.id) if variant else None,
-                            'title': variant.title if variant else None,
-                            'sku_code': variant.sku_code if variant else None,
-                            'price': float(variant.price) if variant and variant.price else None,
-                            'compare_price': float(variant.compare_price) if variant and variant.compare_price else None,
-                            'quantity': variant.quantity if variant else 0,
-                            'weight': float(variant.weight) if variant and variant.weight else None,
-                            'weight_unit': variant.weight_unit if variant else 'g',
-                            'is_active': variant.is_active if variant else False,
-                            'is_refundable': variant.is_refundable if variant else False,
-                            'refund_days': variant.refund_days if variant else 0,
-                            'allow_swap': variant.allow_swap if variant else False,
-                            'swap_type': variant.swap_type if variant else None,
-                            'image_url': variant_image_url,
-                            'created_at': variant.created_at.isoformat() if variant and variant.created_at else None,
-                            'updated_at': variant.updated_at.isoformat() if variant and variant.updated_at else None
-                        } if variant else None,
-                        'quantity': cart_item.quantity if cart_item else 0,
-                        'is_ordered': cart_item.is_ordered if cart_item else False,
-                        'added_at': cart_item.added_at.isoformat() if cart_item and cart_item.added_at else None,
-                        'user': {
-                            'id': str(user.id) if user else None,
-                            'username': user.username if user else 'Unknown User',
-                            'email': user.email if user else '',
-                            'first_name': user.first_name if user else '',
-                            'last_name': user.last_name if user else '',
-                            'contact_number': user.contact_number if user else ''
-                        }
-                    },
-                    'quantity': checkout.quantity,
-                    'total_amount': float(checkout.total_amount),
-                    'status': checkout.status,
-                    'remarks': checkout.remarks or '',
-                    'created_at': checkout.created_at.isoformat() if checkout.created_at else None,
-                }
-                
-                # Add voucher data if exists
-                if checkout.voucher:
-                    item_data['voucher'] = {
-                        'id': str(checkout.voucher.id),
-                        'name': checkout.voucher.name,
-                        'code': checkout.voucher.code,
-                        'discount_type': checkout.voucher.discount_type,
-                        'value': float(checkout.voucher.value),
-                        'minimum_spend': float(checkout.voucher.minimum_spend) if checkout.voucher.minimum_spend else 0,
-                        'valid_until': checkout.voucher.valid_until.isoformat() if checkout.voucher.valid_until else None,
-                        'is_active': checkout.voucher.is_active
-                    }
-                
-                items.append(item_data)
-            
-            # Get delivery address
-            delivery_address = order.delivery_address_text or ''
-            shipping_address_info = {}
-            
-            if order.shipping_address:
-                shipping_address_info = {
-                    'id': str(order.shipping_address.id),
-                    'recipient_name': order.shipping_address.recipient_name,
-                    'recipient_phone': order.shipping_address.recipient_phone,
-                    'street': order.shipping_address.street,
-                    'barangay': order.shipping_address.barangay,
-                    'city': order.shipping_address.city,
-                    'province': order.shipping_address.province,
-                    'zip_code': order.shipping_address.zip_code,
-                    'country': order.shipping_address.country,
-                    'full_address': order.shipping_address.get_full_address(),
-                    'address_type': order.shipping_address.address_type,
-                    'is_default': order.shipping_address.is_default,
-                    'building_name': order.shipping_address.building_name,
-                    'floor_number': order.shipping_address.floor_number,
-                    'unit_number': order.shipping_address.unit_number,
-                    'landmark': order.shipping_address.landmark,
-                    'instructions': order.shipping_address.instructions
-                }
-            
-            # Get receipt URL with S3 conversion
-            receipt_url = None
-            receipt_file_name = None
-            receipt_file_type = None
-            if order.receipt and hasattr(order.receipt, 'url'):
-                receipt_url = convert_s3_to_public_url(order.receipt.url)
-                receipt_file_name = order.receipt.name.split('/')[-1] if order.receipt.name else None
-                # Determine file type from extension
-                if receipt_file_name:
-                    ext = receipt_file_name.split('.')[-1].lower() if '.' in receipt_file_name else ''
-                    receipt_file_type = ext
-            
-            order_data = {
-                'order_id': str(order.order),
-                'user': {
-                    'id': str(order.user.id),
-                    'username': order.user.username,
-                    'email': order.user.email,
-                    'first_name': order.user.first_name,
-                    'last_name': order.user.last_name,
-                    'contact_number': order.user.contact_number,
-                    'is_admin': order.user.is_admin,
-                    'is_customer': order.user.is_customer,
-                    'is_moderator': order.user.is_moderator,
-                    'is_rider': order.user.is_rider
-                },
-                'approval': order.approval,
-                'status': order.status,
-                'total_amount': float(order.total_amount),
-                'payment_method': order.payment_method,
-                'delivery_method': order.delivery_method,
-                'delivery_address': delivery_address,
-                'shipping_address': shipping_address_info,
-                'receipt': {
-                    'url': receipt_url,
-                    'file_name': receipt_file_name,
-                    'file_type': receipt_file_type,
-                    'uploaded_at': order.updated_at.isoformat() if order.updated_at else None
-                } if receipt_url else None,
-                'created_at': order.created_at.isoformat() if order.created_at else None,
-                'updated_at': order.updated_at.isoformat() if order.updated_at else None,
-                'completed_at': order.completed_at.isoformat() if order.completed_at else None,
-                'items': items
-            }
-            
-            order_list.append(order_data)
-        
-        return order_list
+        return [self._serialize_order(order) for order in orders]
 
     @action(detail=False, methods=['get'])
-    def get_order_details(self, request):
-        """Get detailed order information"""
-        order_id = request.query_params.get('order_id')
+    def get_order(self, request):
+        """Get detailed order information for admin view"""
+        order_id = request.GET.get('order_id')
         
         if not order_id:
-            return Response({
-                'success': False,
-                'error': 'Order ID is required'
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return JsonResponse({'success': False, 'error': 'Order ID is required'}, status=400)
         
         try:
-            order = Order.objects.select_related(
-                'user',
-                'shipping_address'
-            ).prefetch_related(
-                'checkout_set',
-                'checkout_set__cart_item',
-                'checkout_set__cart_item__product',
-                'checkout_set__cart_item__variant',
-                'checkout_set__cart_item__product__shop',
-                'checkout_set__voucher'
-            ).get(order=order_id)
-            
-            # Process order items
-            items = []
-            for checkout in order.checkout_set.all():
-                cart_item = checkout.cart_item
-                product = cart_item.product if cart_item else None
-                variant = cart_item.variant if cart_item else None
-                shop = product.shop if product else None
-                user = cart_item.user if cart_item else None
-                
-                # Get price safely using helper method
-                price = self._get_product_price(product, variant)
-                
-                # Get product media with S3 conversion
-                product_media = self._get_product_media(product) if product else []
-                
-                # Get variant image with S3 conversion
-                variant_image_url = self._get_variant_media(variant) if variant else None
-                
-                item_data = {
-                    'id': str(checkout.id),
-                    'cart_item': {
-                        'id': str(cart_item.id) if cart_item else None,
-                        'product': {
-                            'id': str(product.id) if product else None,
-                            'name': product.name if product else 'Unknown Product',
-                            'description': product.description if product else '',
-                            'price': price,
-                            'condition': product.condition if product else '',
-                            'is_refundable': product.is_refundable if product else None,
-                            'refund_days': product.refund_days if product else 0,
-                            'upload_status': product.upload_status if product else '',
-                            'created_at': product.created_at.isoformat() if product and product.created_at else None,
-                            'updated_at': product.updated_at.isoformat() if product and product.updated_at else None,
-                            'shop': {
-                                'id': str(shop.id) if shop else None,
-                                'name': shop.name if shop else 'Unknown Shop',
-                                'contact_number': shop.contact_number if shop else '',
-                                'verified': shop.verified if shop else False,
-                                'status': shop.status if shop else ''
-                            },
-                            'media': product_media,
-                            'primary_image': product_media[0] if product_media else None
-                        },
-                        'variant': {
-                            'id': str(variant.id) if variant else None,
-                            'title': variant.title if variant else None,
-                            'sku_code': variant.sku_code if variant else None,
-                            'price': float(variant.price) if variant and variant.price else None,
-                            'compare_price': float(variant.compare_price) if variant and variant.compare_price else None,
-                            'quantity': variant.quantity if variant else 0,
-                            'weight': float(variant.weight) if variant and variant.weight else None,
-                            'weight_unit': variant.weight_unit if variant else 'g',
-                            'is_active': variant.is_active if variant else False,
-                            'is_refundable': variant.is_refundable if variant else False,
-                            'refund_days': variant.refund_days if variant else 0,
-                            'allow_swap': variant.allow_swap if variant else False,
-                            'swap_type': variant.swap_type if variant else None,
-                            'swap_description': variant.swap_description if variant else None,
-                            'original_price': float(variant.original_price) if variant and variant.original_price else None,
-                            'usage_period': float(variant.usage_period) if variant and variant.usage_period else None,
-                            'usage_unit': variant.usage_unit if variant else None,
-                            'depreciation_rate': float(variant.depreciation_rate) if variant and variant.depreciation_rate else None,
-                            'minimum_additional_payment': float(variant.minimum_additional_payment) if variant and variant.minimum_additional_payment else 0,
-                            'maximum_additional_payment': float(variant.maximum_additional_payment) if variant and variant.maximum_additional_payment else 0,
-                            'image_url': variant_image_url,
-                            'critical_stock': variant.critical_stock if variant else None,
-                            'created_at': variant.created_at.isoformat() if variant and variant.created_at else None,
-                            'updated_at': variant.updated_at.isoformat() if variant and variant.updated_at else None
-                        } if variant else None,
-                        'quantity': cart_item.quantity if cart_item else 0,
-                        'is_ordered': cart_item.is_ordered if cart_item else False,
-                        'added_at': cart_item.added_at.isoformat() if cart_item and cart_item.added_at else None,
-                        'user': {
-                            'id': str(user.id) if user else None,
-                            'username': user.username if user else 'Unknown User',
-                            'email': user.email if user else '',
-                            'first_name': user.first_name if user else '',
-                            'last_name': user.last_name if user else '',
-                            'contact_number': user.contact_number if user else ''
-                        }
-                    },
-                    'quantity': checkout.quantity,
-                    'total_amount': float(checkout.total_amount),
-                    'status': checkout.status,
-                    'remarks': checkout.remarks or '',
-                    'created_at': checkout.created_at.isoformat() if checkout.created_at else None,
-                }
-                
-                if checkout.voucher:
-                    item_data['voucher'] = {
-                        'id': str(checkout.voucher.id),
-                        'name': checkout.voucher.name,
-                        'code': checkout.voucher.code,
-                        'discount_type': checkout.voucher.discount_type,
-                        'value': float(checkout.voucher.value),
-                        'minimum_spend': float(checkout.voucher.minimum_spend) if checkout.voucher.minimum_spend else 0,
-                        'maximum_usage': checkout.voucher.maximum_usage,
-                        'valid_until': checkout.voucher.valid_until.isoformat() if checkout.voucher.valid_until else None,
-                        'is_active': checkout.voucher.is_active,
-                        'added_at': checkout.voucher.added_at.isoformat() if checkout.voucher.added_at else None
-                    }
-                
-                items.append(item_data)
-            
-            # Get delivery address
-            delivery_address = order.delivery_address_text or ''
-            
-            # Include shipping address info if available
-            shipping_address_info = {}
-            if order.shipping_address:
-                shipping_address_info = {
-                    'id': str(order.shipping_address.id),
-                    'recipient_name': order.shipping_address.recipient_name,
-                    'recipient_phone': order.shipping_address.recipient_phone,
-                    'street': order.shipping_address.street,
-                    'barangay': order.shipping_address.barangay,
-                    'city': order.shipping_address.city,
-                    'province': order.shipping_address.province,
-                    'state': order.shipping_address.state,
-                    'zip_code': order.shipping_address.zip_code,
-                    'country': order.shipping_address.country,
-                    'full_address': order.shipping_address.get_full_address(),
-                    'address_type': order.shipping_address.address_type,
-                    'is_default': order.shipping_address.is_default,
-                    'building_name': order.shipping_address.building_name,
-                    'floor_number': order.shipping_address.floor_number,
-                    'unit_number': order.shipping_address.unit_number,
-                    'landmark': order.shipping_address.landmark,
-                    'instructions': order.shipping_address.instructions,
-                    'created_at': order.shipping_address.created_at.isoformat() if order.shipping_address.created_at else None,
-                    'updated_at': order.shipping_address.updated_at.isoformat() if order.shipping_address.updated_at else None
-                }
-            
-            # Get receipt URL with S3 conversion
-            receipt_url = None
-            receipt_file_name = None
-            receipt_file_type = None
-            if order.receipt and hasattr(order.receipt, 'url'):
-                receipt_url = convert_s3_to_public_url(order.receipt.url)
-                receipt_file_name = order.receipt.name.split('/')[-1] if order.receipt.name else None
-                # Determine file type from extension
-                if receipt_file_name:
-                    ext = receipt_file_name.split('.')[-1].lower() if '.' in receipt_file_name else ''
-                    receipt_file_type = ext
-            
-            order_data = {
-                'order_id': str(order.order),
-                'user': {
-                    'id': str(order.user.id),
-                    'username': order.user.username,
-                    'email': order.user.email,
-                    'first_name': order.user.first_name,
-                    'last_name': order.user.last_name,
-                    'contact_number': order.user.contact_number,
-                    'is_admin': order.user.is_admin,
-                    'is_customer': order.user.is_customer,
-                    'is_moderator': order.user.is_moderator,
-                    'is_rider': order.user.is_rider,
-                    'created_at': order.user.created_at.isoformat() if order.user.created_at else None
-                },
-                'approval': order.approval,
-                'status': order.status,
-                'total_amount': float(order.total_amount),
-                'payment_method': order.payment_method,
-                'delivery_method': order.delivery_method,
-                'delivery_address': delivery_address,
-                'shipping_address': shipping_address_info,
-                'receipt': {
-                    'url': receipt_url,
-                    'file_name': receipt_file_name,
-                    'file_type': receipt_file_type,
-                    'uploaded_at': order.updated_at.isoformat() if order.updated_at else None
-                } if receipt_url else None,
-                'created_at': order.created_at.isoformat(),
-                'updated_at': order.updated_at.isoformat(),
-                'completed_at': order.completed_at.isoformat() if order.completed_at else None,
-                'items': items
-            }
-            
-            return Response({
-                'success': True,
-                'order': order_data
-            })
-            
-        except Order.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Order not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            uuid.UUID(str(order_id))
+        except (ValueError, AttributeError):
+            return JsonResponse({'success': False, 'error': 'Invalid order ID format'}, status=400)
         
+        try:
+            order = get_object_or_404(
+                Order.objects.select_related(
+                    'user',
+                    'shipping_address'
+                ).prefetch_related(
+                    'checkout_set__cart_item__product__shop',
+                    'checkout_set__cart_item__product__category',
+                    'checkout_set__cart_item__variant',
+                    'checkout_set__cart_item__user',
+                    'checkout_set__voucher'
+                ),
+                order=order_id
+            )
+            
+            return JsonResponse({
+                'success': True,
+                'order': self._serialize_order(order)
+            })
+                
+        except Order.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'Order not found'}, status=404)
+        except Exception as e:
+            import traceback
+            print(f"Error fetching order: {str(e)}")
+            print(traceback.format_exc())
+            return JsonResponse({'success': False, 'error': 'Internal server error'}, status=500)
+
     @action(detail=False, methods=['post'])
     def update_order_status(self, request):
         """Update order status"""
@@ -6840,280 +6551,160 @@ class AdminOrders(viewsets.ViewSet):
             order = Order.objects.get(order=order_id)
             order.status = new_status
             order.save()
-            
-            return Response({
-                'success': True,
-                'message': f'Order status updated to {new_status}'
-            })
-            
+            return Response({'success': True, 'message': f'Order status updated to {new_status}'})
         except Order.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Order not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=False, methods=['post'])
-    def update_order_approval(self, request):
-        """Update order approval status (pending/accepted/rejected)"""
+    def mark_as_shipped(self, request):
+        """Mark order as shipped"""
         order_id = request.data.get('order_id')
-        new_approval = request.data.get('approval')
-        
-        print(f"🔍 DEBUG - update_order_approval called with order_id: {order_id}, new_approval: {new_approval}")
-        
-        if not order_id or not new_approval:
-            return Response({
-                'success': False,
-                'error': 'Order ID and approval status are required'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        valid_approvals = ['pending', 'accepted', 'rejected']
-        if new_approval not in valid_approvals:
-            return Response({
-                'success': False,
-                'error': f'Invalid approval status. Must be one of: {", ".join(valid_approvals)}'
-            }, status=status.HTTP_400_BAD_REQUEST)
+        if not order_id:
+            return Response({'success': False, 'error': 'Order ID is required'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
             order = Order.objects.get(order=order_id)
-            old_approval = order.approval
-            order.approval = new_approval
+            if order.status != 'processing':
+                return Response({
+                    'success': False,
+                    'error': f'Order must be in processing status to mark as shipped. Current status: {order.status}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            order.status = 'shipped'
             order.save()
-            
-            print(f"✅ Order approval updated from {old_approval} to {new_approval}")
-            
-            # ===== CREATE WALLET TRANSACTION WHEN APPROVAL IS ACCEPTED =====
-            if new_approval == 'accepted' and old_approval != 'accepted':
-                print(f"💰 Creating wallet transaction for order {order_id}")
-                
-                try:
-                    from decimal import Decimal
-                    from django.db.models import Sum
-                    
-                    # Get all checkouts for this order
-                    checkouts = Checkout.objects.filter(order=order)
-                    print(f"📦 Found {checkouts.count()} checkouts for this order")
-                    
-                    if not checkouts.exists():
-                        print("⚠️ No checkouts found for this order")
-                        return Response({
-                            'success': True,
-                            'message': f'Order approval updated to {new_approval} but no items found'
-                        })
-                    
-                    # Check if this is a shop sale or personal listing
-                    # Look at the first checkout to determine
-                    first_checkout = checkouts.first()
-                    product = first_checkout.cart_item.product if first_checkout and first_checkout.cart_item else None
-                    
-                    if not product:
-                        print("⚠️ No product found in checkout")
-                        return Response({
-                            'success': True,
-                            'message': f'Order approval updated to {new_approval}'
-                        })
-                    
-                    # Check if product has a shop
-                    if product.shop:
-                        print(f"🏪 This is a SHOP sale - Shop ID: {product.shop.id}, Name: {product.shop.name}")
-                        
-                        # Handle shop sales - group by shop
-                        # Get unique shops in this order
-                        shop_ids = checkouts.values_list(
-                            'cart_item__product__shop', 
-                            flat=True
-                        ).distinct()
-                        
-                        print(f"🏪 Found {len(shop_ids)} unique shops in this order")
-                        
-                        for shop_id in shop_ids:
-                            if not shop_id:
-                                continue
-                                
-                            try:
-                                shop = Shop.objects.get(id=shop_id)
-                                print(f"🏪 Processing shop: {shop.name} (ID: {shop.id})")
-                                
-                                # Get the shop owner from customer field
-                                shop_owner = shop.customer.customer if shop.customer else None
-                                
-                                if not shop_owner:
-                                    print(f"⚠️ Shop {shop.name} has no customer/owner")
-                                    continue
-                                
-                                print(f"👤 Shop owner: {shop_owner.username} (ID: {shop_owner.id})")
-                                
-                                # Calculate total for this shop - use aggregate to keep as Decimal
-                                shop_checkouts = checkouts.filter(
-                                    cart_item__product__shop=shop
-                                )
-                                
-                                # Use aggregate to get Decimal directly
-                                total_amount = shop_checkouts.aggregate(
-                                    total=Sum('total_amount')
-                                )['total'] or Decimal('0')
-                                
-                                print(f"💰 Total amount for shop {shop.name}: ₱{total_amount}")
-                                
-                                if total_amount > 0:
-                                    # Get or create wallet for shop owner
-                                    wallet, created = UserWallet.objects.get_or_create(user=shop_owner)
-                                    print(f"💳 Wallet {'created' if created else 'found'} for shop owner")
-                                    
-                                    # Check if transaction already exists
-                                    existing_tx = WalletTransaction.objects.filter(
-                                        wallet=wallet,
-                                        order=order,
-                                        shop=shop
-                                    ).first()
-                                    
-                                    if not existing_tx:
-                                        # Determine status based on 30-day rule
-                                        transaction_status = 'pending'
-                                        
-                                        print(f"📝 Creating wallet transaction: amount={total_amount}, status={transaction_status}")
-                                        
-                                        # Create transaction with user field
-                                        wallet_transaction = WalletTransaction.objects.create(
-                                            wallet=wallet,
-                                            user=shop_owner,
-                                            shop=shop,
-                                            order=order,
-                                            amount=total_amount,
-                                            transaction_type='credit',
-                                            source_type='shop_sale',
-                                            status=transaction_status,
-                                            created_at=order.created_at
-                                        )
-                                        
-                                        # Update wallet balance (add to pending balance)
-                                        wallet.pending_balance += total_amount
-                                        wallet.save()
-                                        
-                                        print(f"✅ Wallet transaction created: {wallet_transaction.transaction_id}")
-                                        print(f"💰 Wallet new pending balance: {wallet.pending_balance}")
-                                        
-                                        # Create notification for seller
-                                        try:
-                                            Notification.objects.create(
-                                                user=shop_owner,
-                                                title='Payment Approved',
-                                                type='wallet',
-                                                message=f'Your payment of ₱{total_amount:,.2f} for order #{str(order.order)[:8]} has been approved',
-                                                is_read=False
-                                            )
-                                            print(f"📨 Notification created for shop owner")
-                                        except Exception as notif_error:
-                                            print(f"⚠️ Failed to create notification: {notif_error}")
-                                    else:
-                                        print(f"⚠️ Transaction already exists for this order and shop")
-                                else:
-                                    print(f"⚠️ Total amount is zero for shop {shop.name}")
-                                    
-                            except Shop.DoesNotExist:
-                                print(f"⚠️ Shop with ID {shop_id} not found")
-                            except Exception as shop_error:
-                                print(f"❌ Error processing shop {shop_id}: {shop_error}")
-                    else:
-                        print(f"👤 This is a PERSONAL LISTING sale")
-                        
-                        # Handle personal listing (no shop)
-                        # Find the seller (customer who owns the product)
-                        if product.customer and hasattr(product.customer, 'customer'):
-                            seller = product.customer.customer
-                            print(f"👤 Seller: {seller.username} (ID: {seller.id})")
-                            
-                            # Calculate total amount - use order.total_amount as Decimal
-                            total_amount = order.total_amount
-                            print(f"💰 Total amount: ₱{total_amount}")
-                            
-                            if total_amount > 0:
-                                # Get or create wallet for seller
-                                wallet, created = UserWallet.objects.get_or_create(user=seller)
-                                print(f"💳 Wallet {'created' if created else 'found'} for seller")
-                                
-                                # Check if transaction already exists
-                                existing_tx = WalletTransaction.objects.filter(
-                                    wallet=wallet,
-                                    order=order,
-                                    shop__isnull=True
-                                ).first()
-                                
-                                if not existing_tx:
-                                    # Determine status based on 30-day rule
-                                    transaction_status = 'pending'
-                                    
-                                    print(f"📝 Creating wallet transaction: amount={total_amount}, status={transaction_status}")
-                                    
-                                    # Create transaction (no shop) with user field
-                                    wallet_transaction = WalletTransaction.objects.create(
-                                        wallet=wallet,
-                                        user=seller,
-                                        order=order,
-                                        amount=total_amount,
-                                        transaction_type='credit',
-                                        source_type='personal_sale',
-                                        status=transaction_status,
-                                        created_at=order.created_at
-                                    )
-                                    
-                                    # Update wallet balance (add to pending balance)
-                                    wallet.pending_balance += total_amount
-                                    wallet.save()
-                                    
-                                    print(f"✅ Wallet transaction created: {wallet_transaction.transaction_id}")
-                                    print(f"💰 Wallet new pending balance: {wallet.pending_balance}")
-                                    
-                                    # Create notification for seller
-                                    try:
-                                        Notification.objects.create(
-                                            user=seller,
-                                            title='Payment Approved',
-                                            type='wallet',
-                                            message=f'Your payment of ₱{total_amount:,.2f} for order #{str(order.order)[:8]} has been approved',
-                                            is_read=False
-                                        )
-                                        print(f"📨 Notification created for seller")
-                                    except Exception as notif_error:
-                                        print(f"⚠️ Failed to create notification: {notif_error}")
-                                else:
-                                    print(f"⚠️ Transaction already exists for this order")
-                            else:
-                                print(f"⚠️ Total amount is zero")
-                        else:
-                            print(f"⚠️ Product has no customer/seller")
-                    
-                except Exception as e:
-                    print(f"❌ Failed to create wallet transaction: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
-                    # Don't fail the approval, just log the error
-            # ===== END OF WALLET TRANSACTION CODE =====
-            
-            return Response({
-                'success': True,
-                'message': f'Order approval updated to {new_approval}'
-            })
-            
+
+            try:
+                Notification.objects.create(
+                    user=order.user,
+                    title='Order Shipped',
+                    type='order',
+                    message=f'Your order #{str(order.order)[:8]} has been shipped.',
+                    is_read=False
+                )
+            except Exception as notif_error:
+                print(f"Failed to create notification: {notif_error}")
+
+            return Response({'success': True, 'message': 'Order marked as shipped'})
         except Order.DoesNotExist:
-            print(f"❌ Order not found: {order_id}")
-            return Response({
-                'success': False,
-                'error': 'Order not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            print(f"❌ Error updating order approval: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'])
+    def mark_as_delivered(self, request):
+        """Mark order as delivered"""
+        order_id = request.data.get('order_id')
+        if not order_id:
+            return Response({'success': False, 'error': 'Order ID is required'}, status=status.HTTP_400_BAD_REQUEST)
         
+        try:
+            order = Order.objects.get(order=order_id)
+            if order.status != 'shipped':
+                return Response({
+                    'success': False,
+                    'error': f'Order must be in shipped status to mark as delivered. Current status: {order.status}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            order.status = 'delivered'
+            order.completed_at = timezone.now()
+            order.save()
+
+            # Release pending wallet balance to available for sellers
+            try:
+                checkouts = Checkout.objects.filter(order=order)
+                shop_ids = checkouts.values_list('cart_item__product__shop', flat=True).distinct()
+
+                for shop_id in shop_ids:
+                    if not shop_id:
+                        continue
+                    shop = Shop.objects.get(id=shop_id)
+                    if not shop.customer:
+                        continue
+                    seller = shop.customer.customer
+                    wallet = UserWallet.objects.filter(user=seller).first()
+                    if not wallet:
+                        continue
+                    shop_total = checkouts.filter(
+                        cart_item__product__shop=shop
+                    ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+
+                    if shop_total > 0:
+                        wallet.pending_balance = max(Decimal('0'), wallet.pending_balance - shop_total)
+                        wallet.available_balance += shop_total
+                        wallet.save()
+
+                        WalletTransaction.objects.filter(
+                            wallet=wallet, order=order, shop=shop, status='pending'
+                        ).update(status='completed')
+
+                        Notification.objects.create(
+                            user=seller,
+                            title='Payment Released',
+                            type='wallet',
+                            message=f'₱{shop_total:,.2f} from order #{str(order.order)[:8]} is now available in your wallet.',
+                            is_read=False
+                        )
+            except Exception as wallet_error:
+                print(f"Error releasing wallet balance: {wallet_error}")
+
+            try:
+                Notification.objects.create(
+                    user=order.user,
+                    title='Order Delivered',
+                    type='order',
+                    message=f'Your order #{str(order.order)[:8]} has been delivered.',
+                    is_read=False
+                )
+            except Exception as notif_error:
+                print(f"Failed to create notification: {notif_error}")
+
+            return Response({'success': True, 'message': 'Order marked as delivered'})
+        except Order.DoesNotExist:
+            return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'])
+    def issue_refund(self, request):
+        """Issue a refund for an order"""
+        order_id = request.data.get('order_id')
+        reason = request.data.get('reason', '')
+
+        if not order_id:
+            return Response({'success': False, 'error': 'Order ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not reason:
+            return Response({'success': False, 'error': 'Reason is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order = Order.objects.get(order=order_id)
+            if order.status not in ['delivered', 'completed']:
+                return Response({
+                    'success': False,
+                    'error': f'Order must be delivered or completed to issue a refund. Current status: {order.status}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            order.status = 'refunded'
+            order.save()
+
+            try:
+                Notification.objects.create(
+                    user=order.user,
+                    title='Order Refunded',
+                    type='order',
+                    message=f'Your order #{str(order.order)[:8]} has been refunded. Reason: {reason}',
+                    is_read=False
+                )
+            except Exception as notif_error:
+                print(f"Failed to create notification: {notif_error}")
+
+            return Response({'success': True, 'message': 'Refund issued successfully'})
+        except Order.DoesNotExist:
+            return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=False, methods=['get'])
     def get_order_stats(self, request):
         """Get additional order statistics with date range support"""
@@ -7121,63 +6712,40 @@ class AdminOrders(viewsets.ViewSet):
             start_date_str = request.GET.get('start_date')
             end_date_str = request.GET.get('end_date')
             
-            # Get date range
             try:
                 start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
             except ValueError as e:
-                return Response(
-                    {'success': False, 'error': str(e)}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
             
             filter_applied = bool(start_date_str and end_date_str)
             
-            # Base queryset with date filter
             orders_qs = Order.objects.filter(status='completed')
             if filter_applied and start_date and end_date:
-                orders_qs = orders_qs.filter(
-                    created_at__gte=start_date,
-                    created_at__lte=end_date
-                )
+                orders_qs = orders_qs.filter(created_at__gte=start_date, created_at__lte=end_date)
             
-            # Revenue statistics for the period
-            revenue_data = orders_qs.aggregate(
-                total_revenue=Sum('total_amount')
-            )
+            revenue_data = orders_qs.aggregate(total_revenue=Sum('total_amount'))
             period_revenue = revenue_data['total_revenue'] or Decimal('0')
             
-            # Daily revenue for today (still actual today)
             today = timezone.now().date()
             daily_revenue = Order.objects.filter(
-                status='completed',
-                created_at__date=today
+                status='completed', created_at__date=today
             ).aggregate(revenue=Sum('total_amount'))['revenue'] or Decimal('0')
             
-            # Top customers by order count in the period
             top_customers = orders_qs.values(
-                'user__username',
-                'user__first_name',
-                'user__last_name'
+                'user__username', 'user__first_name', 'user__last_name'
             ).annotate(
                 order_count=Count('order'),
                 total_spent=Sum('total_amount')
             ).order_by('-total_spent')[:10]
             
-            # Top products by order count in the period (through checkouts)
             checkouts_qs = Checkout.objects.filter(order__isnull=False, cart_item__product__isnull=False)
             if filter_applied and start_date and end_date:
-                checkouts_qs = checkouts_qs.filter(
-                    created_at__gte=start_date,
-                    created_at__lte=end_date
-                )
+                checkouts_qs = checkouts_qs.filter(created_at__gte=start_date, created_at__lte=end_date)
             
             top_products = checkouts_qs.values(
                 'cart_item__product__name'
-            ).annotate(
-                order_count=Count('order', distinct=True)
-            ).order_by('-order_count')[:10]
+            ).annotate(order_count=Count('order', distinct=True)).order_by('-order_count')[:10]
             
-            # Top shops by revenue in the period
             top_shops = checkouts_qs.values(
                 'cart_item__product__shop__name'
             ).annotate(
@@ -7185,237 +6753,24 @@ class AdminOrders(viewsets.ViewSet):
                 order_count=Count('order', distinct=True)
             ).order_by('-total_revenue')[:10]
             
-            stats = {
-                'period_revenue': float(period_revenue),
-                'revenue_today': float(daily_revenue),
-                'top_customers': list(top_customers),
-                'top_products': list(top_products),
-                'top_shops': list(top_shops),
-                'date_range': {
-                    'start_date': start_date_str or start_date.isoformat(),
-                    'end_date': end_date_str or end_date.isoformat(),
-                    'actual_start': start_date.isoformat() if start_date else None,
-                    'actual_end': end_date.isoformat() if end_date else None
-                }
-            }
-            
             return Response({
                 'success': True,
-                'stats': stats
-            })
-            
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['get'])
-    def get_order(self, request):
-        """Get detailed order information for admin view"""
-        order_id = request.GET.get('order_id')
-        
-        if not order_id:
-            return JsonResponse({
-                'success': False,
-                'error': 'Order ID is required'
-            }, status=400)
-        
-        # Validate UUID format
-        try:
-            uuid.UUID(str(order_id))
-        except (ValueError, AttributeError):
-            return JsonResponse({
-                'success': False,
-                'error': 'Invalid order ID format'
-            }, status=400)
-        
-        try:
-            with transaction.atomic():
-                # Get the order with related data
-                order = get_object_or_404(
-                    Order.objects.select_related(
-                        'user',
-                        'shipping_address'
-                    ).prefetch_related(
-                        'checkout_set__cart_item__product__shop',
-                        'checkout_set__cart_item__variant',
-                        'checkout_set__cart_item__product__category',
-                        'checkout_set__cart_item__user',
-                        'checkout_set__voucher'
-                    ),
-                    order=order_id
-                )
-                
-                # Get receipt URL with S3 conversion
-                receipt_url = None
-                receipt_file_name = None
-                receipt_file_type = None
-                if order.receipt and hasattr(order.receipt, 'url'):
-                    receipt_url = convert_s3_to_public_url(order.receipt.url)
-                    receipt_file_name = order.receipt.name.split('/')[-1] if order.receipt.name else None
-                    if receipt_file_name:
-                        ext = receipt_file_name.split('.')[-1].lower() if '.' in receipt_file_name else ''
-                        receipt_file_type = ext
-                
-                # Serialize order data
-                order_data = {
-                    'order_id': str(order.order),
-                    'user': {
-                        'id': str(order.user.id),
-                        'username': order.user.username,
-                        'email': order.user.email,
-                        'first_name': order.user.first_name,
-                        'last_name': order.user.last_name,
-                        'contact_number': order.user.contact_number
-                    },
-                    'approval': order.approval, 
-                    'status': order.status,
-                    'total_amount': str(order.total_amount),
-                    'payment_method': order.payment_method,
-                    'delivery_method': order.delivery_method,
-                    'delivery_address': order.delivery_address_text or 
-                                       (order.shipping_address.get_full_address() 
-                                        if order.shipping_address else ''),
-                    'receipt': {
-                        'url': receipt_url,
-                        'file_name': receipt_file_name,
-                        'file_type': receipt_file_type,
-                        'uploaded_at': order.updated_at.isoformat()
-                    } if receipt_url else None,
-                    'created_at': order.created_at.isoformat(),
-                    'updated_at': order.updated_at.isoformat(),
-                    'completed_at': order.completed_at.isoformat() if order.completed_at else None,
-                    'items': []
-                }
-                
-                # Get all checkout items for this order
-                checkouts = order.checkout_set.select_related(
-                    'cart_item__product__shop',
-                    'cart_item__variant',
-                    'cart_item__product__category',
-                    'cart_item__user',
-                    'voucher'
-                ).all()
-                
-                for checkout in checkouts:
-                    cart_item = checkout.cart_item
-                    product = cart_item.product
-                    variant = cart_item.variant
-                    
-                    # Get price safely using helper method
-                    price = self._get_product_price(product, variant)
-                    
-                    # Get product media with S3 conversion
-                    product_media = self._get_product_media(product) if product else []
-                    
-                    # Get variant image with S3 conversion
-                    variant_image_url = self._get_variant_media(variant) if variant else None
-                    
-                    item_data = {
-                        'id': str(checkout.id),
-                        'cart_item': {
-                            'id': str(cart_item.id),
-                            'product': {
-                                'id': str(product.id),
-                                'name': product.name,
-                                'description': product.description,
-                                'price': str(price),
-                                'condition': product.condition,
-                                'is_refundable': product.is_refundable,
-                                'refund_days': product.refund_days,
-                                'upload_status': product.upload_status,
-                                'created_at': product.created_at.isoformat() if product.created_at else None,
-                                'updated_at': product.updated_at.isoformat() if product.updated_at else None,
-                                'shop': {
-                                    'id': str(product.shop.id) if product.shop else None,
-                                    'name': product.shop.name if product.shop else None,
-                                    'contact_number': product.shop.contact_number if product.shop else None,
-                                    'verified': product.shop.verified if product.shop else False
-                                } if product.shop else None,
-                                'category': {
-                                    'id': str(product.category.id) if product.category else None,
-                                    'name': product.category.name if product.category else None,
-                                } if product.category else None,
-                                'media': product_media,
-                                'primary_image': product_media[0] if product_media else None
-                            },
-                            'variant': {
-                                'id': str(variant.id) if variant else None,
-                                'title': variant.title if variant else None,
-                                'sku_code': variant.sku_code if variant else None,
-                                'price': str(variant.price) if variant and variant.price else None,
-                                'compare_price': str(variant.compare_price) if variant and variant.compare_price else None,
-                                'quantity': variant.quantity if variant else 0,
-                                'weight': str(variant.weight) if variant and variant.weight else None,
-                                'weight_unit': variant.weight_unit if variant else 'g',
-                                'is_active': variant.is_active if variant else False,
-                                'is_refundable': variant.is_refundable if variant else False,
-                                'refund_days': variant.refund_days if variant else 0,
-                                'allow_swap': variant.allow_swap if variant else False,
-                                'swap_type': variant.swap_type if variant else None,
-                                'swap_description': variant.swap_description if variant else None,
-                                'original_price': str(variant.original_price) if variant and variant.original_price else None,
-                                'usage_period': float(variant.usage_period) if variant and variant.usage_period else None,
-                                'usage_unit': variant.usage_unit if variant else None,
-                                'depreciation_rate': float(variant.depreciation_rate) if variant and variant.depreciation_rate else None,
-                                'minimum_additional_payment': str(variant.minimum_additional_payment) if variant and variant.minimum_additional_payment else '0.00',
-                                'maximum_additional_payment': str(variant.maximum_additional_payment) if variant and variant.maximum_additional_payment else '0.00',
-                                'image_url': variant_image_url,
-                                'critical_stock': variant.critical_stock if variant else None,
-                                'created_at': variant.created_at.isoformat() if variant and variant.created_at else None,
-                                'updated_at': variant.updated_at.isoformat() if variant and variant.updated_at else None
-                            } if variant else None,
-                            'quantity': cart_item.quantity,
-                            'is_ordered': cart_item.is_ordered,
-                            'added_at': cart_item.added_at.isoformat() if cart_item.added_at else None,
-                            'user': {
-                                'id': str(cart_item.user.id) if cart_item.user else None,
-                                'username': cart_item.user.username if cart_item.user else None,
-                                'email': cart_item.user.email if cart_item.user else None,
-                                'first_name': cart_item.user.first_name if cart_item.user else None,
-                                'last_name': cart_item.user.last_name if cart_item.user else None,
-                                'contact_number': cart_item.user.contact_number if cart_item.user else None
-                            } if cart_item.user else None,
-                        },
-                        'voucher': {
-                            'id': str(checkout.voucher.id),
-                            'name': checkout.voucher.name,
-                            'code': checkout.voucher.code,
-                            'discount_type': checkout.voucher.discount_type,
-                            'value': str(checkout.voucher.value),
-                            'minimum_spend': str(checkout.voucher.minimum_spend) if checkout.voucher.minimum_spend else '0.00',
-                            'valid_until': checkout.voucher.valid_until.isoformat() if checkout.voucher.valid_until else None,
-                            'is_active': checkout.voucher.is_active
-                        } if checkout.voucher else None,
-                        'total_amount': str(checkout.total_amount),
-                        'status': checkout.status,
-                        'remarks': checkout.remarks or '',
-                        'created_at': checkout.created_at.isoformat() if checkout.created_at else None,
+                'stats': {
+                    'period_revenue': float(period_revenue),
+                    'revenue_today': float(daily_revenue),
+                    'top_customers': list(top_customers),
+                    'top_products': list(top_products),
+                    'top_shops': list(top_shops),
+                    'date_range': {
+                        'start_date': start_date_str or start_date.isoformat(),
+                        'end_date': end_date_str or end_date.isoformat(),
+                        'actual_start': start_date.isoformat() if start_date else None,
+                        'actual_end': end_date.isoformat() if end_date else None
                     }
-                    order_data['items'].append(item_data)
-                
-                return JsonResponse({
-                    'success': True,
-                    'order': order_data
-                })
-                
-        except Order.DoesNotExist:
-            return JsonResponse({
-                'success': False,
-                'error': 'Order not found'
-            }, status=404)
-            
+                }
+            })
         except Exception as e:
-            # Log the error for debugging
-            import traceback
-            print(f"Error fetching order: {str(e)}")
-            print(traceback.format_exc())
-            
-            return JsonResponse({
-                'success': False,
-                'error': 'Internal server error'
-            }, status=500) 
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
 
 class AdminRiders(viewsets.ViewSet):
     def parse_date(self, date_str):
@@ -20961,73 +20316,31 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
 class SellerOrderList(viewsets.ViewSet):
     @action(detail=True, methods=['post'])
     def rider_response(self, request, pk=None):
-        """
-        Handle rider response to delivery offer
-        POST /seller-order-list/{order_id}/rider_response/?shop_id={shop_id}
-        {
-            "rider_id": "uuid",
-            "response": "accept" or "reject"
-        }
-        """
         try:
-            # Get order
             try:
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Order not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get rider
+                return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
             rider_id = request.data.get('rider_id')
             if not rider_id:
-                return Response({
-                    "success": False,
-                    "message": "Rider ID is required"
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
+                return Response({"success": False, "message": "Rider ID is required"}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 rider = Rider.objects.get(id=rider_id)
             except Rider.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Rider not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
+                return Response({"success": False, "message": "Rider not found"}, status=status.HTTP_404_NOT_FOUND)
             response_type = request.data.get('response')
             if response_type not in ['accept', 'reject']:
-                return Response({
-                    "success": False,
-                    "message": "Response must be 'accept' or 'reject'"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get the pending delivery for this order and rider
-            delivery = Delivery.objects.filter(
-                order=order,
-                rider=rider,
-                status='pending'
-            ).first()
-
+                return Response({"success": False, "message": "Response must be 'accept' or 'reject'"}, status=status.HTTP_400_BAD_REQUEST)
+            delivery = Delivery.objects.filter(order=order, rider=rider, status='pending').first()
             if not delivery:
-                return Response({
-                    "success": False,
-                    "message": "No pending delivery found for this rider"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Update delivery status based on response
+                return Response({"success": False, "message": "No pending delivery found for this rider"}, status=status.HTTP_404_NOT_FOUND)
             if response_type == 'accept':
                 delivery.status = 'accepted'
                 delivery.save()
-                
-                # Update rider availability
                 rider.availability_status = 'busy'
                 rider.is_accepting_deliveries = False
                 rider.save()
-                
                 message = "Delivery accepted successfully"
-                
-                # Notify seller
                 shop = order.checkout_set.first().cart_item.product.shop
                 Notification.objects.create(
                     user=shop.customer.customer,
@@ -21036,99 +20349,49 @@ class SellerOrderList(viewsets.ViewSet):
                     message=f'Rider {rider.rider.username} has accepted delivery for order #{str(order.order)[:8]}',
                     is_read=False
                 )
-                
-            else:  # reject
+            else:
                 delivery.status = 'rejected'
                 delivery.save()
                 message = "Delivery rejected"
-
             return Response({
                 "success": True,
                 "message": message,
-                "data": {
-                    "delivery_id": str(delivery.id),
-                    "status": delivery.status
-                }
+                "data": {"delivery_id": str(delivery.id), "status": delivery.status}
             }, status=status.HTTP_200_OK)
-
         except Exception as e:
-            return Response({
-                "success": False,
-                "message": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    # NEW: Assign deliveries endpoint
     @action(detail=False, methods=['post'])
     def assign_deliveries(self, request):
-        """
-        Trigger rider assignment for an order
-        POST /seller-order-list/assign_deliveries/?order_id={order_id}
-        """
         try:
             order_id = request.GET.get('order_id')
             if not order_id:
-                return Response({
-                    "success": False,
-                    "message": "Order ID is required"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get the order
+                return Response({"success": False, "message": "Order ID is required"}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 order = Order.objects.get(order=order_id)
             except Order.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Order not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Check if order is for delivery (not pickup)
-            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
-                                                     for keyword in ['pickup', 'store', 'collect'])
+                return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
+                                                      for keyword in ['pickup', 'store', 'collect'])
             if is_pickup:
-                return Response({
-                    "success": False,
-                    "message": "Order is for pickup, not delivery"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Check if there's already a pending delivery
+                return Response({"success": False, "message": "Order is for pickup, not delivery"}, status=status.HTTP_400_BAD_REQUEST)
             existing_delivery = Delivery.objects.filter(
-                order=order,
-                status__in=['pending', 'accepted', 'picked_up', 'in_progress']
+                order=order, status__in=['pending', 'accepted', 'picked_up', 'in_progress']
             ).exists()
-            
             if existing_delivery:
-                return Response({
-                    "success": False,
-                    "message": "Order already has an active or pending delivery"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Find available riders
+                return Response({"success": False, "message": "Order already has an active or pending delivery"}, status=status.HTTP_400_BAD_REQUEST)
             available_riders = Rider.objects.filter(
-                verified=True,
-                availability_status='available',
-                is_accepting_deliveries=True
+                verified=True, availability_status='available', is_accepting_deliveries=True
             ).select_related('rider')
-
             if not available_riders.exists():
-                return Response({
-                    "success": False,
-                    "message": "No available riders found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Create delivery offers for available riders
+                return Response({"success": False, "message": "No available riders found"}, status=status.HTTP_404_NOT_FOUND)
             deliveries_created = []
-            for rider in available_riders[:5]:  # Limit to 5 riders
+            for rider in available_riders[:5]:
                 delivery = Delivery.objects.create(
-                    order=order,
-                    rider=rider,
-                    status='pending',
-                    delivery_fee=50,  # Default delivery fee - you can make this dynamic
-                    distance_km=5.0,  # Default distance - you can calculate this
-                    estimated_minutes=30  # Default estimate - you can calculate this
+                    order=order, rider=rider, status='pending',
+                    delivery_fee=50, distance_km=5.0, estimated_minutes=30
                 )
                 deliveries_created.append(str(delivery.id))
-
-                # Create notification for rider
                 Notification.objects.create(
                     user=rider.rider,
                     title='New Delivery Assignment',
@@ -21136,10 +20399,8 @@ class SellerOrderList(viewsets.ViewSet):
                     message=f'You have a new delivery assignment for order #{str(order.order)[:8]}',
                     is_read=False
                 )
-            
             assign_deliveries_task.delay()
             check_delivery_responses_task.delay()
-
             return Response({
                 "success": True,
                 "message": f"Delivery assignments created for {len(deliveries_created)} riders",
@@ -21149,71 +20410,36 @@ class SellerOrderList(viewsets.ViewSet):
                     "rider_count": len(deliveries_created)
                 }
             }, status=status.HTTP_200_OK)
-
         except Exception as e:
-            return Response({
-                "success": False,
-                "message": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['post'])
     def check_delivery_responses(self, request):
         try:
             order_id = request.GET.get('order_id')
             if not order_id:
-                return Response({
-                    "success": False,
-                    "message": "Order ID is required"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get the order
+                return Response({"success": False, "message": "Order ID is required"}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 order = Order.objects.get(order=order_id)
             except Order.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Order not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get all pending offers for this order
-            pending_deliveries = Delivery.objects.filter(
-                order=order,
-                status='pending'
-            ).select_related('rider__rider')
-
+                return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+            pending_deliveries = Delivery.objects.filter(order=order, status='pending').select_related('rider__rider')
             responses = []
             accepted_delivery = None
-
             for delivery in pending_deliveries:
-                # Here you would check if the rider has responded
-                # This is a simplified version - you might have a separate mechanism
-                # where riders respond via the rider_response endpoint
-                
-                # For now, we'll just return the status
                 response_info = {
                     "delivery_id": str(delivery.id),
                     "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery.rider else None,
                     "status": delivery.status,
                     "has_responded": delivery.status != 'pending'
                 }
-                
-                # If delivery is accepted, mark it
                 if delivery.status == 'accepted':
                     accepted_delivery = delivery
-                    
                 responses.append(response_info)
-
-            # If there's an accepted delivery, update order status
             if accepted_delivery:
                 order.status = 'processing'
                 order.save()
-                
-                # Update other pending deliveries to cancelled
-                Delivery.objects.filter(
-                    order=order,
-                    status='pending'
-                ).exclude(id=accepted_delivery.id).update(status='cancelled')
-
+                Delivery.objects.filter(order=order, status='pending').exclude(id=accepted_delivery.id).update(status='cancelled')
             return Response({
                 "success": True,
                 "message": "Delivery responses checked",
@@ -21223,25 +20449,15 @@ class SellerOrderList(viewsets.ViewSet):
                     "responses": responses
                 }
             }, status=status.HTTP_200_OK)
-
         except Exception as e:
-            return Response({
-                "success": False,
-                "message": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def _get_product_media(self, product):
-        """
-        Helper method to get product media URLs
-        """
         media_files = []
         try:
-            # Get all media for this product
-            product_media = ProductMedia.objects.filter(product=product).order_by('created_at')[:5]
-            
+            product_media = ProductMedia.objects.filter(product=product)[:5]
             for media in product_media:
                 if media.file_data:
-                    # Convert S3 URL to public URL if needed
                     file_url = convert_s3_to_public_url(media.file_data.url)
                     media_files.append({
                         "id": str(media.id),
@@ -21250,40 +20466,18 @@ class SellerOrderList(viewsets.ViewSet):
                     })
         except Exception as e:
             print(f"Error getting product media: {e}")
-        
         return media_files
-    
+
     def _get_variant_media(self, variant):
-        """
-        Helper method to get variant image URL
-        """
         if variant and variant.image:
             return convert_s3_to_public_url(variant.image.url)
         return None
-    
-    def _get_order_receipt(self, order):
-        """
-        Helper method to get order receipt URL if payment was online
-        """
-        if order.receipt and hasattr(order.receipt, 'url'):
-            return convert_s3_to_public_url(order.receipt.url)
-        return None
-    
+
     def _prepare_order_response(self, order, shop):
-        """
-        Helper method to prepare order response data
-        Returns the same structure as order_list endpoint
-        """
-        # Get latest delivery
-        latest_delivery = Delivery.objects.filter(order=order).select_related(
-            'rider__rider'
-        ).order_by('-created_at').first()
-        
-        # Get delivery info from latest delivery
+        latest_delivery = Delivery.objects.filter(order=order).select_related('rider__rider').order_by('-created_at').first()
         delivery_info = None
         if latest_delivery:
             is_pending_offer = latest_delivery.status == 'pending'
-            
             delivery_info = {
                 "delivery_id": str(latest_delivery.id),
                 "status": latest_delivery.status,
@@ -21293,87 +20487,51 @@ class SellerOrderList(viewsets.ViewSet):
                 "submitted_at": latest_delivery.created_at.isoformat(),
                 "is_pending_offer": is_pending_offer
             }
-        
-        # Get shipping status
         shipping_status = self._get_shipping_status(
-            order.status, 
+            order.status,
             latest_delivery.status if latest_delivery else None
         )
-        
-        # Check if this is a pickup order
-        is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
-                                                 for keyword in ['pickup', 'store', 'collect'])
-        
-        # Get order receipt URL if exists
-        receipt_url = self._get_order_receipt(order)
-        
-        # Get shop checkouts for this order
+        is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
+                                                  for keyword in ['pickup', 'store', 'collect'])
         shop_checkouts = Checkout.objects.filter(
-            order=order,
-            cart_item__product__shop=shop
+            order=order, cart_item__product__shop=shop
         ).select_related(
-            'cart_item__product__shop',
-            'cart_item__variant'
-        ).prefetch_related(
-            'cart_item__product__productmedia_set'  # Prefetch media
-        )
-        
-        # Prepare order items
+            'cart_item__product__shop', 'cart_item__variant'
+        ).prefetch_related('cart_item__product__productmedia_set')
         order_items = []
         total_amount = 0
-        
         for checkout in shop_checkouts:
             cart_item = checkout.cart_item
             if not cart_item or not cart_item.product:
                 continue
-            
             product = cart_item.product
             variant = cart_item.variant
-            
-            # Get price from variant if available
             price = 0
             if variant and variant.price:
                 price = float(variant.price)
             elif hasattr(product, 'price'):
                 price = float(product.price)
-            
-            # Get variant title/condition for display
             variant_title = variant.title if variant else product.condition
-            
-            # Get product media
             product_media = self._get_product_media(product)
-            
-            # Get variant image URL
             variant_image_url = self._get_variant_media(variant)
-            
-            # Get tracking info
             tracking_number = None
             shipping_method = None
             estimated_delivery = None
-            
             if latest_delivery:
-                tracking_number = f"TRK-{str(latest_delivery.id)[:10]}" if not latest_delivery.status == 'pending' else None
+                tracking_number = f"TRK-{str(latest_delivery.id)[:10]}" if latest_delivery.status != 'pending' else None
                 shipping_method = "Standard Shipping" if not is_pickup else "Store Pickup"
                 estimated_delivery = self._get_estimated_delivery(latest_delivery)
-            
-            # Build product data with media
             product_data = {
                 "id": str(product.id),
                 "name": product.name,
                 "price": price,
                 "variant": variant_title,
-                "shop": {
-                    "id": str(shop.id),
-                    "name": shop.name
-                },
-                "media": product_media,  # Add product media
-                "primary_image": product_media[0] if product_media else None  # First image as primary
+                "shop": {"id": str(shop.id), "name": shop.name},
+                "media": product_media,
+                "primary_image": product_media[0] if product_media else None
             }
-            
-            # Add variant image if available
             if variant_image_url:
                 product_data["variant_image"] = variant_image_url
-            
             order_items.append({
                 "id": str(checkout.id),
                 "cart_item": {
@@ -21393,17 +20551,12 @@ class SellerOrderList(viewsets.ViewSet):
                 "shipping_method": shipping_method,
                 "estimated_delivery": estimated_delivery
             })
-            
             total_amount += float(checkout.total_amount)
-        
-        # Get delivery address
         delivery_address = None
         if order.shipping_address:
             delivery_address = order.shipping_address.get_full_address()
         elif order.delivery_address_text:
             delivery_address = order.delivery_address_text
-        
-        # Build order data
         order_data = {
             "order_id": str(order.order),
             "user": {
@@ -21414,7 +20567,6 @@ class SellerOrderList(viewsets.ViewSet):
                 "last_name": order.user.last_name,
                 "phone": order.user.contact_number or None
             },
-            "approval": order.approval,  # Add approval field
             "status": shipping_status,
             "total_amount": total_amount,
             "payment_method": order.payment_method,
@@ -21425,92 +20577,43 @@ class SellerOrderList(viewsets.ViewSet):
             "updated_at": order.updated_at.isoformat() if order.updated_at else None,
             "items": order_items,
             "is_pickup": is_pickup,
-            "receipt_url": receipt_url  # Add receipt URL to order data
         }
-        
-        # Add delivery info if exists
         if delivery_info:
             order_data["delivery_info"] = delivery_info
-        
         return order_data
-    
+
     @action(detail=False, methods=['get'])
     def order_list(self, request):
-        """
-        Get seller orders with shop_id parameter
-        Query param: shop_id - Required shop ID
-        """
         try:
-            # Get shop_id from query parameters
             shop_id = request.GET.get('shop_id')
             if not shop_id:
-                return Response({
-                    "success": False,
-                    "message": "Shop ID is required",
-                    "data": []
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get seller's shop
+                return Response({"success": False, "message": "Shop ID is required", "data": []}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Shop not found",
-                    "data": []
-                }, status=status.HTTP_404_NOT_FOUND)
-            
-            # Get all orders for this shop
+                return Response({"success": False, "message": "Shop not found", "data": []}, status=status.HTTP_404_NOT_FOUND)
             orders = Order.objects.filter(
                 checkout__cart_item__product__shop=shop
-            ).select_related(
-                'user',
-                'shipping_address'
-            ).prefetch_related(
-                Prefetch(
-                    'delivery_set',
-                    queryset=Delivery.objects.select_related('rider__rider'),
-                    to_attr='deliveries'
-                ),
+            ).select_related('user', 'shipping_address').prefetch_related(
+                Prefetch('delivery_set', queryset=Delivery.objects.select_related('rider__rider'), to_attr='deliveries'),
                 Prefetch(
                     'checkout_set',
                     queryset=Checkout.objects.filter(
                         cart_item__product__shop=shop
-                    ).select_related(
-                        'cart_item__product__shop',
-                        'cart_item__variant'
-                    ).prefetch_related(
-                        'cart_item__product__productmedia_set'
-                    )
+                    ).select_related('cart_item__product__shop', 'cart_item__variant').prefetch_related('cart_item__product__productmedia_set')
                 )
             ).distinct().order_by('-created_at')
-            
-            # Prepare response data
-            orders_data = []
-            
-            for order in orders:
-                order_data = self._prepare_order_response(order, shop)
-                orders_data.append(order_data)
-            
+            orders_data = [self._prepare_order_response(order, shop) for order in orders]
             return Response({
                 "success": True,
                 "message": "Orders retrieved successfully",
                 "data": orders_data,
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
-            
         except Exception as e:
-            return Response({
-                "success": False,
-                "message": f"Error retrieving orders: {str(e)}",
-                "data": []
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            return Response({"success": False, "message": f"Error retrieving orders: {str(e)}", "data": []}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def _get_shipping_status(self, order_status, delivery_status=None):
-        """
-        Map order status to UI status
-        """
-        # Status mapping for UI
         status_mapping = {
             'pending': 'pending_shipment',
             'processing': 'to_ship',
@@ -21522,12 +20625,8 @@ class SellerOrderList(viewsets.ViewSet):
             'picked_up': 'completed',
             'arrange_shipment': 'arrange_shipment'
         }
-        
-        # Handle pending offers
         if delivery_status == 'pending':
             return 'arrange_shipment'
-        
-        # Handle delivery-specific statuses
         if delivery_status:
             delivery_map = {
                 'pending': 'to_ship',
@@ -21536,13 +20635,9 @@ class SellerOrderList(viewsets.ViewSet):
                 'delivered': 'completed'
             }
             return delivery_map.get(delivery_status, status_mapping.get(order_status, 'pending_shipment'))
-        
         return status_mapping.get(order_status, 'pending_shipment')
-    
+
     def _get_estimated_delivery(self, delivery):
-        """
-        Calculate estimated delivery date
-        """
         if delivery.delivered_at:
             return delivery.delivered_at.strftime('%Y-%m-%d')
         elif delivery.picked_at:
@@ -21552,129 +20647,60 @@ class SellerOrderList(viewsets.ViewSet):
 
     @action(detail=True, methods=['get'])
     def available_actions(self, request, pk=None):
-        """
-        Get available actions for an order
-        GET /seller-order-list/{order_id}/available_actions/?shop_id={shop_id}
-        """
         try:
-            # Get order
             try:
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Order not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Verify shop ownership
+                return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
             shop_id = request.GET.get('shop_id')
             if not shop_id:
-                return Response({
-                    "success": False,
-                    "message": "Shop ID is required"
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get shop
+                return Response({"success": False, "message": "Shop ID is required"}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Shop not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Check if order has items from this shop
-            has_shop_items = Checkout.objects.filter(
-                order=order,
-                cart_item__product__shop=shop
-            ).exists()
-            
+                return Response({"success": False, "message": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+            has_shop_items = Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists()
             if not has_shop_items:
-                return Response({
-                    "success": False,
-                    "message": "Order not found or doesn't belong to your shop"
-                }, status=status.HTTP_403_FORBIDDEN)
-
-            # Check if there's a pending delivery offer
-            has_pending_offer = Delivery.objects.filter(
-                order=order,
-                status='pending'
-            ).exists()
-
-            # Determine if it's a pickup order
-            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
-                                                    for keyword in ['pickup', 'store', 'collect'])
-            
-            # Get current shipping status
+                return Response({"success": False, "message": "Order not found or doesn't belong to your shop"}, status=status.HTTP_403_FORBIDDEN)
+            has_pending_offer = Delivery.objects.filter(order=order, status='pending').exists()
+            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
+                                                      for keyword in ['pickup', 'store', 'collect'])
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
             current_shipping_status = self._get_shipping_status(
-                order.status, 
+                order.status,
                 latest_delivery.status if latest_delivery else None
             )
-            
-            # Check if order has a receipt file (safely check without accessing file attribute)
-            has_receipt = False
-            try:
-                if order.receipt and hasattr(order.receipt, 'name') and order.receipt.name:
-                    has_receipt = True
-            except (ValueError, AttributeError):
-                # If there's an error accessing the receipt, treat as no receipt
-                has_receipt = False
-            
-            # Check if order is pending approval (has receipt but approval not accepted)
-            is_pending_approval = has_receipt and order.approval != 'accepted'
-            
-            # Get available actions based on current shipping status and approval status
             available_actions = []
-            
             if current_shipping_status == 'pending_shipment':
                 if is_pickup:
-                    # For pickup orders, only show confirm if not pending approval
-                    if not is_pending_approval:
-                        available_actions = ['confirm']
+                    available_actions = ['confirm']
                 else:
-                    # For delivery orders, show confirm if not pending approval
-                    if not is_pending_approval:
-                        available_actions = ['confirm', 'prepare_shipment']
-            
+                    available_actions = ['confirm', 'prepare_shipment']
             elif current_shipping_status == 'to_ship':
                 if is_pickup:
                     available_actions = ['ready_for_pickup']
                 else:
                     available_actions = ['arrange_shipment']
-                    # If there's a pending offer, add view_offer action
                     if has_pending_offer:
                         available_actions.append('view_offer')
-            
             elif current_shipping_status == 'arrange_shipment':
                 if has_pending_offer:
                     available_actions = ['view_offer']
                 else:
                     available_actions = ['arrange_shipment_nav']
-            
             elif current_shipping_status == 'ready_for_pickup':
                 available_actions = ['picked_up']
-            
             elif current_shipping_status == 'shipped':
                 available_actions = ['out_for_delivery', 'complete']
-            
             elif current_shipping_status == 'out_for_delivery':
                 available_actions = ['complete']
-            
             elif current_shipping_status == 'in_transit':
                 available_actions = ['complete']
-
-            # Add print waybill button for processing orders with accepted delivery
             if order.status == 'processing' and latest_delivery and latest_delivery.status == 'accepted':
                 available_actions.append('print_waybill')
-            
-            # Always allow cancellation if not completed or cancelled and not pending approval
-            if current_shipping_status not in ['completed', 'cancelled', 'picked_up'] and not is_pending_approval:
+            if current_shipping_status not in ['completed', 'cancelled', 'picked_up']:
                 available_actions.append('cancel')
-            
-            # Always allow view details
             available_actions.append('view_details')
-            
             return Response({
                 "success": True,
                 "data": {
@@ -21682,195 +20708,124 @@ class SellerOrderList(viewsets.ViewSet):
                     "current_status": current_shipping_status,
                     "is_pickup": is_pickup,
                     "has_pending_offer": has_pending_offer,
-                    "is_pending_approval": is_pending_approval,
                     "available_actions": available_actions
                 }
             }, status=status.HTTP_200_OK)
-
         except Exception as e:
-            return Response({
-                "success": False,
-                "message": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['patch'])
     def update_status(self, request, pk=None):
-        """
-        Update order status with immediate updated order data in response
-        PATCH /seller-order-list/{order_id}/update_status/?shop_id={shop_id}
-        """
         try:
-            # Get action type from request
             action_type = request.data.get('action_type')
             if not action_type:
-                return Response({
-                    "success": False,
-                    "message": "action_type is required"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Validate order exists
+                return Response({"success": False, "message": "action_type is required"}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Order not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Verify shop ownership
+                return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
             shop_id = request.GET.get('shop_id')
             if not shop_id:
-                return Response({
-                    "success": False,
-                    "message": "Shop ID is required"
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get shop
+                return Response({"success": False, "message": "Shop ID is required"}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Shop not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Check if order has items from this shop
-            has_shop_items = Checkout.objects.filter(
-                order=order,
-                cart_item__product__shop=shop
-            ).exists()
-            
+                return Response({"success": False, "message": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+            has_shop_items = Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists()
             if not has_shop_items:
-                return Response({
-                    "success": False,
-                    "message": "Order does not contain items from your shop"
-                }, status=status.HTTP_403_FORBIDDEN)
-
-            # Check if order is pending approval (has receipt but approval not accepted)
-            is_pending_approval = order.receipt and order.approval != 'accepted'
-            
-            # Prevent confirmation if order is pending approval
-            if action_type == 'confirm' and is_pending_approval:
-                return Response({
-                    "success": False,
-                    "message": "Cannot confirm order while payment approval is pending"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Determine if it's a pickup order
-            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
-                                                     for keyword in ['pickup', 'store', 'collect'])
-            
-            # Handle different action types
+                return Response({"success": False, "message": "Order does not contain items from your shop"}, status=status.HTTP_403_FORBIDDEN)
+            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
+                                                      for keyword in ['pickup', 'store', 'collect'])
             original_status = order.status
-            
+
             if action_type == 'confirm':
-                if is_pickup:
-                    order.status = 'processing'
-                    message = "Pickup order confirmed"
-                else:
-                    order.status = 'processing'
-                    message = "Delivery order confirmed"
-                
+                order.status = 'processing'
+                message = "Pickup order confirmed" if is_pickup else "Delivery order confirmed"
+
+                # ── PICKUP DATE: only for Cash on Pickup orders ──────────────
+                is_cash_on_pickup = (
+                    is_pickup and
+                    order.payment_method and
+                    'cash' in order.payment_method.lower()
+                )
+                pickup_date_str = request.data.get('pickup_date')
+                if is_cash_on_pickup and pickup_date_str:
+                    try:
+                        from datetime import datetime as dt
+                        pickup_dt = dt.fromisoformat(pickup_date_str)
+                        # Store in metadata (JSONField already added to Order model)
+                        order.metadata = order.metadata or {}
+                        order.metadata['pickup_date'] = pickup_date_str
+                        message = f"Pickup order confirmed. Customer pickup scheduled for {pickup_dt.strftime('%b %d, %Y %I:%M %p')}."
+                    except (ValueError, TypeError):
+                        pass  # Invalid datetime string — ignore and proceed
+                # ─────────────────────────────────────────────────────────────
+
             elif action_type == 'ready_for_pickup':
                 if not is_pickup:
-                    return Response({
-                        "success": False,
-                        "message": "This action is only for pickup orders"
-                    }, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({"success": False, "message": "This action is only for pickup orders"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'ready_for_pickup'
                 message = "Order marked as ready for pickup"
-                
             elif action_type == 'picked_up':
                 if not is_pickup:
-                    return Response({
-                        "success": False,
-                        "message": "This action is only for pickup orders"
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                # Mark order as picked up (not completed) so UI and rider flows can track it
+                    return Response({"success": False, "message": "This action is only for pickup orders"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'picked_up'
-                # Update delivery status if exists and set picked_at timestamp
-                Delivery.objects.filter(order=order).update(
-                    status='picked_up',
-                    picked_at=timezone.now()
-                )
-                # Store completed timestamp on order so frontend can show completion time for pickup
+                Delivery.objects.filter(order=order).update(status='picked_up', picked_at=timezone.now())
                 order.completed_at = timezone.now()
                 message = "Order marked as picked up"
-                
             elif action_type == 'shipped':
                 order.status = 'shipped'
-                # Update delivery status
                 Delivery.objects.filter(order=order).update(status='picked_up')
                 message = "Order marked as shipped"
-                
             elif action_type == 'out_for_delivery':
                 order.status = 'out_for_delivery'
                 message = "Order marked as out for delivery"
-                
             elif action_type == 'complete':
                 order.status = 'completed'
-                # Update delivery status
-                Delivery.objects.filter(order=order).update(
-                    status='delivered',
-                    delivered_at=timezone.now()
-                )
+                Delivery.objects.filter(order=order).update(status='delivered', delivered_at=timezone.now())
                 message = "Order marked as delivered"
-                
             elif action_type == 'cancel':
                 order.status = 'cancelled'
                 message = "Order cancelled"
-                
             else:
-                return Response({
-                    "success": False,
-                    "message": f"Invalid action_type: {action_type}"
-                }, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"success": False, "message": f"Invalid action_type: {action_type}"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Update order
             order.updated_at = timezone.now()
             order.save()
-            
-            # Refresh the order object to get latest data
             order.refresh_from_db()
-            
-            # Create notification
+
+            # Notify customer — include pickup datetime if available
+            notif_message = f'Your order status has been updated to: {order.status}'
+            if action_type == 'confirm' and order.metadata and order.metadata.get('pickup_date'):
+                try:
+                    from datetime import datetime as dt
+                    pickup_dt = dt.fromisoformat(order.metadata['pickup_date'])
+                    notif_message = (
+                        f'Your order has been confirmed. '
+                        f'Please pick up at the shop on {pickup_dt.strftime("%b %d, %Y")} '
+                        f'at {pickup_dt.strftime("%I:%M %p")}.'
+                    )
+                except (ValueError, TypeError):
+                    pass
+
             Notification.objects.create(
                 user=order.user,
-                title=f'Order {order.order} Updated',
+                title=f'Order {str(order.order)[:8]} Updated',
                 type='order_update',
-                message=f'Your order status has been updated to: {order.status}',
+                message=notif_message,
                 is_read=False
             )
 
-            # Prepare updated order data for immediate frontend update
             updated_order_data = self._prepare_order_response(order, shop)
-            
-            # Get updated available actions
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
             current_shipping_status = self._get_shipping_status(
-                order.status, 
+                order.status,
                 latest_delivery.status if latest_delivery else None
             )
-            
-            has_pending_offer = Delivery.objects.filter(
-                order=order,
-                status='pending'
-            ).exists()
-            
-            # Check if order is pending approval after update
-            is_pending_approval = order.receipt and order.approval != 'accepted'
-            
-            # Get updated available actions
+            has_pending_offer = Delivery.objects.filter(order=order, status='pending').exists()
             updated_available_actions = []
-            
             if current_shipping_status == 'pending_shipment':
-                if is_pickup:
-                    if not is_pending_approval:
-                        updated_available_actions = ['confirm']
-                else:
-                    if not is_pending_approval:
-                        updated_available_actions = ['confirm', 'prepare_shipment']
-            
+                updated_available_actions = ['confirm'] if is_pickup else ['confirm', 'prepare_shipment']
             elif current_shipping_status == 'to_ship':
                 if is_pickup:
                     updated_available_actions = ['ready_for_pickup']
@@ -21878,30 +20833,17 @@ class SellerOrderList(viewsets.ViewSet):
                     updated_available_actions = ['arrange_shipment']
                     if has_pending_offer:
                         updated_available_actions.append('view_offer')
-            
             elif current_shipping_status == 'arrange_shipment':
-                if has_pending_offer:
-                    updated_available_actions = ['view_offer']
-                else:
-                    updated_available_actions = ['arrange_shipment_nav']
-            
+                updated_available_actions = ['view_offer'] if has_pending_offer else ['arrange_shipment_nav']
             elif current_shipping_status == 'ready_for_pickup':
                 updated_available_actions = ['picked_up']
-            
             elif current_shipping_status == 'shipped':
                 updated_available_actions = ['out_for_delivery', 'complete']
-            
-            elif current_shipping_status == 'out_for_delivery':
+            elif current_shipping_status in ['out_for_delivery', 'in_transit']:
                 updated_available_actions = ['complete']
-            
-            elif current_shipping_status == 'in_transit':
-                updated_available_actions = ['complete']
-            
-            if current_shipping_status not in ['completed', 'cancelled', 'picked_up'] and not is_pending_approval:
+            if current_shipping_status not in ['completed', 'cancelled', 'picked_up']:
                 updated_available_actions.append('cancel')
-            
             updated_available_actions.append('view_details')
-
             return Response({
                 "success": True,
                 "message": message,
@@ -21911,106 +20853,49 @@ class SellerOrderList(viewsets.ViewSet):
                     "updated_at": order.updated_at.isoformat(),
                     "original_status": original_status,
                     "new_status": order.status,
-                    "updated_order": updated_order_data,  # Full updated order data
-                    "updated_available_actions": updated_available_actions  # Updated actions
+                    "updated_order": updated_order_data,
+                    "updated_available_actions": updated_available_actions
                 }
             }, status=status.HTTP_200_OK)
-
         except Exception as e:
-            return Response({
-                "success": False,
-                "message": f"Error updating order: {str(e)}"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"success": False, "message": f"Error updating order: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['post'])
     def prepare_shipment(self, request, pk=None):
-        """
-        Prepare order for shipment with immediate updated data
-        POST /seller-order-list/{order_id}/prepare_shipment/?shop_id={shop_id}
-        """
         try:
-            # Verify shop ownership
             shop_id = request.GET.get('shop_id')
             if not shop_id:
-                return Response({
-                    "success": False,
-                    "message": "Shop ID is required"
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get shop
+                return Response({"success": False, "message": "Shop ID is required"}, status=status.HTTP_400_BAD_REQUEST)
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Shop not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get order
+                return Response({"success": False, "message": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
             try:
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
-                return Response({
-                    "success": False,
-                    "message": "Order not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Check if order has items from this shop
-            has_shop_items = Checkout.objects.filter(
-                order=order,
-                cart_item__product__shop=shop
-            ).exists()
-            
+                return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+            has_shop_items = Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists()
             if not has_shop_items:
-                return Response({
-                    "success": False,
-                    "message": "Order does not contain items from your shop"
-                }, status=status.HTTP_403_FORBIDDEN)
-
-            # Check if order is in pending_shipment status
+                return Response({"success": False, "message": "Order does not contain items from your shop"}, status=status.HTTP_403_FORBIDDEN)
             current_shipping_status = self._get_shipping_status(order.status)
             if current_shipping_status != 'pending_shipment':
-                return Response({
-                    "success": False,
-                    "message": "Order is not in pending shipment status"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Check if order is for delivery (not pickup)
-            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower() 
-                                                     for keyword in ['pickup', 'store', 'collect'])
+                return Response({"success": False, "message": "Order is not in pending shipment status"}, status=status.HTTP_400_BAD_REQUEST)
+            is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
+                                                      for keyword in ['pickup', 'store', 'collect'])
             if is_pickup:
-                return Response({
-                    "success": False,
-                    "message": "This order is for pickup, not delivery"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Check if order is pending approval
-            is_pending_approval = order.receipt and order.approval != 'accepted'
-            if is_pending_approval:
-                return Response({
-                    "success": False,
-                    "message": "Cannot prepare shipment while payment approval is pending"
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Update order status to 'to_ship' (ready for shipping arrangements)
+                return Response({"success": False, "message": "This order is for pickup, not delivery"}, status=status.HTTP_400_BAD_REQUEST)
             original_status = order.status
-            order.status = 'processing'  # This will map to 'to_ship' in _get_shipping_status
+            order.status = 'processing'
             order.updated_at = timezone.now()
             order.save()
-            
-            # Refresh the order object
             order.refresh_from_db()
-
-            # Create notification for the seller
             Notification.objects.create(
                 user=request.user,
                 title='Order Prepared for Shipment',
                 type='order_update',
-                message=f'Order {pk} has been prepared for shipment and is ready for shipping arrangements.',
+                message=f'Order {pk} has been prepared for shipment.',
                 is_read=False
             )
-
-            # Create notification for the buyer
             Notification.objects.create(
                 user=order.user,
                 title='Order Being Prepared',
@@ -22018,20 +20903,8 @@ class SellerOrderList(viewsets.ViewSet):
                 message=f'Your order {pk} is being prepared for shipment.',
                 is_read=False
             )
-
-            # Prepare updated order data
             updated_order_data = self._prepare_order_response(order, shop)
-            
-            # Get updated available actions
-            latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
-            current_shipping_status = self._get_shipping_status(
-                order.status, 
-                latest_delivery.status if latest_delivery else None
-            )
-            
-            # Updated available actions for to_ship status
             updated_available_actions = ['arrange_shipment', 'cancel', 'view_details']
-
             return Response({
                 "success": True,
                 "message": "Order prepared for shipment successfully",
@@ -22039,56 +20912,27 @@ class SellerOrderList(viewsets.ViewSet):
                     "order_id": pk,
                     "original_status": original_status,
                     "new_status": "to_ship",
-                    "updated_order": updated_order_data,  # Full updated order
-                    "updated_available_actions": updated_available_actions  # New actions
+                    "updated_order": updated_order_data,
+                    "updated_available_actions": updated_available_actions
                 }
             }, status=status.HTTP_200_OK)
-            
         except Exception as e:
-            return Response({
-                "success": False,
-                "message": f"Error preparing shipment: {str(e)}"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"success": False, "message": f"Error preparing shipment: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['get'])
     def seller_view_order(self, request):
         order_id = request.GET.get('order_id')
         shop_id = request.GET.get('shop_id')
-        
         if not order_id or not shop_id:
-            return Response({
-                'success': False,
-                'message': 'Missing order_id or shop_id'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response({'success': False, 'message': 'Missing order_id or shop_id'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            # Get the shop
             shop = Shop.objects.get(id=shop_id)
-            
-            # Get the order
             order = Order.objects.select_related('user', 'shipping_address').get(order=order_id)
-            
-            # Get receipt URL
-            receipt_url = self._get_order_receipt(order)
-            
-            # Get checkouts for this order that belong to the shop
             checkouts = Checkout.objects.filter(
-                order=order,
-                cart_item__product__shop=shop
-            ).select_related(
-                'cart_item__product',
-                'cart_item__variant'
-            ).prefetch_related(
-                'cart_item__product__productmedia_set'
-            )
-            
+                order=order, cart_item__product__shop=shop
+            ).select_related('cart_item__product', 'cart_item__variant').prefetch_related('cart_item__product__productmedia_set')
             if not checkouts.exists():
-                return Response({
-                    'success': False,
-                    'message': 'No items found for this shop in the order'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get delivery info if exists
+                return Response({'success': False, 'message': 'No items found for this shop in the order'}, status=status.HTTP_404_NOT_FOUND)
             delivery_info = None
             try:
                 delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
@@ -22102,69 +20946,36 @@ class SellerOrderList(viewsets.ViewSet):
                     }
             except Delivery.DoesNotExist:
                 pass
-
-            # Build items list
             items = []
             total_amount = 0
-            
             for checkout in checkouts:
                 cart_item = checkout.cart_item
                 if not cart_item or not cart_item.product:
                     continue
-                
                 product = cart_item.product
                 variant = cart_item.variant
-                
-                # Get price from variant
                 price = float(variant.price) if variant and variant.price else 0
                 variant_title = variant.title if variant else product.condition
-                
-                # Get product media - FIXED: removed .order_by('created_at') since it doesn't exist
-                product_media = []
-                try:
-                    # Get all media for this product without ordering by created_at
-                    product_media_queryset = ProductMedia.objects.filter(product=product)[:5]
-                    
-                    for media in product_media_queryset:
-                        if media.file_data:
-                            # Convert S3 URL to public URL if needed
-                            file_url = convert_s3_to_public_url(media.file_data.url)
-                            product_media.append({
-                                "id": str(media.id),
-                                "url": file_url,
-                                "file_type": media.file_type
-                            })
-                except Exception as e:
-                    print(f"Error getting product media: {e}")
-                
-                # Get variant image URL
+                product_media = self._get_product_media(product)
                 variant_image_url = None
                 if variant and variant.image:
                     try:
                         variant_image_url = convert_s3_to_public_url(variant.image.url)
                     except Exception as e:
                         print(f"Error getting variant image: {e}")
-                
                 item_total = price * checkout.quantity
                 total_amount += item_total
-                
-                # Build product data with media
                 product_data = {
                     "id": str(product.id),
                     "name": product.name,
                     "price": price,
                     "variant": variant_title,
-                    "shop": {
-                        "id": str(shop.id),
-                        "name": shop.name
-                    },
+                    "shop": {"id": str(shop.id), "name": shop.name},
                     "media": product_media,
                     "primary_image": product_media[0] if product_media else None
                 }
-                
                 if variant_image_url:
                     product_data["variant_image"] = variant_image_url
-                
                 items.append({
                     'id': str(checkout.id),
                     'cart_item': {
@@ -22177,16 +20988,12 @@ class SellerOrderList(viewsets.ViewSet):
                     'total_amount': item_total,
                     'status': checkout.status if hasattr(checkout, 'status') else 'pending',
                 })
-
-            # Get shipping status
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
             shipping_status = self._get_shipping_status(
-                order.status, 
+                order.status,
                 latest_delivery.status if latest_delivery else None
             )
-
-            # Build response
-            response_data = {
+            return Response({
                 'success': True,
                 'data': {
                     'order_id': str(order.order),
@@ -22198,7 +21005,6 @@ class SellerOrderList(viewsets.ViewSet):
                         'last_name': order.user.last_name,
                         'contact_number': order.user.contact_number,
                     },
-                    'approval': order.approval,  # Add approval field
                     'status': shipping_status,
                     'total_amount': total_amount,
                     'payment_method': order.payment_method,
@@ -22216,152 +21022,68 @@ class SellerOrderList(viewsets.ViewSet):
                     'completed_at': order.completed_at.isoformat() if order.completed_at else None,
                     'items': items,
                     'delivery_info': delivery_info,
-                    'receipt': {
-                        'url': receipt_url,
-                        'file_name': order.receipt.name.split('/')[-1] if order.receipt else None,
-                        'file_type': order.receipt.name.split('.')[-1].lower() if order.receipt else None,
-                        'uploaded_at': order.updated_at.isoformat() if order.updated_at else None
-                    } if receipt_url else None
+                    # Include pickup_date from metadata if set
+                    'pickup_date': order.metadata.get('pickup_date') if order.metadata else None,
                 }
-            }
-
-            return Response(response_data, status=status.HTTP_200_OK)
-
+            }, status=status.HTTP_200_OK)
         except Shop.DoesNotExist:
-            return Response({
-                'success': False,
-                'message': 'Shop not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'message': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Order.DoesNotExist:
-            return Response({
-                'success': False,
-                'message': 'Order not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'message': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({
-                'success': False,
-                'message': f'Error retrieving order: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            return Response({'success': False, 'message': f'Error retrieving order: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['get'])
     def generate_waybill(self, request, pk=None):
+        import io
+        import qrcode
+        from django.http import HttpResponse
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.units import inch
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
         """
         Generate compact Shopee-style waybill sticker (J&T/Shopee format, 1/4 bondpaper size)
-        FIXED: Full-width layout with QR code on right
         GET /seller-order-list/{order_id}/generate_waybill/?shop_id={shop_id}
         """
         try:
-            from reportlab.lib import colors
-            from reportlab.lib.pagesizes import letter
-            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import inch
-            from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-            import io
-            from django.http import HttpResponse
-            import qrcode
-            from PIL import Image as PILImage
-            import textwrap
-            from django.utils import timezone
-            
-            # Get order and validate
             try:
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
                 return Response({"success": False, "message": "Order not found"}, status=404)
-
             shop_id = request.GET.get('shop_id')
             if not shop_id:
                 return Response({"success": False, "message": "Shop ID required"}, status=400)
-            
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found"}, status=404)
-            
-            has_shop_items = Checkout.objects.filter(
-                order=order, cart_item__product__shop=shop
-            ).exists()
+            has_shop_items = Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists()
             if not has_shop_items:
                 return Response({"success": False, "message": "No items from your shop"}, status=403)
-
             delivery = Delivery.objects.filter(order=order).select_related('rider__rider').first()
             checkout_items = Checkout.objects.filter(
                 order=order, cart_item__product__shop=shop
             ).select_related('cart_item__product', 'cart_item__variant')
-
-            # EXACT 1/4 BONDPAPER SIZE: 4.25 x 5.5 inches (half of 8.5x11)
             buffer = io.BytesIO()
-            STICKER_WIDTH = 4.25 * inch  # Exactly half of 8.5 inches
-            STICKER_HEIGHT = 5.5 * inch  # Exactly half of 11 inches
-            
+            STICKER_WIDTH = 4.25 * inch
+            STICKER_HEIGHT = 5.5 * inch
             doc = SimpleDocTemplate(
                 buffer, pagesize=(STICKER_WIDTH, STICKER_HEIGHT),
                 rightMargin=0.1*inch, leftMargin=0.1*inch,
                 topMargin=0.1*inch, bottomMargin=0.1*inch,
-                title=f"Waybill_{order.order}",
-                author="Crimson Delivery"
+                title=f"Waybill_{order.order}", author="Crimson Delivery"
             )
-            
             elements = []
             styles = getSampleStyleSheet()
-            
-            # Create styles that fill the space
-            title_style = ParagraphStyle(
-                'Title',
-                parent=styles['Normal'],
-                fontSize=14,
-                alignment=TA_CENTER,
-                spaceAfter=4,
-                textColor=colors.HexColor('#2c3e50'),
-                fontName='Helvetica-Bold'
-            )
-            
-            header_style = ParagraphStyle(
-                'Header',
-                parent=styles['Normal'],
-                fontSize=10,
-                alignment=TA_CENTER,
-                spaceAfter=4,
-                textColor=colors.HexColor('#34495e'),
-                fontName='Helvetica-Bold'
-            )
-            
-            section_header = ParagraphStyle(
-                'SectionHeader',
-                parent=styles['Normal'],
-                fontSize=9,
-                fontName='Helvetica-Bold',
-                textColor=colors.HexColor('#2980b9'),
-                spaceAfter=2
-            )
-            
-            normal_style = ParagraphStyle(
-                'Normal',
-                parent=styles['Normal'],
-                fontSize=8,
-                leading=10,
-                spaceAfter=2
-            )
-            
-            small_style = ParagraphStyle(
-                'Small',
-                parent=styles['Normal'],
-                fontSize=7,
-                leading=9,
-                textColor=colors.HexColor('#7f8c8d')
-            )
-            
-            bold_small = ParagraphStyle(
-                'BoldSmall',
-                parent=styles['Normal'],
-                fontSize=8,
-                leading=10,
-                fontName='Helvetica-Bold'
-            )
-
-           
-            # 2. ORDER INFO BAR - Full width
+            title_style = ParagraphStyle('Title', parent=styles['Normal'], fontSize=14, alignment=TA_CENTER, spaceAfter=4, textColor=colors.HexColor('#2c3e50'), fontName='Helvetica-Bold')
+            header_style = ParagraphStyle('Header', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER, spaceAfter=4, textColor=colors.HexColor('#34495e'), fontName='Helvetica-Bold')
+            section_header = ParagraphStyle('SectionHeader', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Bold', textColor=colors.HexColor('#2980b9'), spaceAfter=2)
+            normal_style = ParagraphStyle('Normal', parent=styles['Normal'], fontSize=8, leading=10, spaceAfter=2)
+            small_style = ParagraphStyle('Small', parent=styles['Normal'], fontSize=7, leading=9, textColor=colors.HexColor('#7f8c8d'))
+            bold_small = ParagraphStyle('BoldSmall', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
             waybill_num = f"WB-{str(order.order)[:8].upper()}"
             order_info_data = [[
                 Paragraph(f"<b>Order:</b> #{str(order.order)[:8]}", normal_style),
@@ -22378,9 +21100,6 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(order_info_table)
             elements.append(Spacer(1, 0.05*inch))
-            
-            # 3. QR CODE WITH INFO SIDE-BY-SIDE - Fills the width
-            # Generate QR Code
             qr = qrcode.QRCode(version=2, box_size=4, border=1)
             qr_data = f"ORDER:{order.order}|SHOP:{shop.id}"
             if delivery and delivery.rider:
@@ -22392,17 +21111,13 @@ class SellerOrderList(viewsets.ViewSet):
             qr_img.save(img_buffer, 'PNG')
             img_buffer.seek(0)
             qr_img_rl = Image(img_buffer, width=1.2*inch, height=1.2*inch)
-            
-            # Left side info (fills the space beside QR)
             left_info_data = [
                 [Paragraph("<b>SHIPPING INFO</b>", bold_small)],
                 [Paragraph(f"<b>Payment:</b> {order.payment_method or 'N/A'}", small_style)],
                 [Paragraph(f"<b>Items:</b> {len(checkout_items)}", small_style)],
             ]
-            
             if delivery and delivery.delivery_fee:
                 left_info_data.append([Paragraph(f"<b>Delivery Fee:</b> ₱{float(delivery.delivery_fee):,.0f}", small_style)])
-            
             left_info_table = Table(left_info_data, colWidths=[2.5*inch])
             left_info_table.setStyle(TableStyle([
                 ('ALIGN', (0,0), (-1,-1), 'LEFT'),
@@ -22411,10 +21126,7 @@ class SellerOrderList(viewsets.ViewSet):
                 ('BOTTOMPADDING', (0,0), (-1,-1), 2),
                 ('BACKGROUND', (0,0), (0,0), colors.HexColor('#f8f9fa')),
             ]))
-            
-            # Combine left info and QR code side by side
-            qr_row = [[left_info_table, qr_img_rl]]
-            qr_table = Table(qr_row, colWidths=[2.7*inch, 1.2*inch])
+            qr_table = Table([[left_info_table, qr_img_rl]], colWidths=[2.7*inch, 1.2*inch])
             qr_table.setStyle(TableStyle([
                 ('ALIGN', (0,0), (0,0), 'LEFT'),
                 ('ALIGN', (1,0), (1,0), 'RIGHT'),
@@ -22422,40 +21134,17 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(qr_table)
             elements.append(Spacer(1, 0.05*inch))
-            
-            # 4. SENDER/RECEIVER - Side by side to fill width
             customer = order.user
-            
-            # Sender info (left column)
-            sender_text = f"""
-            <b>FROM:</b><br/>
-            {shop.name}<br/>
-            <font size=6>{shop.street}, {shop.barangay}<br/>{shop.city}</font><br/>
-            <font size=6><b>Tel:</b> {shop.contact_number or 'N/A'}</font>
-            """
-            
-            # Receiver info (right column)
+            sender_text = f"<b>FROM:</b><br/>{shop.name}<br/><font size=6>{shop.street}, {shop.barangay}<br/>{shop.city}</font><br/><font size=6><b>Tel:</b> {shop.contact_number or 'N/A'}</font>"
             if order.shipping_address:
                 addr = order.shipping_address
-                receiver_text = f"""
-                <b>TO:</b><br/>
-                {addr.recipient_name}<br/>
-                <font size=6>{addr.get_full_address()}<br/></font>
-                <font size=6><b>Tel:</b> {addr.recipient_phone}</font>
-                """
+                receiver_text = f"<b>TO:</b><br/>{addr.recipient_name}<br/><font size=6>{addr.get_full_address()}<br/></font><font size=6><b>Tel:</b> {addr.recipient_phone}</font>"
             else:
-                receiver_text = f"""
-                <b>TO:</b><br/>
-                {customer.first_name} {customer.last_name}<br/>
-                <font size=6>{order.delivery_address_text or 'N/A'}<br/></font>
-                <font size=6><b>Tel:</b> {customer.contact_number or 'N/A'}</font>
-                """
-            
-            address_data = [
-                [Paragraph(sender_text, normal_style),
-                Paragraph(receiver_text, normal_style)]
-            ]
-            address_table = Table(address_data, colWidths=[STICKER_WIDTH/2-0.15*inch, STICKER_WIDTH/2-0.15*inch])
+                receiver_text = f"<b>TO:</b><br/>{customer.first_name} {customer.last_name}<br/><font size=6>{order.delivery_address_text or 'N/A'}<br/></font><font size=6><b>Tel:</b> {customer.contact_number or 'N/A'}</font>"
+            address_table = Table(
+                [[Paragraph(sender_text, normal_style), Paragraph(receiver_text, normal_style)]],
+                colWidths=[STICKER_WIDTH/2-0.15*inch, STICKER_WIDTH/2-0.15*inch]
+            )
             address_table.setStyle(TableStyle([
                 ('ALIGN', (0,0), (-1,-1), 'LEFT'),
                 ('VALIGN', (0,0), (-1,-1), 'TOP'),
@@ -22468,14 +21157,11 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(address_table)
             elements.append(Spacer(1, 0.05*inch))
-            
-            # 5. RIDER INFO - Full width
             if delivery and delivery.rider:
                 rider = delivery.rider.rider
                 rider_text = f"🚀 <b>RIDER:</b> {rider.first_name} {rider.last_name} | <b>📞</b> {rider.contact_number or 'N/A'}"
             else:
                 rider_text = "🚀 <b>AWAITING RIDER ASSIGNMENT</b>"
-            
             rider_bg = colors.HexColor('#d4edda') if delivery and delivery.rider else colors.HexColor('#fff3cd')
             rider_table = Table([[Paragraph(rider_text, normal_style)]], colWidths=[STICKER_WIDTH-0.2*inch])
             rider_table.setStyle(TableStyle([
@@ -22487,17 +21173,13 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(rider_table)
             elements.append(Spacer(1, 0.05*inch))
-            
-            # 6. ITEMS SUMMARY - Full width
             elements.append(Paragraph("ORDER ITEMS", section_header))
-            
             items_data = [[
                 Paragraph("<b>Item</b>", bold_small),
                 Paragraph("<b>Qty</b>", bold_small),
                 Paragraph("<b>Price</b>", bold_small)
             ]]
-            
-            for checkout in checkout_items[:3]:  # Show first 3 items
+            for checkout in checkout_items[:3]:
                 cart_item = checkout.cart_item
                 if not cart_item or not cart_item.product:
                     continue
@@ -22509,14 +21191,8 @@ class SellerOrderList(viewsets.ViewSet):
                     Paragraph(str(checkout.quantity), small_style),
                     Paragraph(f"₱{price:,.0f}", small_style)
                 ])
-            
             if len(checkout_items) > 3:
-                items_data.append([
-                    Paragraph(f"+{len(checkout_items)-3} more items", small_style),
-                    Paragraph("", small_style),
-                    Paragraph("", small_style)
-                ])
-            
+                items_data.append([Paragraph(f"+{len(checkout_items)-3} more items", small_style), Paragraph("", small_style), Paragraph("", small_style)])
             items_table = Table(items_data, colWidths=[2.2*inch, 0.5*inch, 0.8*inch])
             items_table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#3498db')),
@@ -22533,22 +21209,14 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(items_table)
             elements.append(Spacer(1, 0.05*inch))
-            
-            # 7. TOTALS - Full width
             delivery_fee = float(delivery.delivery_fee if delivery and delivery.delivery_fee else 0)
             subtotal = sum(float(c.total_amount or 0) for c in checkout_items)
             grand_total = subtotal + delivery_fee
-            
-            totals_data = [
-                [Paragraph("Subtotal:", normal_style),
-                Paragraph(f"₱{subtotal:,.0f}", normal_style)],
-                [Paragraph("Delivery Fee:", normal_style),
-                Paragraph(f"₱{delivery_fee:,.0f}", normal_style)],
-                [Paragraph("<b>TOTAL:</b>", bold_small),
-                Paragraph(f"<b>₱{grand_total:,.0f}</b>", bold_small)]
-            ]
-            
-            totals_table = Table(totals_data, colWidths=[3.0*inch, 0.8*inch])
+            totals_table = Table([
+                [Paragraph("Subtotal:", normal_style), Paragraph(f"₱{subtotal:,.0f}", normal_style)],
+                [Paragraph("Delivery Fee:", normal_style), Paragraph(f"₱{delivery_fee:,.0f}", normal_style)],
+                [Paragraph("<b>TOTAL:</b>", bold_small), Paragraph(f"<b>₱{grand_total:,.0f}</b>", bold_small)]
+            ], colWidths=[3.0*inch, 0.8*inch])
             totals_table.setStyle(TableStyle([
                 ('ALIGN', (0,0), (0,-1), 'LEFT'),
                 ('ALIGN', (1,0), (1,-1), 'RIGHT'),
@@ -22557,46 +21225,32 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(totals_table)
             elements.append(Spacer(1, 0.05*inch))
-            
-            # 8. SIGNATURE LINE - Full width
-            sig_data = [[
+            sig_table = Table([[
                 Paragraph("Seller Sig: _________________", small_style),
                 Paragraph("Receiver Sig: _________________", small_style),
                 Paragraph(f"Date: {timezone.now().strftime('%m/%d')}", small_style)
-            ]]
-            sig_table = Table(sig_data, colWidths=[1.4*inch, 1.4*inch, 1.0*inch])
+            ]], colWidths=[1.4*inch, 1.4*inch, 1.0*inch])
             sig_table.setStyle(TableStyle([
                 ('ALIGN', (0,0), (-1,-1), 'LEFT'),
                 ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
                 ('TOPPADDING', (0,0), (-1,-1), 8),
             ]))
             elements.append(sig_table)
-            
-            # Build PDF
             doc.build(elements)
             pdf_bytes = buffer.getvalue()
             buffer.close()
-            
-            # Return PDF directly as download
             response = HttpResponse(pdf_bytes, content_type='application/pdf')
             response['Content-Disposition'] = f'attachment; filename="waybill_{waybill_num}.pdf"'
             response['Content-Length'] = len(pdf_bytes)
             return response
-            
         except Shop.DoesNotExist:
             return Response({"success": False, "message": "Shop not found"}, status=404)
         except ImportError as e:
-            return Response({
-                "success": False,
-                "message": f"PDF libraries missing: {str(e)}. Install: pip install reportlab qrcode[pil]"
-            }, status=500)
+            return Response({"success": False, "message": f"PDF libraries missing: {str(e)}. Install: pip install reportlab qrcode[pil]"}, status=500)
         except Exception as e:
             import traceback
             print(traceback.format_exc())
-            return Response({
-                "success": False,
-                "message": f"Waybill generation failed: {str(e)}"
-            }, status=500)
+            return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)
 
 class CheckoutOrder(viewsets.ViewSet):
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')

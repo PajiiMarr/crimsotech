@@ -61,7 +61,6 @@ import {
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Link } from "react-router";
-
 export function meta(): Route.MetaDescriptors {
     return [
         {
@@ -69,25 +68,21 @@ export function meta(): Route.MetaDescriptors {
         }
     ]
 }
-
 interface MediaItem {
     id: string;
     url: string;
     file_type: string;
 }
-
 interface ShopInfo {
     id: string;
     name: string;
     contact_number?: string;
     verified?: boolean;
 }
-
 interface CategoryInfo {
     id: string;
     name: string;
 }
-
 interface ProductInfo {
     id: string;
     name: string;
@@ -104,7 +99,6 @@ interface ProductInfo {
     media: MediaItem[];
     primary_image: MediaItem | null;
 }
-
 interface VariantInfo {
     id: string;
     title: string;
@@ -131,7 +125,6 @@ interface VariantInfo {
     created_at: string | null;
     updated_at: string | null;
 }
-
 interface UserInfo {
     id: string;
     username: string;
@@ -140,7 +133,6 @@ interface UserInfo {
     last_name: string;
     contact_number: string;
 }
-
 interface CartItemInfo {
     id: string;
     product: ProductInfo;
@@ -150,7 +142,6 @@ interface CartItemInfo {
     added_at: string | null;
     user: UserInfo | null;
 }
-
 interface OrderItem {
     id: string;
     cart_item: CartItemInfo;
@@ -169,7 +160,6 @@ interface OrderItem {
     remarks: string;
     created_at: string | null;
 }
-
 interface ShippingAddressInfo {
     id: string;
     recipient_name: string;
@@ -192,14 +182,6 @@ interface ShippingAddressInfo {
     created_at: string | null;
     updated_at: string | null;
 }
-
-interface ReceiptInfo {
-    url: string;
-    file_name: string;
-    file_type: string;
-    uploaded_at: string;
-}
-
 interface Order {
     order_id: string;
     user: UserInfo;
@@ -210,39 +192,18 @@ interface Order {
     delivery_method: string;
     delivery_address: string;
     shipping_address: ShippingAddressInfo | null;
-    receipt: ReceiptInfo | null;
     created_at: string;
     updated_at: string;
     completed_at: string | null;
     items: OrderItem[];
 }
-
 interface LoaderData {
     user: any;
     order: Order | null;
     error?: string;
 }
-
-// Action configurations
+// Action configurations — approval/receipt removed
 const actionConfigs = {
-    approveOrder: {
-        title: "Approve Order",
-        description: "Approve this order and proceed with processing",
-        confirmText: "Approve",
-        variant: "default" as const,
-        icon: CheckCircle,
-        needsReason: false,
-        needsStatusSelection: false,
-    },
-    rejectOrder: {
-        title: "Reject Order",
-        description: "Reject this order and notify the customer",
-        confirmText: "Reject",
-        variant: "destructive" as const,
-        icon: XCircle,
-        needsReason: true,
-        needsStatusSelection: false,
-    },
     markAsShipped: {
         title: "Mark as Shipped",
         description: "Mark this order as shipped",
@@ -250,7 +211,6 @@ const actionConfigs = {
         variant: "default" as const,
         icon: Truck,
         needsReason: false,
-        needsStatusSelection: false,
     },
     markAsDelivered: {
         title: "Mark as Delivered",
@@ -259,7 +219,6 @@ const actionConfigs = {
         variant: "default" as const,
         icon: CheckCircle,
         needsReason: false,
-        needsStatusSelection: false,
     },
     issueRefund: {
         title: "Issue Refund",
@@ -268,38 +227,28 @@ const actionConfigs = {
         variant: "destructive" as const,
         icon: Undo,
         needsReason: true,
-        needsStatusSelection: false,
     },
 };
-
 export async function loader({ request, context, params }: Route.LoaderArgs): Promise<LoaderData> {
     const { requireRole } = await import("~/middleware/role-require.server");
     const { fetchUserRole } = await import("~/middleware/role.server");
     const { order_id } = params;
-
     let user = (context as any).user;
     if (!user) {
         user = await fetchUserRole({ request, context });
     }
-
     await requireRole(request, context, ["isAdmin"]);
-
     const { getSession } = await import('~/sessions.server');
     const session = await getSession(request.headers.get("Cookie"));
-
     if (!order_id) {
         return { user, order: null, error: "Order ID is required" };
     }
-
-    // Validate that order_id is a valid UUID
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(order_id)) {
         return { user, order: null, error: "Invalid order ID format" };
     }
-
     try {
         const response = await AxiosInstance.get(`/admin-orders/get_order/?order_id=${order_id}`);
-
         if (response.data.success) {
             return { user, order: response.data.order };
         } else {
@@ -307,11 +256,9 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
         }
     } catch (error: any) {
         console.error('Error fetching order:', error);
-        
         if (error.response?.status === 404) {
             return { user, order: null, error: "Order not found" };
         }
-        
         return { 
             user, 
             order: null, 
@@ -319,7 +266,6 @@ export async function loader({ request, context, params }: Route.LoaderArgs): Pr
         };
     }
 }
-
 export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
     const { user, order: initialOrder, error } = loaderData;
     const [order, setOrder] = useState<Order | null>(initialOrder);
@@ -329,11 +275,8 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
     const [reason, setReason] = useState("");
     const isMobile = useIsMobile();
     const { toast } = useToast();
-
-    // Function to refresh order data
     const refreshOrder = async () => {
         if (!order?.order_id) return;
-        
         setLoading(true);
         try {
             const response = await AxiosInstance.get(`/admin-orders/get_order/?order_id=${order.order_id}`);
@@ -346,7 +289,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             setLoading(false);
         }
     };
-
     const getStatusBadge = (status: string) => {
         const statusConfig: Record<string, { variant: "default" | "secondary" | "outline" | "destructive", label: string }> = {
             pending: { variant: "secondary", label: "Pending" },
@@ -357,44 +299,13 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             completed: { variant: "default", label: "Completed" },
             refunded: { variant: "destructive", label: "Refunded" }
         };
-        
         const config = statusConfig[status?.toLowerCase() || 'pending'] || statusConfig.pending;
         return <Badge variant={config.variant}>{config.label}</Badge>;
     };
-
-    const getApprovalBadge = (approval: string) => {
-        const approvalConfig: Record<string, { variant: "default" | "secondary" | "outline" | "destructive", label: string }> = {
-            pending: { variant: "secondary", label: "Pending Approval" },
-            accepted: { variant: "default", label: "Approved" },
-            rejected: { variant: "destructive", label: "Rejected" }
-        };
-        
-        const config = approvalConfig[approval?.toLowerCase() || 'pending'] || approvalConfig.pending;
-        return <Badge variant={config.variant}>{config.label}</Badge>;
-    };
-
     const getAvailableActions = () => {
         if (!order) return [];
-        
         const actions = [];
         const status = order.status?.toLowerCase();
-        const approval = order.approval?.toLowerCase();
-
-        if (approval === 'pending' && order.receipt) {
-            actions.push({
-                id: "approveOrder",
-                label: "Approve Order",
-                icon: CheckCircle,
-                variant: "default" as const,
-            });
-            actions.push({
-                id: "rejectOrder",
-                label: "Reject Order",
-                icon: XCircle,
-                variant: "destructive" as const,
-            });
-        }
-
         if (status === 'processing') {
             actions.push({
                 id: "markAsShipped",
@@ -403,7 +314,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                 variant: "outline" as const,
             });
         }
-
         if (status === 'shipped') {
             actions.push({
                 id: "markAsDelivered",
@@ -412,8 +322,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                 variant: "outline" as const,
             });
         }
-
-
         if (status === 'delivered' || status === 'completed') {
             actions.push({
                 id: "issueRefund",
@@ -422,23 +330,17 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                 variant: "destructive" as const,
             });
         }
-
         return actions;
     };
-
     const availableActions = getAvailableActions();
     const currentAction = activeAction ? actionConfigs[activeAction as keyof typeof actionConfigs] : null;
-
     const handleActionClick = (actionId: string) => {
         setActiveAction(actionId);
         setReason("");
         setShowDialog(true);
     };
-
     const handleConfirm = async () => {
         if (!activeAction || !order) return;
-
-        // Validate required reason for actions that need it
         if (currentAction?.needsReason && !reason.trim()) {
             toast({
                 title: "Validation Error",
@@ -447,52 +349,35 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             });
             return;
         }
-
         setLoading(true);
         try {
             let response;
-            
             switch (activeAction) {
-                case 'approveOrder':
-                case 'rejectOrder':
-                    response = await AxiosInstance.post('/admin-orders/update_order_approval/', {
-                        order_id: order.order_id,
-                        approval: activeAction === 'approveOrder' ? 'accepted' : 'rejected',
-                        reason: reason || undefined,
-                    });
-                    break;
-                    
                 case 'markAsShipped':
                     response = await AxiosInstance.post('/admin-orders/mark_as_shipped/', {
                         order_id: order.order_id,
                     });
                     break;
-                    
                 case 'markAsDelivered':
                     response = await AxiosInstance.post('/admin-orders/mark_as_delivered/', {
                         order_id: order.order_id,
                     });
                     break;
-                    
                 case 'issueRefund':
                     response = await AxiosInstance.post('/admin-orders/issue_refund/', {
                         order_id: order.order_id,
                         reason: reason,
                     });
                     break;
-                    
                 default:
                     return;
             }
-
             if (response?.data.success) {
                 toast({
                     title: "Success",
                     description: response.data.message || "Action completed successfully",
                     variant: "success",
                 });
-                
-                // Refresh order data
                 await refreshOrder();
             }
         } catch (error: any) {
@@ -509,43 +394,14 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             setReason("");
         }
     };
-
     const handleCancel = () => {
         if (loading) return;
         setShowDialog(false);
         setActiveAction(null);
         setReason("");
     };
-
-    const getFileExtension = (filename: string) => {
-        if (!filename) return '';
-        return filename.split('.').pop()?.toLowerCase() || '';
-    };
-
-    const isImageFile = (fileType: string) => {
-        return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(fileType?.toLowerCase() || '');
-    };
-
-    const getFileName = (filepath: string) => {
-        if (!filepath) return 'receipt';
-        return filepath.split('/').pop() || 'receipt';
-    };
-
-    const canApproveOrder = () => {
-        if (!order) return false;
-        const isWalletPayment = order.payment_method?.toLowerCase().includes('gcash') || 
-                                order.payment_method?.toLowerCase().includes('maya') ||
-                                order.payment_method?.toLowerCase().includes('wallet');
-        return (
-            !!order.receipt && 
-            isWalletPayment &&
-            order.approval === 'pending'
-        );
-    };
-
     const renderDialogContent = () => {
         if (!currentAction || !order) return null;
-
         return (
             <>
                 <div className="space-y-4">
@@ -555,8 +411,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                             {currentAction.description}
                         </p>
                     </div>
-                    
-                    {/* Order info */}
                     <div className="bg-muted/50 rounded-lg p-3">
                         <p className="text-sm font-medium">Order ID: {order.order_id.slice(0, 16)}...</p>
                         <p className="text-xs text-muted-foreground mt-1">
@@ -566,11 +420,9 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                             Amount: ₱{parseFloat(order.total_amount).toLocaleString()}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                            Current Status: {order.status} • Approval: {order.approval}
+                            Current Status: {order.status}
                         </p>
                     </div>
-                    
-                    {/* Reason input for actions that need it */}
                     {currentAction.needsReason && (
                         <div className="space-y-2">
                             <Label htmlFor="reason" className="text-sm font-medium">
@@ -586,8 +438,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                             />
                         </div>
                     )}
-                    
-                    {/* Warning message for destructive actions */}
                     {currentAction.variant === "destructive" && (
                         <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3">
                             <p className="text-sm font-medium text-destructive flex items-center gap-1">
@@ -600,10 +450,8 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             </>
         );
     };
-
     const renderDesktopDialog = () => {
         if (!currentAction || !order) return null;
-
         return (
             <AlertDialog open={showDialog} onOpenChange={!loading ? setShowDialog : undefined}>
                 <AlertDialogContent className="sm:max-w-[500px]">
@@ -631,10 +479,8 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             </AlertDialog>
         );
     };
-
     const renderMobileDialog = () => {
         if (!currentAction || !order) return null;
-
         return (
             <Drawer open={showDialog} onOpenChange={!loading ? setShowDialog : undefined}>
                 <DrawerContent>
@@ -670,7 +516,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             </Drawer>
         );
     };
-
     if (error) {
         return (
             <UserProvider user={user}>
@@ -686,7 +531,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             </UserProvider>
         );
     }
-
     if (!order) {
         return (
             <UserProvider user={user}>
@@ -702,7 +546,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             </UserProvider>
         );
     }
-
     return (
         <UserProvider user={user}>
             <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
@@ -714,7 +557,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                         </div>
                     </div>
                 )}
-
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <nav className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 flex-wrap">
@@ -731,9 +573,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                             Order #{order.order_id.slice(0, 8)}...
                         </span>
                     </nav>
-
-                    {/* Admin Actions Dropdown */}
-                    {availableActions.length > 0 && (
+                    {/* {availableActions.length > 0 && (
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button variant="outline" size="sm" className="ml-auto">
@@ -746,7 +586,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                     const isDestructive = action.variant === "destructive";
                                     const prevAction = availableActions[index - 1];
                                     const needsSeparator = isDestructive && prevAction && prevAction.variant !== "destructive";
-
                                     return (
                                         <div key={action.id}>
                                             {needsSeparator && <DropdownMenuSeparator />}
@@ -766,9 +605,8 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                 })}
                             </DropdownMenuContent>
                         </DropdownMenu>
-                    )}
+                    )} */}
                 </div>
-
                 {/* Main Content */}
                 <Card>
                     <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
@@ -780,29 +618,11 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                 </CardDescription>
                             </div>
                             <div className="flex items-center gap-2 flex-wrap">
-                                {getApprovalBadge(order.approval)}
                                 {getStatusBadge(order.status)}
                             </div>
                         </div>
                     </CardHeader>
                     <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-6">
-                        {/* Approval Notice */}
-                        {canApproveOrder() && (
-                            <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-                                <div className="flex items-start gap-3">
-                                    <AlertCircle className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
-                                    <div className="flex-1">
-                                        <h4 className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-1">
-                                            Order Awaiting Approval
-                                        </h4>
-                                        <p className="text-xs text-blue-700 dark:text-blue-300 mb-3">
-                                            This order has a receipt and uses e-wallet payment. Please review and approve or reject.
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
                         {/* Order Summary */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                             <div>
@@ -831,9 +651,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                 </div>
                             </div>
                         </div>
-
                         <Separator />
-
                         {/* Customer & Delivery */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div>
@@ -862,7 +680,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                     )}
                                 </div>
                             </div>
-
                             <div>
                                 <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
                                     <MapPin className="w-4 h-4" />
@@ -880,47 +697,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                 )}
                             </div>
                         </div>
-
                         <Separator />
-
-                        {/* Receipt Section */}
-                        {order.receipt && (
-                            <>
-                                <div>
-                                    <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                                        <Receipt className="w-4 h-4" />
-                                        Payment Receipt
-                                    </h3>
-                                    <div className="bg-muted/50 rounded-lg overflow-hidden border p-4">
-                                        {isImageFile(order.receipt.file_type) ? (
-                                            <div className="flex justify-center">
-                                                <img
-                                                    src={order.receipt.url}
-                                                    alt="Payment Receipt"
-                                                    className="max-w-full max-h-96 object-contain rounded"
-                                                    loading="lazy"
-                                                />
-                                            </div>
-                                        ) : (
-                                            <div className="flex flex-col items-center justify-center py-4">
-                                                <FileText className="w-16 h-16 text-muted-foreground mb-3" />
-                                                <p className="text-sm font-medium text-center mb-1">
-                                                    {order.receipt.file_type?.toUpperCase() || 'Document'} Receipt
-                                                </p>
-                                                <p className="text-xs text-muted-foreground text-center">
-                                                    File: {order.receipt.file_name || getFileName(order.receipt.url)}
-                                                </p>
-                                            </div>
-                                        )}
-                                    </div>
-                                    <p className="text-xs text-muted-foreground mt-2">
-                                        Uploaded by customer on {new Date(order.receipt.uploaded_at).toLocaleDateString()}
-                                    </p>
-                                </div>
-                                <Separator />
-                            </>
-                        )}
-
                         {/* Order Items */}
                         <div>
                             <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
@@ -932,11 +709,9 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                     const variant = item.cart_item.variant;
                                     const product = item.cart_item.product;
                                     const productImage = product.primary_image?.url || variant?.image_url;
-                                    
                                     return (
                                         <div key={item.id} className="border rounded-lg p-3 sm:p-4">
                                             <div className="flex gap-3">
-                                                {/* Product Image */}
                                                 {productImage && (
                                                     <div className="flex-shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-md border bg-muted overflow-hidden">
                                                         <img
@@ -950,7 +725,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                                         />
                                                     </div>
                                                 )}
-                                                
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
                                                         <div className="flex-1">
@@ -981,7 +755,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                                             </div>
                                                         </div>
                                                     </div>
-                                                    
                                                     {item.voucher && (
                                                         <div className="bg-muted/50 rounded-lg p-2 sm:p-3 mt-2">
                                                             <div className="flex items-center gap-2">
@@ -1004,8 +777,6 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                         </div>
                     </CardContent>
                 </Card>
-
-                {/* Responsive Action Dialog/Drawer */}
                 {isMobile ? renderMobileDialog() : renderDesktopDialog()}
             </div>
         </UserProvider>

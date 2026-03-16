@@ -173,13 +173,6 @@ const CheckoutPage = () => {
       iconColor: "text-orange-600",
     },
     {
-      id: "gcash",
-      name: "GCash",
-      description: "Pay instantly via GCash",
-      icon: Smartphone,
-      iconColor: "text-orange-600",
-    },
-    {
       id: "maya",
       name: "Maya",
       description: "Pay using Maya wallet",
