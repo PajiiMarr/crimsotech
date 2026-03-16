@@ -3,6 +3,7 @@
 import { SidebarProvider, SidebarInset } from "~/components/ui/sidebar";
 import { AppSidebar } from "~/components/navigations/sidebar";
 import CustomerHeader from "~/components/layouts/customer_header";
+import RiderHeader from "~/components/layouts/rider-header";
 import { useUser } from '~/components/providers/user-role-provider';
 import { useEffect } from 'react';
 
@@ -45,7 +46,8 @@ export default function SidebarLayout({
     >
       <AppSidebar />
       <SidebarInset>
-        <CustomerHeader />
+        {/* Conditionally render header */}
+        {user?.isRider ? <RiderHeader /> : <CustomerHeader />}
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           {children}
         </div>

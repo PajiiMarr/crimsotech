@@ -257,6 +257,25 @@ export default function Header({ shopId }: HeaderProps) {
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    paddingTop: Platform.OS === 'ios' ? 10 : 30,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
+  },
+  header: {
+    height: 60,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -333,23 +352,6 @@ const styles = StyleSheet.create({
   iconButton: {
     padding: 4,
     position: 'relative',
-  },
-  badge: {
-    position: 'absolute',
-    top: -2,
-    right: -2,
-    backgroundColor: '#EF4444',
-    borderRadius: 10,
-    minWidth: 16,
-    height: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-  },
-  badgeText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '600',
   },
   shopNamePlaceholder: {
     width: 100,

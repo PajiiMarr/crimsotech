@@ -74,15 +74,21 @@ export default function RiderHeader({
 
       {/* Right Section: Icons */}
       <View style={styles.headerRight}>
+        {!showBackButton && (
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={() => router.push("/rider/message")}
+          >
+            <MaterialIcons name="message" size={22} color="#374151" />
+          </TouchableOpacity>
+        )}
+
         {showNotifications && !showBackButton && (
           <TouchableOpacity
             style={styles.iconButton}
             onPress={handleNotificationsPress}
           >
             <MaterialIcons name="notifications" size={22} color="#374151" />
-            <View style={styles.notificationBadge}>
-              <Text style={styles.badgeText}>2</Text>
-            </View>
           </TouchableOpacity>
         )}
 
@@ -154,22 +160,5 @@ const styles = StyleSheet.create({
   iconButton: {
     padding: 6,
     position: "relative",
-  },
-  notificationBadge: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    backgroundColor: "#EF4444",
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 3,
-  },
-  badgeText: {
-    color: "#FFFFFF",
-    fontSize: 10,
-    fontWeight: "700",
   },
 });
