@@ -142,6 +142,7 @@ export default [
             route('schedule', 'routes/rider/schedule.tsx'),
             route('earnings', 'routes/rider/earnings.tsx'),
             route("profile", "routes/rider/profile.tsx"),
+            route("wallet", "routes/rider/wallet.tsx"),
         ]),
     ]),
 ] satisfies RouteConfig;

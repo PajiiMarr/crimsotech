@@ -1452,3 +1452,184 @@ class WithdrawalRequestUpdateSerializer(serializers.ModelSerializer):
             'approved_at': {'read_only': True},
             'completed_at': {'read_only': True}
         }
+
+
+
+from django.db.models import Sum
+
+class RiderWalletSerializer(serializers.ModelSerializer):
+    """Complete serializer for rider wallet with transactions and balances"""
+    
+    # Wallet fields
+    wallet_id = serializers.UUIDField(source='wallet.wallet_id', read_only=True)
+    available_balance = serializers.DecimalField(source='wallet.available_balance', max_digits=15, decimal_places=2, read_only=True)
+    pending_balance = serializers.DecimalField(source='wallet.pending_balance', max_digits=15, decimal_places=2, read_only=True)
+    formatted_available = serializers.SerializerMethodField()
+    formatted_pending = serializers.SerializerMethodField()
+    formatted_total = serializers.SerializerMethodField()
+    
+    # Transaction fields
+    transaction_id = serializers.UUIDField(read_only=True)
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2, write_only=True)
+    transaction_type = serializers.ChoiceField(choices=WalletTransaction.TRANSACTION_TYPES, write_only=True)
+    source_type = serializers.CharField(max_length=20, write_only=True)
+    status = serializers.CharField(max_length=30, default='completed', write_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    
+    # Related fields
+    order_number = serializers.SerializerMethodField()
+    formatted_amount = serializers.SerializerMethodField()
+    formatted_created_at = serializers.SerializerMethodField()
+    
+    # Stats fields
+    total_earned = serializers.SerializerMethodField()
+    total_withdrawn = serializers.SerializerMethodField()
+    transaction_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = WalletTransaction
+        fields = [
+            # Wallet info
+            'wallet_id',
+            'available_balance',
+            'pending_balance',
+            'formatted_available',
+            'formatted_pending',
+            'formatted_total',
+            
+            # Transaction info
+            'transaction_id',
+            'amount',
+            'transaction_type',
+            'source_type',
+            'status',
+            'created_at',
+            'order',
+            'order_number',
+            'formatted_amount',
+            'formatted_created_at',
+            
+            # Stats
+            'total_earned',
+            'total_withdrawn',
+            'transaction_count'
+        ]
+        read_only_fields = ['transaction_id', 'created_at', 'wallet_id']
+
+    def get_formatted_available(self, obj):
+        """Format available balance with peso sign"""
+        if hasattr(obj, 'wallet'):
+            return f"₱{obj.wallet.available_balance:,.2f}"
+        return "₱0.00"
+
+    def get_formatted_pending(self, obj):
+        """Format pending balance with peso sign"""
+        if hasattr(obj, 'wallet'):
+            return f"₱{obj.wallet.pending_balance:,.2f}"
+        return "₱0.00"
+
+    def get_formatted_total(self, obj):
+        """Format total balance with peso sign"""
+        if hasattr(obj, 'wallet'):
+            total = obj.wallet.available_balance + obj.wallet.pending_balance
+            return f"₱{total:,.2f}"
+        return "₱0.00"
+
+    def get_order_number(self, obj):
+        """Get the order number from the related order"""
+        if obj.order:
+            return obj.order.order
+        return None
+
+    def get_formatted_amount(self, obj):
+        """Format transaction amount with peso sign"""
+        return f"₱{obj.amount:,.2f}"
+
+    def get_formatted_created_at(self, obj):
+        """Format created_at for display"""
+        if obj.created_at:
+            return obj.created_at.strftime("%b %d, %Y • %I:%M %p")
+        return None
+
+    def get_total_earned(self, obj):
+        """Get total lifetime earnings from deliveries"""
+        if hasattr(obj, 'wallet') and obj.wallet:
+            total = WalletTransaction.objects.filter(
+                wallet=obj.wallet,
+                transaction_type='credit',
+                source_type='delivery_fee'
+            ).aggregate(total=Sum('amount'))['total'] or 0
+            return float(total)
+        return 0
+
+    def get_total_withdrawn(self, obj):
+        """Get total amount withdrawn"""
+        if hasattr(obj, 'wallet') and obj.wallet:
+            total = WalletTransaction.objects.filter(
+                wallet=obj.wallet,
+                transaction_type='debit',
+                source_type='withdrawal'
+            ).aggregate(total=Sum('amount'))['total'] or 0
+            return float(total)
+        return 0
+
+    def get_transaction_count(self, obj):
+        """Get total number of transactions"""
+        if hasattr(obj, 'wallet') and obj.wallet:
+            return WalletTransaction.objects.filter(wallet=obj.wallet).count()
+        return 0
+
+    def create(self, validated_data):
+        """
+        Create a wallet transaction and update wallet balance
+        Used for:
+        - Adding delivery fees (credit, source_type='delivery_fee')
+        - Processing withdrawals (debit, source_type='withdrawal')
+        """
+        # Extract wallet from context or create/get it
+        user = self.context.get('user')
+        if not user:
+            raise serializers.ValidationError({"error": "User is required"})
+        
+        # Get or create wallet for user
+        wallet, created = UserWallet.objects.get_or_create(user=user)
+        
+        # Create transaction
+        transaction = WalletTransaction.objects.create(
+            wallet=wallet,
+            amount=validated_data['amount'],
+            transaction_type=validated_data['transaction_type'],
+            source_type=validated_data['source_type'],
+            status=validated_data.get('status', 'completed'),
+            order=validated_data.get('order'),
+            user=user
+        )
+        
+        # Update wallet balance
+        if validated_data['transaction_type'] == 'credit':
+            wallet.available_balance += validated_data['amount']
+        elif validated_data['transaction_type'] == 'debit':
+            wallet.available_balance -= validated_data['amount']
+        
+        wallet.save()
+        
+        return transaction
+
+    def to_representation(self, instance):
+        """Customize the output based on what's being requested"""
+        data = super().to_representation(instance)
+        
+        # If this is a list of transactions, include wallet summary at the top
+        if self.context.get('include_wallet_summary'):
+            wallet = instance.wallet if hasattr(instance, 'wallet') else None
+            if wallet:
+                data['wallet_summary'] = {
+                    'wallet_id': str(wallet.wallet_id),
+                    'available_balance': float(wallet.available_balance),
+                    'pending_balance': float(wallet.pending_balance),
+                    'formatted_available': f"₱{wallet.available_balance:,.2f}",
+                    'formatted_pending': f"₱{wallet.pending_balance:,.2f}",
+                    'formatted_total': f"₱{wallet.available_balance + wallet.pending_balance:,.2f}"
+                }
+        
+        return data

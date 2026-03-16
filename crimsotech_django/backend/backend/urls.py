@@ -74,6 +74,7 @@ router.register(r'rider-history', RiderOrderHistoryViewSet, basename='rider-hist
 router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedule')
 router.register(r'rider-deivery', RiderDeliveryViewSet, basename='rider-delivery')
 
+
 router.register(r'proof-management', ProofManagementViewSet, basename='proof-management')
 router.register(r'rider-proof', RiderProofViewSet, basename='rider-proof')
 router.register(r'rider-profile', RiderProfileViewSet, basename='rider-profile')
@@ -91,6 +92,7 @@ urlpatterns = [
     path('api/cart/add/', AddToCartView.as_view(), name='add-to-cart'),
     path('api/shops/<uuid:shop_id>/', ViewShopAPIView.as_view(), name='view-shop'),
     path('api/profile/', ProfileView.as_view(), name='profile'),
+    path('api/rider-wallet/', RiderWalletView.as_view(), name='rider-wallet'),
     # path('profile/payment-methods/', UserPaymentMethodsView.as_view(), name='payment-methods'),
     # path('profile/payment-methods/<uuid:method_id>/', UserPaymentMethodsView.as_view(), name='payment-method-detail'),
 

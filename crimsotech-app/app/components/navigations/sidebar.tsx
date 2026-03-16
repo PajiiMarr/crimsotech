@@ -139,6 +139,7 @@ const menuItems = [
     group: "Account",
     children: [
       { title: "Earnings", url: "/rider/earnings", icon: PhilippinePeso, roles: ["rider"] },
+      { title: "Wallet", url: "/rider/wallet", icon: PhilippinePeso, roles: ["rider"] },
       // { title: "Messages", url: "/rider/messages", icon: MessageSquare, roles: ["rider"] },
     ]
   },

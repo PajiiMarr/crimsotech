@@ -42435,3 +42435,378 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
                 "success": False,
                 "error": str(e)
             }, status=500)
+
+
+
+class RiderWalletView(APIView):
+    """
+    Unified view for rider wallet operations:
+    - GET: Get wallet balance and transaction history
+    - POST: Add delivery fee or process withdrawal
+    """
+    
+    def get_user_from_header(self, request):
+        """Helper to get user from header"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return None, Response(
+                {'success': False, 'error': 'X-User-Id header is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+            return user, None
+        except User.DoesNotExist:
+            return None, Response(
+                {'success': False, 'error': 'User not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    def get(self, request):
+        """
+        Get rider wallet information including:
+        - Current balance (available and pending)
+        - Transaction history with pagination
+        - Summary statistics
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+
+        try:
+            # Get or create wallet for user
+            wallet, created = UserWallet.objects.get_or_create(user=user)
+
+            # Get query parameters for filtering
+            transaction_type = request.GET.get('type')  # 'credit' or 'debit'
+            source_type = request.GET.get('source')  # 'delivery_fee' or 'withdrawal'
+            limit = int(request.GET.get('limit', 20))
+            offset = int(request.GET.get('offset', 0))
+            start_date = request.GET.get('start_date')
+            end_date = request.GET.get('end_date')
+
+            # Build transaction queryset
+            transactions = WalletTransaction.objects.filter(wallet=wallet)
+
+            # Apply filters
+            if transaction_type:
+                transactions = transactions.filter(transaction_type=transaction_type)
+            
+            if source_type:
+                transactions = transactions.filter(source_type=source_type)
+            
+            if start_date:
+                transactions = transactions.filter(created_at__date__gte=start_date)
+            
+            if end_date:
+                transactions = transactions.filter(created_at__date__lte=end_date)
+
+            # Get total count before pagination
+            total_count = transactions.count()
+
+            # Apply pagination
+            transactions = transactions.order_by('-created_at')[offset:offset + limit]
+
+            # Calculate statistics
+            total_earned = WalletTransaction.objects.filter(
+                wallet=wallet,
+                transaction_type='credit',
+                source_type='delivery_fee'
+            ).aggregate(total=Sum('amount'))['total'] or 0
+
+            total_withdrawn = WalletTransaction.objects.filter(
+                wallet=wallet,
+                transaction_type='debit',
+                source_type='withdrawal'
+            ).aggregate(total=Sum('amount'))['total'] or 0
+
+            # Get pending withdrawals
+            pending_withdrawals = WithdrawalRequest.objects.filter(
+                user=user,
+                status__in=['pending', 'processing', 'approved']
+            ).aggregate(total=Sum('amount'))['total'] or 0
+
+            # Serialize transactions
+            serializer = RiderWalletSerializer(
+                transactions, 
+                many=True, 
+                context={'user': user, 'include_wallet_summary': True}
+            )
+
+            response_data = {
+                'success': True,
+                'wallet': {
+                    'wallet_id': str(wallet.wallet_id),
+                    'available_balance': float(wallet.available_balance),
+                    'pending_balance': float(wallet.pending_balance),
+                    'total_balance': float(wallet.available_balance + wallet.pending_balance),
+                    'formatted_available': f"₱{wallet.available_balance:,.2f}",
+                    'formatted_pending': f"₱{wallet.pending_balance:,.2f}",
+                    'formatted_total': f"₱{wallet.available_balance + wallet.pending_balance:,.2f}",
+                    'created_at': wallet.created_at,
+                },
+                'statistics': {
+                    'total_earned': float(total_earned),
+                    'total_withdrawn': float(total_withdrawn),
+                    'pending_withdrawals': float(pending_withdrawals),
+                    'formatted_total_earned': f"₱{total_earned:,.2f}",
+                    'formatted_total_withdrawn': f"₱{total_withdrawn:,.2f}",
+                    'formatted_pending_withdrawals': f"₱{pending_withdrawals:,.2f}",
+                    'transaction_count': total_count,
+                },
+                'transactions': serializer.data,
+                'pagination': {
+                    'total': total_count,
+                    'offset': offset,
+                    'limit': limit,
+                    'next_offset': offset + limit if offset + limit < total_count else None,
+                    'prev_offset': offset - limit if offset - limit >= 0 else None,
+                }
+            }
+
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error fetching rider wallet: {str(e)}", exc_info=True)
+            return Response(
+                {'success': False, 'error': 'Failed to fetch wallet data'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def post(self, request):
+        """
+        Handle wallet operations:
+        1. Add delivery fee (credit) - triggered when delivery is marked as delivered
+        2. Process withdrawal (debit)
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+
+        action = request.data.get('action')
+
+        try:
+            if action == 'add_delivery_fee':
+                return self.add_delivery_fee(request, user)
+            elif action == 'process_withdrawal':
+                return self.process_withdrawal(request, user)
+            else:
+                return Response(
+                    {'success': False, 'error': 'Invalid action'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        except Exception as e:
+            logger.error(f"Error processing wallet action: {str(e)}", exc_info=True)
+            return Response(
+                {'success': False, 'error': 'Failed to process request'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @transaction.atomic
+    def add_delivery_fee(self, request, user):
+        """
+        Add delivery fee to rider wallet based on delivery status:
+        - If status = 'delivered' → transaction status = 'pending', add to pending_balance
+        - If status = 'completed' → transaction status = 'completed', add to available_balance
+        """
+        delivery_id = request.data.get('delivery_id')
+        
+        if not delivery_id:
+            return Response(
+                {'success': False, 'error': 'Delivery ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Get the delivery with rider
+            delivery = Delivery.objects.select_related('order', 'rider__rider').get(
+                id=delivery_id, 
+                rider__rider=user
+            )
+            
+            # Check if delivery has a delivery fee
+            if not delivery.delivery_fee or delivery.delivery_fee <= 0:
+                return Response(
+                    {'success': False, 'error': 'Invalid delivery fee amount'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check if delivery is in a valid state for adding fee
+            if delivery.status not in ['delivered', 'completed']:
+                return Response(
+                    {'success': False, 'error': f'Cannot add fee for delivery with status: {delivery.status}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check if transaction already exists for this delivery
+            existing = WalletTransaction.objects.filter(
+                order=delivery.order,
+                source_type='delivery_fee'
+            ).exists()
+
+            if existing:
+                return Response(
+                    {'success': False, 'error': 'Delivery fee already recorded'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Get or create wallet
+            wallet, _ = UserWallet.objects.get_or_create(user=user)
+
+            # Determine transaction status and balance update based on delivery status
+            if delivery.status == 'delivered':
+                transaction_status = 'pending'
+                # Add to pending balance only
+                wallet.pending_balance += delivery.delivery_fee
+            else:  # completed
+                transaction_status = 'completed'
+                # Add to available balance
+                wallet.available_balance += delivery.delivery_fee
+
+            # Save wallet with updated balances
+            wallet.save()
+
+            # Create transaction record
+            transaction = WalletTransaction.objects.create(
+                wallet=wallet,
+                amount=delivery.delivery_fee,
+                transaction_type='credit',
+                source_type='delivery_fee',
+                status=transaction_status,
+                order=delivery.order,
+                user=user
+            )
+
+            logger.info(f"Delivery fee added for delivery {delivery_id}: ₱{delivery.delivery_fee} ({transaction_status})")
+
+            return Response({
+                'success': True,
+                'message': f'Delivery fee added successfully ({transaction_status})',
+                'transaction': {
+                    'id': str(transaction.transaction_id),
+                    'amount': float(transaction.amount),
+                    'formatted_amount': f"₱{transaction.amount:,.2f}",
+                    'status': transaction.status,
+                    'created_at': transaction.created_at,
+                    'order_number': delivery.order.order,
+                },
+                'wallet': {
+                    'available_balance': float(wallet.available_balance),
+                    'pending_balance': float(wallet.pending_balance),
+                    'formatted_available': f"₱{wallet.available_balance:,.2f}",
+                    'formatted_pending': f"₱{wallet.pending_balance:,.2f}",
+                }
+            }, status=status.HTTP_201_CREATED)
+
+        except Delivery.DoesNotExist:
+            return Response(
+                {'success': False, 'error': 'Delivery not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error adding delivery fee: {str(e)}", exc_info=True)
+            return Response(
+                {'success': False, 'error': 'Failed to add delivery fee'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @transaction.atomic
+    def process_withdrawal(self, request, user):
+        """Process a withdrawal request (debit from wallet)"""
+        withdrawal_id = request.data.get('withdrawal_id')
+        
+        if not withdrawal_id:
+            return Response(
+                {'success': False, 'error': 'Withdrawal ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Get the withdrawal request
+            withdrawal = WithdrawalRequest.objects.get(
+                withdrawal_id=withdrawal_id,
+                user=user
+            )
+
+            # Check if withdrawal is approved/processing
+            if withdrawal.status not in ['approved', 'processing']:
+                return Response(
+                    {'success': False, 'error': 'Withdrawal is not ready for processing'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check if already processed
+            existing = WalletTransaction.objects.filter(
+                source_type='withdrawal',
+                transaction_type='debit',
+                amount=withdrawal.amount,
+                created_at__date=timezone.now().date()
+            ).exists()
+
+            if existing:
+                return Response(
+                    {'success': False, 'error': 'Withdrawal already processed'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Get wallet
+            wallet, _ = UserWallet.objects.get_or_create(user=user)
+
+            # Check sufficient balance (only from available balance)
+            if wallet.available_balance < withdrawal.amount:
+                return Response(
+                    {'success': False, 'error': 'Insufficient available balance'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Deduct from available balance
+            wallet.available_balance -= withdrawal.amount
+            wallet.save()
+
+            # Create transaction record
+            transaction = WalletTransaction.objects.create(
+                wallet=wallet,
+                amount=withdrawal.amount,
+                transaction_type='debit',
+                source_type='withdrawal',
+                status='completed',
+                user=user
+            )
+
+            # Update withdrawal status
+            withdrawal.status = 'completed'
+            withdrawal.completed_at = timezone.now()
+            withdrawal.save()
+
+            logger.info(f"Withdrawal processed for {user.username}: ₱{withdrawal.amount}")
+
+            return Response({
+                'success': True,
+                'message': 'Withdrawal processed successfully',
+                'transaction': {
+                    'id': str(transaction.transaction_id),
+                    'amount': float(transaction.amount),
+                    'formatted_amount': f"₱{transaction.amount:,.2f}",
+                    'created_at': transaction.created_at,
+                },
+                'wallet': {
+                    'available_balance': float(wallet.available_balance),
+                    'pending_balance': float(wallet.pending_balance),
+                    'formatted_available': f"₱{wallet.available_balance:,.2f}",
+                    'formatted_pending': f"₱{wallet.pending_balance:,.2f}",
+                }
+            }, status=status.HTTP_200_OK)
+
+        except WithdrawalRequest.DoesNotExist:
+            return Response(
+                {'success': False, 'error': 'Withdrawal request not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error processing withdrawal: {str(e)}", exc_info=True)
+            return Response(
+                {'success': False, 'error': 'Failed to process withdrawal'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
