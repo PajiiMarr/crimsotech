@@ -1,7 +1,7 @@
 import SellerSidebarLayout from "~/components/layouts/seller-sidebar";
 import type { Route } from "./+types/seller-boosts";
 import { UserProvider } from '~/components/providers/user-role-provider';
-import { Link, useNavigate } from "react-router";  // Fixed: Added useNavigate
+import { Link, useNavigate } from "react-router";
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
@@ -104,7 +104,7 @@ interface BoostProduct {
   id: string;
   name: string;
   description: string;
-  image?: string;
+  image?: string;  // This is already here, but make sure it's included
   total_stock: number;
   price_range: {
     min: number;
@@ -212,8 +212,6 @@ interface LoaderData {
 }
 
 export async function loader({ request, context}: Route.LoaderArgs): Promise<LoaderData> {
-
-  
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
   
@@ -325,9 +323,20 @@ function getTimeUnitDisplay(unit: string, duration: number) {
   }
 }
 
+const getProductImageUrl = (product?: BoostProduct) => {
+  if (!product?.image) return null;
+  
+  // Check if the URL is already complete
+  if (product.image.startsWith('http')) {
+    return product.image;
+  }
+  
+  return product.image;
+};
+
 export default function SellerBoosts({ loaderData }: { loaderData: LoaderData }) {
   const { user, userId, shopId } = loaderData;
-  const navigate = useNavigate(); // Now properly imported
+  const navigate = useNavigate();
   
   const [boosts, setBoosts] = useState<Boost[]>([]);
   const [boostCounts, setBoostCounts] = useState<BoostCounts>({
@@ -363,6 +372,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
   const [boostModalOpen, setBoostModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [applyingBoost, setApplyingBoost] = useState(false);
+  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
 
   const fetchBoostData = async (start: Date, end: Date) => {
     if (!userId || !shopId) {
@@ -370,14 +380,12 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
       setIsLoading(false);
       return;
     }
-
     try {
       setIsLoading(true);
       
       const boostsResponse = await AxiosInstance.get<UserBoostsResponse>(`/seller-boosts/user/${userId}/`, {
         params: { status: activeStatusFilter !== 'all' ? activeStatusFilter : 'all' }
       });
-
       if (boostsResponse.data.success) {
         setBoosts(boostsResponse.data.boosts || []);
         setBoostCounts(boostsResponse.data.counts || {
@@ -388,11 +396,10 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
           cancelled: 0
         });
       }
-
+      
       const plansResponse = await AxiosInstance.get<BoostPlansResponse>('/seller-boosts/plans/', { 
         params: { status: 'active' } 
       });
-
       if (plansResponse.data.success && plansResponse.data.plans) {
         const transformedPlans: BoostPlan[] = plansResponse.data.plans.map((plan: any) => {
           let features: BoostPlanFeature[] = [];
@@ -432,7 +439,6 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
         });
         
         setBoostPlans(transformedPlans);
-
         const activePlans = transformedPlans.filter((p) => p.status === 'active').length;
         const inactivePlans = transformedPlans.filter((p) => p.status === 'inactive').length;
         const archivedPlans = transformedPlans.filter((p) => p.status === 'archived').length;
@@ -444,7 +450,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
           archived_plans: archivedPlans
         });
       }
-
+      
       const activeBoosts = boostsResponse.data.boosts?.filter((b: Boost) => b.status === 'active') || [];
       const totalSpent = boostsResponse.data.boosts?.reduce((sum: number, boost: Boost) => {
         if (boost.status === 'active' || boost.status === 'expired') {
@@ -452,21 +458,21 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
         }
         return sum;
       }, 0) || 0;
-
+      
       const planUsage: Record<string, number> = {};
       boostsResponse.data.boosts?.forEach((boost: Boost) => {
         if (boost.plan?.name) {
           planUsage[boost.plan.name] = (planUsage[boost.plan.name] || 0) + 1;
         }
       });
-
+      
       const mostUsedPlan = Object.entries(planUsage).sort((a, b) => b[1] - a[1])[0]?.[0] || "No boosts";
-
+      
       const durations = activeBoosts.map((boost: Boost) => boost.days_remaining || 0);
       const avgDuration = durations.length > 0 
         ? Math.round(durations.reduce((a: number, b: number) => a + b, 0) / durations.length) 
         : 0;
-
+      
       setBoostMetrics({
         total_boosts: boostsResponse.data.boosts?.length || 0,
         active_boosts: activeBoosts.length,
@@ -475,7 +481,6 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
         average_boost_duration: avgDuration,
         boosts_by_month: []
       });
-
     } catch (error) {
       console.error('Error fetching boost data:', error);
       setBoosts([]);
@@ -554,6 +559,10 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     navigate(`/seller/seller-boosts/${boostId}/edit`);
   };
 
+  const handleImageError = (boostId: string) => {
+    setImageErrors(prev => ({ ...prev, [boostId]: true }));
+  };
+
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleDateString('en-PH', {
@@ -600,14 +609,13 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
   };
 
   const boostFilterConfig: { [key: string]: { options: string[]; placeholder: string } } = {};
-
   if (boosts.length > 0) {
     const statusOptions = [...new Set(boosts.map(boost => boost.status))];
     boostFilterConfig.status = {
       options: statusOptions,
       placeholder: 'Filter by Status'
     };
-
+    
     const planOptions = [...new Set(boosts.map(boost => boost.plan?.name).filter((name): name is string => !!name))];
     if (planOptions.length > 0) {
       boostFilterConfig.plan = {
@@ -644,31 +652,41 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
     </Card>
   );
 
-  // Updated columns with Actions column matching the product list UI
+  // Updated columns with proper image handling
   const columns: ColumnDef<Boost>[] = [
     {
       accessorKey: "product",
       header: "Product",
       cell: ({ row }) => {
         const product = row.original.product;
+        const boostId = row.original.id;
+        const imageUrl = getProductImageUrl(product);
+        const hasImageError = imageErrors[boostId];
+        
         return (
-          <div className="flex items-center gap-2 px-2 sm:px-4 py-2">
-            {product?.image ? (
-              <img 
-                src={product.image} 
-                alt={product.name} 
-                className="w-8 h-8 rounded object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = '/Crimsotech.png';
-                }}
-              />
-            ) : (
-              <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center">
-                <ImageIcon className="w-4 h-4 text-gray-400" />
+          <div className="flex items-center gap-3 px-2 sm:px-4 py-2">
+            <div className="w-10 h-10 rounded-md overflow-hidden bg-gray-100 flex items-center justify-center shrink-0 border border-gray-200">
+              {imageUrl && !hasImageError ? (
+                <img 
+                  src={imageUrl} 
+                  alt={product?.name || 'Product'} 
+                  className="w-full h-full object-cover"
+                  onError={() => handleImageError(boostId)}
+                  loading="lazy"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-orange-50 to-amber-50">
+                  <ImageIcon className="w-5 h-5 text-orange-300" />
+                </div>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-xs sm:text-sm truncate">
+                {product?.name || 'Unknown Product'}
               </div>
-            )}
-            <div className="font-medium text-xs sm:text-sm truncate max-w-[150px]">
-              {product?.name || 'Unknown Product'}
+              <div className="text-xs text-muted-foreground truncate">
+                Stock: {product?.total_stock || 0}
+              </div>
             </div>
           </div>
         );
@@ -787,7 +805,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
       cell: ({ row }) => {
         const boost = row.original;
         const isLoading = actionLoading === boost.id;
-
+        
         const handleAction = (value: string) => {
           setActionLoading(boost.id);
           switch (value) {
@@ -808,22 +826,24 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
 
         return (
           <div className="flex items-center gap-2">
-            <Link
-              to={`/seller/seller-boosts/${boost.id}`}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleViewBoost(boost.id)}
               className="text-primary hover:text-primary/80 transition-colors"
               title="View Details"
             >
-              <Eye className="w-5 h-5" />
-            </Link>
+              <Eye className="w-4 h-4" />
+            </Button>
             <Select onValueChange={handleAction} disabled={isLoading}>
-              <SelectTrigger className="w-[130px]">
-                <SelectValue placeholder={isLoading ? "Loading…" : "Actions"} />
+              <SelectTrigger className="w-[100px] h-8 text-xs">
+                <SelectValue placeholder={isLoading ? "..." : "Actions"} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="view">View Details</SelectItem>
-                <SelectItem value="edit">Edit Boost</SelectItem>
+                <SelectItem value="view">View</SelectItem>
+                <SelectItem value="edit">Edit</SelectItem>
                 {boost.has_receipt && boost.receipt_url && (
-                  <SelectItem value="receipt">View Receipt</SelectItem>
+                  <SelectItem value="receipt">Receipt</SelectItem>
                 )}
               </SelectContent>
             </Select>
@@ -1079,7 +1099,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
                             {plan.duration} {getTimeUnitDisplay(plan.time_unit, plan.duration)}
                           </div>
                         </div>
-
+                        
                         {plan.features && plan.features.length > 0 && (
                           <div className="space-y-1">
                             <div className="flex items-center justify-between">
@@ -1101,7 +1121,7 @@ export default function SellerBoosts({ loaderData }: { loaderData: LoaderData })
                             </div>
                           </div>
                         )}
-
+                        
                         <div className="grid grid-cols-2 gap-2 pt-2 border-t">
                           <div className="text-center">
                             <p className="text-xs text-muted-foreground">Usage</p>

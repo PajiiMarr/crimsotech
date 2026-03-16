@@ -1,11 +1,10 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, Link, useSearchParams, useParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import type { Route } from "./+types/pay-boosting";
 import { UserProvider } from '~/components/providers/user-role-provider';
 import AxiosInstance from '~/components/axios/Axios';
 import { Button } from "~/components/ui/button";
-import { Input } from "~/components/ui/input";
-import { CheckCircle, Clock, AlertCircle, CreditCard, Smartphone, Wallet, ArrowLeft, Upload, FileText, Image } from "lucide-react";
+import { CheckCircle, AlertCircle, CreditCard, Package, Clock, Zap } from "lucide-react";
 
 export function meta(): Route.MetaDescriptors {
     return [{ title: "Complete Boosting Payment" }]
@@ -23,99 +22,43 @@ interface BoostPlanDetails {
     duration: number;
     time_unit: string;
     total_amount: number;
-    payment_method?: string;
     product_count: number;
     product_ids: string[];
 }
 
 export async function loader({ request, context, params }: Route.LoaderArgs): Promise<LoaderData> {
     const { registrationMiddleware } = await import("~/middleware/registration.server");
-    ;
     const { requireRole } = await import("~/middleware/role-require.server");
     const { fetchUserRole } = await import("~/middleware/role.server");
-
     let user = (context as any).user;
     if (!user) user = await fetchUserRole({ request, context });
     await requireRole(request, context, ["isCustomer"]);
-    
     const planId = params.boostPlanId as string;
     return { user, planId };
 }
 
-export async function action({ request }: { request: Request }) {
-    try {
-        const formData = await request.formData();
-        const planId = formData.get('plan_id') as string;
-        const productIds = formData.get('product_ids') as string;
-        const receipt = formData.get('receipt') as File;
-        const paymentMethod = formData.get('payment_method') as string;
-        const customerId = formData.get('customer_id') as string;
-        
-        if (!planId || !productIds || !receipt || !customerId) {
-            return { success: false, error: 'Missing required fields' };
-        }
-
-        const uploadData = new FormData();
-        uploadData.append('plan_id', planId);
-        uploadData.append('product_ids', productIds);
-        uploadData.append('receipt_image', receipt); // Changed from 'receipt' to 'receipt_image' to match backend
-        uploadData.append('payment_method', paymentMethod || 'GCash');
-        uploadData.append('customer_id', customerId);
-
-        // No need for '/api' prefix as it's already in AxiosInstance
-        const response = await AxiosInstance.post('/seller-boosts/add_receipt/', uploadData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-        });
-
-        if (response.data.success) {
-            return { 
-                success: true, 
-                message: response.data.message,
-                boosts: response.data.boosts 
-            };
-        } else {
-            return { success: false, error: response.data.error };
-        }
-    } catch (error: any) {
-        return { success: false, error: error.response?.data?.error || error.message };
-    }
-}
-
-export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
+export default function PayBoosting({ loaderData }: { loaderData: LoaderData }) {
     const { user, planId } = loaderData;
     const [searchParams] = useSearchParams();
     const productIdsParam = searchParams.get('product_ids') || '';
-    
-    // Store as a ref to avoid dependency changes
     const [productIds] = useState(() => productIdsParam.split(',').filter(id => id));
-    
+
     const [planDetails, setPlanDetails] = useState<BoostPlanDetails | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [paymentStatus, setPaymentStatus] = useState<'pending' | 'submitted' | 'paid'>('pending');
-    const [receiptFile, setReceiptFile] = useState<File | null>(null);
-    const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
-    const [uploadingReceipt, setUploadingReceipt] = useState(false);
-    const [paymentMethod, setPaymentMethod] = useState<string>('GCash');
+    const [processingMaya, setProcessingMaya] = useState(false);
     const [hasFetched, setHasFetched] = useState(false);
-    const [submittedBoosts, setSubmittedBoosts] = useState<any[]>([]);
+
 
     useEffect(() => {
-        // Only fetch once
         if (hasFetched) return;
-        
-        if (planId && productIds.length > 0) {
-            fetchPlanDetails();
-        } else {
-            setError("No boost plan or products selected");
-            setLoading(false);
-        }
+        if (planId && productIds.length > 0) fetchPlanDetails();
+        else { setError("No boost plan or products selected"); setLoading(false); }
     }, [planId, productIds, hasFetched]);
 
     const fetchPlanDetails = async () => {
         try {
             setLoading(true);
-            // No '/api' prefix needed
             const response = await AxiosInstance.get(`/seller-boosts/${planId}/plan_detail/`);
             if (response.data.success) {
                 const plan = response.data.plan;
@@ -142,81 +85,24 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
         }
     };
 
-    const getPaymentMethodIcon = () => {
-        switch(paymentMethod) {
-            case 'GCash': return Smartphone;
-            case 'Maya': return CreditCard;
-            default: return Wallet;
-        }
-    };
-
-    const getQRCodeImage = () => {
-        switch(paymentMethod) {
-            case 'GCash': return '/gcash.jpeg';
-            case 'Maya': return '/maya.jpeg';
-            default: return null;
-        }
-    };
-
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file) {
-            if (file.size > 5 * 1024 * 1024) {
-                setError("File size too large. Maximum size is 5MB.");
-                return;
-            }
-
-            const validTypes = ['image/jpeg', 'image/png', 'image/jpg'];
-            if (!validTypes.includes(file.type)) {
-                setError("Invalid file type. Please upload JPEG or PNG images.");
-                return;
-            }
-
-            setReceiptFile(file);
-            setError(null);
-
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setReceiptPreview(reader.result as string);
-            };
-            reader.readAsDataURL(file);
-        }
-    };
-
-    const uploadReceipt = async () => {
-        if (!receiptFile) {
-            setError("Please select a receipt file first.");
-            return;
-        }
-
-        console.log('Full user object:', JSON.stringify(user, null, 2)); // ADD THIS
-        console.log('user.id:', user.id); // ADD THIS
-
+    const handleMayaPayment = async () => {
+        if (!planDetails) return;
         try {
-            setUploadingReceipt(true);
-            const formData = new FormData();
-            formData.append('plan_id', planId);
-            formData.append('product_ids', productIdsParam);
-            formData.append('receipt_image', receiptFile);
-            formData.append('payment_method', paymentMethod);
-            formData.append('customer_id', user.user_id);
-
-            // No '/api' prefix needed
-            const response = await AxiosInstance.post('/seller-boosts/add_receipt/', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
+            setProcessingMaya(true);
+            const response = await AxiosInstance.post('/seller-boosts/initiate_maya_payment/', {
+                plan_id: planId,
+                product_ids: productIdsParam,
+                user_id: user.user_id,
             });
-
             if (response.data.success) {
-                setPaymentStatus('submitted');
-                setSubmittedBoosts(response.data.boosts || []);
-                setError(null);
+                window.location.href = response.data.redirect_url;
             } else {
-                setError(response.data.error || "Failed to upload receipt");
+                setError(response.data.error || "Failed to initiate Maya payment");
             }
         } catch (err: any) {
-            setError(err.response?.data?.error || "Error uploading receipt");
+            setError(err.response?.data?.error || "Error initiating Maya payment");
         } finally {
-            setUploadingReceipt(false);
+            setProcessingMaya(false);
         }
     };
 
@@ -238,32 +124,34 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                     <AlertCircle className="h-16 w-16 text-red-500 mx-auto mb-4" />
                     <h2 className="text-xl font-semibold text-gray-900 mb-2">{error || "Boosting Request Not Found"}</h2>
                     <Link to="/seller/seller-boosts">
-                        <Button className="bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700">View Boosting Plans</Button>
+                        <Button className="bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700">
+                            View Boosting Plans
+                        </Button>
                     </Link>
                 </div>
             </div>
         </UserProvider>
     );
 
-    const PaymentIcon = getPaymentMethodIcon();
-    const qrCodeImage = getQRCodeImage();
-
     return (
         <UserProvider user={user}>
             <div className="min-h-screen flex flex-col">
                 <div className="flex-1 flex flex-col">
                     <div className="max-w-7xl mx-auto p-4 w-full h-full">
-                        <div className="bg-white rounded-xl shadow-md h-auto flex flex-col overflow-hidden">
-                            {/* Header - Orange gradient */}
+                        <div className="bg-white rounded-xl shadow-md flex flex-col overflow-hidden">
+
+                            {/* Header */}
                             <div className="bg-gradient-to-r from-orange-600 to-amber-600 p-6">
                                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                                     <div className="flex items-center gap-4">
                                         <div className="p-3 bg-white/20 rounded-full">
-                                            <PaymentIcon className="h-8 w-8 text-white" />
+                                            <CreditCard className="h-8 w-8 text-white" />
                                         </div>
                                         <div className="text-center sm:text-left">
                                             <h1 className="text-2xl font-bold text-white">Complete Boosting Payment</h1>
-                                            <p className="text-orange-100">{planDetails.name} - {planDetails.product_count} Product{planDetails.product_count !== 1 ? 's' : ''}</p>
+                                            <p className="text-orange-100">
+                                                {planDetails.name} — {planDetails.product_count} Product{planDetails.product_count !== 1 ? 's' : ''}
+                                            </p>
                                         </div>
                                     </div>
                                     <div className="text-center sm:text-right">
@@ -271,241 +159,141 @@ export default function PayBoosting({ loaderData}: { loaderData: LoaderData }){
                                         <div className="text-orange-100">Total Amount</div>
                                     </div>
                                 </div>
+
+
                             </div>
 
+                            {/* Body */}
                             <div className="flex-1 p-6 overflow-auto">
-                                {paymentStatus === 'submitted' && (
-                                    <div className="mb-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
-                                        <div className="flex items-center justify-center gap-4">
-                                            <div className="p-3 bg-green-100 rounded-full">
-                                                <CheckCircle className="h-8 w-8 text-green-600" />
-                                            </div>
-                                            <div>
-                                                <h3 className="font-semibold text-green-800">Receipt Submitted Successfully!</h3>
-                                                <p className="text-sm text-green-600">Your boost request is pending admin approval.</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
-                                    {/* Left Column - QR Code */}
-                                    <div className="h-full">
-                                        <div className="h-full flex flex-col">
-                                            <div className="border-2 border-dashed border-orange-300 rounded-2xl p-6 bg-gradient-to-b from-white to-orange-50 h-full flex flex-col">
-                                                <div className="flex-1 flex flex-col items-center justify-center">
-                                                    {qrCodeImage ? (
-                                                        <>
-                                                            <div className="mb-4 flex-1 flex items-center justify-center w-full">
-                                                                <img 
-                                                                    src={qrCodeImage} 
-                                                                    alt={`${paymentMethod} QR Code`}
-                                                                    className="w-full max-w-xs h-auto object-contain"
-                                                                />
-                                                            </div>
-                                                            <div className="mt-auto pt-4 w-full text-center">
-                                                                <div className="inline-flex items-center gap-3 px-5 py-2 bg-orange-100 text-orange-800 rounded-full mb-2">
-                                                                    <PaymentIcon className="h-4 w-4" />
-                                                                    <select 
-                                                                        value={paymentMethod}
-                                                                        onChange={(e) => setPaymentMethod(e.target.value)}
-                                                                        className="bg-transparent border-none focus:ring-0 text-orange-800 font-semibold"
-                                                                        disabled={paymentStatus === 'submitted'}
-                                                                    >
-                                                                        <option value="GCash">GCash</option>
-                                                                        <option value="Maya">Maya</option>
-                                                                    </select>
-                                                                </div>
-                                                                <p className="text-gray-600 text-sm">
-                                                                    Scan this QR code with your {paymentMethod} app
-                                                                </p>
-                                                            </div>
-                                                        </>
-                                                    ) : (
-                                                        <div className="h-full flex flex-col items-center justify-center">
-                                                            <CreditCard className="h-20 w-20 text-gray-400 mb-4" />
-                                                            <select 
-                                                                value={paymentMethod}
-                                                                onChange={(e) => setPaymentMethod(e.target.value)}
-                                                                className="mt-2 p-2 border rounded-lg focus:ring-orange-500 focus:border-orange-500"
-                                                                disabled={paymentStatus === 'submitted'}
-                                                            >
-                                                                <option value="GCash">GCash</option>
-                                                                <option value="Maya">Maya</option>
-                                                            </select>
-                                                        </div>
-                                                    )}
+                                    {/* Left — Boost overview */}
+                                    <div className="border-2 border-dashed border-orange-300 rounded-2xl p-6 bg-gradient-to-b from-white to-orange-50 flex flex-col items-center justify-center gap-4">
+                                        <div className="w-24 h-24 bg-gradient-to-br from-orange-400 to-amber-500 rounded-2xl flex items-center justify-center shadow-lg">
+                                            <Zap className="h-12 w-12 text-white" />
+                                        </div>
+                                        <div className="text-center">
+                                            <h3 className="text-xl font-semibold text-gray-800 mb-1">{planDetails.name}</h3>
+                                            <p className="text-sm text-gray-500">Boost Plan</p>
+                                        </div>
+                                        <div className="w-full max-w-xs space-y-2">
+                                            <div className="flex items-center gap-3 bg-white rounded-xl border p-3">
+                                                <div className="p-2 bg-orange-100 rounded-lg flex-shrink-0">
+                                                    <Package className="h-4 w-4 text-orange-600" />
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs text-gray-500">Products</p>
+                                                    <p className="text-sm font-semibold text-gray-800">
+                                                        {planDetails.product_count} product{planDetails.product_count !== 1 ? 's' : ''} selected
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-3 bg-white rounded-xl border p-3">
+                                                <div className="p-2 bg-orange-100 rounded-lg flex-shrink-0">
+                                                    <Clock className="h-4 w-4 text-orange-600" />
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs text-gray-500">Duration</p>
+                                                    <p className="text-sm font-semibold text-gray-800">
+                                                        {planDetails.duration} {planDetails.time_unit}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-3 bg-white rounded-xl border p-3">
+                                                <div className="p-2 bg-orange-100 rounded-lg flex-shrink-0">
+                                                    <CreditCard className="h-4 w-4 text-orange-600" />
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs text-gray-500">Total</p>
+                                                    <p className="text-sm font-semibold text-orange-600">
+                                                        ₱{planDetails.total_amount.toFixed(2)}
+                                                    </p>
                                                 </div>
                                             </div>
                                         </div>
+                                        <p className="text-xs text-gray-400 text-center max-w-xs">
+                                            You will be redirected to Maya to complete your payment securely.
+                                        </p>
                                     </div>
 
-                                    {/* Right Column - Payment Details */}
-                                    <div className="h-full">
-                                        <div className="h-full flex flex-col">
-                                            <div className="bg-gray-50 rounded-xl p-5 h-full flex flex-col">
-                                                <h3 className="font-semibold text-gray-900 mb-5 text-center text-lg">Payment Details</h3>
-                                                <div className="space-y-3 flex-1 overflow-y-auto">
-                                                    <div className="flex justify-between items-center p-3 bg-white rounded-lg border">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="p-2 bg-orange-100 rounded-lg">
-                                                                <PaymentIcon className="h-4 w-4 text-orange-600" />
-                                                            </div>
-                                                            <div>
-                                                                <div className="text-xs text-gray-500">Payment Method</div>
-                                                                <div className="font-medium">{paymentMethod}</div>
-                                                            </div>
-                                                        </div>
+                                    {/* Right — Plan details + action */}
+                                    <div className="bg-gray-50 rounded-xl p-5 flex flex-col">
+                                        <h3 className="font-semibold text-gray-900 mb-5 text-center text-lg">Payment Details</h3>
+                                        <div className="space-y-3 flex-1">
+
+                                            <div className="flex justify-between items-center p-3 bg-white rounded-lg border">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="p-2 bg-orange-100 rounded-lg">
+                                                        <CreditCard className="h-4 w-4 text-orange-600" />
                                                     </div>
-
-                                                    <div className="flex justify-between p-3 bg-white rounded-lg border">
-                                                        <div>
-                                                            <div className="text-xs text-gray-500">Boost Plan</div>
-                                                            <div className="font-medium">{planDetails.name}</div>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="flex justify-between p-3 bg-white rounded-lg border">
-                                                        <div>
-                                                            <div className="text-xs text-gray-500">Products Selected</div>
-                                                            <div className="font-medium">{planDetails.product_count} Product{planDetails.product_count !== 1 ? 's' : ''}</div>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="flex justify-between p-3 bg-white rounded-lg border">
-                                                        <div>
-                                                            <div className="text-xs text-gray-500">Duration</div>
-                                                            <div className="font-medium">{planDetails.duration} {planDetails.time_unit}</div>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Receipt Upload Section */}
-                                                    <div className="p-4 bg-white rounded-lg border border-dashed border-orange-300">
-                                                        <div className="text-center">
-                                                            <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-orange-100 mb-2">
-                                                                <Upload className="h-5 w-5 text-orange-600" />
-                                                            </div>
-                                                            <h4 className="font-semibold text-gray-900 mb-1 text-sm">Upload Payment Receipt</h4>
-                                                            <p className="text-xs text-gray-600 mb-3">
-                                                                Upload a screenshot or photo of your payment confirmation
-                                                            </p>
-                                                            
-                                                            <div className="space-y-2">
-                                                                <div className="flex items-center justify-center">
-                                                                    <label className="cursor-pointer w-full">
-                                                                        <div className="flex flex-col items-center justify-center px-3 py-4 bg-orange-50 border-2 border-dashed border-orange-300 rounded-lg hover:bg-orange-100 transition-colors w-full">
-                                                                            {receiptPreview ? (
-                                                                                <div className="mb-2">
-                                                                                    <div className="relative">
-                                                                                        <img 
-                                                                                            src={receiptPreview} 
-                                                                                            alt="Receipt preview" 
-                                                                                            className="w-28 h-28 object-cover rounded-lg border"
-                                                                                        />
-                                                                                        <div className="absolute -top-2 -right-2 bg-orange-500 text-white rounded-full p-1">
-                                                                                            <Image className="h-2 w-2" />
-                                                                                        </div>
-                                                                                    </div>
-                                                                                </div>
-                                                                            ) : (
-                                                                                <Upload className="h-10 w-10 text-orange-500 mb-2" />
-                                                                            )}
-                                                                            <span className="text-xs font-medium text-orange-600">
-                                                                                {receiptFile ? 'Change file' : 'Choose file'}
-                                                                            </span>
-                                                                            <p className="text-xs text-gray-500 mt-1">
-                                                                                JPG or PNG (max 5MB)
-                                                                            </p>
-                                                                        </div>
-                                                                        <Input
-                                                                            id="receipt"
-                                                                            type="file"
-                                                                            accept=".jpg,.jpeg,.png,image/*"
-                                                                            className="hidden"
-                                                                            onChange={handleFileChange}
-                                                                            disabled={paymentStatus === 'submitted'}
-                                                                        />
-                                                                    </label>
-                                                                </div>
-
-                                                                {receiptFile && (
-                                                                    <div className="text-center">
-                                                                        <p className="text-xs text-gray-700">
-                                                                            Selected: <span className="font-medium">{receiptFile.name}</span>
-                                                                        </p>
-                                                                        <p className="text-xs text-gray-500">
-                                                                            Size: {(receiptFile.size / 1024 / 1024).toFixed(2)} MB
-                                                                        </p>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Total Amount */}
-                                                    <div className="pt-3 space-y-3">
-                                                        <div className="flex justify-between items-center p-3 bg-gradient-to-r from-orange-50 to-amber-50 rounded-lg">
-                                                            <div>
-                                                                <div className="text-sm font-semibold text-gray-900">Total Amount</div>
-                                                                <div className="text-xs text-gray-600">Plan price × {planDetails.product_count} product{planDetails.product_count !== 1 ? 's' : ''}</div>
-                                                            </div>
-                                                            <div className="text-xl font-bold text-orange-600">
-                                                                ₱{planDetails.total_amount.toFixed(2)}
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Action Buttons */}
-                                                        <div className="space-y-2">
-                                                            {paymentStatus === 'pending' ? (
-                                                                <>
-                                                                    <Button
-                                                                        size="lg"
-                                                                        className="w-full h-12 text-sm font-semibold bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700"
-                                                                        onClick={uploadReceipt}
-                                                                        disabled={loading || uploadingReceipt || !receiptFile}
-                                                                    >
-                                                                        {uploadingReceipt ? (
-                                                                            <div className="flex items-center justify-center gap-2">
-                                                                                <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
-                                                                                Uploading...
-                                                                            </div>
-                                                                        ) : loading ? (
-                                                                            <div className="flex items-center justify-center gap-2">
-                                                                                <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
-                                                                                Processing...
-                                                                            </div>
-                                                                        ) : (
-                                                                            `Submit Payment with ${paymentMethod}`
-                                                                        )}
-                                                                    </Button>
-                                                                    <Button
-                                                                        variant="outline"
-                                                                        size="sm"
-                                                                        className="w-full h-10 border-orange-300 text-orange-700 hover:bg-orange-50"
-                                                                        onClick={() => window.location.href = `/seller/seller-boosts`}
-                                                                        disabled={uploadingReceipt}
-                                                                    >
-                                                                        Cancel
-                                                                    </Button>
-                                                                </>
-                                                            ) : (
-                                                                <Button
-                                                                    size="lg"
-                                                                    className="w-full h-12 text-sm font-semibold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
-                                                                    onClick={() => window.location.href = `/seller/seller-boosts`}
-                                                                >
-                                                                    <CheckCircle className="h-4 w-4 mr-2" />
-                                                                    Back to Boosts
-                                                                </Button>
-                                                            )}
-                                                        </div>
+                                                    <div>
+                                                        <div className="text-xs text-gray-500">Payment Method</div>
+                                                        <div className="font-medium">Maya</div>
                                                     </div>
                                                 </div>
+                                            </div>
+
+                                            <div className="p-3 bg-white rounded-lg border">
+                                                <div className="text-xs text-gray-500">Boost Plan</div>
+                                                <div className="font-medium">{planDetails.name}</div>
+                                            </div>
+
+                                            <div className="p-3 bg-white rounded-lg border">
+                                                <div className="text-xs text-gray-500">Products Selected</div>
+                                                <div className="font-medium">
+                                                    {planDetails.product_count} Product{planDetails.product_count !== 1 ? 's' : ''}
+                                                </div>
+                                            </div>
+
+                                            <div className="p-3 bg-white rounded-lg border">
+                                                <div className="text-xs text-gray-500">Duration</div>
+                                                <div className="font-medium">{planDetails.duration} {planDetails.time_unit}</div>
+                                            </div>
+
+                                            {/* Total */}
+                                            <div className="flex justify-between items-center p-3 bg-gradient-to-r from-orange-50 to-amber-50 rounded-lg">
+                                                <div>
+                                                    <div className="text-sm font-semibold text-gray-900">Total Amount</div>
+                                                    <div className="text-xs text-gray-600">
+                                                        Plan price × {planDetails.product_count} product{planDetails.product_count !== 1 ? 's' : ''}
+                                                    </div>
+                                                </div>
+                                                <div className="text-xl font-bold text-orange-600">
+                                                    ₱{planDetails.total_amount.toFixed(2)}
+                                                </div>
+                                            </div>
+
+                                            {/* Action buttons */}
+                                            <div className="pt-2 space-y-2">
+                                                <Button
+                                                    size="lg"
+                                                    className="w-full h-12 text-sm font-semibold bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                                                    onClick={handleMayaPayment}
+                                                    disabled={processingMaya}
+                                                >
+                                                    {processingMaya ? (
+                                                        <div className="flex items-center justify-center gap-2">
+                                                            <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                                                            Processing...
+                                                        </div>
+                                                    ) : 'Proceed to Payment'}
+                                                </Button>
+
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="w-full h-10 border-orange-300 text-orange-700 hover:bg-orange-50"
+                                                    onClick={() => window.location.href = '/seller/seller-boosts'}
+                                                    disabled={processingMaya}
+                                                >
+                                                    Cancel
+                                                </Button>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
+
                         </div>
                     </div>
                 </div>

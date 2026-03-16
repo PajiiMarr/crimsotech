@@ -27,7 +27,8 @@ import {
   AlertTriangle,
   Crown,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Image as ImageIcon
 } from "lucide-react";
 import { DataTable } from "~/components/ui/data-table";
 import { type ColumnDef } from "@tanstack/react-table";
@@ -111,6 +112,12 @@ interface Product {
     is_eligible: boolean;
     issues: string[];
   };
+  image?: string; // For product image
+  media?: Array<{
+    id: string;
+    file_data: string;
+    is_primary?: boolean;
+  }>;
 }
 
 interface BoostPlan {
@@ -135,8 +142,6 @@ interface LoaderData {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
-
-  
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
   
@@ -166,6 +171,40 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   
   return { user, userId, shopId, planId };
 }
+
+// Helper function to get product image URL
+const getProductImageUrl = (product: Product): string | null => {
+  // Check direct image property first
+  if (product.image) {
+    // Check if it's already a full URL
+    if (product.image.startsWith('http')) {
+      return product.image;
+    }
+    // If it's a relative path, construct full URL
+    // You might need to adjust this based on your storage setup
+    return product.image;
+  }
+  
+  // Check media array for images
+  if (product.media && product.media.length > 0) {
+    // Find primary image first
+    const primaryMedia = product.media.find(m => m.is_primary);
+    if (primaryMedia?.file_data) {
+      return primaryMedia.file_data.startsWith('http') 
+        ? primaryMedia.file_data 
+        : primaryMedia.file_data;
+    }
+    // Fallback to first media item
+    const firstMedia = product.media[0];
+    if (firstMedia?.file_data) {
+      return firstMedia.file_data.startsWith('http') 
+        ? firstMedia.file_data 
+        : firstMedia.file_data;
+    }
+  }
+  
+  return null;
+};
 
 export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderData }) {
   const { user, userId, shopId, planId } = loaderData;
@@ -199,6 +238,7 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
   const [loadingBoostStatus, setLoadingBoostStatus] = useState(false);
   const [boostStatusChecked, setBoostStatusChecked] = useState(false);
   const [featuresOpen, setFeaturesOpen] = useState(false);
+  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const fetchBoostPlan = async () => {
@@ -267,6 +307,19 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
               categoryName = product.category_admin.name;
             }
             
+            // Get product image from media if available
+            let productImage = null;
+            if (product.media && product.media.length > 0) {
+              // Try to find primary image first
+              const primaryMedia = product.media.find((m: any) => m.is_primary);
+              if (primaryMedia?.file_data) {
+                productImage = primaryMedia.file_data;
+              } else {
+                // Fallback to first media item
+                productImage = product.media[0].file_data;
+              }
+            }
+            
             return {
               ...product,
               // Set a default category property for filtering
@@ -274,7 +327,9 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
               // Default values for boost properties
               is_boosted: false,
               boost_info: null,
-              can_be_boosted: true
+              can_be_boosted: true,
+              image: productImage,
+              media: product.media || []
             };
           });
           
@@ -487,6 +542,10 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
   useEffect(() => {
     setIsLoading(isLoadingPlan || isLoadingProducts || loadingBoostStatus);
   }, [isLoadingPlan, isLoadingProducts, loadingBoostStatus]);
+
+  const handleImageError = (productId: string) => {
+    setImageErrors(prev => ({ ...prev, [productId]: true }));
+  };
 
   const validateProductForBoost = (product: Product): string[] => {
     const errors: string[] = [];
@@ -943,29 +1002,43 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
         const product = row.original;
         const hasErrors = validationErrors[product.id]?.length > 0;
         const isBoosted = product.is_boosted || false;
+        const imageUrl = getProductImageUrl(product);
+        const hasImageError = imageErrors[product.id];
         
         return (
           <div className="flex items-center gap-3">
-            <div className={`h-10 w-10 rounded-md flex items-center justify-center ${
-              hasErrors ? 'bg-red-100' : isBoosted ? 'bg-orange-100' : 'bg-gray-100'
-            }`}>
-              {isBoosted ? (
-                <Crown className="h-5 w-5 text-orange-600" />
+            {/* Product Image with fallback */}
+            <div className="h-12 w-12 rounded-md overflow-hidden bg-gray-100 flex items-center justify-center shrink-0 border border-gray-200">
+              {imageUrl && !hasImageError ? (
+                <img 
+                  src={imageUrl} 
+                  alt={product.name}
+                  className="h-full w-full object-cover"
+                  onError={() => handleImageError(product.id)}
+                  loading="lazy"
+                />
               ) : (
-                <Package className={`h-5 w-5 ${hasErrors ? 'text-red-600' : 'text-gray-600'}`} />
+                <div className={`w-full h-full flex items-center justify-center ${
+                  hasErrors ? 'bg-red-50' : isBoosted ? 'bg-orange-50' : 'bg-gradient-to-br from-orange-50 to-amber-50'
+                }`}>
+                  <ImageIcon className={`h-6 w-6 ${
+                    hasErrors ? 'text-red-400' : isBoosted ? 'text-orange-400' : 'text-orange-300'
+                  }`} />
+                </div>
               )}
             </div>
-            <div>
+            
+            <div className="min-w-0 flex-1">
               <div className="font-medium flex items-center gap-2">
-                {product.name}
+                <span className="truncate">{product.name}</span>
                 {isBoosted && (
-                  <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700 border-orange-200">
+                  <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700 border-orange-200 shrink-0">
                     <Zap className="h-3 w-3 mr-1" />
-                    Already Boosted
+                    Boosted
                   </Badge>
                 )}
               </div>
-              <div className="text-xs text-muted-foreground">{getCategoryName(product)}</div>
+              <div className="text-xs text-muted-foreground truncate">{getCategoryName(product)}</div>
               {hasErrors && (
                 <div className="text-xs text-red-600 mt-1">
                   {validationErrors[product.id]?.[0] || ''}
@@ -1264,7 +1337,6 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
                   </Collapsible>
                 )}
 
-
                 {/* Visual indicator for boosted products */}
                 <div className="border-t border-orange-100 pt-3">
                   <div className="flex items-center gap-2 text-xs">
@@ -1399,13 +1471,15 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
                     )}
                   </div>
                 ) : viewMode === 'grid' ? (
-                  // Responsive Grid
+                  // Responsive Grid with Images
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                     {filteredProducts.map((product) => {
                       const isSelected = selectedProducts.has(product.id);
                       const canBoost = validateProductForBoost(product).length === 0;
                       const isBoosted = product.is_boosted || false;
                       const errors = validationErrors[product.id] || [];
+                      const imageUrl = getProductImageUrl(product);
+                      const hasImageError = imageErrors[product.id];
                       
                       return (
                         <Card 
@@ -1415,23 +1489,41 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
                             isBoosted ? 'ring-2 ring-orange-500' : 'border-orange-200'
                           } ${!canBoost || isBoosted ? 'opacity-75' : ''}`}
                         >
+                          {/* Product Image - Prominent in grid view */}
+                          <div className="relative h-32 sm:h-40 w-full bg-gray-100 border-b border-gray-200">
+                            {imageUrl && !hasImageError ? (
+                              <img 
+                                src={imageUrl} 
+                                alt={product.name}
+                                className="h-full w-full object-cover"
+                                onError={() => handleImageError(product.id)}
+                                loading="lazy"
+                              />
+                            ) : (
+                              <div className="h-full w-full flex items-center justify-center bg-gradient-to-br from-orange-50 to-amber-50">
+                                <ImageIcon className="h-10 w-10 text-orange-300" />
+                              </div>
+                            )}
+                            
+                            {/* Boost indicator */}
+                            {isBoosted && (
+                              <div className="absolute top-2 right-2">
+                                <Badge variant="outline" className="bg-orange-500 text-white border-orange-600">
+                                  <Zap className="h-3 w-3 mr-1" />
+                                  Boosted
+                                </Badge>
+                              </div>
+                            )}
+                          </div>
+
                           <CardContent className="p-3">
                             <div className="flex items-start gap-2 mb-2">
                               <Checkbox
                                 checked={isSelected}
                                 onCheckedChange={() => handleProductSelect(product.id)}
                                 disabled={!canBoost || isBoosted}
-                                className="mt-1 border-orange-300 data-[state=checked]:bg-orange-500"
+                                className="mt-1 border-orange-300 data-[state=checked]:bg-orange-500 shrink-0"
                               />
-                              <div className={`h-10 w-10 rounded-md flex items-center justify-center shrink-0 ${
-                                isBoosted ? 'bg-orange-100' : 'bg-orange-50'
-                              }`}>
-                                {isBoosted ? (
-                                  <Crown className="h-5 w-5 text-orange-600" />
-                                ) : (
-                                  <Package className="h-5 w-5 text-orange-500" />
-                                )}
-                              </div>
                               <div className="min-w-0 flex-1">
                                 <div className="font-medium text-sm truncate">{product.name}</div>
                                 <div className="text-xs text-muted-foreground truncate">
@@ -1511,9 +1603,23 @@ export default function SelectBoostProduct({ loaderData }: { loaderData: LoaderD
                 <div className="max-h-32 overflow-y-auto space-y-1.5">
                   {Array.from(selectedProducts).slice(0, 3).map((productId) => {
                     const product = products.find(p => p.id === productId);
+                    const imageUrl = product ? getProductImageUrl(product) : null;
+                    
                     return product ? (
-                      <div key={productId} className="flex justify-between text-xs bg-white p-2 rounded border border-orange-100">
-                        <span className="truncate flex-1">{product.name}</span>
+                      <div key={productId} className="flex justify-between items-center text-xs bg-white p-2 rounded border border-orange-100">
+                        <div className="flex items-center gap-2 truncate flex-1">
+                          {imageUrl && !imageErrors[product.id] ? (
+                            <img 
+                              src={imageUrl} 
+                              alt="" 
+                              className="h-5 w-5 rounded object-cover"
+                              onError={() => handleImageError(product.id)}
+                            />
+                          ) : (
+                            <Package className="h-5 w-5 text-orange-300" />
+                          )}
+                          <span className="truncate">{product.name}</span>
+                        </div>
                         <span className="font-medium text-orange-600 ml-2">{formatPrice(product.price)}</span>
                       </div>
                     ) : null;

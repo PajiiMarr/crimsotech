@@ -22324,13 +22324,13 @@ class CheckoutOrder(viewsets.ViewSet):
             self._process_seller_payments(order)
 
             # Redirect to React frontend order success page
-            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+            frontend_url = getattr(settings, 'FRONTEND_URL')
             from django.shortcuts import redirect
             return redirect(f"{frontend_url}/order-successful/{order_id}")
 
         except Exception as e:
             logger.error(f"Error in Maya success callback: {str(e)}")
-            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+            frontend_url = getattr(settings, 'FRONTEND_URL')
             from django.shortcuts import redirect
             return redirect(f"{frontend_url}/order-successful/{order_id}?error=payment_failed")
         
@@ -22344,14 +22344,14 @@ class CheckoutOrder(viewsets.ViewSet):
                 order.save(update_fields=['status'])
             except Order.DoesNotExist:
                 pass
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+        frontend_url = getattr(settings, 'FRONTEND_URL')
         from django.shortcuts import redirect
         return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=failed")
 
     @action(detail=False, methods=['GET'], url_path='maya-cancel')
     def maya_cancel(self, request):
         order_id = request.GET.get('order_id')
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+        frontend_url = getattr(settings, 'FRONTEND_URL')
         from django.shortcuts import redirect
         return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=cancelled")
 
@@ -34827,6 +34827,23 @@ class SellerBoosts(viewsets.ViewSet):
         ).order_by('-price').values_list('price', flat=True).first()
         return float(max_price) if max_price else 0
     
+    def _get_product_primary_image(self, product):
+        """Helper method to get primary product image and convert to public URL"""
+        try:
+            media = product.productmedia_set.first()
+            if media and media.file_data:
+                s3_url = media.file_data.url
+                # Convert S3 URL to public URL using the utility
+                public_url = convert_s3_to_public_url(s3_url)
+                
+                request = self.request if hasattr(self, 'request') else None
+                if request and public_url and not public_url.startswith('http'):
+                    return request.build_absolute_uri(public_url)
+                return public_url
+        except Exception as e:
+            print(f"Error getting product image: {e}")
+        return None
+    
     @action(detail=False, methods=['get'])
     def plans(self, request):
         """Get all active boost plans with features"""
@@ -35134,16 +35151,20 @@ class SellerBoosts(viewsets.ViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _get_product_primary_image(self, product):
-        """Helper method to get primary product image"""
+        """Helper method to get primary product image and convert to public URL"""
         try:
             media = product.productmedia_set.first()
             if media and media.file_data:
+                s3_url = media.file_data.url
+                # Convert S3 URL to public URL using the utility
+                public_url = convert_s3_to_public_url(s3_url)
+                
                 request = self.request if hasattr(self, 'request') else None
-                if request:
-                    return request.build_absolute_uri(media.file_data.url)
-                return media.file_data.url
-        except:
-            pass
+                if request and public_url and not public_url.startswith('http'):
+                    return request.build_absolute_uri(public_url)
+                return public_url
+        except Exception as e:
+            print(f"Error getting product image: {e}")
         return None
     
     @action(detail=False, methods=['get'])
@@ -35231,7 +35252,7 @@ class SellerBoosts(viewsets.ViewSet):
             # Annotate products with boost information
             products = products_query.annotate(
                 is_boosted=Exists(active_boost_subquery)
-            ).prefetch_related('variants').order_by('-created_at')
+            ).prefetch_related('variants', 'productmedia_set').order_by('-created_at')
             
             products_data = []
             for product in products:
@@ -35241,6 +35262,9 @@ class SellerBoosts(viewsets.ViewSet):
                 # Get price range from variants
                 min_price = self._get_product_min_price(product)
                 max_price = self._get_product_max_price(product)
+                
+                # Get product image
+                product_image = self._get_product_primary_image(product)
                 
                 boost_info = None
                 
@@ -35281,7 +35305,8 @@ class SellerBoosts(viewsets.ViewSet):
                     'boost_info': boost_info,
                     'category': str(product.category.name) if product.category else None,
                     'created_at': product.created_at.isoformat(),
-                    'can_be_boosted': self._can_product_be_boosted(product)
+                    'can_be_boosted': self._can_product_be_boosted(product),
+                    'image': product_image  # Add product image
                 }
                 
                 # Add shop info if available
@@ -35368,6 +35393,9 @@ class SellerBoosts(viewsets.ViewSet):
             min_price = self._get_product_min_price(product)
             max_price = self._get_product_max_price(product)
             
+            # Get product image
+            product_image = self._get_product_primary_image(product)
+            
             # Check eligibility
             eligibility = self._check_product_eligibility(product)
             
@@ -35404,7 +35432,8 @@ class SellerBoosts(viewsets.ViewSet):
                         'has_variants': product.variants.filter(is_active=True).count() > 0,
                         'upload_status': product.upload_status,
                         'status': product.status,
-                        'is_removed': product.is_removed
+                        'is_removed': product.is_removed,
+                        'image': product_image  # Add product image
                     },
                     'boost_history': history_data,
                     'can_be_boosted': self._can_product_be_boosted(product)
@@ -35987,6 +36016,9 @@ class SellerBoosts(viewsets.ViewSet):
                     # Get stock from variants
                     total_stock = self._get_product_total_stock(product)
                     
+                    # Get product image
+                    product_image = self._get_product_primary_image(product)
+                    
                     eligibility = self._check_product_eligibility(product)
                     
                     results.append({
@@ -36008,7 +36040,8 @@ class SellerBoosts(viewsets.ViewSet):
                             'has_receipt': bool(pending_boost.receipt_image) if pending_boost else False
                         } if pending_boost else None,
                         'eligibility': eligibility,
-                        'can_be_boosted': self._can_product_be_boosted(product) and not pending_boost
+                        'can_be_boosted': self._can_product_be_boosted(product) and not pending_boost,
+                        'image': product_image  # Add product image to response
                     })
                     
                 except Product.DoesNotExist:
@@ -36023,7 +36056,8 @@ class SellerBoosts(viewsets.ViewSet):
                             'issues': ['Product not found or unauthorized']
                         },
                         'can_be_boosted': False,
-                        'error': 'Product not found'
+                        'error': 'Product not found',
+                        'image': None
                     })
             
             return Response({
@@ -36076,7 +36110,193 @@ class SellerBoosts(viewsets.ViewSet):
             
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-                
+    
+    @action(detail=False, methods=['post'])
+    def initiate_maya_payment(self, request):
+        """
+        Initiate Maya PWM (Pay with Maya Wallet) payment for boost plans.
+        POST /seller-boosts/initiate_maya_payment/
+        Body: { plan_id, product_ids (comma-separated string), user_id }
+        """
+        try:
+            import base64
+            import requests as http_requests
+            from datetime import datetime as dt
+            from django.utils import timezone
+            
+            plan_id = request.data.get('plan_id')
+            product_ids_raw = request.data.get('product_ids', '')
+            user_id = request.data.get('user_id')
+            
+            if not plan_id:
+                return Response({'success': False, 'error': 'plan_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+            if not product_ids_raw:
+                return Response({'success': False, 'error': 'product_ids is required'}, status=status.HTTP_400_BAD_REQUEST)
+            if not user_id:
+                return Response({'success': False, 'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Parse product IDs
+            product_ids = [pid.strip() for pid in product_ids_raw.split(',') if pid.strip()]
+            if not product_ids:
+                return Response({'success': False, 'error': 'No valid product IDs provided'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get the boost plan
+            try:
+                boost_plan = BoostPlan.objects.get(id=plan_id, status='active')
+            except BoostPlan.DoesNotExist:
+                return Response({'success': False, 'error': 'Boost plan not found or inactive'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get the customer
+            try:
+                customer = Customer.objects.get(customer__id=user_id)
+            except Customer.DoesNotExist:
+                return Response({'success': False, 'error': 'Customer not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            total_amount = float(boost_plan.price) * len(product_ids)
+            
+            # Maya PWM settings
+            maya_config = settings.MAYA_SANDBOX
+            base_url = maya_config['BASE_URL']
+            public_key = maya_config['PUBLIC_KEY']
+            frontend_url = settings.FRONTEND_URL
+            
+            # Build Basic Auth with public key (PWM uses public key)
+            credentials = base64.b64encode(f"{public_key}:".encode()).decode()
+            
+            # Reference number — encode plan + products for use in callback
+            reference_number = f"BOOST-{plan_id[:8].upper()}-{user_id[:8].upper()}-{dt.now().strftime('%H%M%S')}"
+            
+            payload = {
+                "totalAmount": {
+                    "value": round(total_amount, 2),
+                    "currency": "PHP"
+                },
+                "requestReferenceNumber": reference_number,
+                "items": [
+                    {
+                        "name": f"{boost_plan.name} Boost ({len(product_ids)} product{'s' if len(product_ids) != 1 else ''})",
+                        "quantity": len(product_ids),
+                        "code": str(boost_plan.id)[:20],
+                        "description": f"Boost plan: {boost_plan.name}",
+                        "amount": {
+                            "value": round(float(boost_plan.price), 2),
+                            "currency": "PHP"
+                        },
+                        "totalAmount": {
+                            "value": round(total_amount, 2),
+                            "currency": "PHP"
+                        }
+                    }
+                ],
+                "redirectUrl": {
+                    "success": f"{frontend_url}/seller/seller-boosts?boost_status=success&plan_id={plan_id}&product_ids={product_ids_raw}&user_id={user_id}",
+                    "failure": f"{frontend_url}/pay-boosting/{plan_id}?product_ids={product_ids_raw}&status=failed",
+                    "cancel": f"{frontend_url}/pay-boosting/{plan_id}?product_ids={product_ids_raw}&status=cancelled"
+                }
+            }
+            
+            maya_response = http_requests.post(
+                f"{base_url}/payby/v2/paymaya/payments",
+                json=payload,
+                headers={
+                    "Authorization": f"Basic {credentials}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                timeout=30
+            )
+            
+            if maya_response.status_code not in [200, 201]:
+                return Response({
+                    'success': False,
+                    'error': f"Maya API error: {maya_response.text}"
+                }, status=status.HTTP_502_BAD_GATEWAY)
+            
+            maya_data = maya_response.json()
+            payment_id = maya_data.get('paymentId') or maya_data.get('id')
+            redirect_url = maya_data.get('redirectUrl')
+            
+            if not redirect_url:
+                return Response({'success': False, 'error': 'No redirect URL from Maya'}, status=status.HTTP_502_BAD_GATEWAY)
+            
+            # Create active boost records immediately
+            created_boosts = []
+            skipped_products = []
+            
+            for product_id in product_ids:
+                try:
+                    product = Product.objects.get(id=product_id, customer=customer)
+                    
+                    # Check if product already has an active boost
+                    existing_active = Boost.objects.filter(
+                        product=product,
+                        status='active',
+                        end_date__gt=timezone.now()
+                    ).first()
+                    
+                    if existing_active:
+                        skipped_products.append({
+                            'product_id': product_id,
+                            'product_name': product.name,
+                            'reason': 'Product already has an active boost'
+                        })
+                        continue
+                    
+                    # Create new active boost
+                    boost = Boost(
+                        product=product,
+                        boost_plan=boost_plan,
+                        customer=customer,
+                        shop=product.shop,
+                        payment_method='Maya',
+                        status='active',
+                        start_date=timezone.now(),
+                        # end_date will be set automatically by the model's save method
+                    )
+                    boost.save()  # This will trigger the save() method which sets end_date
+                    
+                    created_boosts.append({
+                        'id': str(boost.id),
+                        'product_id': str(product.id),
+                        'product_name': product.name,
+                        'status': boost.status,
+                        'start_date': boost.start_date.isoformat() if boost.start_date else None,
+                        'end_date': boost.end_date.isoformat() if boost.end_date else None,
+                    })
+                    
+                except Product.DoesNotExist:
+                    skipped_products.append({
+                        'product_id': product_id,
+                        'reason': 'Product not found or unauthorized'
+                    })
+                    continue
+                except Exception as e:
+                    skipped_products.append({
+                        'product_id': product_id,
+                        'reason': str(e)
+                    })
+                    continue
+            
+            # Log the created boosts for debugging
+            print(f"Created {len(created_boosts)} boost instances: {created_boosts}")
+            
+            return Response({
+                'success': True,
+                'redirect_url': redirect_url,
+                'payment_id': payment_id,
+                'reference_number': reference_number,
+                'total_amount': total_amount,
+                'sandbox_mode': settings.ENABLE_SANDBOX,
+                'boosts_created': created_boosts,
+                'skipped_products': skipped_products,
+                'message': f'Successfully created {len(created_boosts)} boost(s)'
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in initiate_maya_payment: {str(e)}")
+            print(traceback.format_exc())
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 class HomeBoosts(viewsets.ViewSet):
     """ViewSet for showing boosted products on home page"""
     

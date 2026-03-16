@@ -315,3 +315,6 @@ def get_maya_auth_header(use_secret=False):
     credentials = f"{key}:"
     encoded = base64.b64encode(credentials.encode()).decode()
     return f"Basic {encoded}"
+
+FRONTEND_URL = env.str('FRONTEND_URL', default='http://localhost:5173')
+print(f"Frontend URL set to: {FRONTEND_URL}")
