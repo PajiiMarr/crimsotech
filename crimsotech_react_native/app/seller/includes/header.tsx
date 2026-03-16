@@ -233,9 +233,6 @@ export default function Header({ shopId }: HeaderProps) {
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Ionicons name="notifications-outline" size={24} color="#374151" />
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>3</Text>
-            </View>
           </TouchableOpacity>
 
           <TouchableOpacity 
@@ -244,9 +241,6 @@ export default function Header({ shopId }: HeaderProps) {
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <Ionicons name="chatbubble-outline" size={24} color="#374151" />
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>3</Text>
-            </View>
           </TouchableOpacity>
           
           <TouchableOpacity 
@@ -263,25 +257,6 @@ export default function Header({ shopId }: HeaderProps) {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'ios' ? 10 : 30,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 3,
-      },
-      android: {
-        elevation: 3,
-      },
-    }),
-  },
-  header: {
-    height: 60,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
