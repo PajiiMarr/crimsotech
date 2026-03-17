@@ -45,7 +45,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "~/components/ui/alert-dialog";
 import {
   Dialog,
@@ -63,12 +62,13 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-  DrawerTrigger,
 } from "~/components/ui/drawer";
 import { Input } from '~/components/ui/input';
 import { Textarea } from '~/components/ui/textarea';
 import { Label } from '~/components/ui/label';
 import { ScrollArea } from '~/components/ui/scroll-area';
+import { toast } from 'sonner';
+import { useIsMobile } from '~/hooks/use-mobile';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -156,7 +156,6 @@ interface LoaderData {
   user: any;
 }
 
-// Status badges configuration
 const STATUS_CONFIG = {
   pending: { 
     label: 'Pending', 
@@ -190,14 +189,12 @@ const STATUS_CONFIG = {
   }
 };
 
-// Tabs configuration
 const STATUS_TABS = [
   { id: 'pending', label: 'Pending', icon: Clock },
   { id: 'to_process', label: 'To Process', icon: Truck }
 ];
 
 export async function loader({ request, context}: Route.LoaderArgs): Promise<LoaderData> {
-
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
 
@@ -213,9 +210,8 @@ export async function loader({ request, context}: Route.LoaderArgs): Promise<Loa
 
 export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
   const { user } = loaderData;
-  const [isDesktop, setIsDesktop] = useState(false);
+  const isMobile = useIsMobile();
   
-  // State for data
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
   const [metrics, setMetrics] = useState<Metrics>({
@@ -234,7 +230,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     declined_orders: 0
   });
   
-  // State for loading and date range
   const [isLoading, setIsLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null);
@@ -244,12 +239,11 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
   const [showLimitReachedDialog, setShowLimitReachedDialog] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState({
-    start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
+    start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
     end: new Date(),
     rangeType: 'weekly' as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
   });
 
-  // State for proof of delivery modal
   const [showProofModal, setShowProofModal] = useState(false);
   const [proofImages, setProofImages] = useState<string[]>([]);
   const [proofFiles, setProofFiles] = useState<File[]>([]);
@@ -257,48 +251,27 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // State for decline warning
   const [showDeclineWarning, setShowDeclineWarning] = useState(false);
 
-  // Minimalist tabs for rider active orders (Pending / To Process)
   const [activeTab, setActiveTab] = useState<'pending' | 'to_process'>('pending');
   const [expandedDeliveries, setExpandedDeliveries] = useState<Set<string>>(new Set());
 
-  // Check if desktop on mount and resize
-  useEffect(() => {
-    const checkIfDesktop = () => {
-      setIsDesktop(window.innerWidth >= 768);
-    };
-    
-    checkIfDesktop();
-    window.addEventListener('resize', checkIfDesktop);
-    
-    return () => window.removeEventListener('resize', checkIfDesktop);
-  }, []);
-
-  // Show warning when approaching decline limit (at 2 declines)
   useEffect(() => {
     if (metrics.declined_orders === 2) {
       setShowDeclineWarning(true);
     }
   }, [metrics.declined_orders]);
 
-  // Fetch data function
   const fetchDeliveryData = async () => {
     try {
       setIsLoading(true);
       
-      // Fetch metrics and deliveries in parallel
       const [metricsResponse, deliveriesResponse] = await Promise.all([
         AxiosInstance.get('/rider-orders-active/get_metrics/', {
-            headers: {
-                'X-User-Id': user.user_id
-            }
+            headers: { 'X-User-Id': user.user_id }
         }),
         AxiosInstance.get('/rider-orders-active/get_deliveries/?page=1&page_size=50&status=all', {
-            headers: {
-                'X-User-Id': user.user_id
-            }
+            headers: { 'X-User-Id': user.user_id }
         })
       ]);
 
@@ -313,7 +286,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
 
     } catch (error) {
       console.error('Error fetching delivery data:', error);
-      // Reset to empty state on error
       setMetrics({
         total_active_orders: 0,
         pending_pickup: 0,
@@ -336,7 +308,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     }
   };
 
-  // Handle decline order with backend
   const handleDeclineOrder = async () => {
     if (!selectedDelivery) return;
     
@@ -347,49 +318,51 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
       formData.append('order_id', selectedDelivery.id);
 
       const response = await AxiosInstance.post('/rider-orders-active/decline_order/', formData, {
-        headers: {
-          'X-User-Id': user.user_id
-        }
+        headers: { 'X-User-Id': user.user_id }
       });
 
-      console.debug('Decline order response:', response.data);
-
       if (response.data.success) {
-        // Get the current count before refresh
         const currentDeclinedCount = metrics.declined_orders;
-        
-        // Refresh data to get updated metrics
         await fetchDeliveryData();
         
-        // Close dialog
         setShowDeclineDialog(false);
         setSelectedDelivery(null);
         setActionType(null);
         
-        // Show success message
         const newDeclinedCount = currentDeclinedCount + 1;
         const remaining = 3 - newDeclinedCount;
         
         if (remaining > 0) {
-          alert(`Order declined successfully. You have ${remaining} decline${remaining !== 1 ? 's' : ''} remaining.`);
+          toast.success('Order declined', {
+            description: `You have ${remaining} decline${remaining !== 1 ? 's' : ''} remaining.`,
+          });
+        } else {
+          toast.warning('Decline limit reached', {
+            description: 'You have used all 3 of your allowed declines.',
+          });
         }
       } else {
-        alert(response.data.error || 'Failed to decline order');
+        toast.error('Failed to decline order', {
+          description: response.data.error,
+        });
       }
     } catch (err: any) {
       console.error('Error declining order:', err);
-      alert(err?.response?.data?.error || 'Failed to decline order');
+      toast.error('Failed to decline order', {
+        description: err?.response?.data?.error,
+      });
     } finally {
       setIsActionLoading(false);
     }
   };
 
-  // Handle delivery action with proof of delivery
   const handleDeliverWithProof = async () => {
     if (!selectedDelivery) return;
 
     if (proofImages.length === 0) {
-      alert('Please take at least one photo as proof of delivery');
+      toast.warning('No photos added', {
+        description: 'Please take at least one photo as proof of delivery.',
+      });
       return;
     }
 
@@ -397,23 +370,11 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
       setUploadingProofs(true);
       setUploadProgress(0);
 
-      // Upload each proof image
       for (let i = 0; i < proofFiles.length; i++) {
         const file = proofFiles[i];
         const formData = new FormData();
         formData.append('proof_type', 'delivery');
         formData.append('file', file);
-
-        console.log('🔍 UPLOAD DEBUG ==================');
-        console.log('File name:', file.name);
-        console.log('File size:', file.size, 'bytes');
-        console.log('File type:', file.type);
-        console.log('Delivery ID:', selectedDelivery.id);
-        console.log('Upload URL:', `/rider-proof/upload/${selectedDelivery.id}/`);
-      
-        for (let pair of (formData as any).entries()) {
-          console.log('FormData:', pair[0], pair[1]);
-        }
 
         const response = await AxiosInstance.post(
           `/rider-proof/upload/${selectedDelivery.id}/`,
@@ -426,20 +387,9 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
           }
         );
 
-        console.log('✅ UPLOAD RESPONSE ==================');
-        console.log('Response status:', response.status);
-        console.log('Response data:', response.data);
-      
-        if (response.data && response.data.success) {
-          console.log('Proof uploaded successfully!');
-          console.log('File URL from server:', response.data.proof?.file_url);
-          console.log('File path in DB:', response.data.proof?.file_name);
-        }
-
         setUploadProgress(((i + 1) / proofFiles.length) * 100);
       }
 
-      // After all proofs are uploaded, mark as delivered
       const deliverFormData = new FormData();
       deliverFormData.append('delivery_id', selectedDelivery.id);
       if (selectedDelivery.order?.order_id) {
@@ -450,60 +400,49 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
         '/rider-orders-active/deliver_order/',
         deliverFormData,
         {
-          headers: {
-            'X-User-Id': user.user_id,
-          }
+          headers: { 'X-User-Id': user.user_id }
         }
       );
 
-      console.log('📦 DELIVERY RESPONSE ==================');
-      console.log('Delivery response:', deliverResponse.data);
-
       if (deliverResponse.data.success) {
-        // Refresh data
         await fetchDeliveryData();
-        // Close modal
         setShowProofModal(false);
         setProofImages([]);
         setProofFiles([]);
         setSelectedDelivery(null);
         setActionType(null);
-        alert('Order delivered successfully with proof!');
-        // redirect to history page
+        toast.success('Order delivered!', {
+          description: 'Proof of delivery uploaded successfully.',
+        });
         navigate('/rider/orders/history');
       } else {
-        alert(deliverResponse.data.error || 'Failed to mark order as delivered');
+        toast.error('Failed to mark as delivered', {
+          description: deliverResponse.data.error,
+        });
       }
     } catch (error: any) {
-      console.error('❌ ERROR ==================');
       console.error('Error uploading proofs or marking delivery:', error);
-      console.error('Error response:', error.response?.data);
-      console.error('Error status:', error.response?.status);
-      console.error('Error headers:', error.response?.headers);
-      
-      if (error.response?.data) {
-        console.error('Server error details:', error.response.data);
-      }
-      
-      alert(error.response?.data?.error || 'Failed to complete delivery');
+      toast.error('Failed to complete delivery', {
+        description: error.response?.data?.error,
+      });
     } finally {
       setUploadingProofs(false);
       setUploadProgress(0);
     }
   };
 
-  // Handle camera capture
   const handleCameraCapture = () => {
     if (proofImages.length >= 6) {
-      alert('Maximum 6 photos allowed');
+      toast.warning('Photo limit reached', {
+        description: 'Maximum 6 photos allowed.',
+      });
       return;
     }
 
-    // Create a hidden file input for camera capture
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    input.capture = 'environment'; // Use rear camera
+    input.capture = 'environment';
     input.multiple = false;
 
     input.onchange = (e: Event) => {
@@ -525,33 +464,29 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     input.click();
   };
 
-  // Handle remove image
   const handleRemoveImage = (index: number) => {
     setProofImages(prev => prev.filter((_, i) => i !== index));
     setProofFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Handle action confirmation
   const confirmAction = async () => {
     if (!selectedDelivery || !actionType) return;
 
-    // Client-side guard: prevent firing pickup if delivery is not in a valid pre-pickup state
     if (actionType === 'pickup') {
       const status = String(selectedDelivery.status || '').toLowerCase();
       const allowed = ['pending', 'accepted'];
       if (!allowed.includes(status)) {
-        alert(`Cannot mark pickup — delivery status is "${selectedDelivery.status}" (expected: ${allowed.join(', ')}).`);
+        toast.error('Cannot mark pickup', {
+          description: `Delivery status is "${selectedDelivery.status}" (expected: ${allowed.join(', ')}).`,
+        });
         return;
       }
     }
 
-    // For pickup action, proceed with normal confirmation
     try {
       setIsActionLoading(true);
 
       const endpoint = '/rider-orders-active/pickup_order/';
-
-      console.debug('[RiderAction] sending', { actionType, deliveryId: selectedDelivery.id, deliveryStatus: selectedDelivery.status, riderUserId: user.user_id });
 
       const formData = new FormData();
       formData.append('delivery_id', selectedDelivery.id);
@@ -560,28 +495,27 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
       }
 
       const response = await AxiosInstance.post(endpoint, formData, {
-        headers: {
-          'X-User-Id': user.user_id,
-        }
+        headers: { 'X-User-Id': user.user_id }
       });
-      console.debug('[RiderAction] response', response.data);
 
       if (response.data.success) {
-        // Refresh data
         await fetchDeliveryData();
-        // Close dialog
         setShowActionDialog(false);
         setSelectedDelivery(null);
         setActionType(null);
-        alert(`Order picked up successfully!`);
+        toast.success('Order picked up!', {
+          description: 'The order is now in transit.',
+        });
       } else {
-        // Show server-provided message when available
-        alert(response.data.error || `Failed to ${actionType} order`);
+        toast.error('Failed to pick up order', {
+          description: response.data.error,
+        });
       }
     } catch (error: any) {
       console.error('Error performing action:', error);
-      console.error('Error response:', error.response?.data);
-      alert((error.response?.data && error.response.data.error) || `Failed to ${actionType} order`);
+      toast.error(`Failed to ${actionType} order`, {
+        description: error.response?.data?.error,
+      });
     } finally {
       setIsActionLoading(false);
     }
@@ -589,24 +523,20 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
 
   const navigate = useNavigate();
 
-  // Handle pickup action
   const handlePickupClick = (delivery: Delivery) => {
     setSelectedDelivery(delivery);
     setActionType('pickup');
     setShowActionDialog(true);
   };
 
-  // Handle delivery action - now directly opens proof modal without confirmation
   const handleDeliverClick = (delivery: Delivery) => {
     setSelectedDelivery(delivery);
     setActionType('deliver');
-    setShowProofModal(true); // Directly open proof modal
+    setShowProofModal(true);
   };
 
-  // Handle decline click - open confirmation modal or limit reached modal
   const handleDeclineClick = (delivery: Delivery) => {
     if (metrics.declined_orders >= 3) {
-      // Show limit reached modal
       setSelectedDelivery(delivery);
       setShowLimitReachedDialog(true);
       return;
@@ -616,7 +546,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     setShowDeclineDialog(true);
   };
 
-  // Accept a delivery (calls backend accept_order endpoint)
   const handleAcceptDelivery = async (delivery: Delivery) => {
     try {
       setIsActionLoading(true);
@@ -624,60 +553,72 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
       formData.append('order_id', delivery.id);
 
       const response = await AxiosInstance.post('/rider-orders-active/accept_order/', formData, {
-        headers: {
-          'X-User-Id': user.user_id
-        }
+        headers: { 'X-User-Id': user.user_id }
       });
 
-      console.debug('rider/accept_order response', response.data);
-
       if (response.data.success) {
-        // update UI to show 'accepted' status (frontend representation)
         setDeliveries(prev => prev.map(d => d.id === delivery.id ? { ...d, status: 'accepted' } : d));
         if (selectedDelivery?.id === delivery.id) {
           setSelectedDelivery(prev => prev ? { ...prev, status: 'accepted' } : prev);
         }
-        alert('Order accepted');
+        toast.success('Order accepted', {
+          description: `Order #${delivery.order.order_id?.slice(-8)} is now yours.`,
+        });
       } else {
-        console.error('Accept delivery failed:', response.data);
-        alert(response.data.error || 'Failed to accept order');
+        toast.error('Failed to accept order', {
+          description: response.data.error,
+        });
       }
     } catch (err: any) {
       console.error('Error accepting delivery:', err);
-      alert(err?.response?.data?.error || 'Failed to accept order');
+      toast.error('Failed to accept order', {
+        description: err?.response?.data?.error,
+      });
     } finally {
       setIsActionLoading(false);
     }
   };
 
-  // Mark an accepted delivery as failed (persisted on server -> status='declined')
+  // Replaced confirm() with a sonner toast that has action buttons
   const handleMarkFailed = async (delivery: Delivery) => {
-    if (!confirm('Mark this delivery as failed? This will unassign you from the delivery.')) return;
-    try {
-      setIsActionLoading(true);
-      const formData = new FormData();
-      formData.append('delivery_id', delivery.id);
-      formData.append('status', 'declined');
+    toast('Mark delivery as failed?', {
+      description: 'This will unassign you from the delivery.',
+      action: {
+        label: 'Yes, mark failed',
+        onClick: async () => {
+          try {
+            setIsActionLoading(true);
+            const formData = new FormData();
+            formData.append('delivery_id', delivery.id);
+            formData.append('status', 'declined');
 
-      const res = await AxiosInstance.post('/rider-orders-active/update_delivery_status/', formData, {
-        headers: { 'X-User-Id': user.user_id }
-      });
+            const res = await AxiosInstance.post('/rider-orders-active/update_delivery_status/', formData, {
+              headers: { 'X-User-Id': user.user_id }
+            });
 
-      console.debug('update_delivery_status response', res.data);
-
-      if (res.data.success) {
-        // refresh list to reflect change
-        await fetchDeliveryData();
-        alert('Delivery marked as failed');
-      } else {
-        alert(res.data.error || 'Failed to mark delivery as failed');
-      }
-    } catch (err: any) {
-      console.error('Failed to mark failed:', err);
-      alert(err?.response?.data?.error || 'Failed to mark delivery as failed');
-    } finally {
-      setIsActionLoading(false);
-    }
+            if (res.data.success) {
+              await fetchDeliveryData();
+              toast.success('Delivery marked as failed');
+            } else {
+              toast.error('Failed to update delivery', {
+                description: res.data.error,
+              });
+            }
+          } catch (err: any) {
+            console.error('Failed to mark failed:', err);
+            toast.error('Failed to update delivery', {
+              description: err?.response?.data?.error,
+            });
+          } finally {
+            setIsActionLoading(false);
+          }
+        },
+      },
+      cancel: {
+        label: 'Cancel',
+        onClick: () => {},
+      },
+    });
   };
 
   const toggleDeliveryExpansion = (deliveryId: string) => {
@@ -690,16 +631,14 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     setExpandedDeliveries(newExpanded);
   };
 
-  // Prepare transformed data for the table (filtered by activeTab)
   const pendingStatuses = ['pending'];
-  const toProcessStatuses = ['accepted', 'picked_up']; // "To Process" / To Pick Up includes accepted + picked_up (in-transit)
+  const toProcessStatuses = ['accepted', 'picked_up'];
 
   const filteredDeliveries = useMemo(() => {
     let filtered = activeTab === 'pending' 
       ? deliveries.filter(d => pendingStatuses.includes(d.status))
       : deliveries.filter(d => toProcessStatuses.includes(d.status));
     
-    // Apply search filter
     if (searchTerm) {
       const searchLower = searchTerm.toLowerCase();
       filtered = filtered.filter(d => 
@@ -712,22 +651,18 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     return filtered;
   }, [deliveries, activeTab, searchTerm]);
 
-  // Get status badge
   const getStatusBadge = (status: string) => {
     const config = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.default;
     const Icon = config.icon;
     
     return (
-      <Badge 
-        className={`text-[10px] h-5 px-1.5 py-0 flex items-center gap-1 ${config.color}`}
-      >
+      <Badge className={`text-[10px] h-5 px-1.5 py-0 flex items-center gap-1 ${config.color}`}>
         <Icon className="w-2.5 h-2.5" />
         {config.label}
       </Badge>
     );
   };
 
-  // Format date
   const formatDate = (dateString?: string) => {
     if (!dateString) return '';
     try {
@@ -742,12 +677,10 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     }
   };
 
-  // Format currency
   const formatCurrency = (amount: number) => {
     return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
   };
 
-  // Get tab count
   const getTabCount = (tabId: string) => {
     if (tabId === 'pending') {
       return deliveries.filter(d => pendingStatuses.includes(d.status)).length;
@@ -756,7 +689,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     }
   };
 
-  // Handle date range change
   const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
     setDateRange({
       start: range.start,
@@ -765,7 +697,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     });
   };
 
-  // Loading skeleton for metrics
   const MetricCardSkeleton = () => (
     <Card>
       <CardContent className="p-3">
@@ -781,10 +712,150 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
     </Card>
   );
 
-  // Initial data fetch
   useEffect(() => {
     fetchDeliveryData();
   }, []);
+
+  // ─── Shared content for Decline Warning ───────────────────────────────────
+  const DeclineWarningContent = () => (
+    <>
+      <p>You have declined {metrics.declined_orders} out of 3 allowed orders.</p>
+      <p className="font-medium text-orange-600">
+        You have {3 - metrics.declined_orders} decline{3 - metrics.declined_orders !== 1 ? 's' : ''} remaining.
+      </p>
+      <p className="text-xs text-muted-foreground mt-2">
+        Reaching the limit will prevent you from declining further orders.
+      </p>
+    </>
+  );
+
+  // ─── Shared content for Limit Reached ─────────────────────────────────────
+  const LimitReachedContent = () => (
+    <>
+      <p className="text-sm">You have reached the maximum number of declined orders (3).</p>
+      <div className="bg-muted p-3 rounded space-y-2 text-sm mt-2">
+        <div className="flex justify-between">
+          <span className="font-medium">Order ID:</span>
+          <span className="font-mono">#{selectedDelivery?.order.order_id?.slice(-8)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="font-medium">Customer:</span>
+          <span>{selectedDelivery?.order.customer.first_name} {selectedDelivery?.order.customer.last_name}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="font-medium">Amount:</span>
+          <span className="font-bold">{selectedDelivery ? formatCurrency(selectedDelivery.order.total_amount) : '₱0.00'}</span>
+        </div>
+      </div>
+      <p className="text-xs text-red-600 font-medium mt-2">
+        You cannot decline any more orders. Please accept this order or wait for it to expire.
+      </p>
+    </>
+  );
+
+  // ─── Shared content for Decline Confirmation ──────────────────────────────
+  const DeclineConfirmContent = () => (
+    <>
+      <p className="text-sm">Are you sure you want to decline this order?</p>
+      <div className="bg-muted p-3 rounded space-y-2 text-sm mt-2">
+        <div className="flex justify-between">
+          <span className="font-medium">Order ID:</span>
+          <span className="font-mono">#{selectedDelivery?.order.order_id?.slice(-8)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="font-medium">Customer:</span>
+          <span>{selectedDelivery?.order.customer.first_name} {selectedDelivery?.order.customer.last_name}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="font-medium">Amount:</span>
+          <span className="font-bold">{selectedDelivery ? formatCurrency(selectedDelivery.order.total_amount) : '₱0.00'}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="font-medium">Remaining declines:</span>
+          <span className={`font-bold ${3 - metrics.declined_orders <= 1 ? 'text-red-600' : 'text-orange-600'}`}>
+            {3 - metrics.declined_orders - 1} left
+          </span>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground mt-2">
+        This action cannot be undone. The order will be reassigned to another rider.
+      </p>
+    </>
+  );
+
+  // ─── Shared content for Pickup Confirmation ───────────────────────────────
+  const PickupConfirmContent = () => (
+    <>
+      <p className="text-xs">Are you sure you want to mark this order as picked up?</p>
+      <div className="bg-muted p-2 rounded space-y-1 text-xs mt-2">
+        <div className="flex justify-between">
+          <span className="font-medium">Order ID:</span>
+          <span className="font-mono">#{selectedDelivery?.order.order_id?.slice(-8)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="font-medium">Customer:</span>
+          <span>{selectedDelivery?.order.customer.first_name} {selectedDelivery?.order.customer.last_name}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="font-medium">Amount:</span>
+          <span className="font-bold">{selectedDelivery ? formatCurrency(selectedDelivery.order.total_amount) : '₱0.00'}</span>
+        </div>
+      </div>
+    </>
+  );
+
+  // ─── Shared content for Proof of Delivery ─────────────────────────────────
+  const ProofOfDeliveryContent = () => (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-2">
+        {proofImages.map((image, index) => (
+          <div key={index} className="relative aspect-square rounded-md overflow-hidden border">
+            <img 
+              src={image} 
+              alt={`Proof ${index + 1}`} 
+              className="w-full h-full object-cover"
+            />
+            <button
+              onClick={() => handleRemoveImage(index)}
+              className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+              disabled={uploadingProofs}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+        {proofImages.length < 6 && (
+          <button
+            onClick={handleCameraCapture}
+            disabled={uploadingProofs}
+            className="aspect-square rounded-md border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 hover:border-gray-400 transition-colors disabled:opacity-50"
+          >
+            <Camera className="w-6 h-6 text-gray-400" />
+            <span className="text-[10px] text-gray-500">Take Photo</span>
+          </button>
+        )}
+      </div>
+
+      {uploadingProofs && (
+        <div className="space-y-1">
+          <div className="flex justify-between text-xs">
+            <span>Uploading proofs...</span>
+            <span>{Math.round(uploadProgress)}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div 
+              className="bg-green-600 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-gray-500">
+        {proofImages.length}/6 photos taken. All photos are uploaded in real-time.
+      </p>
+    </div>
+  );
 
   return (
     <UserProvider user={user}>
@@ -801,7 +872,7 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
             isLoading={isLoading}
           />
 
-          {/* Key Metrics - MINIMALIST */}
+          {/* Key Metrics */}
           <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-2">
             {isLoading ? (
               <>
@@ -897,7 +968,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                   </CardContent>
                 </Card>
 
-                {/* Decline Orders Metric Card */}
                 <Card>
                   <CardContent className="p-3">
                     <div className="flex items-center justify-between">
@@ -914,7 +984,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                         <AlertCircle className={`w-3 h-3 sm:w-4 sm:h-4 ${metrics.declined_orders >= 3 ? 'text-red-600' : 'text-orange-600'}`} />
                       </div>
                     </div>
-                    {/* Progress bar for decline limit */}
                     <div className="mt-2">
                       <div className="w-full bg-gray-200 rounded-full h-1.5">
                         <div 
@@ -937,274 +1006,330 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
             )}
           </div>
 
-          {/* Approaching Decline Limit Warning Modal (shows at 2 declines) */}
-          <AlertDialog open={showDeclineWarning} onOpenChange={setShowDeclineWarning}>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle className="flex items-center gap-2 text-orange-600">
-                  <AlertCircle className="w-5 h-5" />
-                  Approaching Decline Limit
-                </AlertDialogTitle>
-                <AlertDialogDescription className="space-y-2">
-                  <p>
-                    You have declined {metrics.declined_orders} out of 3 allowed orders.
-                  </p>
-                  <p className="font-medium text-orange-600">
-                    You have {3 - metrics.declined_orders} decline{3 - metrics.declined_orders !== 1 ? 's' : ''} remaining.
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Reaching the limit will prevent you from declining further orders.
-                  </p>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogAction 
-                  onClick={() => setShowDeclineWarning(false)} 
-                  className="bg-orange-600 hover:bg-orange-700 text-xs h-8"
-                >
-                  Understood
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          {/* ── Approaching Decline Limit Warning ─────────────────────────────── */}
+          {isMobile ? (
+            <Drawer open={showDeclineWarning} onOpenChange={setShowDeclineWarning}>
+              <DrawerContent>
+                <DrawerHeader>
+                  <DrawerTitle className="flex items-center gap-2 text-orange-600">
+                    <AlertCircle className="w-5 h-5" />
+                    Approaching Decline Limit
+                  </DrawerTitle>
+                  <DrawerDescription asChild>
+                    <div className="space-y-2 text-sm text-left">
+                      <DeclineWarningContent />
+                    </div>
+                  </DrawerDescription>
+                </DrawerHeader>
+                <DrawerFooter>
+                  <DrawerClose asChild>
+                    <Button
+                      onClick={() => setShowDeclineWarning(false)}
+                      className="bg-orange-600 hover:bg-orange-700 text-xs h-8 w-full"
+                    >
+                      Understood
+                    </Button>
+                  </DrawerClose>
+                </DrawerFooter>
+              </DrawerContent>
+            </Drawer>
+          ) : (
+            <AlertDialog open={showDeclineWarning} onOpenChange={setShowDeclineWarning}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle className="flex items-center gap-2 text-orange-600">
+                    <AlertCircle className="w-5 h-5" />
+                    Approaching Decline Limit
+                  </AlertDialogTitle>
+                  <AlertDialogDescription asChild>
+                    <div className="space-y-2">
+                      <DeclineWarningContent />
+                    </div>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogAction 
+                    onClick={() => setShowDeclineWarning(false)} 
+                    className="bg-orange-600 hover:bg-orange-700 text-xs h-8"
+                  >
+                    Understood
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
 
-          {/* Decline Limit Reached Modal (shows at 3 declines) */}
-          <AlertDialog open={showLimitReachedDialog} onOpenChange={setShowLimitReachedDialog}>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle className="flex items-center gap-2 text-red-600">
-                  <AlertCircle className="w-5 h-5" />
-                  Decline Limit Reached
-                </AlertDialogTitle>
-                <AlertDialogDescription className="space-y-3">
-                  <p className="text-sm">
-                    You have reached the maximum number of declined orders (3).
-                  </p>
-                  <div className="bg-muted p-3 rounded space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="font-medium">Order ID:</span>
-                      <span className="font-mono">#{selectedDelivery?.order.order_id?.slice(-8)}</span>
+          {/* ── Decline Limit Reached ─────────────────────────────────────────── */}
+          {isMobile ? (
+            <Drawer open={showLimitReachedDialog} onOpenChange={setShowLimitReachedDialog}>
+              <DrawerContent>
+                <DrawerHeader>
+                  <DrawerTitle className="flex items-center gap-2 text-red-600">
+                    <AlertCircle className="w-5 h-5" />
+                    Decline Limit Reached
+                  </DrawerTitle>
+                  <DrawerDescription asChild>
+                    <div className="text-sm text-left">
+                      <LimitReachedContent />
                     </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Customer:</span>
-                      <span>{selectedDelivery?.order.customer.first_name} {selectedDelivery?.order.customer.last_name}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Amount:</span>
-                      <span className="font-bold">{selectedDelivery ? formatCurrency(selectedDelivery.order.total_amount) : '₱0.00'}</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-red-600 font-medium mt-2">
-                    You cannot decline any more orders. Please accept this order or wait for it to expire.
-                  </p>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogAction 
-                  onClick={() => {
-                    setShowLimitReachedDialog(false);
-                    setSelectedDelivery(null);
-                  }} 
-                  className="bg-red-600 hover:bg-red-700 text-xs h-8"
-                >
-                  Understood
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-
-          {/* Decline Confirmation Dialog */}
-          {selectedDelivery && actionType === 'decline' && (
-            <AlertDialog open={showDeclineDialog} onOpenChange={setShowDeclineDialog}>
+                  </DrawerDescription>
+                </DrawerHeader>
+                <DrawerFooter>
+                  <DrawerClose asChild>
+                    <Button
+                      onClick={() => { setShowLimitReachedDialog(false); setSelectedDelivery(null); }}
+                      className="bg-red-600 hover:bg-red-700 text-xs h-8 w-full"
+                    >
+                      Understood
+                    </Button>
+                  </DrawerClose>
+                </DrawerFooter>
+              </DrawerContent>
+            </Drawer>
+          ) : (
+            <AlertDialog open={showLimitReachedDialog} onOpenChange={setShowLimitReachedDialog}>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle className="flex items-center gap-2 text-red-600">
                     <AlertCircle className="w-5 h-5" />
-                    Decline Order
+                    Decline Limit Reached
                   </AlertDialogTitle>
-                  <AlertDialogDescription className="space-y-3">
-                    <p className="text-sm">
-                      Are you sure you want to decline this order?
-                    </p>
-                    <div className="bg-muted p-3 rounded space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="font-medium">Order ID:</span>
-                        <span className="font-mono">#{selectedDelivery.order.order_id?.slice(-8)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-medium">Customer:</span>
-                        <span>{selectedDelivery.order.customer.first_name} {selectedDelivery.order.customer.last_name}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-medium">Amount:</span>
-                        <span className="font-bold">{formatCurrency(selectedDelivery.order.total_amount)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-medium">Remaining declines:</span>
-                        <span className={`font-bold ${3 - metrics.declined_orders <= 1 ? 'text-red-600' : 'text-orange-600'}`}>
-                          {3 - metrics.declined_orders - 1} left
-                        </span>
-                      </div>
+                  <AlertDialogDescription asChild>
+                    <div>
+                      <LimitReachedContent />
                     </div>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      This action cannot be undone. The order will be reassigned to another rider.
-                    </p>
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isActionLoading} className="text-xs h-8">
-                    Cancel
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleDeclineOrder}
-                    disabled={isActionLoading}
-                    className="text-xs h-8 bg-red-600 hover:bg-red-700"
+                  <AlertDialogAction 
+                    onClick={() => { setShowLimitReachedDialog(false); setSelectedDelivery(null); }} 
+                    className="bg-red-600 hover:bg-red-700 text-xs h-8"
                   >
-                    {isActionLoading ? "Processing..." : 'Yes, Decline Order'}
+                    Understood
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
           )}
 
-          {/* Pickup Action Confirmation Dialog */}
-          {selectedDelivery && actionType === 'pickup' && (
-            <AlertDialog open={showActionDialog} onOpenChange={setShowActionDialog}>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle className="flex items-center gap-2">
-                    <Package className="w-4 h-4" />
-                    Pick Up Order
-                  </AlertDialogTitle>
-                  <AlertDialogDescription className="space-y-3">
-                    <p className="text-xs">
-                      Are you sure you want to mark this order as picked up?
-                    </p>
-                    <div className="bg-muted p-2 rounded space-y-1 text-xs">
-                      <div className="flex justify-between">
-                        <span className="font-medium">Order ID:</span>
-                        <span className="font-mono">#{selectedDelivery.order.order_id?.slice(-8)}</span>
+          {/* ── Decline Confirmation ──────────────────────────────────────────── */}
+          {selectedDelivery && actionType === 'decline' && (
+            isMobile ? (
+              <Drawer open={showDeclineDialog} onOpenChange={setShowDeclineDialog}>
+                <DrawerContent>
+                  <DrawerHeader>
+                    <DrawerTitle className="flex items-center gap-2 text-red-600">
+                      <AlertCircle className="w-5 h-5" />
+                      Decline Order
+                    </DrawerTitle>
+                    <DrawerDescription asChild>
+                      <div className="text-sm text-left">
+                        <DeclineConfirmContent />
                       </div>
-                      <div className="flex justify-between">
-                        <span className="font-medium">Customer:</span>
-                        <span>{selectedDelivery.order.customer.first_name} {selectedDelivery.order.customer.last_name}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-medium">Amount:</span>
-                        <span className="font-bold">{formatCurrency(selectedDelivery.order.total_amount)}</span>
-                      </div>
-                    </div>
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={isActionLoading} className="text-xs h-7">
-                    Cancel
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={confirmAction}
-                    disabled={isActionLoading}
-                    className="text-xs h-7 bg-blue-600 hover:bg-blue-700"
-                  >
-                    {isActionLoading ? "Processing..." : 'Yes, Pick Up'}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
-
-          {/* Proof of Delivery Modal - Opens directly when Deliver is clicked */}
-          <Dialog open={showProofModal} onOpenChange={setShowProofModal}>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Camera className="w-5 h-5" />
-                  Proof of Delivery
-                </DialogTitle>
-                <DialogDescription>
-                  Take up to 6 photos as proof of delivery. Photos are taken in real-time using your camera.
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-4">
-                {/* Image Grid */}
-                <div className="grid grid-cols-3 gap-2">
-                  {proofImages.map((image, index) => (
-                    <div key={index} className="relative aspect-square rounded-md overflow-hidden border">
-                      <img 
-                        src={image} 
-                        alt={`Proof ${index + 1}`} 
-                        className="w-full h-full object-cover"
-                      />
-                      <button
-                        onClick={() => handleRemoveImage(index)}
-                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
-                        disabled={uploadingProofs}
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
-                  {proofImages.length < 6 && (
-                    <button
-                      onClick={handleCameraCapture}
-                      disabled={uploadingProofs}
-                      className="aspect-square rounded-md border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 hover:border-gray-400 transition-colors disabled:opacity-50"
+                    </DrawerDescription>
+                  </DrawerHeader>
+                  <DrawerFooter className="gap-2">
+                    <Button
+                      onClick={handleDeclineOrder}
+                      disabled={isActionLoading}
+                      className="bg-red-600 hover:bg-red-700 text-xs h-8 w-full"
                     >
-                      <Camera className="w-6 h-6 text-gray-400" />
-                      <span className="text-[10px] text-gray-500">Take Photo</span>
-                    </button>
-                  )}
+                      {isActionLoading ? 'Processing...' : 'Yes, Decline Order'}
+                    </Button>
+                    <DrawerClose asChild>
+                      <Button variant="outline" disabled={isActionLoading} className="text-xs h-8 w-full">
+                        Cancel
+                      </Button>
+                    </DrawerClose>
+                  </DrawerFooter>
+                </DrawerContent>
+              </Drawer>
+            ) : (
+              <AlertDialog open={showDeclineDialog} onOpenChange={setShowDeclineDialog}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+                      <AlertCircle className="w-5 h-5" />
+                      Decline Order
+                    </AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                      <div>
+                        <DeclineConfirmContent />
+                      </div>
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isActionLoading} className="text-xs h-8">
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDeclineOrder}
+                      disabled={isActionLoading}
+                      className="text-xs h-8 bg-red-600 hover:bg-red-700"
+                    >
+                      {isActionLoading ? 'Processing...' : 'Yes, Decline Order'}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )
+          )}
+
+          {/* ── Pickup Confirmation ───────────────────────────────────────────── */}
+          {selectedDelivery && actionType === 'pickup' && (
+            isMobile ? (
+              <Drawer open={showActionDialog} onOpenChange={setShowActionDialog}>
+                <DrawerContent>
+                  <DrawerHeader>
+                    <DrawerTitle className="flex items-center gap-2">
+                      <Package className="w-4 h-4" />
+                      Pick Up Order
+                    </DrawerTitle>
+                    <DrawerDescription asChild>
+                      <div className="text-sm text-left">
+                        <PickupConfirmContent />
+                      </div>
+                    </DrawerDescription>
+                  </DrawerHeader>
+                  <DrawerFooter className="gap-2">
+                    <Button
+                      onClick={confirmAction}
+                      disabled={isActionLoading}
+                      className="bg-blue-600 hover:bg-blue-700 text-xs h-8 w-full"
+                    >
+                      {isActionLoading ? 'Processing...' : 'Yes, Pick Up'}
+                    </Button>
+                    <DrawerClose asChild>
+                      <Button variant="outline" disabled={isActionLoading} className="text-xs h-8 w-full">
+                        Cancel
+                      </Button>
+                    </DrawerClose>
+                  </DrawerFooter>
+                </DrawerContent>
+              </Drawer>
+            ) : (
+              <AlertDialog open={showActionDialog} onOpenChange={setShowActionDialog}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle className="flex items-center gap-2">
+                      <Package className="w-4 h-4" />
+                      Pick Up Order
+                    </AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                      <div>
+                        <PickupConfirmContent />
+                      </div>
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isActionLoading} className="text-xs h-7">
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={confirmAction}
+                      disabled={isActionLoading}
+                      className="text-xs h-7 bg-blue-600 hover:bg-blue-700"
+                    >
+                      {isActionLoading ? 'Processing...' : 'Yes, Pick Up'}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )
+          )}
+
+          {/* ── Proof of Delivery — Dialog (desktop) / Drawer (mobile) ────────── */}
+          {isMobile ? (
+            <Drawer open={showProofModal} onOpenChange={(open) => {
+              if (!open) {
+                setShowProofModal(false);
+                setProofImages([]);
+                setProofFiles([]);
+                setSelectedDelivery(null);
+                setActionType(null);
+              }
+            }}>
+              <DrawerContent>
+                <DrawerHeader>
+                  <DrawerTitle className="flex items-center gap-2">
+                    <Camera className="w-5 h-5" />
+                    Proof of Delivery
+                  </DrawerTitle>
+                  <DrawerDescription>
+                    Take up to 6 photos as proof of delivery. Photos are taken in real-time using your camera.
+                  </DrawerDescription>
+                </DrawerHeader>
+                <div className="px-4">
+                  <ProofOfDeliveryContent />
                 </div>
-
-                {/* Progress Bar */}
-                {uploadingProofs && (
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span>Uploading proofs...</span>
-                      <span>{Math.round(uploadProgress)}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div 
-                        className="bg-green-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${uploadProgress}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Info Text */}
-                <p className="text-xs text-gray-500">
-                  {proofImages.length}/6 photos taken. All photos are uploaded in real-time.
-                </p>
-              </div>
-
-              <DialogFooter className="sm:justify-between">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setShowProofModal(false);
-                    setProofImages([]);
-                    setProofFiles([]);
-                    setSelectedDelivery(null);
-                    setActionType(null);
-                  }}
-                  disabled={uploadingProofs}
-                  className="text-xs h-8"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  onClick={handleDeliverWithProof}
-                  disabled={proofImages.length === 0 || uploadingProofs}
-                  className="text-xs h-8 bg-green-600 hover:bg-green-700"
-                >
-                  {uploadingProofs ? 'Uploading...' : `Confirm Delivery (${proofImages.length} photo${proofImages.length !== 1 ? 's' : ''})`}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                <DrawerFooter className="gap-2">
+                  <Button
+                    onClick={handleDeliverWithProof}
+                    disabled={proofImages.length === 0 || uploadingProofs}
+                    className="bg-green-600 hover:bg-green-700 text-xs h-8 w-full"
+                  >
+                    {uploadingProofs ? 'Uploading...' : `Confirm Delivery (${proofImages.length} photo${proofImages.length !== 1 ? 's' : ''})`}
+                  </Button>
+                  <DrawerClose asChild>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setShowProofModal(false);
+                        setProofImages([]);
+                        setProofFiles([]);
+                        setSelectedDelivery(null);
+                        setActionType(null);
+                      }}
+                      disabled={uploadingProofs}
+                      className="text-xs h-8 w-full"
+                    >
+                      Cancel
+                    </Button>
+                  </DrawerClose>
+                </DrawerFooter>
+              </DrawerContent>
+            </Drawer>
+          ) : (
+            <Dialog open={showProofModal} onOpenChange={setShowProofModal}>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Camera className="w-5 h-5" />
+                    Proof of Delivery
+                  </DialogTitle>
+                  <DialogDescription>
+                    Take up to 6 photos as proof of delivery. Photos are taken in real-time using your camera.
+                  </DialogDescription>
+                </DialogHeader>
+                <ProofOfDeliveryContent />
+                <DialogFooter className="sm:justify-between">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setShowProofModal(false);
+                      setProofImages([]);
+                      setProofFiles([]);
+                      setSelectedDelivery(null);
+                      setActionType(null);
+                    }}
+                    disabled={uploadingProofs}
+                    className="text-xs h-8"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleDeliverWithProof}
+                    disabled={proofImages.length === 0 || uploadingProofs}
+                    className="text-xs h-8 bg-green-600 hover:bg-green-700"
+                  >
+                    {uploadingProofs ? 'Uploading...' : `Confirm Delivery (${proofImages.length} photo${proofImages.length !== 1 ? 's' : ''})`}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
 
           {/* Active Deliveries */}
           <Card>
@@ -1221,7 +1346,7 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                   />
                 </div>
 
-                {/* Minimalist tabs (Pending / To Process) */}
+                {/* Tabs */}
                 <div className="flex items-center space-x-1 overflow-x-auto">
                   {STATUS_TABS.map((tab) => {
                     const Icon = tab.icon;
@@ -1252,10 +1377,9 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                   })}
                 </div>
 
-                {/* Deliveries List - CARD-BASED */}
+                {/* Deliveries List */}
                 <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
                   {isLoading ? (
-                    // Loading skeletons
                     Array.from({ length: 3 }).map((_, i) => (
                       <Card key={i} className="overflow-hidden border">
                         <CardContent className="p-3">
@@ -1284,7 +1408,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                       return (
                         <Card key={delivery.id} className="overflow-hidden border">
                           <CardContent className="p-3">
-                            {/* Top Section - Header */}
                             <div className="flex items-start justify-between mb-2">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-1">
@@ -1319,7 +1442,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                               </div>
                             </div>
 
-                            {/* Middle Section - Summary */}
                             <div className="mb-2">
                               <div className="flex items-center gap-2 text-[10px] text-gray-600 mb-1">
                                 <MapPin className="w-2.5 h-2.5" />
@@ -1340,7 +1462,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                               </div>
                             </div>
 
-                            {/* Time Elapsed */}
                             <div className="flex items-center gap-1 mb-2">
                               <Clock className="w-2.5 h-2.5 text-gray-400" />
                               <span className="text-[10px] text-gray-500">
@@ -1348,7 +1469,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                               </span>
                             </div>
 
-                            {/* Expanded Section - Details */}
                             {isExpanded && (
                               <div className="mt-3 pt-3 border-t space-y-2">
                                 <div className="text-[10px]">
@@ -1374,7 +1494,6 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                               </div>
                             )}
 
-                            {/* Bottom Section - Actions */}
                             <div className="flex items-center justify-between pt-2 border-t mt-2">
                               <Button
                                 variant="ghost"
@@ -1476,5 +1595,5 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
         </div>
       </SidebarLayout>
     </UserProvider>
-  )
+  );
 }
