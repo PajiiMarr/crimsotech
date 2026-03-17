@@ -22707,7 +22707,7 @@ class CheckoutOrder(viewsets.ViewSet):
         try:
             order = get_object_or_404(Order, order=order_id)
 
-            order.status = 'processing'
+            order.status = 'pending'
             order.save(update_fields=['status'])
 
             payment, created = Payment.objects.get_or_create(

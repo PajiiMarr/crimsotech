@@ -5,7 +5,7 @@ import { UserProvider } from '~/components/providers/user-role-provider';
 import AxiosInstance from '~/components/axios/Axios';
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { CheckCircle, Clock, AlertCircle, CreditCard, Smartphone, Wallet, ArrowLeft, Upload, FileText, Image, DollarSign, ShieldCheck } from "lucide-react";
+import { CheckCircle, Clock, AlertCircle, CreditCard, Smartphone, Wallet, ArrowLeft, Upload, FileText, Image, DollarSign } from "lucide-react";
 export function meta(): Route.MetaDescriptors {
     return [{ title: "Complete Payment" }]
 }
@@ -100,9 +100,7 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
     const [uploadingReceipt, setUploadingReceipt] = useState(false);
     const [mayaPayment, setMayaPayment] = useState<MayaPaymentResponse | null>(null);
     const [processingMaya, setProcessingMaya] = useState(false);
-
     const enableSandbox = import.meta.env.VITE_ENABLE_SANDBOX === 'true';
-
     useEffect(() => {
         if (orderId) fetchOrderDetails();
         else {
@@ -110,7 +108,6 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
             setLoading(false);
         }
     }, [orderId]);
-
     const fetchOrderDetails = async () => {
         try {
             const response = await AxiosInstance.get(`/checkout-order/get_order_details/${orderId}/`);
@@ -191,10 +188,8 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
         if (!orderDetails || orderDetails.payment_method !== 'Maya') return;
         
         try {
-
             console.log("Initiating Maya payment for order:", orderId);
             console.log("Initiating Maya payment for order:", user.user_id);
-
             setProcessingMaya(true);
             const response = await AxiosInstance.post('/checkout-order/initiate_maya_payment/', {
                 order_id: orderId,
@@ -203,8 +198,6 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
             
             if (response.data.success) {
                 setMayaPayment(response.data);
-                
-                // Redirect to Maya checkout page
                 window.location.href = response.data.redirect_url;
             } else {
                 setError(response.data.error || "Failed to initiate Maya payment");
@@ -286,16 +279,6 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                         <div className="text-orange-100">Total Amount</div>
                                     </div>
                                 </div>
-                                
-                                {/* Sandbox Mode Badge */}
-                                {enableSandbox && (
-                                    <div className="mt-4 flex justify-center">
-                                        <div className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-400/20 backdrop-blur-sm rounded-full border border-yellow-300/30">
-                                            <ShieldCheck className="h-4 w-4 text-yellow-200" />
-                                            <span className="text-sm font-medium text-yellow-100">Sandbox Mode Active</span>
-                                        </div>
-                                    </div>
-                                )}
                             </div>
                             <div className="flex-1 p-6 overflow-auto">
                                 {paymentStatus === 'paid' && (
@@ -340,9 +323,9 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                                             <div className="w-32 h-32 bg-gradient-to-br from-blue-500 to-purple-500 rounded-2xl flex items-center justify-center mb-4 shadow-lg">
                                                                 <CreditCard className="h-16 w-16 text-white" />
                                                             </div>
-                                                            <h3 className="text-xl font-semibold text-gray-800 mb-2">Sandbox Mode</h3>
+                                                            <h3 className="text-xl font-semibold text-gray-800 mb-2">Pay with Maya</h3>
                                                             <p className="text-sm text-gray-600 text-center max-w-xs">
-                                                                You're testing Maya payments. Click the sandbox button to proceed.
+                                                                Click the button below to proceed with your Maya payment.
                                                             </p>
                                                         </div>
                                                     ) : (
@@ -408,7 +391,6 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                                             <div className="text-xs text-gray-600 mt-1">{orderDetails.shipping_address.full_address}</div>
                                                         </div>
                                                     )}
-                                                    {/* Only show receipt upload for non-sandbox or non-Maya payments */}
                                                     {!(enableSandbox && orderDetails.payment_method === 'Maya') && (
                                                         <div className="p-4 bg-white rounded-lg border border-dashed border-blue-300">
                                                             <div className="text-center">
@@ -508,7 +490,7 @@ export default function PaymentPage({ loaderData}: { loaderData: LoaderData }){
                                                                                         Processing...
                                                                                     </div>
                                                                                 ) : (
-                                                                                    'Pay with Maya Sandbox'
+                                                                                    'Pay with Maya'
                                                                                 )}
                                                                             </Button>
                                                                         </>

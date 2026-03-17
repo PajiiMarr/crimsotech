@@ -65,14 +65,6 @@ export default function SellerSidebar() {
         { title: "Vouchers", url: "/seller/seller-vouchers", icon: Gift },
       ],
     },
-    {
-      group: "Settings",
-      children: [
-        { title: "Notifications", url: "/seller/seller-notifications", icon: Bell },
-        { title: "Account Settings", url: "/seller/settings", icon: Settings },
-        { title: "Violations", url: "/seller/violation", icon: AlertTriangle },
-      ],
-    },
   ];
 
   return (
