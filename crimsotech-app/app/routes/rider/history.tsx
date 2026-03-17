@@ -432,9 +432,11 @@ export default function OrderHistory({ loaderData}: { loaderData: LoaderData }){
     };
 
     // Format currency (matching active orders)
-    const formatCurrency = (amount: number) => {
-      return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
-    };
+// Replace the existing formatCurrency function
+const formatCurrency = (amount: number | undefined | null) => {
+  const safe = Number(amount) || 0;
+  return `₱${safe.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+};
 
     // Format time
     const formatTime = (minutes?: number) => {

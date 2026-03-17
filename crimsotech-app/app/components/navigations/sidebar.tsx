@@ -80,15 +80,6 @@ const menuItems = [
     ]
   },
   {
-    group: "System",
-    children: [
-      { title: "Notifications", url: "/admin/notifications", icon: Bell, roles: ["admin"] },
-      { title: "Settings", url: "/admin/settings", icon: Settings, roles: ["admin"] },
-    ]
-  },
-
-  // CUSTOMER
-  {
     group: "Shop",
     children: [
       { title: "Home", url: "/home", icon: Home, roles: ["customer"] },
