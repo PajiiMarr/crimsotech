@@ -30,6 +30,7 @@ import {
 // Types
 interface CartItem {
   id: string;
+  cartItemId?: string;
   product_id: string;
   name: string;
   price: number;
@@ -134,20 +135,6 @@ const paymentMethods = [
     iconSet: 'FontAwesome5' as const,
     iconColor: '#EA580C',
     requiresDetails: false,
-    placeholder: {
-      name: '',
-      number: '',
-      email: ''
-    }
-  },
-  {
-    id: 'gcash',
-    name: 'GCash',
-    description: 'Pay instantly via GCash',
-    icon: 'mobile-alt',
-    iconSet: 'FontAwesome5' as const,
-    iconColor: '#EA580C',
-    requiresDetails: false,
   },
   {
     id: 'maya',
@@ -181,6 +168,20 @@ const shippingMethods = [
     cost: 50.00,
   },
 ];
+
+// Tier badge colors
+const getTierBadgeStyle = (tier: string) => {
+  switch (tier) {
+    case 'platinum':
+      return { backgroundColor: '#92400E' };
+    case 'gold':
+      return { backgroundColor: '#D97706' };
+    case 'silver':
+      return { backgroundColor: '#6B7280' };
+    default:
+      return { backgroundColor: '#EA580C' };
+  }
+};
 
 export default function CheckoutPage() {
   const { userId, userRole, loading: authLoading } = useAuth();
@@ -239,6 +240,8 @@ export default function CheckoutPage() {
       setLoading(true);
       setError(null);
 
+      console.log('Fetching checkout data with:', { selectedIds, userId });
+
       const response = await AxiosInstance.get('/checkout-order/get_checkout_items/', {
         params: {
           selected: selectedIds.join(','),
@@ -246,19 +249,11 @@ export default function CheckoutPage() {
         }
       });
 
-      if (response.data.success) {
-        // Normalize response
-        const normalized = {
-          ...response.data,
-          checkout_items: response.data.checkout_items ?? [],
-          available_vouchers: response.data.available_vouchers ?? [],
-          shipping_addresses: response.data.shipping_addresses ?? [],
-          default_shipping_address: response.data.default_shipping_address ?? null,
-          summary: response.data.summary ?? { subtotal: 0, delivery: 0, total: 0, item_count: 0, shop_count: 0 },
-          shop_addresses: response.data.shop_addresses ?? []
-        };
+      console.log('Checkout response:', response.data);
 
-        const hasOrderedItems = normalized.checkout_items.some((item: any) => item.is_ordered === true);
+      if (response.data.success) {
+        // Check for ordered items
+        const hasOrderedItems = response.data.checkout_items?.some((item: any) => item.is_ordered === true);
         
         if (hasOrderedItems) {
           setError('Some items in your cart have already been ordered. Please refresh your cart.');
@@ -266,28 +261,37 @@ export default function CheckoutPage() {
           return;
         }
         
-        setCheckoutData(normalized);
+        // Normalize items
+        const normalizedItems = response.data.checkout_items.map((item: any) => ({
+          ...item,
+          cartItemId: item.id || item.cartItemId
+        }));
+        
+        setCheckoutData({
+          ...response.data,
+          checkout_items: normalizedItems
+        });
         
         // Update summary
-        if (normalized.summary) {
+        if (response.data.summary) {
           setSummary({
-            subtotal: normalized.summary.subtotal,
-            delivery: normalized.summary.delivery,
-            total: normalized.summary.total,
+            subtotal: response.data.summary.subtotal,
+            delivery: response.data.summary.delivery,
+            total: response.data.summary.total,
             discount: 0,
           });
         }
         
         // Set default shipping address if available
-        if (normalized.default_shipping_address) {
+        if (response.data.default_shipping_address) {
           setFormData(prev => ({
             ...prev,
-            selectedAddressId: normalized.default_shipping_address.id
+            selectedAddressId: response.data.default_shipping_address.id
           }));
-        } else if (normalized.shipping_addresses && normalized.shipping_addresses.length > 0) {
+        } else if (response.data.shipping_addresses && response.data.shipping_addresses.length > 0) {
           setFormData(prev => ({
             ...prev,
-            selectedAddressId: normalized.shipping_addresses[0].id
+            selectedAddressId: response.data.shipping_addresses[0].id
           }));
         }
       } else {
@@ -314,9 +318,7 @@ export default function CheckoutPage() {
   }, [userId, selectedIds]);
 
   useEffect(() => {
-    if (authLoading) {
-      return;
-    }
+    if (authLoading) return;
 
     if (!userId) {
       setLoading(false);
@@ -333,9 +335,41 @@ export default function CheckoutPage() {
     fetchCheckoutData();
   }, [authLoading, userId, selectedIds.length]);
 
+  // Fetch vouchers when subtotal changes
+  useEffect(() => {
+    if (summary.subtotal > 0 && userId && checkoutData) {
+      fetchVouchersByAmount(summary.subtotal);
+    }
+  }, [summary.subtotal, userId]);
+
   const onRefresh = () => {
     setRefreshing(true);
     fetchCheckoutData();
+  };
+
+  const fetchVouchersByAmount = async (amount: number) => {
+    if (!userId) return;
+
+    setLoadingVouchers(true);
+    try {
+      const response = await AxiosInstance.get('/checkout-order/get_vouchers_by_amount/', {
+        params: {
+          user_id: userId,
+          amount: amount
+        }
+      });
+
+      if (response.data.success && checkoutData) {
+        setCheckoutData(prev => ({
+          ...prev!,
+          available_vouchers: response.data.available_vouchers || []
+        }));
+      }
+    } catch (err: any) {
+      console.error('Error fetching vouchers by amount:', err);
+    } finally {
+      setLoadingVouchers(false);
+    }
   };
 
   // Handle input changes
@@ -381,14 +415,10 @@ export default function CheckoutPage() {
     }
   };
 
-  // Get current payment method
-  const getCurrentPaymentMethod = () => {
-    return paymentMethods.find(method => {
-      const methodName = typeof method.name === 'function' 
-        ? method.name(formData.shippingMethod) 
-        : method.name;
-      return methodName === formData.paymentMethod;
-    });
+  // Handle address selection
+  const handleAddressSelect = (addressId: string) => {
+    setFormData(prev => ({ ...prev, selectedAddressId: addressId }));
+    setIsAddressModalVisible(false);
   };
 
   // Apply voucher
@@ -457,38 +487,81 @@ export default function CheckoutPage() {
     }));
   };
 
-  // Fetch vouchers by amount
-  const fetchVouchersByAmount = async (amount: number) => {
-    if (!userId) return;
+  // Place order
+  // Place order
+const handlePlaceOrder = async () => {
+  if (!userId || !checkoutData) {
+    Alert.alert('Error', 'Please complete all required information');
+    return;
+  }
 
-    setLoadingVouchers(true);
-    try {
-      const response = await AxiosInstance.get('/checkout-order/get_vouchers_by_amount/', {
-        params: {
-          user_id: userId,
-          amount: amount
-        }
-      });
+  // Validate shipping address for delivery
+  if (formData.shippingMethod === 'Standard Delivery' && !formData.selectedAddressId) {
+    Alert.alert('Required', 'Please select a shipping address for delivery');
+    return;
+  }
 
-      if (response.data.success && checkoutData) {
-        setCheckoutData(prev => ({
-          ...prev!,
-          available_vouchers: response.data.available_vouchers || []
-        }));
+  if (!formData.agreeTerms) {
+    Alert.alert('Required', 'Please agree to the Terms of Service and Privacy Policy');
+    return;
+  }
+
+  setProcessingOrder(true);
+  setError(null);
+
+  try {
+    const requestBody = {
+      user_id: userId,
+      selected_ids: checkoutData.checkout_items.map(p => p.cartItemId || p.id),
+      shipping_address_id: formData.selectedAddressId,
+      payment_method: formData.paymentMethod,
+      shipping_method: formData.shippingMethod,
+      voucher_id: appliedVoucher?.id || null,
+      remarks: formData.remarks.substring(0, 500) || null,
+    };
+
+    console.log('Placing order with data:', requestBody);
+
+    const response = await AxiosInstance.post('/checkout-order/create_order/', requestBody);
+
+    if (response.data.success) {
+      const orderId = response.data.order_id;
+      // Detect e-wallet payments
+      const isEWalletPayment = ['Maya'].includes(formData.paymentMethod);
+
+      if (isEWalletPayment) {
+        // FIXED: Use proper navigation with params
+        router.push({
+          pathname: '/customer/pay-order',
+          params: { order_id: orderId }
+        });
+      } else {
+        // For Cash on Pickup/Delivery, go directly to order success
+        router.push(`/customer/order-successful/${orderId}` as any);
       }
-    } catch (err: any) {
-      console.error('Error fetching vouchers by amount:', err);
-    } finally {
-      setLoadingVouchers(false);
+    } else {
+      throw new Error(response.data.error || 'Failed to create order');
     }
-  };
+    
+  } catch (err: any) {
+    const errorMessage = err.response?.data?.error || err.response?.data?.details || err.message || 'An error occurred while placing your order';
+    setError(errorMessage);
+    Alert.alert('Error', errorMessage);
+    console.error('Order placement error:', err.response?.data || err);
+  } finally {
+    setProcessingOrder(false);
+  }
+};
 
-  // Update vouchers when subtotal changes
-  useEffect(() => {
-    if (summary.subtotal > 0 && userId) {
-      fetchVouchersByAmount(summary.subtotal);
-    }
-  }, [summary.subtotal, userId]);
+  // Get current payment method
+  const getCurrentPaymentMethod = () => {
+    return paymentMethods.find(method => {
+      const methodName = typeof method.name === 'function' 
+        ? method.name(formData.shippingMethod) 
+        : method.name;
+      return methodName === formData.paymentMethod;
+    });
+  };
 
   // Get selected address
   const getSelectedAddress = () => {
@@ -518,87 +591,66 @@ export default function CheckoutPage() {
     );
   };
 
-  // Place order
-  const handlePlaceOrder = async () => {
-    if (!userId || !checkoutData) {
-      Alert.alert('Error', 'Please complete all required information');
-      return;
-    }
-
-    // Validate shipping address for delivery
-    if (formData.shippingMethod === 'Standard Delivery' && !formData.selectedAddressId) {
-      Alert.alert('Required', 'Please select a shipping address for delivery');
-      return;
-    }
-
-    if (!formData.agreeTerms) {
-      Alert.alert('Required', 'Please agree to the Terms of Service and Privacy Policy');
-      return;
-    }
-
-    setProcessingOrder(true);
-    setError(null);
-
-    try {
-      const requestBody = {
-        user_id: userId,
-        selected_ids: checkoutData.checkout_items.map(p => p.id),
-        shipping_address_id: formData.selectedAddressId,
-        payment_method: formData.paymentMethod,
-        shipping_method: formData.shippingMethod,
-        voucher_id: appliedVoucher?.id || null,
-        remarks: formData.remarks.substring(0, 500) || null,
-      };
-
-      console.log('Placing order with data:', requestBody);
-
-      const response = await AxiosInstance.post('/checkout-order/create_order/', requestBody);
-
-      if (response.data.success) {
-        const orderId = response.data.order_id;
-        // Detect e-wallet payments
-        const isEWalletPayment = ['GCash', 'Maya'].includes(formData.paymentMethod);
-
-        if (isEWalletPayment) {
-          // Redirect to mobile pay screen with order id
-          router.push(`/customer/pay-order?order_id=${orderId}` as any);
-        } else {
-          // For Cash on Pickup/Delivery, go directly to order success
-          router.push(`/customer/order-successful/${orderId}` as any);
-        }
-
-      } else {
-        throw new Error(response.data.error || 'Failed to create order');
-      }
-      
-    } catch (err: any) {
-      const errorMessage = err.response?.data?.error || err.response?.data?.details || err.message || 'An error occurred while placing your order';
-      setError(errorMessage);
-      Alert.alert('Error', errorMessage);
-      console.error('Order placement error:', err.response?.data || err);
-    } finally {
-      setProcessingOrder(false);
-    }
+  // Get main shop address
+  const getMainShopAddress = () => {
+    const shopAddresses = getShopAddressesForProducts();
+    return shopAddresses.length > 0 ? shopAddresses[0] : null;
   };
 
-  // Get tier badge component
-  const getTierBadge = (tier: string) => {
-    const tierConfig = {
-      platinum: { color: 'bg-gradient-to-r from-orange-700 to-amber-900', label: 'Platinum' },
-      gold: { color: 'bg-gradient-to-r from-amber-500 to-orange-300', label: 'Gold' },
-      silver: { color: 'bg-gradient-to-r from-gray-300 to-gray-100', label: 'Silver' },
-      new: { color: 'bg-gradient-to-r from-orange-400 to-amber-200', label: 'New' }
-    };
-    
-    const config = tierConfig[tier as keyof typeof tierConfig] || tierConfig.new;
-    
-    return (
-      <View style={[styles.tierBadge, tier === 'platinum' && styles.tierBadgePlatinum, 
-                    tier === 'gold' && styles.tierBadgeGold, 
-                    tier === 'silver' && styles.tierBadgeSilver]}>
-        <Text style={styles.tierBadgeText}>{config.label}</Text>
-      </View>
-    );
+  // Render address display
+  const renderAddressDisplay = () => {
+    if (formData.shippingMethod === 'Pickup from Store') {
+      const shopAddress = getMainShopAddress();
+      if (shopAddress) {
+        return (
+          <View style={styles.pickupLocationCard}>
+            <Text style={styles.pickupLocationLabel}>Pickup Location:</Text>
+            <Text style={styles.pickupLocationName}>{shopAddress.shop_name}</Text>
+            <Text style={styles.pickupLocationAddress}>{shopAddress.shop_address}</Text>
+            {shopAddress.shop_contact_number && (
+              <Text style={styles.pickupLocationContact}>
+                Contact: {shopAddress.shop_contact_number}
+              </Text>
+            )}
+          </View>
+        );
+      } else {
+        return (
+          <View style={styles.warningCard}>
+            <MaterialIcons name="info-outline" size={16} color="#D97706" />
+            <Text style={styles.warningText}>
+              Shop address information is not available. Please contact the shop for pickup details.
+            </Text>
+          </View>
+        );
+      }
+    } else {
+      const selectedAddress = getSelectedAddress();
+      if (selectedAddress) {
+        return (
+          <View style={styles.deliveryAddressCard}>
+            <View style={styles.deliveryAddressHeader}>
+              <MaterialIcons name="home" size={16} color="#EA580C" />
+              <Text style={styles.deliveryAddressLabel}>Delivery Address:</Text>
+            </View>
+            <Text style={styles.deliveryAddressName}>{selectedAddress.recipient_name}</Text>
+            <Text style={styles.deliveryAddressFull}>{selectedAddress.full_address}</Text>
+            <Text style={styles.deliveryAddressPhone}>
+              📱 Contact: {selectedAddress.recipient_phone}
+            </Text>
+          </View>
+        );
+      } else {
+        return (
+          <View style={styles.errorCard}>
+            <MaterialIcons name="error-outline" size={16} color="#DC2626" />
+            <Text style={styles.errorCardText}>
+              Please select a shipping address for delivery.
+            </Text>
+          </View>
+        );
+      }
+    }
   };
 
   // Get all vouchers
@@ -620,6 +672,41 @@ export default function CheckoutPage() {
     );
     
     return category ? category.vouchers : [];
+  };
+
+  // Get tier badge component
+  const renderTierBadge = (tier: string) => {
+    const tierConfig = {
+      platinum: { label: 'Platinum', color: '#92400E' },
+      gold: { label: 'Gold', color: '#D97706' },
+      silver: { label: 'Silver', color: '#6B7280' },
+      new: { label: 'New', color: '#EA580C' }
+    };
+    
+    const config = tierConfig[tier as keyof typeof tierConfig] || tierConfig.new;
+    
+    return (
+      <View style={[styles.tierBadge, { backgroundColor: config.color }]}>
+        <Text style={styles.tierBadgeText}>{config.label}</Text>
+      </View>
+    );
+  };
+
+  // Check if shipping address is required
+  const isShippingAddressRequired = () => {
+    return formData.shippingMethod === 'Standard Delivery';
+  };
+
+  // Calculate button text
+  const getPlaceOrderButtonText = () => {
+    if (processingOrder) return 'Processing Order...';
+    
+    const isEWalletPayment = ['Maya'].includes(formData.paymentMethod);
+    if (isEWalletPayment) {
+      return `Pay with ${formData.paymentMethod} • ₱${summary.total.toFixed(2)}`;
+    } else {
+      return `Place Order • ₱${summary.total.toFixed(2)}`;
+    }
   };
 
   // Loading state
@@ -673,25 +760,8 @@ export default function CheckoutPage() {
   const selectedAddress = getSelectedAddress();
   const shopAddresses = getShopAddressesForProducts();
   const currentPaymentMethod = getCurrentPaymentMethod();
-  const currentPaymentMethodName = currentPaymentMethod
-    ? (typeof currentPaymentMethod.name === 'function'
-        ? currentPaymentMethod.name(formData.shippingMethod)
-        : currentPaymentMethod.name)
-    : '';
   const allVouchers = getAllVouchers();
   const filteredVouchers = getFilteredVouchers();
-
-  // Calculate button text
-  const getPlaceOrderButtonText = () => {
-    if (processingOrder) return 'Processing Order...';
-    
-    const isEWalletPayment = ['GCash', 'Maya'].includes(formData.paymentMethod);
-    if (isEWalletPayment) {
-      return `Pay with ${formData.paymentMethod} • ₱${summary.total.toFixed(2)}`;
-    } else {
-      return `Place Order • ₱${summary.total.toFixed(2)}`;
-    }
-  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -843,11 +913,11 @@ export default function CheckoutPage() {
           </View>
         </View>
 
-        {/* Delivery Address (for Standard Delivery) */}
-        {formData.shippingMethod === 'Standard Delivery' && (
+        {/* Delivery Address Section */}
+        {isShippingAddressRequired() && (
           <View style={styles.sectionCard}>
             <View style={styles.addressHeader}>
-              <View style={{ flex: 1 }}>
+              <View>
                 <Text style={styles.sectionTitle}>Delivery Address</Text>
                 <Text style={styles.sectionSubtitle}>Select where to deliver your order</Text>
               </View>
@@ -860,41 +930,57 @@ export default function CheckoutPage() {
               </TouchableOpacity>
             </View>
 
-            {selectedAddress ? (
+            {checkoutData.shipping_addresses && checkoutData.shipping_addresses.length > 0 ? (
               <View>
-                <TouchableOpacity
-                  style={[styles.addressCard, styles.addressCardSelected]}
-                  onPress={() => handleInputChange('selectedAddressId', selectedAddress.id)}
-                >
-                  <View style={styles.addressCardHeader}>
-                    <View style={{ flex: 1 }}>
-                      <View style={styles.addressNameRow}>
-                        <Text style={styles.addressName}>{selectedAddress.recipient_name}</Text>
-                        {selectedAddress.is_default && (
-                          <View style={styles.defaultBadge}>
-                            <Text style={styles.defaultBadgeText}>Default</Text>
+                <View style={styles.addressList}>
+                  {checkoutData.shipping_addresses.map((address) => (
+                    <TouchableOpacity
+                      key={address.id}
+                      style={[
+                        styles.addressCard,
+                        formData.selectedAddressId === address.id && styles.addressCardSelected
+                      ]}
+                      onPress={() => handleAddressSelect(address.id)}
+                    >
+                      <View style={styles.addressCardHeader}>
+                        <View style={{ flex: 1 }}>
+                          <View style={styles.addressNameRow}>
+                            <Text style={styles.addressName}>{address.recipient_name}</Text>
+                            {address.is_default && (
+                              <View style={styles.defaultBadge}>
+                                <Text style={styles.defaultBadgeText}>Default</Text>
+                              </View>
+                            )}
                           </View>
-                        )}
-                        <Text style={styles.addressPhone}>{selectedAddress.recipient_phone}</Text>
+                          <Text style={styles.addressPhone}>{address.recipient_phone}</Text>
+                        </View>
+                        <View style={[
+                          styles.addressRadio,
+                          formData.selectedAddressId === address.id && styles.addressRadioSelected
+                        ]} />
                       </View>
-                    </View>
-                    <View style={[styles.addressRadio, styles.addressRadioSelected]} />
+
+                      <Text style={styles.addressFull} numberOfLines={2}>
+                        {address.full_address}
+                      </Text>
+
+                      {address.instructions && (
+                        <Text style={styles.addressInstructions} numberOfLines={1}>
+                          📝 {address.instructions}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {formData.selectedAddressId && selectedAddress && (
+                  <View style={styles.selectedAddressCard}>
+                    <Text style={styles.selectedAddressTitle}>Selected Address</Text>
+                    <Text style={styles.selectedAddressName}>{selectedAddress.recipient_name}</Text>
+                    <Text style={styles.selectedAddressFull}>{selectedAddress.full_address}</Text>
+                    <Text style={styles.selectedAddressPhone}>{selectedAddress.recipient_phone}</Text>
                   </View>
-
-                  <Text style={styles.addressFull} numberOfLines={2}>
-                    {selectedAddress.full_address}
-                  </Text>
-
-                  {selectedAddress.instructions && (
-                    <Text style={styles.addressInstructions} numberOfLines={1}>
-                      📝 {selectedAddress.instructions}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity onPress={() => setIsAddressModalVisible(true)} style={{ marginTop: 8 }}>
-                  <Text style={styles.changeLink}>Change</Text>
-                </TouchableOpacity>
+                )}
               </View>
             ) : (
               <View style={styles.noAddressContainer}>
@@ -915,7 +1001,7 @@ export default function CheckoutPage() {
           </View>
         )}
 
-        {/* Pickup Location (for Pickup from Store) */}
+        {/* Pickup Location Section */}
         {formData.shippingMethod === 'Pickup from Store' && shopAddresses.length > 0 && (
           <View style={styles.sectionCard}>
             <View style={styles.sectionHeader}>
@@ -929,7 +1015,7 @@ export default function CheckoutPage() {
             </View>
 
             {shopAddresses.map((shop, index) => (
-              <View key={index} style={styles.pickupLocationCard}>
+              <View key={index} style={styles.pickupShopCard}>
                 <View style={styles.pickupShopHeader}>
                   <MaterialIcons name="storefront" size={20} color="#374151" />
                   <Text style={styles.pickupShopName}>{shop.shop_name}</Text>
@@ -973,8 +1059,7 @@ export default function CheckoutPage() {
                 ? method.description(formData.shippingMethod)
                 : method.description;
               const isSelected = formData.paymentMethod === methodName;
-              const IconComponent = method.iconSet === 'FontAwesome5' ? FontAwesome5 : 
-                                 method.iconSet === 'FontAwesome' ? FontAwesome : MaterialIcons;
+              const IconComponent = method.iconSet === 'FontAwesome5' ? FontAwesome5 : FontAwesome;
               
               return (
                 <TouchableOpacity
@@ -1049,7 +1134,7 @@ export default function CheckoutPage() {
                   <View style={styles.voucherCodeRow}>
                     <Text style={styles.appliedVoucherCode}>{appliedVoucher.code}</Text>
                     {appliedVoucher.customer_tier && appliedVoucher.customer_tier !== 'all' && (
-                      getTierBadge(appliedVoucher.customer_tier)
+                      renderTierBadge(appliedVoucher.customer_tier)
                     )}
                   </View>
                   <Text style={styles.appliedVoucherName}>{appliedVoucher.name}</Text>
@@ -1110,7 +1195,7 @@ export default function CheckoutPage() {
             </View>
           )}
 
-          {/* Show some available vouchers */}
+          {/* Show available vouchers preview */}
           {allVouchers.length > 0 && !appliedVoucher && (
             <View style={styles.availableVouchersPreview}>
               <Text style={styles.availableVouchersTitle}>
@@ -1183,7 +1268,7 @@ export default function CheckoutPage() {
                 <Text style={styles.discountLabel}>
                   Discount {appliedVoucher.code}
                   {appliedVoucher.customer_tier && appliedVoucher.customer_tier !== 'all' && (
-                    getTierBadge(appliedVoucher.customer_tier)
+                    renderTierBadge(appliedVoucher.customer_tier)
                   )}
                 </Text>
                 <Text style={styles.discountValue}>-₱{summary.discount.toFixed(2)}</Text>
@@ -1237,21 +1322,24 @@ export default function CheckoutPage() {
           </TouchableOpacity>
         </View>
 
+        {/* Address Display */}
+        {renderAddressDisplay()}
+
         {/* Validation messages */}
+        {isShippingAddressRequired() && !formData.selectedAddressId && checkoutData.shipping_addresses?.length > 0 && (
+          <View style={styles.validationMessage}>
+            <MaterialIcons name="warning" size={16} color="#D97706" />
+            <Text style={styles.validationText}>
+              Please select a shipping address for delivery
+            </Text>
+          </View>
+        )}
+
         {!formData.agreeTerms && (
           <View style={styles.validationMessage}>
             <MaterialIcons name="warning" size={16} color="#D97706" />
             <Text style={styles.validationText}>
               Please agree to the Terms of Service and Privacy Policy
-            </Text>
-          </View>
-        )}
-        
-        {formData.shippingMethod === 'Standard Delivery' && !formData.selectedAddressId && (
-          <View style={styles.validationMessage}>
-            <MaterialIcons name="warning" size={16} color="#D97706" />
-            <Text style={styles.validationText}>
-              Please select a shipping address for delivery
             </Text>
           </View>
         )}
@@ -1318,10 +1406,7 @@ export default function CheckoutPage() {
                       styles.modalAddressCard,
                       isSelected && styles.modalAddressCardSelected
                     ]}
-                    onPress={() => {
-                      handleInputChange('selectedAddressId', address.id);
-                      setIsAddressModalVisible(false);
-                    }}
+                    onPress={() => handleAddressSelect(address.id)}
                   >
                     <View style={styles.modalAddressHeader}>
                       <View style={{ flex: 1 }}>
@@ -1464,7 +1549,7 @@ export default function CheckoutPage() {
                               </View>
                             )}
                             {voucher.customer_tier && voucher.customer_tier !== 'all' && (
-                              getTierBadge(voucher.customer_tier)
+                              renderTierBadge(voucher.customer_tier)
                             )}
                           </View>
                           <Text style={styles.modalVoucherName}>{voucher.name}</Text>
@@ -1629,6 +1714,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   errorText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#DC2626',
+  },
+  errorCardText: {
     flex: 1,
     fontSize: 12,
     color: '#DC2626',
@@ -1823,6 +1913,9 @@ const styles = StyleSheet.create({
     color: '#374151',
     fontWeight: '500',
   },
+  addressList: {
+    gap: 8,
+  },
   addressCard: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -1886,12 +1979,34 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     fontStyle: 'italic',
   },
-  changeLink: {
-    color: '#3B82F6',
+  selectedAddressCard: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#EA580C',
+    borderRadius: 8,
+  },
+  selectedAddressTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#EA580C',
+    marginBottom: 4,
+  },
+  selectedAddressName: {
     fontSize: 14,
     fontWeight: '600',
-    textAlign: 'right',
-    marginTop: 8,
+    color: '#111827',
+    marginBottom: 2,
+  },
+  selectedAddressFull: {
+    fontSize: 13,
+    color: '#374151',
+    marginBottom: 2,
+  },
+  selectedAddressPhone: {
+    fontSize: 12,
+    color: '#6B7280',
   },
   noAddressContainer: {
     alignItems: 'center',
@@ -1925,7 +2040,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  pickupLocationCard: {
+  pickupShopCard: {
     backgroundColor: '#F9FAFB',
     padding: 12,
     borderRadius: 8,
@@ -1961,6 +2076,86 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   pickupInstructionsText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#92400E',
+    lineHeight: 16,
+  },
+  pickupLocationCard: {
+    marginTop: 8,
+    padding: 12,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+  },
+  pickupLocationLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  pickupLocationName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  pickupLocationAddress: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 2,
+  },
+  pickupLocationContact: {
+    fontSize: 12,
+    color: '#EA580C',
+  },
+  deliveryAddressCard: {
+    marginTop: 8,
+    padding: 12,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#EA580C',
+    borderRadius: 8,
+  },
+  deliveryAddressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 4,
+  },
+  deliveryAddressLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#EA580C',
+  },
+  deliveryAddressName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  deliveryAddressFull: {
+    fontSize: 12,
+    color: '#374151',
+    marginBottom: 2,
+  },
+  deliveryAddressPhone: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  warningCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+    gap: 8,
+  },
+  warningText: {
     flex: 1,
     fontSize: 12,
     color: '#92400E',
@@ -2080,15 +2275,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
-  },
-  tierBadgePlatinum: {
-    backgroundColor: '#92400E',
-  },
-  tierBadgeGold: {
-    backgroundColor: '#D97706',
-  },
-  tierBadgeSilver: {
-    backgroundColor: '#6B7280',
   },
   tierBadgeText: {
     fontSize: 10,
@@ -2287,8 +2473,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#059669',
     fontWeight: '500',
-    textAlign: 'center',
-    marginTop: 8,
+    marginTop: 4,
   },
   termsRow: {
     flexDirection: 'row',
@@ -2368,7 +2553,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEF3C7',
     padding: 12,
     borderRadius: 8,
-    marginTop: 12,
+    marginHorizontal: 16,
+    marginBottom: 8,
   },
   validationText: {
     flex: 1,

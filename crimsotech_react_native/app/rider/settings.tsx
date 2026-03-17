@@ -275,9 +275,7 @@ export default function SettingsPage() {
           <SettingItem
             icon="credit-card"
             title="Bank Accounts & Cards"
-            onPress={() => {
-              Alert.alert("Coming Soon", "This feature is not yet available");
-            }}
+            onPress={() => router.push("/rider/payment-methods")}
           />
         </View>
 

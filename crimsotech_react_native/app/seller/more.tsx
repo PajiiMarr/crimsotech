@@ -16,6 +16,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import AxiosInstance from '../../contexts/axios';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface ShopDetails {
   id: string;
@@ -80,6 +81,40 @@ export default function MorePage() {
     return [shop.street, shop.barangay, shop.city, shop.province]
       .filter(Boolean)
       .join(', ');
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Clear all stored data
+              await AsyncStorage.multiRemove([
+                'userToken',
+                'userRole',
+                'userId',
+                'userData'
+              ]);
+              
+              // Navigate to login screen
+              // router.replace('/log-out');
+            } catch (error) {
+              console.error('Logout error:', error);
+              Alert.alert('Error', 'Failed to logout. Please try again.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const MenuSection = ({ title, items }: { title: string; items: any[] }) => (
@@ -196,7 +231,7 @@ export default function MorePage() {
           icon: 'cube-outline',
           iconBg: '#F1F5F9',
           iconColor: '#475569',
-          onPress: () => router.push(`/seller/myproducts?shopId=${shopId}`),
+          onPress: () => router.push(`/seller/product-list?shopId=${shopId}`),
         },
         {
           id: 'orders',
@@ -214,11 +249,10 @@ export default function MorePage() {
           icon: 'refresh-outline',
           iconBg: '#F1F5F9',
           iconColor: '#475569',
-          onPress: () => router.push(`/seller/refunds?shopId=${shopId}`),
+          onPress: () => router.push(`/seller/seller-return-refund-cancel?shopId=${shopId}`),
         },
       ],
     },
-
   ];
 
   return (
@@ -287,7 +321,25 @@ export default function MorePage() {
             <MenuSection key={section.title} title={section.title} items={section.items} />
           ))}
 
-        
+          {/* Logout Button */}
+          <TouchableOpacity 
+            style={styles.logoutButton}
+            onPress={handleLogout}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.menuIcon, { backgroundColor: '#FEE2E2' }]}>
+              <Ionicons name="log-out-outline" size={22} color="#EF4444" />
+            </View>
+            <View style={styles.menuContent}>
+              <Text style={styles.logoutText}>Logout</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
+          </TouchableOpacity>
+
+          {/* Version Info */}
+          <View style={styles.versionContainer}>
+            <Text style={styles.versionText}>Version 1.0.0</Text>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -445,29 +497,28 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 40,
-    paddingBottom: 16,
-    gap: 24,
-  },
-  footerButton: {
+  logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    marginTop: 24,
+    borderTopWidth: 8,
+    borderTopColor: '#F1F5F9',
   },
-  footerButtonText: {
-    fontSize: 13,
-    color: '#475569',
+  logoutText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#EF4444',
   },
-  version: {
+  versionContainer: {
+    alignItems: 'center',
+    marginTop: 24,
+    marginBottom: 16,
+  },
+  versionText: {
     fontSize: 12,
     color: '#CBD5E1',
-    marginLeft: 8,
   },
   noShopTitle: {
     fontSize: 18,

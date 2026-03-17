@@ -66,6 +66,7 @@ interface PurchaseOrder {
   delivery_status: string | null;
   delivery_rider: string | null;
   items: OrderItem[];
+  pickup_date?: string | null;
 }
 
 interface PurchasesResponse {
@@ -95,12 +96,16 @@ interface PurchaseItem {
   can_review: boolean;
 }
 
-// Status tabs configuration
+// Status tabs configuration - All 8 tabs from web
 const STATUS_TABS = [
   { id: 'all', label: 'All' },
+  { id: 'pending', label: 'Pending' },
   { id: 'processing', label: 'Processing' },
+  { id: 'to_pickup', label: 'To Pickup' },
   { id: 'shipped', label: 'Shipped' },
+  { id: 'completed', label: 'Completed' },
   { id: 'rate', label: 'Rate' },
+  { id: 'returns', label: 'Returns' },
 ];
 
 // Status configuration for badges
@@ -131,9 +136,14 @@ const STATUS_CONFIG = {
     bgColor: '#CCFBF1'
   },
   ready_for_pickup: { 
-    label: 'To Pickup', 
+    label: 'Ready for Pickup', 
     color: '#3B82F6',
     bgColor: '#DBEAFE'
+  },
+  picked_up: { 
+    label: 'Picked Up', 
+    color: '#10B981',
+    bgColor: '#D1FAE5'
   },
   completed: { 
     label: 'Completed', 
@@ -141,7 +151,7 @@ const STATUS_CONFIG = {
     bgColor: '#D1FAE5'
   },
   cancelled: { 
-    label: 'Order cancelled', 
+    label: 'Cancelled', 
     color: '#EF4444',
     bgColor: '#FEE2E2'
   },
@@ -181,7 +191,10 @@ const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
     case 'processing':
       return 'in_progress';
     case 'shipped':
+    case 'to_ship':
       return 'to_ship';
+    case 'to_receive':
+      return 'to_receive';
     case 'ready_for_pickup':
       return 'ready_for_pickup';
     case 'picked_up':
@@ -193,9 +206,34 @@ const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
     case 'cancelled':
       return 'cancelled';
     case 'refunded':
+    case 'return_refund':
       return 'return_refund';
     default:
       return 'pending';
+  }
+};
+
+// Detect Cash on Pickup orders
+const isCashOnPickup = (order: PurchaseOrder): boolean => {
+  const method = (order.payment_method || '').toLowerCase();
+  const delivery = (order.delivery_method || '').toLowerCase();
+  return method.includes('cash') && (method.includes('pickup') || delivery.includes('pickup'));
+};
+
+// Format a datetime string nicely
+const formatPickupDateTime = (dt: string): string => {
+  try {
+    const date = new Date(dt);
+    return date.toLocaleString('en-PH', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return dt;
   }
 };
 
@@ -223,9 +261,13 @@ export default function PurchasesPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
   const [orderCounts, setOrderCounts] = useState({
+    pending: 0,
     processing: 0,
+    to_pickup: 0,
     shipped: 0,
+    completed: 0,
     rate: 0,
+    returns: 0,
     all: 0
   });
 
@@ -292,8 +334,11 @@ export default function PurchasesPage() {
 
   const calculateOrderCounts = (items: PurchaseItem[]) => {
     const counts = {
+      pending: 0,
       processing: 0,
+      to_pickup: 0,
       shipped: 0,
+      completed: 0,
       rate: 0,
       returns: 0,
       all: items.length
@@ -306,9 +351,9 @@ export default function PurchasesPage() {
 
       const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
 
-      if ((status === 'pending' || status === 'in_progress') || (isPickupCash && status === 'ready_for_pickup')) {
-        counts.processing++;
-      }
+      if (status === 'pending') counts.pending++;
+      if (status === 'in_progress') counts.processing++;
+      if (status === 'ready_for_pickup' || (isPickupCash && status === 'pending')) counts.to_pickup++;
 
       const rawOrderStatus = (item.order?.status || '').toString().trim().toLowerCase();
       if (
@@ -322,8 +367,12 @@ export default function PurchasesPage() {
         counts.shipped++;
       }
 
-      // Rate tab shows ALL completed orders, not just those with can_review
-      if (status === 'completed') {
+      if (status === 'picked_up' || status === 'completed') {
+        counts.completed++;
+      }
+
+      // Rate tab shows completed orders that can be reviewed
+      if ((status === 'picked_up' || status === 'completed') && item.can_review) {
         counts.rate++;
       }
 
@@ -349,9 +398,12 @@ export default function PurchasesPage() {
   const getFilteredItems = () => {
     let filtered = purchaseItems;
 
-    // Apply tab filter
+    // Apply tab filter - All 8 tabs
     if (activeTab !== 'all') {
       switch (activeTab) {
+        case 'pending':
+          filtered = filtered.filter(item => item.status === 'pending');
+          break;
         case 'processing':
           filtered = filtered.filter(item => {
             const paymentMethod = (item.order.payment_method || '').toString().toLowerCase();
@@ -359,9 +411,17 @@ export default function PurchasesPage() {
             const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
 
             if (isPickupCash) {
-              return item.status === 'pending' || item.status === 'in_progress' || item.status === 'ready_for_pickup';
+              return item.status === 'in_progress' || item.status === 'pending';
             }
-            return item.status === 'pending' || item.status === 'in_progress';
+            return item.status === 'in_progress';
+          });
+          break;
+        case 'to_pickup':
+          filtered = filtered.filter(item => {
+            const paymentMethod = (item.order.payment_method || '').toString().toLowerCase();
+            const deliveryMethod = (item.order.delivery_method || '').toString().toLowerCase();
+            const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
+            return item.status === 'ready_for_pickup' || (isPickupCash && item.status === 'pending');
           });
           break;
         case 'shipped':
@@ -377,10 +437,14 @@ export default function PurchasesPage() {
             );
           });
           break;
-        case 'rate':
-          // FIXED: Show ALL completed orders, not just those with can_review
+        case 'completed':
           filtered = filtered.filter(item => 
-            item.status === 'completed'
+            item.status === 'picked_up' || item.status === 'completed'
+          );
+          break;
+        case 'rate':
+          filtered = filtered.filter(item => 
+            (item.status === 'picked_up' || item.status === 'completed') && item.can_review
           );
           break;
         case 'returns':
@@ -417,7 +481,6 @@ export default function PurchasesPage() {
           text: 'Yes, Cancel', 
           style: 'destructive',
           onPress: () => {
-            // Navigate to cancel order page
             // router.push(`/cancel-order/${item.order_id}?item_id=${item.id}`);
           }
         }
@@ -426,12 +489,40 @@ export default function PurchasesPage() {
   };
 
   const renderOrderCard = ({ item }: { item: PurchaseItem }) => {
+    const pickupDate = item.order.pickup_date;
+    const showPickupBanner =
+      isCashOnPickup(item.order) &&
+      (item.status === 'in_progress' || item.status === 'ready_for_pickup' || item.status === 'pending') &&
+      !!pickupDate;
+
     return (
       <TouchableOpacity 
-        style={styles.orderCard}
+        style={[styles.orderCard, showPickupBanner && styles.orderCardWithBanner]}
         onPress={() => router.push(`/customer/view-order?orderId=${item.order_id}`)}
         activeOpacity={0.7}
       >
+        {/* Pickup Date Banner */}
+        {showPickupBanner && (
+          <View style={styles.pickupBanner}>
+            <View style={styles.pickupBannerIcon}>
+              <MaterialIcons name="event" size={16} color="#F59E0B" />
+            </View>
+            <View style={styles.pickupBannerContent}>
+              <Text style={styles.pickupBannerTitle}>Pickup Scheduled</Text>
+              <Text style={styles.pickupBannerDate}>
+                {formatPickupDateTime(pickupDate!)}
+              </Text>
+              <View style={styles.pickupBannerLocation}>
+                <MaterialIcons name="location-on" size={10} color="#F59E0B" />
+                <Text style={styles.pickupBannerLocationText}>Pick up at shop</Text>
+              </View>
+            </View>
+            <View style={styles.pickupBannerBadge}>
+              <Text style={styles.pickupBannerBadgeText}>Cash on Pickup</Text>
+            </View>
+          </View>
+        )}
+
         {/* Shop Header */}
         <View style={styles.shopHeader}>
           <View style={styles.shopInfo}>
@@ -467,12 +558,10 @@ export default function PurchasesPage() {
               <Text style={styles.infoText} numberOfLines={1}>{item.order.payment_method}</Text>
             </View>
 
-            {/* Status Badge - Only show if cancelled or return/refund */}
-            {(item.status === 'cancelled' || item.status === 'return_refund') && (
-              <View style={styles.statusContainer}>
-                {getStatusBadge(item.status)}
-              </View>
-            )}
+            {/* Status Badge */}
+            <View style={styles.statusContainer}>
+              {getStatusBadge(item.status)}
+            </View>
 
             {/* Quantity and Price */}
             <View style={styles.priceRow}>
@@ -482,6 +571,16 @@ export default function PurchasesPage() {
           </View>
         </View>
 
+        {/* Voucher Applied */}
+        {item.item?.voucher_applied && (
+          <View style={styles.voucherContainer}>
+            <MaterialIcons name="local-offer" size={14} color="#10B981" />
+            <Text style={styles.voucherText}>
+              {item.item.voucher_applied.name} ({item.item.voucher_applied.code})
+            </Text>
+          </View>
+        )}
+
         {/* Total and Action */}
         <View style={styles.footer}>
           <View style={styles.totalContainer}>
@@ -489,9 +588,9 @@ export default function PurchasesPage() {
             <Text style={styles.totalAmount}>{formatCurrency(item.total_amount)}</Text>
           </View>
 
-          {/* Action Buttons - Professional border-only style */}
+          {/* Action Buttons - Matches web version exactly */}
           <View style={styles.actionButtons}>
-            {/* Cancel button for processing items */}
+            {/* Cancel button for pending/in_progress items */}
             {(item.status === 'pending' || item.status === 'in_progress') && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.cancelButton]}
@@ -502,8 +601,8 @@ export default function PurchasesPage() {
               </TouchableOpacity>
             )}
 
-            {/* Track button for shipped items */}
-            {(item.status === 'to_ship' || item.status === 'to_receive' || item.status === 'delivered') && (
+            {/* Track button for to_ship/to_receive items (but not delivered) */}
+            {(item.status === 'to_ship' || item.status === 'to_receive') && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.trackButton]}
                 onPress={() => router.push(`/customer/track-order?orderId=${item.order_id}&status=${item.status}`)}
@@ -513,25 +612,48 @@ export default function PurchasesPage() {
               </TouchableOpacity>
             )}
 
-            {/* Refund button for delivered items */}
-            {(item.status === 'delivered' || item.status === 'to_receive') && item.is_refundable && (
-              <TouchableOpacity 
-                style={[styles.actionButton, styles.refundButton]}
-                onPress={() => router.push(`/customer/request-refund?orderId=${item.order_id}&productId=${item.product_id}`)}
-              >
-                <MaterialIcons name="refresh" size={14} color="#F97316" />
-                <Text style={styles.refundButtonText}>Refund</Text>
-              </TouchableOpacity>
+            {/* For delivered items - Shows Rate button (like web version) */}
+            {item.status === 'delivered' && (
+              <>
+                <TouchableOpacity 
+                  style={[styles.actionButton, styles.rateButton]}
+                  onPress={() => router.push(`/customer/rate?productId=${item.product_id}&orderId=${item.order_id}&productName=${encodeURIComponent(item.product_name)}`)}
+                >
+                  <MaterialIcons name="star" size={14} color="#F97316" />
+                  <Text style={styles.rateButtonText}>Rate</Text>
+                </TouchableOpacity>
+                
+                {item.is_refundable && (
+                  <TouchableOpacity 
+                    style={[styles.actionButton, styles.refundButton]}
+                    onPress={() => router.push(`/customer/request-refund?orderId=${item.order_id}&productId=${item.product_id}`)}
+                  >
+                    <MaterialIcons name="refresh" size={14} color="#F97316" />
+                    <Text style={styles.refundButtonText}>Refund</Text>
+                  </TouchableOpacity>
+                )}
+              </>
             )}
 
-            {/* Rate button for completed items */}
-            {item.status === 'completed' && (
+            {/* For picked_up/completed items - Rate button only if can_review */}
+            {(item.status === 'picked_up' || item.status === 'completed') && item.can_review && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.rateButton]}
                 onPress={() => router.push(`/customer/order-review?productId=${item.product_id}&orderId=${item.order_id}&productName=${encodeURIComponent(item.product_name)}`)}
               >
                 <MaterialIcons name="star" size={14} color="#F97316" />
                 <Text style={styles.rateButtonText}>Rate</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* For picked_up/completed items without review - View button */}
+            {(item.status === 'picked_up' || item.status === 'completed') && !item.can_review && (
+              <TouchableOpacity 
+                style={[styles.actionButton, styles.viewButton]}
+                onPress={() => router.push(`/customer/view-order?orderId=${item.order_id}`)}
+              >
+                <MaterialIcons name="visibility" size={14} color="#6B7280" />
+                <Text style={styles.viewButtonText}>View</Text>
               </TouchableOpacity>
             )}
 
@@ -543,24 +665,6 @@ export default function PurchasesPage() {
               >
                 <MaterialIcons name="visibility" size={14} color="#6B7280" />
                 <Text style={styles.detailsButtonText}>Details</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Always show View Order button for all other statuses */}
-            {item.status !== 'pending' && 
-             item.status !== 'in_progress' && 
-             item.status !== 'to_ship' && 
-             item.status !== 'to_receive' && 
-             item.status !== 'delivered' && 
-             item.status !== 'completed' && 
-             item.status !== 'cancelled' && 
-             item.status !== 'return_refund' && (
-              <TouchableOpacity 
-                style={[styles.actionButton, styles.viewButton]}
-                onPress={() => router.push(`/customer/view-order?orderId=${item.order_id}`)}
-              >
-                <MaterialIcons name="visibility" size={14} color="#6B7280" />
-                <Text style={styles.viewButtonText}>View</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -592,7 +696,7 @@ export default function PurchasesPage() {
   return (
     <CustomerLayout disableScroll>
       <View style={styles.container}>
-        {/* Status Tabs */}
+        {/* Status Tabs - All 8 tabs */}
         <ScrollView 
           horizontal 
           showsHorizontalScrollIndicator={false}
@@ -632,8 +736,11 @@ export default function PurchasesPage() {
             <Text style={styles.emptyTitle}>No purchases found</Text>
             <Text style={styles.emptyText}>
               {activeTab === 'all' ? 'Start shopping to see your purchases' :
+               activeTab === 'pending' ? 'No pending orders' :
                activeTab === 'processing' ? 'No processing orders' :
+               activeTab === 'to_pickup' ? 'No orders ready for pickup' :
                activeTab === 'shipped' ? 'No shipped orders' :
+               activeTab === 'completed' ? 'No completed orders' :
                activeTab === 'rate' ? 'No orders to rate' :
                'No returns or refunds'}
             </Text>
@@ -670,7 +777,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F9FAFB',
-    paddingTop: 52, // reserve space for fixed tabs
+    paddingTop: 52,
   },
   loadingContainer: {
     flex: 1,
@@ -697,7 +804,6 @@ const styles = StyleSheet.create({
   tabsContainer: {
     paddingHorizontal: 12,
     paddingVertical: 0,
-    // use horizontal layout spacing via margin on children
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'nowrap',
@@ -713,8 +819,6 @@ const styles = StyleSheet.create({
     borderRadius: 0,
     backgroundColor: '#F3F4F6',
     marginRight: 8,
-    // flexShrink: 0,
-    // minWidth: 100,
     justifyContent: 'center',
     height: 36,
     position: 'relative',
@@ -730,7 +834,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: '#6B7280',
-    // allow label to size naturally
     flexShrink: 0,
     textAlign: 'center',
     includeFontPadding: false,
@@ -785,6 +888,63 @@ const styles = StyleSheet.create({
         elevation: 2,
       },
     }),
+  },
+  orderCardWithBanner: {
+    borderColor: '#FCD34D',
+  },
+  pickupBanner: {
+    flexDirection: 'row',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    gap: 12,
+  },
+  pickupBannerIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FDE68A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickupBannerContent: {
+    flex: 1,
+  },
+  pickupBannerTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#92400E',
+  },
+  pickupBannerDate: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#B45309',
+    marginTop: 2,
+  },
+  pickupBannerLocation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  pickupBannerLocationText: {
+    fontSize: 10,
+    color: '#B45309',
+  },
+  pickupBannerBadge: {
+    backgroundColor: '#FDE68A',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+  },
+  pickupBannerBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#92400E',
   },
   shopHeader: {
     flexDirection: 'row',
@@ -864,6 +1024,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#F97316',
+  },
+  voucherContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 12,
+    padding: 8,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 6,
+  },
+  voucherText: {
+    fontSize: 11,
+    color: '#10B981',
+    fontWeight: '500',
   },
   footer: {
     flexDirection: 'row',

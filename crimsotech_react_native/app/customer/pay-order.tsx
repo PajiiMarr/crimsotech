@@ -18,7 +18,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import AxiosInstance from '../../contexts/axios';
 import * as ImagePicker from 'expo-image-picker';
-// Use legacy FileSystem API to keep using getInfoAsync (avoids deprecation error on Expo v54)
 import * as FileSystem from 'expo-file-system/legacy';
 import {
   MaterialIcons,
@@ -30,18 +29,56 @@ import {
   Entypo
 } from '@expo/vector-icons';
 
-// Types
+// Types - Updated to match web version
 interface OrderDetails {
   order_id: string;
-  total_amount: number;
-  payment_method: string;
   status: string;
+  approval: string;
+  total_amount: string;
+  payment_method: string;
+  delivery_method: string;
+  delivery_address: string;
   created_at: string;
-  payment_qr_code?: string; // Add this field for backend QR code
+  updated_at: string;
+  user: {
+    id: string;
+    username: string;
+    email: string;
+    first_name: string;
+    last_name: string;
+  };
+  shipping_address?: {
+    recipient_name: string;
+    recipient_phone: string;
+    full_address: string;
+    address_type: string;
+  };
 }
 
+interface MayaPaymentResponse {
+  success: boolean;
+  message: string;
+  order_id: string;
+  maya_checkout_id: string;
+  redirect_url: string;
+  reference_number: string;
+  total_amount: number;
+  items: any[];
+  sandbox_mode: boolean;
+  test_card?: {
+    message: string;
+    card_number: string;
+    expiry: string;
+    cvv: string;
+    otp: string;
+  };
+}
+
+// Environment variable for sandbox mode
+const ENABLE_SANDBOX = true; // Set to false in production
+
 export default function PayOrderPage() {
-  const { userId, userRole } = useAuth();
+  const { userId } = useAuth();
   const params = useLocalSearchParams();
   const orderId = params.order_id as string;
   
@@ -50,10 +87,17 @@ export default function PayOrderPage() {
   const [error, setError] = useState<string | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<'pending' | 'paid'>('pending');
   const [receiptFile, setReceiptFile] = useState<any>(null);
+  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [mayaPayment, setMayaPayment] = useState<MayaPaymentResponse | null>(null);
+  const [processingMaya, setProcessingMaya] = useState(false);
+  const [showTestCardModal, setShowTestCardModal] = useState(false);
 
   useEffect(() => {
+    console.log('PayOrderPage mounted with orderId:', orderId);
+    console.log('User ID:', userId);
+    
     if (orderId) {
       fetchOrderDetails();
     } else {
@@ -64,55 +108,71 @@ export default function PayOrderPage() {
 
   const fetchOrderDetails = async () => {
     try {
+      console.log('Fetching order details for ID:', orderId);
+      
       const response = await AxiosInstance.get(`/checkout-order/get_order_details/${orderId}/`);
-      if (response.data.success) {
+      
+      console.log('Order details response:', JSON.stringify(response.data, null, 2));
+      
+      // Check if the response has the order data (web version returns the order object directly)
+      if (response.data && response.data.order_id) {
+        // The backend returns the order object directly (like in web version)
+        setOrderDetails(response.data);
+        setPaymentStatus(response.data.status === 'paid' || response.data.status === 'completed' ? 'paid' : 'pending');
+      } else if (response.data.success && response.data.order) {
+        // Alternative structure if wrapped
         setOrderDetails(response.data.order);
-        setPaymentStatus(response.data.order.status === 'paid' ? 'paid' : 'pending');
+        setPaymentStatus(response.data.order.status === 'paid' || response.data.order.status === 'completed' ? 'paid' : 'pending');
       } else {
         setError(response.data.error || "Failed to load order details");
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || "Error fetching order details");
+      console.error('Error fetching order details:', err);
+      console.error('Error response:', err.response?.data);
+      
+      let errorMessage = "Error fetching order details";
+      if (err.response?.status === 404) {
+        errorMessage = "Order not found";
+      } else if (err.response?.data?.error) {
+        errorMessage = err.response.data.error;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  const getPaymentMethodIcon = () => {
+  const getPaymentMethodIcon = (): any => {
     if (!orderDetails) return 'credit-card';
     switch(orderDetails.payment_method) {
       case 'GCash': return 'mobile-alt';
       case 'Maya': return 'credit-card';
-      default: return 'wallet';
+      default: return 'money-bill';
     }
   };
 
   const getQRCodeImage = () => {
     if (!orderDetails) return null;
     
-    // Option 1: Check if backend provides QR code URL
-    if (orderDetails.payment_qr_code) {
-      return orderDetails.payment_qr_code;
+    // In sandbox mode for Maya, don't show QR code
+    if (ENABLE_SANDBOX && orderDetails.payment_method === 'Maya') {
+      return null;
     }
     
-    // Option 2: Use your local assets (requires adding images to your mobile app)
-    // Make sure to add these images to your assets folder
     switch(orderDetails.payment_method) {
       case 'GCash': 
-        // For Expo, you would typically use require() for local images
-        // return require('../../assets/gcash-qr.png');
-        // For now, using a placeholder or backend should provide this
-        return 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=GCashPayment:' + orderId;
+        return 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=GCashPayment:' + orderId;
       case 'Maya': 
-        // return require('../../assets/maya-qr.png');
-        return 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=MayaPayment:' + orderId;
+        return 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=MayaPayment:' + orderId;
       default: return null;
     }
   };
 
   const pickImage = async () => {
     try {
-      // Request permissions
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission required', 'Sorry, we need camera roll permissions to upload receipts.');
@@ -144,7 +204,9 @@ export default function PayOrderPage() {
           name: `receipt_${orderId}_${Date.now()}.jpg`,
           type: 'image/jpeg'
         });
+        setReceiptPreview(asset.uri);
         setShowReceiptModal(false);
+        setError(null);
       }
     } catch (error) {
       console.error('Error picking image:', error);
@@ -154,7 +216,6 @@ export default function PayOrderPage() {
 
   const takePhoto = async () => {
     try {
-      // Request camera permissions
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission required', 'Sorry, we need camera permissions to take photos.');
@@ -170,7 +231,6 @@ export default function PayOrderPage() {
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
         
-        // Check file size
         const fileInfo = await FileSystem.getInfoAsync(asset.uri);
         if (fileInfo.exists && fileInfo.size) {
           const fileSizeMB = fileInfo.size / (1024 * 1024);
@@ -185,16 +245,14 @@ export default function PayOrderPage() {
           name: `receipt_${orderId}_${Date.now()}.jpg`,
           type: 'image/jpeg'
         });
+        setReceiptPreview(asset.uri);
         setShowReceiptModal(false);
+        setError(null);
       }
     } catch (error) {
       console.error('Error taking photo:', error);
       Alert.alert('Error', 'Failed to take photo. Please try again.');
     }
-  };
-
-  const handleFilePick = () => {
-    setShowReceiptModal(true);
   };
 
   const uploadReceipt = async () => {
@@ -210,7 +268,6 @@ export default function PayOrderPage() {
       formData.append('order_id', orderId);
       formData.append('user_id', userId || '');
       
-      // Create file object
       formData.append('receipt', {
         uri: receiptFile.uri,
         name: receiptFile.name,
@@ -224,7 +281,16 @@ export default function PayOrderPage() {
       });
 
       if (response.data.success) {
-        handlePaymentComplete();
+        Alert.alert(
+          'Receipt Uploaded',
+          'Your receipt has been uploaded successfully. Please wait for confirmation.',
+          [
+            {
+              text: 'OK',
+              onPress: () => router.push(`/customer/order-successful/${orderId}` as any)
+            }
+          ]
+        );
       } else {
         setError(response.data.error || "Failed to upload receipt");
         Alert.alert('Error', response.data.error || "Failed to upload receipt");
@@ -235,6 +301,54 @@ export default function PayOrderPage() {
       Alert.alert('Error', errorMsg);
     } finally {
       setUploadingReceipt(false);
+    }
+  };
+
+  const handleMayaPayment = async () => {
+    if (!orderDetails || !userId) return;
+    
+    try {
+      setProcessingMaya(true);
+      setError(null);
+
+      console.log("Initiating Maya payment for order:", orderId);
+      console.log("User ID:", userId);
+
+      const response = await AxiosInstance.post('/checkout-order/initiate_maya_payment/', {
+        order_id: orderId,
+        user_id: userId
+      });
+      
+      console.log('Maya payment response:', response.data);
+      
+      if (response.data.success) {
+        setMayaPayment(response.data);
+        
+        // If in sandbox mode and test card info is provided, show it
+        if (response.data.sandbox_mode && response.data.test_card) {
+          setShowTestCardModal(true);
+        }
+        
+        // Open the redirect URL in browser
+        if (response.data.redirect_url) {
+          const supported = await Linking.canOpenURL(response.data.redirect_url);
+          if (supported) {
+            await Linking.openURL(response.data.redirect_url);
+          } else {
+            Alert.alert('Error', 'Cannot open payment page');
+          }
+        }
+      } else {
+        setError(response.data.error || "Failed to initiate Maya payment");
+        Alert.alert('Error', response.data.error || "Failed to initiate Maya payment");
+      }
+    } catch (err: any) {
+      console.error('Maya payment error:', err);
+      const errorMsg = err.response?.data?.error || "Error initiating Maya payment";
+      setError(errorMsg);
+      Alert.alert('Error', errorMsg);
+    } finally {
+      setProcessingMaya(false);
     }
   };
 
@@ -253,14 +367,7 @@ export default function PayOrderPage() {
           [
             {
               text: 'View Order',
-              onPress: async () => {
-                try {
-                  await router.replace('/customer/purchases');
-                } catch (e) {
-                  console.warn('Navigation to /customer/purchases failed, falling back to /customer/orders', e);
-                  router.push('/customer/orders');
-                }
-              }
+              onPress: () => router.push(`/customer/order-successful/${orderId}` as any)
             }
           ]
         );
@@ -277,7 +384,7 @@ export default function PayOrderPage() {
   const handleSkipPayment = () => {
     Alert.alert(
       'Skip Payment',
-      'Are you sure you want to skip payment? You can upload your receipt later.',
+      'Are you sure you want to skip payment? You can upload your receipt later from your orders.',
       [
         {
           text: 'Cancel',
@@ -289,6 +396,21 @@ export default function PayOrderPage() {
         }
       ]
     );
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-PH', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const removeReceipt = () => {
+    setReceiptFile(null);
+    setReceiptPreview(null);
   };
 
   if (loading) {
@@ -321,13 +443,7 @@ export default function PayOrderPage() {
 
   const PaymentIcon = getPaymentMethodIcon();
   const qrCodeImage = getQRCodeImage();
-  const formattedDate = new Date(orderDetails.created_at).toLocaleDateString('en-PH', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
+  const formattedDate = formatDate(orderDetails.created_at);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -340,6 +456,7 @@ export default function PayOrderPage() {
           >
             <MaterialIcons name="arrow-back" size={24} color="#FFFFFF" />
           </TouchableOpacity>
+          
           <View style={styles.headerContent}>
             <View style={styles.paymentIconContainer}>
               {PaymentIcon === 'mobile-alt' ? (
@@ -348,11 +465,25 @@ export default function PayOrderPage() {
                 <FontAwesome name={PaymentIcon} size={24} color="#FFFFFF" />
               )}
             </View>
-            <View style={{ flex: 1 }}>
+            <View style={styles.headerTextContainer}>
               <Text style={styles.headerTitle}>Complete Your Payment</Text>
+              <Text style={styles.headerSubtitle}>Order #{orderDetails.order_id.slice(0, 8)}</Text>
             </View>
           </View>
+          
+          <View style={styles.headerAmountContainer}>
+            <Text style={styles.headerAmount}>₱{parseFloat(orderDetails.total_amount).toFixed(2)}</Text>
+            <Text style={styles.headerAmountLabel}>Total</Text>
+          </View>
         </View>
+
+        {/* Sandbox Mode Badge */}
+        {ENABLE_SANDBOX && (
+          <View style={styles.sandboxBadge}>
+            <MaterialIcons name="security" size={16} color="#FFFFFF" />
+            <Text style={styles.sandboxBadgeText}>Sandbox Mode Active</Text>
+          </View>
+        )}
 
         {/* Success Message */}
         {paymentStatus === 'paid' && (
@@ -362,7 +493,7 @@ export default function PayOrderPage() {
             </View>
             <View style={styles.successContent}>
               <Text style={styles.successTitle}>Payment Confirmed!</Text>
-              <Text style={styles.successText}>Your payment has been verified</Text>
+              <Text style={styles.successText}>Your order is being processed</Text>
             </View>
           </View>
         )}
@@ -371,7 +502,7 @@ export default function PayOrderPage() {
           {/* QR Code Section */}
           <View style={styles.qrSection}>
             <View style={styles.qrCard}>
-              {qrCodeImage ? (
+              {qrCodeImage && !(ENABLE_SANDBOX && orderDetails.payment_method === 'Maya') ? (
                 <>
                   <Image 
                     source={{ uri: qrCodeImage }}
@@ -392,14 +523,24 @@ export default function PayOrderPage() {
                     </Text>
                   </View>
                 </>
+              ) : ENABLE_SANDBOX && orderDetails.payment_method === 'Maya' ? (
+                <View style={styles.sandboxQRContainer}>
+                  <View style={styles.sandboxIconContainer}>
+                    <FontAwesome name="credit-card" size={60} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.sandboxTitle}>Sandbox Mode</Text>
+                  <Text style={styles.sandboxDescription}>
+                    You're testing Maya payments. Click the sandbox button to proceed.
+                  </Text>
+                </View>
               ) : (
                 <View style={styles.noQrContainer}>
                   <MaterialIcons name="credit-card" size={60} color="#D1D5DB" />
                   <Text style={styles.noQrText}>
-                    QR Code not available for {orderDetails.payment_method}
+                    Please complete your payment via {orderDetails.payment_method}
                   </Text>
                   <Text style={styles.noQrSubtext}>
-                    Please proceed with manual payment and upload receipt
+                    Instructions will be provided by the seller
                   </Text>
                 </View>
               )}
@@ -414,6 +555,16 @@ export default function PayOrderPage() {
             <View style={styles.detailCard}>
               <View style={styles.detailRow}>
                 <View style={styles.detailIcon}>
+                  <MaterialIcons name="payment" size={20} color="#EA580C" />
+                </View>
+                <View style={styles.detailContent}>
+                  <Text style={styles.detailLabel}>Payment Method</Text>
+                  <Text style={styles.detailValue}>{orderDetails.payment_method}</Text>
+                </View>
+              </View>
+
+              <View style={styles.detailRow}>
+                <View style={styles.detailIcon}>
                   <MaterialIcons name="receipt" size={20} color="#EA580C" />
                 </View>
                 <View style={styles.detailContent}>
@@ -424,16 +575,6 @@ export default function PayOrderPage() {
 
               <View style={styles.detailRow}>
                 <View style={styles.detailIcon}>
-                  <MaterialIcons name="paid" size={20} color="#EA580C" />
-                </View>
-                <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Amount</Text>
-                  <Text style={styles.detailValue}>₱{orderDetails.total_amount.toFixed(2)}</Text>
-                </View>
-              </View>
-              
-              <View style={styles.detailRow}>
-                <View style={styles.detailIcon}>
                   <MaterialIcons name="date-range" size={20} color="#EA580C" />
                 </View>
                 <View style={styles.detailContent}>
@@ -441,72 +582,89 @@ export default function PayOrderPage() {
                   <Text style={styles.detailValue}>{formattedDate}</Text>
                 </View>
               </View>
-              
+
               <View style={styles.detailRow}>
                 <View style={styles.detailIcon}>
-                  <MaterialIcons name="payment" size={20} color="#EA580C" />
+                  <MaterialIcons name="local-shipping" size={20} color="#EA580C" />
                 </View>
                 <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Payment Method</Text>
-                  <Text style={styles.detailValue}>{orderDetails.payment_method}</Text>
+                  <Text style={styles.detailLabel}>Delivery Method</Text>
+                  <Text style={styles.detailValue}>{orderDetails.delivery_method}</Text>
                 </View>
               </View>
-            </View>
 
-            {/* Upload Receipt */}
-            <View style={styles.uploadCard}>
-              <View style={styles.uploadHeader}>
-                <View style={styles.uploadIcon}>
-                  <MaterialIcons name="cloud-upload" size={24} color="#3B82F6" />
-                </View>
-                <View>
-                  <Text style={styles.uploadTitle}>Upload Payment Receipt</Text>
-                  <Text style={styles.uploadSubtitle}>
-                    Upload a screenshot or photo of your payment confirmation
-                  </Text>
-                </View>
-              </View>
-              
-              <TouchableOpacity 
-                style={styles.uploadButton}
-                onPress={handleFilePick}
-                disabled={paymentStatus === 'paid' || uploadingReceipt}
-              >
-                {receiptFile ? (
-                  <View style={styles.receiptPreview}>
-                    <Image 
-                      source={{ uri: receiptFile.uri }}
-                      style={styles.receiptImage}
-                      resizeMode="cover"
-                    />
-                    <View style={styles.receiptInfo}>
-                      <Text style={styles.receiptFileName} numberOfLines={1}>
-                        {receiptFile.name}
-                      </Text>
-                    </View>
+              {orderDetails.delivery_address && (
+                <View style={styles.detailRow}>
+                  <View style={styles.detailIcon}>
+                    <MaterialIcons name="location-on" size={20} color="#EA580C" />
                   </View>
-                ) : (
-                  <>
-                    <MaterialIcons name="upload" size={40} color="#3B82F6" />
-                    <Text style={styles.uploadButtonText}>
-                      {paymentStatus === 'paid' ? 'Receipt Uploaded' : 'Choose File'}
-                    </Text>
-                    <Text style={styles.uploadFormat}>
-                      JPG, PNG (max 5MB)
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
-              
-              {receiptFile && !uploadingReceipt && paymentStatus === 'pending' && (
-                <TouchableOpacity 
-                  style={styles.confirmUploadButton}
-                  onPress={uploadReceipt}
-                >
-                  <Text style={styles.confirmUploadText}>Confirm Upload</Text>
-                </TouchableOpacity>
+                  <View style={styles.detailContent}>
+                    <Text style={styles.detailLabel}>Delivery Address</Text>
+                    <Text style={styles.detailValue}>{orderDetails.delivery_address}</Text>
+                  </View>
+                </View>
+              )}
+
+              {orderDetails.shipping_address && (
+                <View style={styles.addressDetail}>
+                  <Text style={styles.detailLabel}>Shipping Details</Text>
+                  <Text style={styles.addressName}>{orderDetails.shipping_address.recipient_name}</Text>
+                  <Text style={styles.addressPhone}>{orderDetails.shipping_address.recipient_phone}</Text>
+                  <Text style={styles.addressFull}>{orderDetails.shipping_address.full_address}</Text>
+                </View>
               )}
             </View>
+
+            {/* Upload Receipt - Hide for sandbox Maya payments */}
+            {!(ENABLE_SANDBOX && orderDetails.payment_method === 'Maya') && (
+              <View style={styles.uploadCard}>
+                <View style={styles.uploadHeader}>
+                  <View style={styles.uploadIcon}>
+                    <MaterialIcons name="cloud-upload" size={24} color="#3B82F6" />
+                  </View>
+                  <View>
+                    <Text style={styles.uploadTitle}>Upload Payment Receipt</Text>
+                    <Text style={styles.uploadSubtitle}>
+                      Upload a screenshot or photo of your payment confirmation
+                    </Text>
+                  </View>
+                </View>
+                
+                <TouchableOpacity 
+                  style={styles.uploadButton}
+                  onPress={() => setShowReceiptModal(true)}
+                  disabled={paymentStatus === 'paid' || uploadingReceipt}
+                >
+                  {receiptPreview ? (
+                    <View style={styles.receiptPreviewContainer}>
+                      <Image 
+                        source={{ uri: receiptPreview }}
+                        style={styles.receiptImage}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.receiptInfo}>
+                        <Text style={styles.receiptFileName} numberOfLines={1}>
+                          {receiptFile?.name}
+                        </Text>
+                        <TouchableOpacity onPress={removeReceipt}>
+                          <MaterialIcons name="close" size={20} color="#DC2626" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : (
+                    <>
+                      <MaterialIcons name="upload" size={40} color="#3B82F6" />
+                      <Text style={styles.uploadButtonText}>
+                        {paymentStatus === 'paid' ? 'Receipt Uploaded' : 'Choose File'}
+                      </Text>
+                      <Text style={styles.uploadFormat}>
+                        JPG, PNG (max 5MB)
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Total Amount */}
             <View style={styles.totalCard}>
@@ -515,7 +673,7 @@ export default function PayOrderPage() {
                   <Text style={styles.totalLabel}>Total Amount</Text>
                   <Text style={styles.totalSubLabel}>Including all charges</Text>
                 </View>
-                <Text style={styles.totalAmount}>₱{orderDetails.total_amount.toFixed(2)}</Text>
+                <Text style={styles.totalAmount}>₱{parseFloat(orderDetails.total_amount).toFixed(2)}</Text>
               </View>
             </View>
 
@@ -523,30 +681,49 @@ export default function PayOrderPage() {
             <View style={styles.actionButtons}>
               {paymentStatus === 'pending' ? (
                 <>
-                  <TouchableOpacity 
-                    style={[
-                      styles.payButton,
-                      (!receiptFile || uploadingReceipt) && styles.payButtonDisabled
-                    ]}
-                    onPress={uploadReceipt}
-                    disabled={!receiptFile || uploadingReceipt}
-                  >
-                    {uploadingReceipt ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <MaterialIcons name="check-circle" size={20} color="#FFFFFF" />
-                        <Text style={styles.payButtonText}>
-                          Confirm Payment with {orderDetails.payment_method}
-                        </Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
+                  {ENABLE_SANDBOX && orderDetails.payment_method === 'Maya' ? (
+                    <TouchableOpacity 
+                      style={[styles.payButton, styles.mayaButton]}
+                      onPress={handleMayaPayment}
+                      disabled={processingMaya}
+                    >
+                      {processingMaya ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <FontAwesome name="credit-card" size={20} color="#FFFFFF" />
+                          <Text style={styles.payButtonText}>
+                            Pay with Maya Sandbox
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity 
+                      style={[
+                        styles.payButton,
+                        (!receiptFile || uploadingReceipt) && styles.payButtonDisabled
+                      ]}
+                      onPress={uploadReceipt}
+                      disabled={!receiptFile || uploadingReceipt}
+                    >
+                      {uploadingReceipt ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <MaterialIcons name="check-circle" size={20} color="#FFFFFF" />
+                          <Text style={styles.payButtonText}>
+                            Confirm Payment with {orderDetails.payment_method}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  )}
                   
                   <TouchableOpacity 
                     style={styles.skipButton}
                     onPress={handleSkipPayment}
-                    disabled={uploadingReceipt}
+                    disabled={uploadingReceipt || processingMaya}
                   >
                     <Text style={styles.skipButtonText}>Skip Payment for Now</Text>
                   </TouchableOpacity>
@@ -554,14 +731,7 @@ export default function PayOrderPage() {
               ) : (
                 <TouchableOpacity 
                   style={styles.viewOrderButton}
-                  onPress={async () => {
-                    try {
-                      await router.replace('/customer/purchases');
-                    } catch (e) {
-                      console.warn('Navigation to /customer/purchases failed, falling back to /customer/orders', e);
-                      router.push('/customer/orders');
-                    }
-                  }}
+                  onPress={() => router.push(`/customer/order-successful/${orderId}` as any)}
                 >
                   <MaterialIcons name="visibility" size={20} color="#FFFFFF" />
                   <Text style={styles.viewOrderText}>View Order Details</Text>
@@ -572,7 +742,7 @@ export default function PayOrderPage() {
         </View>
       </ScrollView>
 
-      {/* Receipt Modal */}
+      {/* Receipt Selection Modal */}
       <Modal
         visible={showReceiptModal}
         animationType="slide"
@@ -599,7 +769,7 @@ export default function PayOrderPage() {
               <View style={styles.requirementsList}>
                 <View style={styles.requirementItem}>
                   <MaterialIcons name="check-circle" size={16} color="#059669" />
-                  <Text style={styles.requirementText}>Transaction ID</Text>
+                  <Text style={styles.requirementText}>Transaction ID / Reference Number</Text>
                 </View>
                 <View style={styles.requirementItem}>
                   <MaterialIcons name="check-circle" size={16} color="#059669" />
@@ -607,7 +777,7 @@ export default function PayOrderPage() {
                 </View>
                 <View style={styles.requirementItem}>
                   <MaterialIcons name="check-circle" size={16} color="#059669" />
-                  <Text style={styles.requirementText}>Date & Time</Text>
+                  <Text style={styles.requirementText}>Date & Time of Payment</Text>
                 </View>
               </View>
               
@@ -632,6 +802,66 @@ export default function PayOrderPage() {
                 onPress={() => setShowReceiptModal(false)}
               >
                 <Text style={styles.modalButtonSecondaryText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Test Card Info Modal for Maya Sandbox */}
+      <Modal
+        visible={showTestCardModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowTestCardModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, styles.testCardModal]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Sandbox Test Card</Text>
+              <TouchableOpacity 
+                onPress={() => setShowTestCardModal(false)}
+                style={styles.modalCloseButton}
+              >
+                <MaterialIcons name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.modalContent}>
+              <View style={styles.testCardIcon}>
+                <FontAwesome name="credit-card" size={48} color="#EA580C" />
+              </View>
+              
+              <Text style={styles.testCardMessage}>
+                {mayaPayment?.test_card?.message || 'Use these test card details for sandbox payment:'}
+              </Text>
+              
+              {mayaPayment?.test_card && (
+                <View style={styles.testCardDetails}>
+                  <View style={styles.testCardRow}>
+                    <Text style={styles.testCardLabel}>Card Number:</Text>
+                    <Text style={styles.testCardValue}>{mayaPayment.test_card.card_number}</Text>
+                  </View>
+                  <View style={styles.testCardRow}>
+                    <Text style={styles.testCardLabel}>Expiry:</Text>
+                    <Text style={styles.testCardValue}>{mayaPayment.test_card.expiry}</Text>
+                  </View>
+                  <View style={styles.testCardRow}>
+                    <Text style={styles.testCardLabel}>CVV:</Text>
+                    <Text style={styles.testCardValue}>{mayaPayment.test_card.cvv}</Text>
+                  </View>
+                  <View style={styles.testCardRow}>
+                    <Text style={styles.testCardLabel}>OTP:</Text>
+                    <Text style={styles.testCardValue}>{mayaPayment.test_card.otp}</Text>
+                  </View>
+                </View>
+              )}
+              
+              <TouchableOpacity 
+                style={styles.testCardButton}
+                onPress={() => setShowTestCardModal(false)}
+              >
+                <Text style={styles.testCardButtonText}>Got it</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -705,17 +935,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 12,
   },
+  headerTextContainer: {
+    flex: 1,
+  },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
     color: '#FFFFFF',
   },
   headerSubtitle: {
-    fontSize: 14,
+    fontSize: 12,
     color: 'rgba(255, 255, 255, 0.9)',
     marginTop: 2,
   },
-  headerRight: {
+  headerAmountContainer: {
     alignItems: 'flex-end',
   },
   headerAmount: {
@@ -727,6 +960,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: 'rgba(255, 255, 255, 0.9)',
     marginTop: 2,
+  },
+  sandboxBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F59E0B',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  sandboxBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
   successCard: {
     flexDirection: 'row',
@@ -807,6 +1054,31 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
   },
+  sandboxQRContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  sandboxIconContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#3B82F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  sandboxTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  sandboxDescription: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    maxWidth: 250,
+  },
   noQrContainer: {
     alignItems: 'center',
     paddingVertical: 40,
@@ -877,6 +1149,29 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#374151',
   },
+  addressDetail: {
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 16,
+    marginTop: 8,
+  },
+  addressName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginTop: 4,
+  },
+  addressPhone: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  addressFull: {
+    fontSize: 13,
+    color: '#374151',
+    marginTop: 4,
+    lineHeight: 18,
+  },
   uploadCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
@@ -930,7 +1225,7 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 4,
   },
-  receiptPreview: {
+  receiptPreviewContainer: {
     alignItems: 'center',
     width: '100%',
   },
@@ -941,27 +1236,18 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   receiptInfo: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    paddingHorizontal: 20,
   },
   receiptFileName: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#374151',
-    marginBottom: 4,
-    maxWidth: 200,
-  },
-  confirmUploadButton: {
-    backgroundColor: '#3B82F6',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  confirmUploadText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+    flex: 1,
+    marginRight: 8,
   },
   totalCard: {
     backgroundColor: '#FFF7ED',
@@ -1002,6 +1288,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     gap: 8,
   },
+  mayaButton: {
+    backgroundColor: '#3B82F6',
+  },
   payButtonDisabled: {
     backgroundColor: '#9CA3AF',
   },
@@ -1009,6 +1298,8 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+    flex: 1,
+    textAlign: 'center',
   },
   skipButton: {
     alignItems: 'center',
@@ -1043,6 +1334,9 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '80%',
+  },
+  testCardModal: {
+    maxHeight: '70%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1083,6 +1377,7 @@ const styles = StyleSheet.create({
   requirementText: {
     fontSize: 14,
     color: '#374151',
+    flex: 1,
   },
   modalButton: {
     flexDirection: 'row',
@@ -1107,6 +1402,48 @@ const styles = StyleSheet.create({
   },
   modalButtonSecondaryText: {
     color: '#374151',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  testCardIcon: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  testCardMessage: {
+    fontSize: 14,
+    color: '#374151',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  testCardDetails: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  testCardRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  testCardLabel: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  testCardValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  testCardButton: {
+    backgroundColor: '#EA580C',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  testCardButtonText: {
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
