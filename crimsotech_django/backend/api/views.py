@@ -1,7 +1,8 @@
 from asyncio.log import logger
+import csv
 from asgiref.sync import async_to_sync
 from email import parser
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 import re
 import time
 from django.utils.text import slugify
@@ -32978,32 +32979,31 @@ class RiderDeliveryActionsViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
 class RiderOrderHistoryViewSet(viewsets.ViewSet):
     """
     Rider Order History API endpoints with optimized queries and data integrity
     """
-    
+
+    # ================================================================
+    # PRIVATE HELPERS
+    # ================================================================
+
     def _get_user_from_header(self, request):
         """Extract and validate user from X-User-Id header"""
         user_id = request.headers.get('X-User-Id')
-        
         if not user_id:
             raise ValueError('X-User-Id header is required')
-        
         try:
-            # Try UUID conversion for validation
             user_uuid = uuid.UUID(user_id)
             user = User.objects.get(id=user_uuid)
             return user
         except (ValueError, User.DoesNotExist):
             raise ValueError(f'Invalid or non-existent user ID: {user_id}')
-    
+
     def get_queryset(self, user):
         """Get optimized queryset for rider's deliveries with all necessary relations"""
         try:
             rider = user.rider
-            # Get all deliveries for the rider with optimized queries
             return Delivery.objects.filter(rider=rider).select_related(
                 'order',
                 'order__user',
@@ -33013,7 +33013,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
             ).order_by('-created_at')
         except (Rider.DoesNotExist, AttributeError):
             return Delivery.objects.none()
-    
+
     def _apply_date_filter(self, queryset, start_date, end_date):
         """Apply date filtering to queryset"""
         if start_date and end_date:
@@ -33022,92 +33022,217 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 created_at__date__lte=end_date
             )
         return queryset
-    
+
+    def _is_cod_order(self, order):
+        """Check if order is Cash on Delivery"""
+        return order.payment_method and order.payment_method.lower() in ['cod', 'cash on delivery', 'cash']
+
+    def _calculate_amount_to_remit(self, order, delivery):
+        """Calculate total amount rider needs to remit for an order"""
+        if self._is_cod_order(order):
+            return float(order.total_amount) + float(delivery.delivery_fee or 0)
+        else:
+            return float(delivery.delivery_fee or 0)
+
+    def _calculate_rider_earnings(self, delivery):
+        """Calculate rider's earnings from delivery"""
+        return float(delivery.delivery_fee or 0)
+
+    def _get_unremitted_deliveries_queryset(self, user):
+        """
+        Returns delivered deliveries that have NOT been included
+        in a completed remittance. Used by both unremitted_amounts
+        and initiate_remittance to stay in sync.
+        """
+        return self.get_queryset(user).filter(
+            status='delivered',
+            delivered_at__isnull=False
+        ).exclude(
+            remittance_items__remittance__status='completed'
+        )
+
+    # ================================================================
+    # ORDER HISTORY
+    # ================================================================
+
     @action(detail=False, methods=['get'])
     def order_history(self, request):
         """
-        Get comprehensive order history for rider with metrics
-        Query params: start_date, end_date, status
+        Get comprehensive order history for rider with metrics.
+        Query params: status (optional)
         """
         try:
-            # Get user from X-User-Id header
             user = self._get_user_from_header(request)
-            
-            # Check if user is a rider
+
             if not hasattr(user, 'rider'):
                 return Response({
                     'success': False,
                     'error': 'User is not a rider'
                 }, status=status.HTTP_403_FORBIDDEN)
-            
-            # Get query parameters
-            start_date = request.query_params.get('start_date')
-            end_date = request.query_params.get('end_date')
+
             status_filter = request.query_params.get('status', 'all')
-            
-            # Get base queryset
             deliveries = self.get_queryset(user)
-            
-            # Apply date filtering
-            if start_date and end_date:
-                deliveries = self._apply_date_filter(deliveries, start_date, end_date)
-            
-            # Apply status filter
+
             if status_filter != 'all':
-                if status_filter == 'completed':
-                    deliveries = deliveries.filter(status='delivered')
-                elif status_filter == 'active':
-                    deliveries = deliveries.filter(status__in=['pending', 'picked_up', 'in_progress'])
+                status_map = {
+                    'completed': {'status': 'delivered'},
+                    'active':    {'status__in': ['pending', 'picked_up', 'in_progress', 'accepted']},
+                    'cancelled': {'status': 'cancelled'},
+                    'pending':   {'status': 'pending'},
+                    'accepted':  {'status': 'accepted'},
+                    'picked_up': {'status': 'picked_up'},
+                    'in_progress': {'status': 'in_progress'},
+                    'delivered': {'status': 'delivered'},
+                }
+                if status_filter in status_map:
+                    deliveries = deliveries.filter(**status_map[status_filter])
                 else:
                     deliveries = deliveries.filter(status=status_filter)
-            
-            # Calculate metrics
-            metrics = self._calculate_metrics(deliveries, user.rider, start_date, end_date)
-            
-            # Format response data
+
+            metrics = self._calculate_all_time_metrics(deliveries, user.rider)
             deliveries_data = self._format_delivery_data(deliveries)
-            
+
             return Response({
                 'success': True,
                 'metrics': metrics,
                 'deliveries': deliveries_data,
                 'count': len(deliveries_data),
-                'filters': {
-                    'start_date': start_date,
-                    'end_date': end_date,
-                    'status': status_filter
-                }
+                'filters': {'status': status_filter}
             })
-            
+
         except ValueError as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({
-                'success': False,
-                'error': f'An unexpected error occurred: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
-    def _calculate_metrics(self, deliveries, rider, start_date=None, end_date=None):
-        """Calculate comprehensive metrics for the rider"""
+            return Response({'success': False, 'error': f'An unexpected error occurred: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # ================================================================
+    # METRICS
+    # ================================================================
+
+    def _calculate_all_time_metrics(self, deliveries, rider):
+        """Calculate comprehensive all-time metrics for the rider"""
         if not deliveries.exists():
             return self._get_empty_metrics()
-        
-        # Use database aggregation for efficiency
+
+        delivered_deliveries = deliveries.filter(status='delivered')
+
+        total_earnings = 0.0
+        total_to_remit = 0.0
+        total_cod_amount = 0.0
+        total_online_amount = 0.0
+        cod_count = 0
+        online_count = 0
+
+        for delivery in delivered_deliveries:
+            order = delivery.order
+            is_cod = self._is_cod_order(order)
+            total_earnings += float(delivery.delivery_fee or 0)
+            if is_cod:
+                total_to_remit += float(order.total_amount) + float(delivery.delivery_fee or 0)
+                total_cod_amount += float(order.total_amount)
+                cod_count += 1
+            else:
+                total_to_remit += float(delivery.delivery_fee or 0)
+                total_online_amount += float(order.total_amount)
+                online_count += 1
+
         aggregated = deliveries.aggregate(
             total_deliveries=Count('id'),
             delivered_count=Count('id', filter=Q(status='delivered')),
             cancelled_count=Count('id', filter=Q(status='cancelled')),
-            total_earnings=Coalesce(
-                Sum(
-                    'delivery_fee',
-                    filter=Q(status='delivered')
-                ),
+            pending_count=Count('id', filter=Q(status='pending')),
+            accepted_count=Count('id', filter=Q(status='accepted')),
+            picked_up_count=Count('id', filter=Q(status='picked_up')),
+            in_progress_count=Count('id', filter=Q(status='in_progress')),
+            avg_delivery_time=Avg(
+                F('actual_minutes'),
+                filter=Q(status='delivered', actual_minutes__isnull=False)
+            ),
+            avg_rating=Avg('delivery_rating', filter=Q(delivery_rating__isnull=False)),
+            on_time_count=Count(
+                'id',
+                filter=Q(
+                    status='delivered',
+                    estimated_minutes__isnull=False,
+                    actual_minutes__isnull=False,
+                    actual_minutes__lte=F('estimated_minutes')
+                )
+            ),
+            total_distance=Coalesce(
+                Sum('distance_km', filter=Q(status='delivered')),
                 Decimal('0.00'),
                 output_field=DecimalField()
-            ),
+            )
+        )
+
+        delivered_count = aggregated['delivered_count'] or 0
+        on_time_percentage = 0
+        if delivered_count > 0:
+            on_time_percentage = round((aggregated['on_time_count'] / delivered_count) * 100, 1)
+
+        date_range = deliveries.filter(status='delivered').aggregate(
+            first_delivery=Min('delivered_at'),
+            last_delivery=Max('delivered_at')
+        )
+
+        unremitted_data = delivered_deliveries.aggregate(unremitted_count=Count('id'))
+
+        return {
+            'total_deliveries': aggregated['total_deliveries'],
+            'delivered_count': aggregated['delivered_count'],
+            'cancelled_count': aggregated['cancelled_count'],
+            'pending_count': aggregated['pending_count'],
+            'accepted_count': aggregated['accepted_count'],
+            'picked_up_count': aggregated['picked_up_count'],
+            'in_progress_count': aggregated['in_progress_count'],
+            'total_earnings': total_earnings,
+            'total_to_remit': total_to_remit,
+            'cod_orders': {
+                'count': cod_count,
+                'total_order_amount': total_cod_amount,
+                'total_with_fees': total_cod_amount
+            },
+            'online_orders': {
+                'count': online_count,
+                'total_order_amount': total_online_amount,
+                'total_with_fees': total_online_amount
+            },
+            'unremitted_count': unremitted_data['unremitted_count'],
+            'avg_delivery_time': round(aggregated['avg_delivery_time'] or 0, 1),
+            'avg_rating': round(aggregated['avg_rating'] or 0, 1),
+            'on_time_percentage': on_time_percentage,
+            'total_distance_km': float(aggregated['total_distance']),
+            'first_delivery': date_range['first_delivery'].isoformat() if date_range['first_delivery'] else None,
+            'last_delivery': date_range['last_delivery'].isoformat() if date_range['last_delivery'] else None,
+            'has_data': aggregated['total_deliveries'] > 0,
+            'rider_since': rider.approval_date.isoformat() if rider.approval_date else None,
+            'rider_verified': rider.verified,
+            'rider_status': rider.availability_status,
+            'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
+        }
+
+    def _calculate_metrics(self, deliveries, rider, start_date=None, end_date=None):
+        """Calculate metrics for a filtered queryset"""
+        if not deliveries.exists():
+            return self._get_empty_metrics()
+
+        delivered_deliveries = deliveries.filter(status='delivered')
+
+        total_earnings = 0.0
+        total_to_remit = 0.0
+
+        for delivery in delivered_deliveries:
+            order = delivery.order
+            total_earnings += float(delivery.delivery_fee or 0)
+            if self._is_cod_order(order):
+                total_to_remit += float(order.total_amount) + float(delivery.delivery_fee or 0)
+            else:
+                total_to_remit += float(delivery.delivery_fee or 0)
+
+        aggregated = deliveries.aggregate(
+            total_deliveries=Count('id'),
+            delivered_count=Count('id', filter=Q(status='delivered')),
+            cancelled_count=Count('id', filter=Q(status='cancelled')),
             avg_delivery_time=Avg(
                 F('actual_minutes'),
                 filter=Q(status='delivered', actual_minutes__isnull=False)
@@ -33123,62 +33248,622 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 )
             )
         )
-        
-        # Calculate percentages
+
         delivered_count = aggregated['delivered_count'] or 0
         on_time_percentage = 0
         if delivered_count > 0:
             on_time_percentage = round((aggregated['on_time_count'] / delivered_count) * 100, 1)
-        
-        # Today's deliveries
+
         today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        today_deliveries = deliveries.filter(
-            status='delivered',
-            delivered_at__gte=today_start
-        ).count()
-        
-        # This week's earnings
+        today_deliveries = deliveries.filter(status='delivered', delivered_at__gte=today_start).count()
+
         week_start = timezone.now() - timedelta(days=timezone.now().weekday())
-        week_earnings = deliveries.filter(
-            status='delivered',
-            delivered_at__gte=week_start,
-            order__payment__status='success'
-        ).aggregate(
-            total=Coalesce(
-                Sum('order__total_amount'),
-                Decimal('0.00'),
-                output_field=DecimalField()
-            )
-        )['total']
-        
+        week_deliveries = deliveries.filter(status='delivered', delivered_at__gte=week_start)
+
+        week_earnings = 0.0
+        week_to_remit = 0.0
+        for delivery in week_deliveries:
+            order = delivery.order
+            week_earnings += float(delivery.delivery_fee or 0)
+            if self._is_cod_order(order):
+                week_to_remit += float(order.total_amount) + float(delivery.delivery_fee or 0)
+            else:
+                week_to_remit += float(delivery.delivery_fee or 0)
+
         return {
             'total_deliveries': aggregated['total_deliveries'],
             'delivered_count': aggregated['delivered_count'],
             'cancelled_count': aggregated['cancelled_count'],
-            'total_earnings': float(aggregated['total_earnings']),
+            'total_earnings': total_earnings,
+            'total_to_remit': total_to_remit,
             'avg_delivery_time': round(aggregated['avg_delivery_time'] or 0, 1),
             'avg_rating': round(aggregated['avg_rating'] or 0, 1),
             'on_time_percentage': on_time_percentage,
             'today_deliveries': today_deliveries,
-            'week_earnings': float(week_earnings),
+            'week_earnings': week_earnings,
+            'week_to_remit': week_to_remit,
             'has_data': aggregated['total_deliveries'] > 0,
-            'date_range': {
-                'start_date': start_date,
-                'end_date': end_date
-            }
+            'date_range': {'start_date': start_date, 'end_date': end_date},
+            'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
         }
-    
+
+    def _get_empty_metrics(self):
+        return {
+            'total_deliveries': 0,
+            'delivered_count': 0,
+            'cancelled_count': 0,
+            'pending_count': 0,
+            'accepted_count': 0,
+            'picked_up_count': 0,
+            'in_progress_count': 0,
+            'total_earnings': 0.0,
+            'total_to_remit': 0.0,
+            'cod_orders': {'count': 0, 'total_order_amount': 0.0, 'total_with_fees': 0.0},
+            'online_orders': {'count': 0, 'total_order_amount': 0.0, 'total_with_fees': 0.0},
+            'unremitted_count': 0,
+            'avg_delivery_time': 0,
+            'avg_rating': 0,
+            'on_time_percentage': 0,
+            'total_distance_km': 0.0,
+            'first_delivery': None,
+            'last_delivery': None,
+            'has_data': False,
+            'rider_since': None,
+            'rider_verified': False,
+            'rider_status': None,
+            'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
+        }
+
+    # ================================================================
+    # UNREMITTED AMOUNTS
+    # ================================================================
+
+    @action(detail=False, methods=['get'])
+    def unremitted_amounts(self, request):
+        """
+        Get all unremitted amounts for the rider.
+        Excludes deliveries already covered by a completed remittance.
+        Query params: start_date, end_date
+        """
+        try:
+            user = self._get_user_from_header(request)
+
+            if not hasattr(user, 'rider'):
+                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+
+            deliveries = self._get_unremitted_deliveries_queryset(user)
+
+            if start_date and end_date:
+                deliveries = self._apply_date_filter(deliveries, start_date, end_date)
+
+            total_unremitted = Decimal('0.00')
+            total_cod_amount = Decimal('0.00')
+            total_delivery_fees = Decimal('0.00')
+            cod_count = 0
+            online_count = 0
+            unremitted_deliveries = []
+
+            for delivery in deliveries:
+                order = delivery.order
+                customer = order.user
+                is_cod = self._is_cod_order(order)
+
+                if is_cod:
+                    amount_to_remit = order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
+                    total_cod_amount += order.total_amount
+                    cod_count += 1
+                else:
+                    amount_to_remit = delivery.delivery_fee or Decimal('0.00')
+                    online_count += 1
+
+                total_unremitted += amount_to_remit
+                total_delivery_fees += (delivery.delivery_fee or Decimal('0.00'))
+
+                unremitted_deliveries.append({
+                    'delivery_id': str(delivery.id),
+                    'order_id': str(order.order),
+                    'order_number': str(order.order)[:8].upper(),
+                    'customer_name': f"{customer.first_name} {customer.last_name}".strip() or customer.username,
+                    'delivery_date': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                    'order_amount': float(order.total_amount),
+                    'delivery_fee': float(delivery.delivery_fee or 0),
+                    'total_to_remit': float(amount_to_remit),
+                    'payment_method': order.payment_method,
+                    'is_cod': is_cod,
+                    'has_been_remitted': False,
+                    'remittance_due_date': (delivery.delivered_at + timedelta(days=7)).isoformat() if delivery.delivered_at else None
+                })
+
+            return Response({
+                'success': True,
+                'summary': {
+                    'total_unremitted_amount': float(total_unremitted),
+                    'total_delivery_fees': float(total_delivery_fees),
+                    'total_cod_order_amount': float(total_cod_amount),
+                    'cod_orders_count': cod_count,
+                    'online_orders_count': online_count,
+                    'total_orders': cod_count + online_count,
+                    'total_deliveries': len(unremitted_deliveries),
+                    'currency': 'PHP',
+                    'note': 'For COD orders, total includes order amount + delivery fee. For online payments, only delivery fee needs to be remitted.'
+                },
+                'unremitted_deliveries': unremitted_deliveries,
+                'date_range': {'start_date': start_date, 'end_date': end_date},
+                'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False),
+                'test_card': {
+                    'message': 'For sandbox testing, use:',
+                    'card_number': '5123450000000008',
+                    'expiry': '12/25',
+                    'cvv': '123',
+                    'otp': '123456'
+                } if getattr(settings, 'ENABLE_SANDBOX', False) else None
+            })
+
+        except ValueError as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'success': False, 'error': f'An unexpected error occurred: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # ================================================================
+    # INITIATE REMITTANCE (Maya)
+    # ================================================================
+
+    @action(detail=False, methods=['POST'], url_path='initiate_remittance')
+    def initiate_remittance(self, request):
+        """
+        Initiate rider remittance via Maya PWM.
+        Creates a PENDING RiderRemittance record, then redirects to Maya.
+        Body: { "delivery_ids": ["uuid1", "uuid2"], "user_id": "uuid" }
+        """
+        enable_sandbox = getattr(settings, 'ENABLE_SANDBOX', False)
+        if not enable_sandbox:
+            return Response({'success': False, 'error': 'Sandbox mode is not enabled'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            import base64
+            import requests as http_requests
+            from datetime import datetime as dt
+
+            # Resolve user
+            try:
+                user = self._get_user_from_header(request)
+                user_id = str(user.id)
+            except ValueError:
+                user_id = request.data.get('user_id')
+                if not user_id:
+                    return Response({'success': False, 'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+                try:
+                    user = User.objects.get(id=user_id)
+                except User.DoesNotExist:
+                    return Response({'success': False, 'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            if not hasattr(user, 'rider'):
+                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
+
+            delivery_ids = request.data.get('delivery_ids', [])
+            if not delivery_ids:
+                return Response({'success': False, 'error': 'delivery_ids are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Only delivered + not yet in a completed remittance
+            deliveries = Delivery.objects.filter(
+                id__in=delivery_ids,
+                rider=user.rider,
+                status='delivered'
+            ).exclude(
+                remittance_items__remittance__status='completed'
+            ).select_related('order')
+
+            if not deliveries.exists():
+                return Response({
+                    'success': False,
+                    'error': 'No valid unremitted deliveries found. These may have already been remitted.'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Calculate total
+            total_amount = Decimal('0.00')
+            items_preview = []
+            for delivery in deliveries:
+                order = delivery.order
+                is_cod = self._is_cod_order(order)
+                amount = (
+                    order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
+                    if is_cod else
+                    (delivery.delivery_fee or Decimal('0.00'))
+                )
+                total_amount += amount
+                items_preview.append({
+                    'delivery_id': str(delivery.id),
+                    'order_number': str(order.order)[:8].upper(),
+                    'amount': float(amount),
+                    'is_cod': is_cod,
+                })
+
+            reference = f"REM-{user_id[:8].upper()}-{dt.now().strftime('%H%M%S')}"
+
+            # Build Maya payload
+            maya_config = settings.MAYA_SANDBOX
+            base_url = maya_config['BASE_URL']
+            public_key = maya_config['PUBLIC_KEY']
+            frontend_url = settings.FRONTEND_URL
+
+            credentials = base64.b64encode(f"{public_key}:".encode()).decode()
+
+            payload = {
+                "totalAmount": {"value": round(float(total_amount), 2), "currency": "PHP"},
+                "requestReferenceNumber": reference,
+                "items": [{
+                    "name": f"Rider Remittance ({len(items_preview)} delivery{'s' if len(items_preview) != 1 else ''})",
+                    "quantity": len(items_preview),
+                    "code": f"REM-{user_id[:8].upper()}",
+                    "description": "Rider remittance payment",
+                    "amount": {"value": round(float(total_amount / len(items_preview)), 2), "currency": "PHP"},
+                    "totalAmount": {"value": round(float(total_amount), 2), "currency": "PHP"}
+                }],
+                "redirectUrl": {
+                    "success": f"{frontend_url}/rider/remit-amount?status=success&reference={reference}",
+                    "failure": f"{frontend_url}/rider/remit-amount?status=failed&reference={reference}",
+                    "cancel":  f"{frontend_url}/rider/remit-amount?status=cancelled&reference={reference}"
+                }
+            }
+
+            maya_response = http_requests.post(
+                f"{base_url}/payby/v2/paymaya/payments",
+                json=payload,
+                headers={
+                    "Authorization": f"Basic {credentials}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                timeout=30
+            )
+
+            if maya_response.status_code not in [200, 201]:
+                logger.error(f"Maya API error {maya_response.status_code}: {maya_response.text}")
+                return Response({
+                    'success': False,
+                    'error': f"Maya API error: {maya_response.text}"
+                }, status=status.HTTP_502_BAD_GATEWAY)
+
+            maya_data = maya_response.json()
+            redirect_url = maya_data.get('redirectUrl')
+            payment_id = maya_data.get('paymentId') or maya_data.get('id')
+
+            if not redirect_url:
+                return Response({'success': False, 'error': 'No redirect URL from Maya'}, status=status.HTTP_502_BAD_GATEWAY)
+
+            # Create PENDING remittance + items
+            remittance = RiderRemittance.objects.create(
+                rider=user.rider,
+                reference_number=reference,
+                total_amount=total_amount,
+                payment_method='Maya',
+                maya_payment_id=payment_id,
+                status='pending'
+            )
+            for delivery in deliveries:
+                order = delivery.order
+                is_cod = self._is_cod_order(order)
+                amount = (
+                    order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
+                    if is_cod else
+                    (delivery.delivery_fee or Decimal('0.00'))
+                )
+                RiderRemittanceItem.objects.create(
+                    remittance=remittance,
+                    delivery=delivery,
+                    order_amount=order.total_amount,
+                    delivery_fee=delivery.delivery_fee or Decimal('0.00'),
+                    amount_remitted=amount,
+                    is_cod=is_cod,
+                    payment_method=order.payment_method,
+                )
+
+            logger.info(f"Created pending remittance {reference} for rider {user.rider}")
+
+            return Response({
+                'success': True,
+                'message': 'Remittance initiated. Redirecting to Maya payment.',
+                'reference_number': reference,
+                'total_amount': float(total_amount),
+                'deliveries_count': len(items_preview),
+                'items': items_preview,
+                'redirect_url': redirect_url,
+                'payment_id': payment_id,
+                'sandbox_mode': True,
+            })
+
+        except Exception as e:
+            logger.error(f"Error initiating remittance: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response({
+                'success': False,
+                'error': 'Failed to initiate remittance',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    @action(detail=False, methods=['get'], url_path='remittance-success')
+    def remittance_success(self, request):
+        """
+        Maya browser redirect after successful payment.
+        Marks the RiderRemittance as completed, then redirects frontend.
+        """
+        reference = request.GET.get('reference')
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+
+        if not reference:
+            from django.shortcuts import redirect
+            return redirect(f"{frontend_url}/rider/remit-amount?status=failed&error=missing_reference")
+
+        try:
+            remittance = RiderRemittance.objects.get(reference_number=reference)
+
+            if remittance.status == 'pending':
+                remittance.status = 'completed'
+                remittance.processed_at = timezone.now()
+                remittance.save(update_fields=['status', 'processed_at'])
+                logger.info(f"Remittance {reference} marked as completed via success callback")
+            elif remittance.status == 'completed':
+                logger.info(f"Remittance {reference} already completed — duplicate callback ignored")
+
+        except RiderRemittance.DoesNotExist:
+            logger.error(f"Remittance {reference} not found in success callback")
+            from django.shortcuts import redirect
+            return redirect(f"{frontend_url}/rider/remit-amount?status=failed&error=not_found&reference={reference}")
+        except Exception as e:
+            logger.error(f"Error completing remittance {reference}: {str(e)}")
+            from django.shortcuts import redirect
+            return redirect(f"{frontend_url}/rider/remit-amount?status=failed&error=server_error&reference={reference}")
+
+        from django.shortcuts import redirect
+        return redirect(f"{frontend_url}/rider/remit-amount?status=success&reference={reference}")
+
+
+    @action(detail=False, methods=['get'], url_path='remittance-failure')
+    def remittance_failure(self, request):
+        """Maya browser redirect after failed payment."""
+        reference = request.GET.get('reference')
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+
+        if reference:
+            try:
+                RiderRemittance.objects.filter(
+                    reference_number=reference,
+                    status='pending'
+                ).update(status='failed')
+                logger.info(f"Remittance {reference} marked as failed")
+            except Exception as e:
+                logger.error(f"Error marking remittance {reference} as failed: {str(e)}")
+
+        from django.shortcuts import redirect
+        return redirect(f"{frontend_url}/rider/remit-amount?status=failed&reference={reference or ''}")
+
+
+    @action(detail=False, methods=['get'], url_path='remittance-cancel')
+    def remittance_cancel(self, request):
+        """Maya browser redirect after cancelled payment."""
+        reference = request.GET.get('reference')
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+
+        if reference:
+            try:
+                RiderRemittance.objects.filter(
+                    reference_number=reference,
+                    status='pending'
+                ).update(status='cancelled')
+                logger.info(f"Remittance {reference} marked as cancelled")
+            except Exception as e:
+                logger.error(f"Error marking remittance {reference} as cancelled: {str(e)}")
+
+        from django.shortcuts import redirect
+        return redirect(f"{frontend_url}/rider/remit-amount?status=cancelled&reference={reference or ''}")
+
+
+    @action(detail=False, methods=['post'], url_path='process_remittance')
+    def process_remittance(self, request):
+        """
+        Sandbox shortcut: directly creates a completed remittance without Maya.
+        Body: { "delivery_ids": ["uuid1"], "user_id": "uuid" }
+        """
+        enable_sandbox = getattr(settings, 'ENABLE_SANDBOX', False)
+        if not enable_sandbox:
+            return Response({'success': False, 'error': 'Sandbox mode is not enabled'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            user_id = request.data.get('user_id')
+            delivery_ids = request.data.get('delivery_ids', [])
+
+            if not user_id or not delivery_ids:
+                return Response({'success': False, 'error': 'user_id and delivery_ids are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({'success': False, 'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            if not hasattr(user, 'rider'):
+                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
+
+            deliveries = Delivery.objects.filter(
+                id__in=delivery_ids,
+                rider=user.rider,
+                status='delivered'
+            ).exclude(
+                remittance_items__remittance__status='completed'
+            ).select_related('order')
+
+            if not deliveries.exists():
+                return Response({
+                    'success': False,
+                    'error': 'No valid unremitted deliveries found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            total_amount = Decimal('0.00')
+            remittance_details = []
+
+            for delivery in deliveries:
+                order = delivery.order
+                is_cod = self._is_cod_order(order)
+                amount = (
+                    order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
+                    if is_cod else
+                    (delivery.delivery_fee or Decimal('0.00'))
+                )
+                total_amount += amount
+                remittance_details.append({
+                    'delivery_id': str(delivery.id),
+                    'order_number': str(order.order)[:8].upper(),
+                    'amount': float(amount),
+                    'is_cod': is_cod,
+                    'payment_method': order.payment_method,
+                })
+
+            reference = f"REM{str(uuid.uuid4())[:8].upper()}"
+
+            # Create completed remittance directly
+            remittance = RiderRemittance.objects.create(
+                rider=user.rider,
+                reference_number=reference,
+                total_amount=total_amount,
+                payment_method='Cash',
+                status='completed',
+                processed_at=timezone.now()
+            )
+            for delivery in deliveries:
+                order = delivery.order
+                is_cod = self._is_cod_order(order)
+                amount = (
+                    order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
+                    if is_cod else
+                    (delivery.delivery_fee or Decimal('0.00'))
+                )
+                RiderRemittanceItem.objects.create(
+                    remittance=remittance,
+                    delivery=delivery,
+                    order_amount=order.total_amount,
+                    delivery_fee=delivery.delivery_fee or Decimal('0.00'),
+                    amount_remitted=amount,
+                    is_cod=is_cod,
+                    payment_method=order.payment_method,
+                )
+
+            logger.info(f"Sandbox: completed remittance {reference} for rider {user.rider}")
+
+            return Response({
+                'success': True,
+                'message': 'Remittance processed successfully',
+                'reference_number': reference,
+                'total_amount': float(total_amount),
+                'deliveries_count': len(remittance_details),
+                'deliveries': remittance_details,
+                'sandbox_mode': True,
+            })
+
+        except Exception as e:
+            logger.error(f"Error processing remittance: {str(e)}")
+            return Response({
+                'success': False,
+                'error': 'Failed to process remittance',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+    @action(detail=False, methods=['get'], url_path='remittance-history')
+    def remittance_history(self, request):
+        """
+        Get rider's remittance history from RiderRemittance records.
+        Query params: start_date, end_date, status
+        """
+        try:
+            user = self._get_user_from_header(request)
+
+            if not hasattr(user, 'rider'):
+                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
+
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            status_filter = request.query_params.get('status', 'all')
+
+            remittances = RiderRemittance.objects.filter(
+                rider=user.rider
+            ).prefetch_related('items__delivery__order').order_by('-created_at')
+
+            if status_filter != 'all':
+                remittances = remittances.filter(status=status_filter)
+
+            if start_date and end_date:
+                remittances = remittances.filter(
+                    created_at__date__gte=start_date,
+                    created_at__date__lte=end_date
+                )
+
+            history_data = []
+            for remittance in remittances:
+                items_data = []
+                for item in remittance.items.all():
+                    delivery = item.delivery
+                    items_data.append({
+                        'delivery_id': str(delivery.id) if delivery else None,
+                        'order_id': str(delivery.order.order) if delivery else None,
+                        'order_number': str(delivery.order.order)[:8].upper() if delivery else None,
+                        'order_amount': float(item.order_amount),
+                        'delivery_fee': float(item.delivery_fee),
+                        'amount_remitted': float(item.amount_remitted),
+                        'is_cod': item.is_cod,
+                        'payment_method': item.payment_method,
+                    })
+
+                history_data.append({
+                    'id': str(remittance.id),
+                    'reference_number': remittance.reference_number,
+                    'total_amount': float(remittance.total_amount),
+                    'status': remittance.status,
+                    'payment_method': remittance.payment_method,
+                    'maya_payment_id': remittance.maya_payment_id,
+                    'deliveries_count': remittance.deliveries_count,
+                    'processed_at': remittance.processed_at.isoformat() if remittance.processed_at else None,
+                    'created_at': remittance.created_at.isoformat(),
+                    'items': items_data,
+                })
+
+            # Summary
+            total_remitted = sum(r['total_amount'] for r in history_data if r['status'] == 'completed')
+
+            return Response({
+                'success': True,
+                'remittance_history': history_data,
+                'count': len(history_data),
+                'summary': {
+                    'total_remitted': total_remitted,
+                    'completed_count': sum(1 for r in history_data if r['status'] == 'completed'),
+                    'pending_count': sum(1 for r in history_data if r['status'] == 'pending'),
+                    'failed_count': sum(1 for r in history_data if r['status'] == 'failed'),
+                },
+                'date_range': {'start_date': start_date, 'end_date': end_date},
+                'current_filter': status_filter,
+            })
+
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # ================================================================
+    # FORMAT HELPERS
+    # ================================================================
+
     def _format_delivery_data(self, deliveries):
         """Format delivery data for frontend consumption"""
         formatted_deliveries = []
-        
+
         for delivery in deliveries:
             order = delivery.order
             customer = order.user
             shipping_address = order.shipping_address
             payment = order.payment_set.filter(status='success').first()
-            
-            # Calculate time elapsed for pending deliveries
+            is_cod = self._is_cod_order(order)
+
             time_elapsed = None
             is_late = False
             if delivery.status in ['pending', 'picked_up', 'in_progress']:
@@ -33186,25 +33871,26 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 hours = int(time_diff.total_seconds() // 3600)
                 minutes = int((time_diff.total_seconds() % 3600) // 60)
                 time_elapsed = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
-                
-                # Check if delivery is late (more than estimated time or 2 hours for pending)
                 if delivery.estimated_minutes:
                     expected_delivery_time = delivery.created_at + timedelta(minutes=delivery.estimated_minutes)
                     is_late = timezone.now() > expected_delivery_time
                 else:
-                    # Default: pending for more than 2 hours is late
-                    is_late = time_diff.total_seconds() > 7200  # 2 hours in seconds
-            
-            # Get shop name from order items if available
+                    is_late = time_diff.total_seconds() > 7200
+
             shop_name = None
             try:
                 if order.checkout_set.exists():
                     first_item = order.checkout_set.first()
                     if first_item.cart_item and first_item.cart_item.product and first_item.cart_item.product.shop:
                         shop_name = first_item.cart_item.product.shop.name
-            except:
+            except Exception:
                 shop_name = None
-            
+
+            # Check if this delivery has been remitted
+            is_remitted = delivery.remittance_items.filter(
+                remittance__status='completed'
+            ).exists()
+
             formatted_deliveries.append({
                 'id': str(delivery.id),
                 'order_id': str(order.order),
@@ -33212,153 +33898,128 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 'customer_name': f"{customer.first_name} {customer.last_name}".strip() or customer.username,
                 'customer_contact': customer.contact_number,
                 'customer_email': customer.email,
-                
-                # Shipping address info
                 'pickup_location': shop_name or "Pickup Location",
                 'delivery_location': shipping_address.get_full_address() if shipping_address else "Address not available",
                 'recipient_name': shipping_address.recipient_name if shipping_address else customer.first_name,
                 'recipient_phone': shipping_address.recipient_phone if shipping_address else customer.contact_number,
-                
-                # Delivery details
                 'status': delivery.status,
                 'distance_km': float(delivery.distance_km) if delivery.distance_km else None,
                 'estimated_minutes': delivery.estimated_minutes,
                 'actual_minutes': delivery.actual_minutes,
                 'delivery_rating': delivery.delivery_rating,
                 'notes': delivery.notes,
-                
-                # Order financials
                 'order_amount': float(order.total_amount),
                 'delivery_fee': float(delivery.delivery_fee or 0),
+                'total_amount': float(order.total_amount + (delivery.delivery_fee or 0)),
                 'payment_method': order.payment_method,
+                'is_cod': is_cod,
                 'payment_status': payment.status if payment else 'unknown',
-                
-                # Shop information
+                'amount_to_remit': float(order.total_amount + (delivery.delivery_fee or 0)) if is_cod else float(delivery.delivery_fee or 0),
+                'rider_earnings': float(delivery.delivery_fee or 0),
+                'is_remitted': is_remitted,
                 'shop_name': shop_name,
-                'shop_contact': None,  # Could be fetched from shop if available
-                
-                # Timestamps
+                'shop_contact': None,
                 'order_created_at': order.created_at.isoformat(),
                 'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
                 'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
                 'created_at': delivery.created_at.isoformat(),
-                
-                # Additional metadata
                 'items_count': order.checkout_set.count(),
                 'items_summary': self._get_items_summary(order),
                 'is_late': is_late,
                 'time_elapsed': time_elapsed,
+                'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
             })
-        
+
         return formatted_deliveries
-    
+
     def _get_items_summary(self, order):
         """Get a brief summary of order items"""
-        items = order.checkout_set.all()[:3]  # Get first 3 items
+        items = order.checkout_set.all()[:3]
         if not items.exists():
             return "No items"
-        
+
         item_names = []
         for item in items:
             if item.cart_item and item.cart_item.product:
                 item_names.append(item.cart_item.product.name)
             else:
                 item_names.append("Unknown Product")
-        
+
         summary = ", ".join(item_names)
         if order.checkout_set.count() > 3:
             summary += f" and {order.checkout_set.count() - 3} more"
-        
         return summary
-    
-    def _get_empty_metrics(self):
-        """Return empty metrics structure"""
-        return {
-            'total_deliveries': 0,
-            'delivered_count': 0,
-            'cancelled_count': 0,
-            'total_earnings': 0.0,
-            'avg_delivery_time': 0,
-            'avg_rating': 0,
-            'on_time_percentage': 0,
-            'today_deliveries': 0,
-            'week_earnings': 0.0,
-            'has_data': False,
-        }
-    
+
+    # ================================================================
+    # EXPORT
+    # ================================================================
+
     @action(detail=False, methods=['get'])
     def export_history(self, request):
         """Export order history as CSV or JSON"""
         try:
             user = self._get_user_from_header(request)
-            
+
             if not hasattr(user, 'rider'):
-                return Response({
-                    'success': False,
-                    'error': 'User is not a rider'
-                }, status=status.HTTP_403_FORBIDDEN)
-            
+                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
+
             format_type = request.query_params.get('format', 'json')
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
-            
+
             deliveries = self.get_queryset(user)
-            
             if start_date and end_date:
                 deliveries = self._apply_date_filter(deliveries, start_date, end_date)
-            
+
             if format_type == 'csv':
-                # Return CSV response
-                import csv
-                from django.http import HttpResponse
-                
                 response = HttpResponse(content_type='text/csv')
                 response['Content-Disposition'] = 'attachment; filename="rider_history.csv"'
-                
                 writer = csv.writer(response)
                 writer.writerow([
                     'Order ID', 'Customer', 'Delivery Address', 'Status',
-                    'Amount', 'Payment Method', 'Rating', 'Delivery Time',
-                    'Order Date', 'Delivered Date'
+                    'Payment Method', 'Order Amount', 'Delivery Fee', 'Total Amount',
+                    'Amount to Remit', 'Rider Earnings', 'Is Remitted', 'Rating',
+                    'Delivery Time', 'Order Date', 'Delivered Date'
                 ])
-                
                 for delivery in deliveries:
                     order = delivery.order
                     customer = order.user
                     shipping_address = order.shipping_address
-                    
+                    is_cod = self._is_cod_order(order)
+                    amount_to_remit = float(order.total_amount + (delivery.delivery_fee or 0)) if is_cod else float(delivery.delivery_fee or 0)
+                    is_remitted = delivery.remittance_items.filter(remittance__status='completed').exists()
+
                     writer.writerow([
                         str(order.order)[:8],
                         f"{customer.first_name} {customer.last_name}",
                         shipping_address.get_full_address() if shipping_address else "N/A",
                         delivery.get_status_display(),
-                        str(order.total_amount),
                         order.payment_method,
+                        str(order.total_amount),
+                        str(delivery.delivery_fee or 0),
+                        str(order.total_amount + (delivery.delivery_fee or 0)),
+                        str(amount_to_remit),
+                        str(delivery.delivery_fee or 0),
+                        'Yes' if is_remitted else 'No',
                         str(delivery.delivery_rating) if delivery.delivery_rating else "N/A",
                         f"{delivery.actual_minutes}m" if delivery.actual_minutes else "N/A",
                         order.created_at.strftime('%Y-%m-%d'),
                         delivery.delivered_at.strftime('%Y-%m-%d') if delivery.delivered_at else "N/A"
                     ])
-                
                 return response
-            
             else:
-                # Return JSON response
                 deliveries_data = self._format_delivery_data(deliveries)
-                
                 return Response({
                     'success': True,
                     'format': 'json',
                     'count': len(deliveries_data),
-                    'data': deliveries_data
+                    'data': deliveries_data,
+                    'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
                 })
-                
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                   
 class RiderScheduleViewSet(viewsets.ViewSet):
     """
     Rider Schedule API endpoints for managing rider availability and schedules
@@ -36448,6 +37109,7 @@ class SellerBoosts(viewsets.ViewSet):
             print(f"Error in initiate_maya_payment: {str(e)}")
             print(traceback.format_exc())
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class HomeBoosts(viewsets.ViewSet):
     """ViewSet for showing boosted products on home page"""
     

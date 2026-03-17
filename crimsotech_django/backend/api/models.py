@@ -1119,6 +1119,7 @@ class Delivery(models.Model):
     scheduled_pickup_time = models.DateTimeField(null=True, blank=True)
     scheduled_delivery_time = models.DateTimeField(null=True, blank=True)
     is_scheduled = models.BooleanField(default=False)
+    metadata = models.JSONField(null=True, blank=True, default=None)
 
     class Meta:
         indexes = [
@@ -2239,3 +2240,102 @@ class WithdrawalRequest(models.Model):
 
     def __str__(self):
         return f"Withdrawal {self.withdrawal_id} - {self.amount} for {self.user.username}"
+
+# -----------------------------
+# Rider Remittance
+# -----------------------------
+class RiderRemittance(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    PAYMENT_METHOD_CHOICES = [
+        ('Maya', 'Maya'),
+        ('GCash', 'GCash'),
+        ('Cash', 'Cash'),
+        ('Bank Transfer', 'Bank Transfer'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    rider = models.ForeignKey(
+        Rider,
+        on_delete=models.CASCADE,
+        related_name='remittances'
+    )
+    reference_number = models.CharField(max_length=100, unique=True)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    payment_method = models.CharField(max_length=50, choices=PAYMENT_METHOD_CHOICES, default='Maya')
+
+    # Maya-specific fields
+    maya_payment_id = models.CharField(max_length=200, blank=True, null=True)
+
+    # Who verified/processed it (admin side)
+    processed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='processed_remittances'
+    )
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['rider', 'status']),
+            models.Index(fields=['reference_number']),
+            models.Index(fields=['status', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"Remittance {self.reference_number} by {self.rider.rider.username} - {self.status}"
+
+    @property
+    def deliveries_count(self):
+        return self.items.count()
+
+
+class RiderRemittanceItem(models.Model):
+    """
+    Each delivery included in a remittance batch.
+    Stores the snapshot amounts so historical records stay accurate
+    even if delivery/order data changes later.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    remittance = models.ForeignKey(
+        RiderRemittance,
+        on_delete=models.CASCADE,
+        related_name='items'
+    )
+    delivery = models.ForeignKey(
+        Delivery,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='remittance_items'
+    )
+
+    # Snapshot amounts at time of remittance
+    order_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2)
+    amount_remitted = models.DecimalField(max_digits=12, decimal_places=2)  # actual amount rider remits
+    is_cod = models.BooleanField(default=False)
+    payment_method = models.CharField(max_length=50, blank=True, null=True)  # order payment method
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['remittance']),
+            models.Index(fields=['delivery']),
+        ]
+
+    def __str__(self):
+        return f"RemittanceItem {self.id} for Remittance {self.remittance.reference_number}"

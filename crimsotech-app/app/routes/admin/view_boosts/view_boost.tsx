@@ -32,7 +32,6 @@ import {
   DollarSign,
   Zap,
   FileText,
-  Download,
   ExternalLink,
   RefreshCw,
   PauseCircle,
@@ -45,7 +44,6 @@ import {
   Layers,
   Award,
   CreditCard,
-  Receipt,
   Hash,
   Building2
 } from 'lucide-react';
@@ -103,8 +101,6 @@ interface BoostDetails {
   status: 'active' | 'pending' | 'expired' | 'cancelled' | 'suspended' | 'completed';
   payment_method?: string;
   payment_verified: boolean;
-  has_receipt: boolean;
-  receipt_url?: string;
   start_date?: string;
   end_date?: string;
   created_at: string;
@@ -466,8 +462,6 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
           status: data.status || 'pending',
           payment_method: data.payment_method,
           payment_verified: data.payment_verified || false,
-          has_receipt: data.has_receipt || !!data.receipt_url,
-          receipt_url: data.receipt_url,
           start_date: data.start_date,
           end_date: data.end_date,
           created_at: data.created_at || data.createdAt,
@@ -1199,35 +1193,9 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
                       </div>
                     </div>
                     
-                    {/* Receipt Section */}
-                    {boost.has_receipt && (
-                      <div className="pt-3 border-t border-slate-200">
-                        <p className="text-sm font-medium text-slate-900 mb-3 flex items-center gap-2">
-                          <Receipt className="h-4 w-4 text-slate-600" />
-                          Payment Receipt
-                        </p>
-                        {boost.receipt_url ? (
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm" className="flex-1 border-slate-200 hover:bg-slate-100" asChild>
-                              <a href={boost.receipt_url} target="_blank" rel="noopener noreferrer">
-                                <Eye className="h-4 w-4 mr-2" /> View
-                              </a>
-                            </Button>
-                            <Button variant="outline" size="sm" className="border-slate-200 hover:bg-slate-100" asChild>
-                              <a href={boost.receipt_url} download>
-                                <Download className="h-4 w-4" />
-                              </a>
-                            </Button>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-slate-600">Receipt uploaded but URL not available</p>
-                        )}
-                      </div>
-                    )}
-                    
                     {/* Verification Details */}
                     {boost.verification && boost.verification.verified && (
-                      <div className="mt-4 pt-3 border-t border-slate-200">
+                      <div className="pt-3 border-t border-slate-200">
                         <p className="text-xs text-slate-500">Verified by</p>
                         <p className="font-medium text-slate-900">{boost.verification.verified_by_name}</p>
                         <p className="text-xs text-slate-500 mt-1">{formatDate(boost.verification.verified_at)}</p>
@@ -1272,13 +1240,6 @@ export default function ViewBoost({ loaderData }: { loaderData: LoaderData }) {
                     <div className="bg-slate-50 p-3 rounded-lg">
                       <p className="text-xs text-slate-500 mb-1">Payment Method</p>
                       <p className="font-medium text-sm text-slate-900">{boost.payment_method || 'N/A'}</p>
-                    </div>
-                    <div className="bg-slate-50 p-3 rounded-lg">
-                      <p className="text-xs text-slate-500 mb-1">Has Receipt</p>
-                      <Badge variant={boost.has_receipt ? "default" : "secondary"} 
-                             className={boost.has_receipt ? "bg-emerald-600" : ""}>
-                        {boost.has_receipt ? 'Yes' : 'No'}
-                      </Badge>
                     </div>
                   </div>
                 </AccordionContent>

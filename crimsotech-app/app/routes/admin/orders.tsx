@@ -580,7 +580,7 @@ export default function Checkouts() {
           />
 
           {/* Key Metrics */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {isLoading ? (
               <>
                 <MetricCardSkeleton />
@@ -635,21 +635,6 @@ export default function Checkouts() {
                       </div>
                       <div className="p-2 sm:p-3 bg-green-100 rounded-full">
                         <PhilippinePeso className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Success Rate</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.success_rate}%</p>
-                        <p className="text-xs text-muted-foreground mt-2">Order completion</p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
-                        <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
                       </div>
                     </div>
                   </CardContent>
