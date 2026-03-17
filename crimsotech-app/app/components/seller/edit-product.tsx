@@ -40,7 +40,6 @@ import {
   X,
   Package,
   Tag,
-  RefreshCw,
   Plus,
   Trash2,
   ChevronDown,
@@ -148,6 +147,7 @@ interface VariantFormState {
   id?: string;
   title: string;
   sku_code: string;
+  price: string;           // manual price when not using depreciation
   quantity: string;
   weight: string;
   weight_unit: string;
@@ -167,11 +167,10 @@ interface VariantFormState {
   critical_stock: string;
   calculated_price?: string;
   isNew?: boolean;
-  // image fields
-  image?: string | null;           // existing image URL from server
-  imagePending?: File | null;      // new file to upload
-  imagePreview?: string | null;    // object URL for preview
-  imageToDelete?: boolean;         // flag to remove existing
+  image?: string | null;
+  imagePending?: File | null;
+  imagePreview?: string | null;
+  imageToDelete?: boolean;
 }
 interface MediaFormState {
   existing: MediaItem[];
@@ -190,10 +189,12 @@ function buildInitialForm(product: Product | null): FormState {
     category_admin_id: product?.category_admin?.id ?? "",
   };
 }
+
 function createEmptyVariant(): VariantFormState {
   return {
     title: "",
     sku_code: "",
+    price: "",
     quantity: "0",
     weight: "",
     weight_unit: "g",
@@ -218,6 +219,7 @@ function createEmptyVariant(): VariantFormState {
     imageToDelete: false,
   };
 }
+
 function variantToFormState(variant: Variant): VariantFormState {
   let calculated_price = "";
   if (variant.original_price && variant.usage_period && variant.depreciation_rate) {
@@ -232,13 +234,12 @@ function variantToFormState(variant: Variant): VariantFormState {
     const depreciatedValue = originalPrice * Math.pow(1 - rate, years);
     calculated_price = Math.max(0, Math.round(depreciatedValue * 100) / 100).toString();
   }
-  if (!calculated_price && variant.price) {
-    calculated_price = Number(variant.price).toString();
-  }
+
   return {
     id: variant.id,
     title: variant.title || "",
     sku_code: variant.sku_code || "",
+    price: variant.price?.toString() || "",
     quantity: variant.quantity?.toString() || "0",
     weight: variant.weight?.toString() || "",
     weight_unit: variant.weight_unit || "g",
@@ -363,6 +364,7 @@ function EditProductForm({
     setMedia((prev) => ({ ...prev, pending: [...prev.pending, ...newPending] }));
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
   const queueDeleteExisting = (id: string) => {
     setMedia((prev) => ({
       ...prev,
@@ -370,6 +372,7 @@ function EditProductForm({
       toDelete: [...prev.toDelete, id],
     }));
   };
+
   const removePending = (index: number) => {
     setMedia((prev) => {
       URL.revokeObjectURL(prev.pending[index].preview);
@@ -387,7 +390,6 @@ function EditProductForm({
     const preview = URL.createObjectURL(file);
     setVariants((prev) => {
       const updated = [...prev];
-      // revoke old preview if any
       if (updated[index].imagePreview) {
         URL.revokeObjectURL(updated[index].imagePreview!);
       }
@@ -399,7 +401,6 @@ function EditProductForm({
       };
       return updated;
     });
-    // reset input
     if (variantImageInputRefs.current[index]) {
       variantImageInputRefs.current[index]!.value = "";
     }
@@ -476,10 +477,10 @@ function EditProductForm({
     return { ...v, calculated_price: "" };
   };
 
+  // ─── Validation ───────────────────────────────────────────────────────────
   function validate(): boolean {
     const newErrors: typeof errors = {};
 
-    // ── Product fields ──────────────────────────────────────────────────────
     if (!form.name.trim()) newErrors.name = "Product name is required.";
     else if (form.name.trim().length > 100) newErrors.name = "Max 100 characters.";
 
@@ -494,7 +495,6 @@ function EditProductForm({
 
     setErrors(newErrors);
 
-    // ── Variant fields (collected separately so we can show a toast per issue) ─
     if (variants.length === 0) {
       toast({
         title: "Validation Error",
@@ -508,20 +508,38 @@ function EditProductForm({
 
     variants.forEach((v, i) => {
       const label = v.title?.trim() ? `"${v.title}"` : `Variant ${i + 1}`;
+
       if (!v.title?.trim())
         variantIssues.push(`${label}: title is required.`);
+
       if (!v.quantity || Number(v.quantity) < 0)
         variantIssues.push(`${label}: quantity must be 0 or more.`);
-      if (!v.original_price || Number(v.original_price) <= 0)
-        variantIssues.push(`${label}: original price is required.`);
-      if (!v.usage_period || Number(v.usage_period) <= 0)
-        variantIssues.push(`${label}: usage period is required.`);
-      if (!v.depreciation_rate || Number(v.depreciation_rate) < 0 || Number(v.depreciation_rate) > 100)
-        variantIssues.push(`${label}: depreciation rate must be between 0–100.`);
-      if (!v.calculated_price || Number(v.calculated_price) <= 0)
-        variantIssues.push(`${label}: calculated price could not be determined.`);
+
+      // Price validation: accept either calculated (depreciation) or manual price
+      const hasCalculatedPrice = v.calculated_price && Number(v.calculated_price) > 0;
+      const hasManualPrice = v.price && Number(v.price) > 0;
+      if (!hasCalculatedPrice && !hasManualPrice) {
+        variantIssues.push(
+          `${label}: a selling price is required. Fill the depreciation calculator or enter a price manually.`
+        );
+      }
+
+      // Depreciation fields — only validate if the seller has started filling them
+      const hasDepreciationInput = v.original_price || v.usage_period;
+      if (hasDepreciationInput) {
+        if (!v.original_price || Number(v.original_price) <= 0)
+          variantIssues.push(`${label}: original price is required when using the depreciation calculator.`);
+        if (!v.usage_period || Number(v.usage_period) <= 0)
+          variantIssues.push(`${label}: usage period is required when using the depreciation calculator.`);
+        if (!v.depreciation_rate || Number(v.depreciation_rate) < 0 || Number(v.depreciation_rate) > 100)
+          variantIssues.push(`${label}: depreciation rate must be between 0–100.`);
+        if (!v.calculated_price || Number(v.calculated_price) <= 0)
+          variantIssues.push(`${label}: calculated price could not be determined. Check your depreciation inputs.`);
+      }
+
       if (v.is_refundable && (!v.refund_days || Number(v.refund_days) < 1))
         variantIssues.push(`${label}: refund days must be at least 1 if refundable.`);
+
       if (v.allow_swap && v.swap_type === "swap_plus_payment") {
         if (Number(v.minimum_additional_payment) < 0)
           variantIssues.push(`${label}: min additional payment cannot be negative.`);
@@ -533,7 +551,9 @@ function EditProductForm({
     if (variantIssues.length > 0) {
       toast({
         title: `Fix ${variantIssues.length} variant issue${variantIssues.length > 1 ? "s" : ""}`,
-        description: variantIssues.slice(0, 3).join(" • ") + (variantIssues.length > 3 ? ` (+${variantIssues.length - 3} more)` : ""),
+        description:
+          variantIssues.slice(0, 3).join(" • ") +
+          (variantIssues.length > 3 ? ` (+${variantIssues.length - 3} more)` : ""),
         variant: "destructive",
       });
       return false;
@@ -544,9 +564,9 @@ function EditProductForm({
 
   // ─── Submit ───────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
-  if (!validate()) return;  // ← validate() now covers everything
+    if (!validate()) return;
 
-  setSaving(true);
+    setSaving(true);
     try {
       const payload: Record<string, unknown> = {
         product_id: product.id,
@@ -565,12 +585,17 @@ function EditProductForm({
         payload
       );
 
-      // variants bulk update
+      // Variants bulk update
       const variantsPayload = variants.map((v) => ({
         id: v.id,
         title: v.title,
         sku_code: v.sku_code,
-        price: v.calculated_price ? parseFloat(v.calculated_price) : null,
+        // Use calculated (depreciation) price first, fall back to manual price
+        price: v.calculated_price && Number(v.calculated_price) > 0
+          ? parseFloat(v.calculated_price)
+          : v.price && Number(v.price) > 0
+          ? parseFloat(v.price)
+          : null,
         quantity: parseInt(v.quantity) || 0,
         weight: v.weight ? parseFloat(v.weight) : null,
         weight_unit: v.weight_unit,
@@ -589,12 +614,13 @@ function EditProductForm({
         swap_description: v.swap_description,
         critical_stock: v.critical_stock ? parseInt(v.critical_stock) : null,
       }));
+
       await AxiosInstance.put(
-        `/seller-products/${product.id}/variants/bulk_update/`,
+        `/seller-products/${product.id}/variants-bulk-update/`,
         { variants: variantsPayload }
       );
 
-      // variant image uploads (best-effort)
+      // Variant image uploads (best-effort)
       await Promise.allSettled(
         variants.map(async (v) => {
           if (!v.id) return;
@@ -614,11 +640,17 @@ function EditProductForm({
         })
       );
 
-      // product media
       await flushMedia();
 
-      toast({ title: "Saved", description: res.data.message ?? "Product updated successfully.", variant: "success" });
-      const selectedCategory = categories.find((c) => c.id === form.category_admin_id) ?? null;
+      toast({
+        title: "Saved",
+        description: res.data.message ?? "Product updated successfully.",
+        variant: "success",
+      });
+
+      const selectedCategory =
+        categories.find((c) => c.id === form.category_admin_id) ?? null;
+
       onSuccess({
         id: product.id,
         name: form.name.trim(),
@@ -647,29 +679,48 @@ function EditProductForm({
       setForm((f) => ({ ...f, [key]: value }));
       if (errors[key]) setErrors((e) => ({ ...e, [key]: undefined }));
     };
+
   const fieldError = (key: keyof FormState) =>
-    errors[key] ? <p className="text-xs text-destructive mt-1">{errors[key]}</p> : null;
+    errors[key] ? (
+      <p className="text-xs text-destructive mt-1">{errors[key]}</p>
+    ) : null;
 
   const addVariant = () => setVariants([...variants, createEmptyVariant()]);
+
   const removeVariant = (index: number) => {
     if (variants.length <= 1) {
-      toast({ title: "Error", description: "Products must have at least one variant.", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Products must have at least one variant.",
+        variant: "destructive",
+      });
       return;
     }
     const v = variants[index];
     if (v.imagePreview) URL.revokeObjectURL(v.imagePreview);
     setVariants(variants.filter((_, i) => i !== index));
   };
-  const updateVariant = (index: number, field: keyof VariantFormState, value: any) => {
+
+  const updateVariant = (
+    index: number,
+    field: keyof VariantFormState,
+    value: any
+  ) => {
     const updated = [...variants];
     updated[index] = { ...updated[index], [field]: value };
-    if (["original_price", "usage_period", "usage_unit", "depreciation_rate"].includes(field as string)) {
+    if (
+      ["original_price", "usage_period", "usage_unit", "depreciation_rate"].includes(
+        field as string
+      )
+    ) {
       updated[index] = updateVariantCalculatedPrice(index, updated[index]);
     }
     setVariants(updated);
   };
+
   const toggleVariantExpanded = (index: number) =>
     setExpandedVariants((prev) => ({ ...prev, [index]: !prev[index] }));
+
   const formatPrice = (price: string) =>
     price ? parseFloat(price).toFixed(2) : "0.00";
 
@@ -741,7 +792,11 @@ function EditProductForm({
                   className="relative group aspect-square rounded-lg overflow-hidden border bg-muted"
                 >
                   {m.file_data ? (
-                    <img src={m.file_data} alt="product" className="w-full h-full object-cover" />
+                    <img
+                      src={m.file_data}
+                      alt="product"
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
                       <ImageIcon className="w-6 h-6 text-muted-foreground" />
@@ -761,7 +816,11 @@ function EditProductForm({
                   key={i}
                   className="relative group aspect-square rounded-lg overflow-hidden border-2 border-dashed border-orange-300 bg-orange-50"
                 >
-                  <img src={p.preview} alt="pending" className="w-full h-full object-cover" />
+                  <img
+                    src={p.preview}
+                    alt="pending"
+                    className="w-full h-full object-cover"
+                  />
                   <div className="absolute bottom-0 left-0 right-0 bg-orange-500/80 text-white text-[9px] text-center py-0.5">
                     New
                   </div>
@@ -800,7 +859,9 @@ function EditProductForm({
           />
           <div className="flex justify-between items-start">
             {fieldError("name")}
-            <span className="text-xs text-muted-foreground ml-auto">{form.name.length}/100</span>
+            <span className="text-xs text-muted-foreground ml-auto">
+              {form.name.length}/100
+            </span>
           </div>
         </div>
 
@@ -820,21 +881,29 @@ function EditProductForm({
           />
           <div className="flex justify-between items-start">
             {fieldError("description")}
-            <span className="text-xs text-muted-foreground ml-auto">{form.description.length}/1000</span>
+            <span className="text-xs text-muted-foreground ml-auto">
+              {form.description.length}/1000
+            </span>
           </div>
         </div>
 
         {/* Condition + Category */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <Label>Condition <span className="text-destructive">*</span></Label>
+            <Label>
+              Condition <span className="text-destructive">*</span>
+            </Label>
             <Select value={form.condition} onValueChange={set("condition")}>
-              <SelectTrigger className={`w-full ${errors.condition ? "border-destructive" : ""}`}>
+              <SelectTrigger
+                className={`w-full ${errors.condition ? "border-destructive" : ""}`}
+              >
                 <SelectValue placeholder="Select condition" />
               </SelectTrigger>
               <SelectContent>
                 {CONDITION_OPTIONS.map((c) => (
-                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -850,7 +919,9 @@ function EditProductForm({
             ) : (
               <Select
                 value={form.category_admin_id || "__none__"}
-                onValueChange={(v) => set("category_admin_id")(v === "__none__" ? "" : v)}
+                onValueChange={(v) =>
+                  set("category_admin_id")(v === "__none__" ? "" : v)
+                }
               >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="No category" />
@@ -858,7 +929,9 @@ function EditProductForm({
                 <SelectContent>
                   <SelectItem value="__none__">No category</SelectItem>
                   {categories.map((cat) => (
-                    <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                    <SelectItem key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -890,23 +963,38 @@ function EditProductForm({
             <div className="text-center py-8 border-2 border-dashed rounded-lg bg-muted/10">
               <Package className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
               <p className="text-sm text-muted-foreground">No variants added yet</p>
-              <Button type="button" variant="link" onClick={addVariant} className="text-orange-600 mt-2">
+              <Button
+                type="button"
+                variant="link"
+                onClick={addVariant}
+                className="text-orange-600 mt-2"
+              >
                 Add your first variant
               </Button>
             </div>
           ) : (
             <div className="space-y-4">
               {variants.map((variant, index) => {
-                const currentImage = variant.imagePreview ?? variant.image ?? null;
+                const currentImage =
+                  variant.imagePreview ?? variant.image ?? null;
+                const hasCalculatedPrice =
+                  variant.calculated_price && Number(variant.calculated_price) > 0;
+
                 return (
-                  <div key={index} className="border rounded-lg p-4 space-y-3 bg-white">
-                    {/* header */}
+                  <div
+                    key={index}
+                    className="border rounded-lg p-4 space-y-3 bg-white"
+                  >
+                    {/* Header */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        {/* variant thumbnail */}
                         {currentImage ? (
                           <div className="w-8 h-8 rounded-md overflow-hidden border flex-shrink-0">
-                            <img src={currentImage} alt="variant" className="w-full h-full object-cover" />
+                            <img
+                              src={currentImage}
+                              alt="variant"
+                              className="w-full h-full object-cover"
+                            />
                           </div>
                         ) : (
                           <div className="w-8 h-8 rounded-md border bg-muted flex items-center justify-center flex-shrink-0">
@@ -919,17 +1007,38 @@ function EditProductForm({
                         <h4 className="font-medium text-sm">
                           {variant.title || `Variant ${index + 1}`}
                         </h4>
-                        {variant.calculated_price && (
+                        {/* Show whichever price is active */}
+                        {hasCalculatedPrice ? (
                           <Badge className="bg-orange-100 text-orange-700 border-orange-300 text-xs">
-                            ₱{formatPrice(variant.calculated_price)}
+                            ₱{formatPrice(variant.calculated_price!)}
                           </Badge>
-                        )}
+                        ) : variant.price && Number(variant.price) > 0 ? (
+                          <Badge className="bg-blue-100 text-blue-700 border-blue-300 text-xs">
+                            ₱{formatPrice(variant.price)}
+                          </Badge>
+                        ) : null}
                       </div>
                       <div className="flex items-center gap-1">
-                        <Button type="button" variant="ghost" size="sm" onClick={() => toggleVariantExpanded(index)} className="h-8 w-8 p-0">
-                          {expandedVariants[index] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleVariantExpanded(index)}
+                          className="h-8 w-8 p-0"
+                        >
+                          {expandedVariants[index] ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
                         </Button>
-                        <Button type="button" variant="ghost" size="sm" onClick={() => removeVariant(index)} className="h-8 w-8 p-0 text-destructive hover:text-destructive/90">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeVariant(index)}
+                          className="h-8 w-8 p-0 text-destructive hover:text-destructive/90"
+                        >
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
@@ -937,13 +1046,21 @@ function EditProductForm({
 
                     {/* Variant image */}
                     <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Variant Image</Label>
+                      <Label className="text-xs text-muted-foreground">
+                        Variant Image
+                      </Label>
                       <div className="flex items-center gap-3">
                         {currentImage ? (
                           <div className="relative group w-16 h-16 rounded-lg overflow-hidden border bg-muted flex-shrink-0">
-                            <img src={currentImage} alt="variant" className="w-full h-full object-cover" />
+                            <img
+                              src={currentImage}
+                              alt="variant"
+                              className="w-full h-full object-cover"
+                            />
                             {variant.imagePending && (
-                              <div className="absolute bottom-0 left-0 right-0 bg-orange-500/80 text-white text-[9px] text-center py-0.5">New</div>
+                              <div className="absolute bottom-0 left-0 right-0 bg-orange-500/80 text-white text-[9px] text-center py-0.5">
+                                New
+                              </div>
                             )}
                             <button
                               type="button"
@@ -956,7 +1073,9 @@ function EditProductForm({
                         ) : (
                           <button
                             type="button"
-                            onClick={() => variantImageInputRefs.current[index]?.click()}
+                            onClick={() =>
+                              variantImageInputRefs.current[index]?.click()
+                            }
                             className="w-16 h-16 rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1 text-muted-foreground hover:border-orange-300 hover:text-orange-500 transition-colors flex-shrink-0"
                           >
                             <ImagePlus className="w-4 h-4" />
@@ -968,7 +1087,9 @@ function EditProductForm({
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() => variantImageInputRefs.current[index]?.click()}
+                            onClick={() =>
+                              variantImageInputRefs.current[index]?.click()
+                            }
                             className="text-xs h-7 border-orange-200 text-orange-600 hover:bg-orange-50"
                           >
                             <ImagePlus className="w-3 h-3 mr-1" />
@@ -988,7 +1109,9 @@ function EditProductForm({
                           )}
                         </div>
                         <input
-                          ref={(el) => { variantImageInputRefs.current[index] = el; }}
+                          ref={(el) => {
+                            variantImageInputRefs.current[index] = el;
+                          }}
                           type="file"
                           accept="image/*"
                           className="hidden"
@@ -1000,96 +1123,262 @@ function EditProductForm({
                     {/* Title + Quantity + toggles */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div className="space-y-1.5">
-                        <Label>Title *</Label>
-                        <Input value={variant.title} onChange={(e) => updateVariant(index, "title", e.target.value)} placeholder="e.g., Small, Red, 1kg" />
+                        <Label>
+                          Title <span className="text-destructive">*</span>
+                        </Label>
+                        <Input
+                          value={variant.title}
+                          onChange={(e) =>
+                            updateVariant(index, "title", e.target.value)
+                          }
+                          placeholder="e.g., Small, Red, 1kg"
+                        />
                       </div>
                       <div className="space-y-1.5">
-                        <Label>Quantity *</Label>
-                        <Input type="number" min="0" value={variant.quantity} onChange={(e) => updateVariant(index, "quantity", e.target.value)} placeholder="0" />
+                        <Label>
+                          Quantity <span className="text-destructive">*</span>
+                        </Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={variant.quantity}
+                          onChange={(e) =>
+                            updateVariant(index, "quantity", e.target.value)
+                          }
+                          placeholder="0"
+                        />
                       </div>
                       <div className="flex items-center space-x-4 pt-6">
                         <div className="flex items-center space-x-2">
-                          <Switch checked={variant.is_active} onCheckedChange={(v) => updateVariant(index, "is_active", v)} className="data-[state=checked]:bg-orange-600" />
+                          <Switch
+                            checked={variant.is_active}
+                            onCheckedChange={(v) =>
+                              updateVariant(index, "is_active", v)
+                            }
+                            className="data-[state=checked]:bg-orange-600"
+                          />
                           <Label className="text-sm">Active</Label>
                         </div>
                         <div className="flex items-center space-x-2">
-                          <Switch checked={variant.is_refundable} onCheckedChange={(v) => updateVariant(index, "is_refundable", v)} className="data-[state=checked]:bg-orange-600" />
+                          <Switch
+                            checked={variant.is_refundable}
+                            onCheckedChange={(v) =>
+                              updateVariant(index, "is_refundable", v)
+                            }
+                            className="data-[state=checked]:bg-orange-600"
+                          />
                           <Label className="text-sm">Refundable</Label>
                         </div>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3" />
+                    {/* Manual price — shown when depreciation calculator is not used */}
+                    {!hasCalculatedPrice && (
+                      <div className="space-y-1.5">
+                        <Label>
+                          Selling Price <span className="text-destructive">*</span>
+                        </Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">
+                            ₱
+                          </span>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={variant.price}
+                            onChange={(e) =>
+                              updateVariant(index, "price", e.target.value)
+                            }
+                            placeholder="Enter selling price"
+                            className="pl-8"
+                          />
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                          Or fill the depreciation calculator below to auto-calculate
+                          the price.
+                        </p>
+                      </div>
+                    )}
 
-                    {/* Depreciation */}
+                    {/* Depreciation calculator */}
                     <div className="p-4 bg-orange-50 rounded-lg border border-orange-200">
                       <div className="flex items-center gap-2 mb-3">
                         <Calculator className="h-4 w-4 text-orange-600" />
-                        <span className="text-sm font-medium text-orange-800">Price Depreciation Calculator</span>
+                        <span className="text-sm font-medium text-orange-800">
+                          Price Depreciation Calculator
+                        </span>
+                        <span className="text-xs text-orange-600 font-normal">
+                          (optional)
+                        </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                         <div className="space-y-1">
-                          <Label className="text-xs font-medium text-orange-700">Original Price</Label>
+                          <Label className="text-xs font-medium text-orange-700">
+                            Original Price
+                          </Label>
                           <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">₱</span>
-                            <Input type="number" min="0" step="0.01" value={variant.original_price} onChange={(e) => updateVariant(index, "original_price", e.target.value)} placeholder="Original price" className="h-8 text-xs pl-8" />
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">
+                              ₱
+                            </span>
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={variant.original_price}
+                              onChange={(e) =>
+                                updateVariant(index, "original_price", e.target.value)
+                              }
+                              placeholder="Original price"
+                              className="h-8 text-xs pl-8"
+                            />
                           </div>
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs font-medium text-orange-700">Usage Period</Label>
+                          <Label className="text-xs font-medium text-orange-700">
+                            Usage Period
+                          </Label>
                           <div className="flex gap-2">
-                            <Input type="number" min="0" step="0.1" value={variant.usage_period} onChange={(e) => updateVariant(index, "usage_period", e.target.value)} placeholder="Amount" className="h-8 text-xs flex-1" />
-                            <Select value={variant.usage_unit} onValueChange={(v) => updateVariant(index, "usage_unit", v)}>
-                              <SelectTrigger className="w-20 h-8 text-xs"><SelectValue /></SelectTrigger>
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={variant.usage_period}
+                              onChange={(e) =>
+                                updateVariant(index, "usage_period", e.target.value)
+                              }
+                              placeholder="Amount"
+                              className="h-8 text-xs flex-1"
+                            />
+                            <Select
+                              value={variant.usage_unit}
+                              onValueChange={(v) =>
+                                updateVariant(index, "usage_unit", v)
+                              }
+                            >
+                              <SelectTrigger className="w-20 h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
                               <SelectContent>
                                 {USAGE_UNIT_OPTIONS.map((opt) => (
-                                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                                  <SelectItem key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
                           </div>
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs font-medium text-orange-700">Rate (%)</Label>
+                          <Label className="text-xs font-medium text-orange-700">
+                            Rate (%)
+                          </Label>
                           <div className="relative">
-                            <Input type="number" min="0" max="100" step="0.1" value={variant.depreciation_rate} onChange={(e) => updateVariant(index, "depreciation_rate", e.target.value)} placeholder="e.g., 10" className="h-8 text-xs pr-6" />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
+                            <Input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.1"
+                              value={variant.depreciation_rate}
+                              onChange={(e) =>
+                                updateVariant(
+                                  index,
+                                  "depreciation_rate",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="e.g., 10"
+                              className="h-8 text-xs pr-6"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">
+                              %
+                            </span>
                           </div>
                         </div>
                         <div className="space-y-1">
-                          <Label className="text-xs font-medium text-orange-700">Calculated</Label>
+                          <Label className="text-xs font-medium text-orange-700">
+                            Calculated
+                          </Label>
                           <div className="h-8 px-3 bg-white border border-gray-300 rounded-md flex items-center">
                             {variant.calculated_price ? (
-                              <span className="text-sm font-medium text-orange-600">₱{formatPrice(variant.calculated_price)}</span>
+                              <span className="text-sm font-medium text-orange-600">
+                                ₱{formatPrice(variant.calculated_price)}
+                              </span>
                             ) : (
-                              <span className="text-xs text-gray-400">Fill fields</span>
+                              <span className="text-xs text-gray-400">
+                                Fill fields above
+                              </span>
                             )}
                           </div>
+                          {/* If calculator produced a price, show a clear button */}
+                          {hasCalculatedPrice && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateVariant(index, "original_price", "");
+                                updateVariant(index, "usage_period", "");
+                              }}
+                              className="text-[10px] text-orange-500 hover:text-orange-700 underline"
+                            >
+                              Clear & use manual price instead
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
 
                     {/* Additional Details */}
-                    <Collapsible open={expandedVariants[index]} onOpenChange={() => toggleVariantExpanded(index)}>
+                    <Collapsible
+                      open={expandedVariants[index]}
+                      onOpenChange={() => toggleVariantExpanded(index)}
+                    >
                       <CollapsibleTrigger asChild>
-                        <Button variant="ghost" size="sm" className="w-full flex items-center justify-center gap-2 text-muted-foreground">
-                          {expandedVariants[index] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                          {expandedVariants[index] ? "Hide Additional Details" : "Show Additional Details"}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2 text-muted-foreground"
+                        >
+                          {expandedVariants[index] ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                          {expandedVariants[index]
+                            ? "Hide Additional Details"
+                            : "Show Additional Details"}
                         </Button>
                       </CollapsibleTrigger>
                       <CollapsibleContent className="space-y-3 pt-3">
                         <div className="grid grid-cols-2 gap-2">
                           <div className="space-y-1.5">
                             <Label>Weight</Label>
-                            <Input type="number" min="0" step="0.01" value={variant.weight} onChange={(e) => updateVariant(index, "weight", e.target.value)} placeholder="0.00" />
+                            <Input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={variant.weight}
+                              onChange={(e) =>
+                                updateVariant(index, "weight", e.target.value)
+                              }
+                              placeholder="0.00"
+                            />
                           </div>
                           <div className="space-y-1.5">
                             <Label>Unit</Label>
-                            <Select value={variant.weight_unit} onValueChange={(v) => updateVariant(index, "weight_unit", v)}>
-                              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                            <Select
+                              value={variant.weight_unit}
+                              onValueChange={(v) =>
+                                updateVariant(index, "weight_unit", v)
+                              }
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
                               <SelectContent>
                                 {WEIGHT_UNIT_OPTIONS.map((opt) => (
-                                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                                  <SelectItem key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -1098,39 +1387,105 @@ function EditProductForm({
                         <div className="grid grid-cols-2 gap-2">
                           <div className="space-y-1.5">
                             <Label>Critical Trigger</Label>
-                            <Input type="number" min="0" value={variant.critical_trigger} onChange={(e) => updateVariant(index, "critical_trigger", e.target.value)} placeholder="Low stock alert at" />
+                            <Input
+                              type="number"
+                              min="0"
+                              value={variant.critical_trigger}
+                              onChange={(e) =>
+                                updateVariant(
+                                  index,
+                                  "critical_trigger",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="Low stock alert at"
+                            />
                           </div>
                         </div>
                         <div className="space-y-2 border-t pt-2">
                           <div className="flex items-center space-x-2">
-                            <Switch checked={variant.allow_swap} onCheckedChange={(v) => updateVariant(index, "allow_swap", v)} className="data-[state=checked]:bg-orange-600" />
+                            <Switch
+                              checked={variant.allow_swap}
+                              onCheckedChange={(v) =>
+                                updateVariant(index, "allow_swap", v)
+                              }
+                              className="data-[state=checked]:bg-orange-600"
+                            />
                             <Label>Allow Swap</Label>
                           </div>
                           {variant.allow_swap && (
                             <>
                               <div className="space-y-1.5">
                                 <Label>Swap Type</Label>
-                                <Select value={variant.swap_type} onValueChange={(v) => updateVariant(index, "swap_type", v)}>
-                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                <Select
+                                  value={variant.swap_type}
+                                  onValueChange={(v) =>
+                                    updateVariant(index, "swap_type", v)
+                                  }
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="direct_swap">Direct swap</SelectItem>
-                                    <SelectItem value="swap_plus_payment">Swap + payment</SelectItem>
+                                    <SelectItem value="direct_swap">
+                                      Direct swap
+                                    </SelectItem>
+                                    <SelectItem value="swap_plus_payment">
+                                      Swap + payment
+                                    </SelectItem>
                                   </SelectContent>
                                 </Select>
                               </div>
                               <div className="grid grid-cols-2 gap-2">
                                 <div className="space-y-1.5">
                                   <Label>Min Additional Payment</Label>
-                                  <Input type="number" min="0" step="0.01" value={variant.minimum_additional_payment} onChange={(e) => updateVariant(index, "minimum_additional_payment", e.target.value)} placeholder="0.00" />
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={variant.minimum_additional_payment}
+                                    onChange={(e) =>
+                                      updateVariant(
+                                        index,
+                                        "minimum_additional_payment",
+                                        e.target.value
+                                      )
+                                    }
+                                    placeholder="0.00"
+                                  />
                                 </div>
                                 <div className="space-y-1.5">
                                   <Label>Max Additional Payment</Label>
-                                  <Input type="number" min="0" step="0.01" value={variant.maximum_additional_payment} onChange={(e) => updateVariant(index, "maximum_additional_payment", e.target.value)} placeholder="0.00" />
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={variant.maximum_additional_payment}
+                                    onChange={(e) =>
+                                      updateVariant(
+                                        index,
+                                        "maximum_additional_payment",
+                                        e.target.value
+                                      )
+                                    }
+                                    placeholder="0.00"
+                                  />
                                 </div>
                               </div>
                               <div className="space-y-1.5">
                                 <Label>Swap Description</Label>
-                                <Textarea value={variant.swap_description} onChange={(e) => updateVariant(index, "swap_description", e.target.value)} placeholder="Describe swap conditions..." rows={2} />
+                                <Textarea
+                                  value={variant.swap_description}
+                                  onChange={(e) =>
+                                    updateVariant(
+                                      index,
+                                      "swap_description",
+                                      e.target.value
+                                    )
+                                  }
+                                  placeholder="Describe swap conditions..."
+                                  rows={2}
+                                />
                               </div>
                             </>
                           )}
@@ -1147,15 +1502,30 @@ function EditProductForm({
 
       {/* Footer */}
       <div className="flex gap-2 pt-4 border-t mt-2 shrink-0 bg-white">
-        <Button variant="outline" onClick={onCancel} disabled={saving} className="flex-1">
+        <Button
+          variant="outline"
+          onClick={onCancel}
+          disabled={saving}
+          className="flex-1"
+        >
           <X className="w-4 h-4 mr-1.5" />
           Cancel
         </Button>
-        <Button onClick={handleSubmit} disabled={saving} className="flex-1 bg-orange-600 hover:bg-orange-700">
+        <Button
+          onClick={handleSubmit}
+          disabled={saving}
+          className="flex-1 bg-orange-600 hover:bg-orange-700"
+        >
           {saving ? (
-            <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Saving…</>
+            <>
+              <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+              Saving…
+            </>
           ) : (
-            <><Save className="w-4 h-4 mr-1.5" />Save Changes</>
+            <>
+              <Save className="w-4 h-4 mr-1.5" />
+              Save Changes
+            </>
           )}
         </Button>
       </div>
@@ -1172,11 +1542,13 @@ export function EditProductDialog({
   onSuccess,
 }: EditProductDialogProps) {
   const isMobile = useIsMobile();
+
   const handleSuccess = (updated: Partial<Product>) => {
     onSuccess(updated);
     onOpenChange(false);
   };
   const handleCancel = () => onOpenChange(false);
+
   if (!product) return null;
 
   if (!isMobile) {
@@ -1186,11 +1558,17 @@ export function EditProductDialog({
           <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
             <DialogTitle className="text-xl">Edit Product</DialogTitle>
             <DialogDescription className="line-clamp-1">
-              Editing: <span className="font-medium text-foreground">{product.name}</span>
+              Editing:{" "}
+              <span className="font-medium text-foreground">{product.name}</span>
             </DialogDescription>
           </DialogHeader>
           <div className="flex-1 min-h-0 px-6 pb-0">
-            <EditProductForm product={product} userId={userId} onSuccess={handleSuccess} onCancel={handleCancel} />
+            <EditProductForm
+              product={product}
+              userId={userId}
+              onSuccess={handleSuccess}
+              onCancel={handleCancel}
+            />
           </div>
         </DialogContent>
       </Dialog>
@@ -1203,11 +1581,17 @@ export function EditProductDialog({
         <DrawerHeader className="text-left shrink-0 pb-2">
           <DrawerTitle className="text-lg">Edit Product</DrawerTitle>
           <DrawerDescription className="line-clamp-1">
-            Editing: <span className="font-medium text-foreground">{product.name}</span>
+            Editing:{" "}
+            <span className="font-medium text-foreground">{product.name}</span>
           </DrawerDescription>
         </DrawerHeader>
         <div className="flex-1 min-h-0 px-4">
-          <EditProductForm product={product} userId={userId} onSuccess={handleSuccess} onCancel={handleCancel} />
+          <EditProductForm
+            product={product}
+            userId={userId}
+            onSuccess={handleSuccess}
+            onCancel={handleCancel}
+          />
         </div>
       </DrawerContent>
     </Drawer>

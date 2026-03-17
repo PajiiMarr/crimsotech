@@ -17337,7 +17337,180 @@ class SellerProducts(viewsets.ModelViewSet):
             return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
+    @action(detail=True, methods=['get'], url_path='variants')
+    def get_variants(self, request, pk=None):
+        """
+        GET /seller-products/{product_id}/variants/
+        """
+        try:
+            product = Product.objects.get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        variants = Variants.objects.filter(product=product).order_by('created_at')
+        variants_data = []
+
+        for variant in variants:
+            variants_data.append({
+                'id': str(variant.id),
+                'title': variant.title,
+                'option_title': variant.option_title,
+                'option_ids': variant.option_ids,
+                'option_map': variant.option_map,
+                'sku_code': variant.sku_code,
+                'price': str(variant.price) if variant.price else None,
+                'compare_price': str(variant.compare_price) if variant.compare_price else None,
+                'quantity': variant.quantity,
+                'weight': str(variant.weight) if variant.weight else None,
+                'weight_unit': variant.weight_unit,
+                'critical_trigger': variant.critical_trigger,
+                'critical_stock': variant.critical_stock,
+                'is_active': variant.is_active,
+                'is_refundable': variant.is_refundable,
+                'refund_days': variant.refund_days,
+                'allow_swap': variant.allow_swap,
+                'swap_type': variant.swap_type,
+                'swap_description': variant.swap_description,
+                'original_price': str(variant.original_price) if variant.original_price else None,
+                'usage_period': variant.usage_period,
+                'usage_unit': variant.usage_unit,
+                'depreciation_rate': variant.depreciation_rate,
+                'minimum_additional_payment': str(variant.minimum_additional_payment),
+                'maximum_additional_payment': str(variant.maximum_additional_payment),
+                'image': variant.image.url if variant.image else None,
+                'proof_image': variant.proof_image.url if variant.proof_image else None,
+                'created_at': variant.created_at.isoformat() if variant.created_at else None,
+                'updated_at': variant.updated_at.isoformat() if variant.updated_at else None,
+            })
+
+        return Response({
+            'success': True,
+            'variants': variants_data,
+            'count': len(variants_data),
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['put'], url_path='variants-bulk-update')
+    def variants_bulk_update(self, request, pk=None):
+        """
+        Bulk update variants for a product.
+        PUT /seller-products/{product_id}/variants/bulk_update/
+        Body: { "variants": [ { "id": "uuid", ...fields }, ... ] }
+        """
+        user_id = request.data.get('user_id') or request.query_params.get('user_id')
+
+        try:
+            product = Product.objects.get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Ownership check — user_id is optional but enforced if provided
+        if user_id and str(product.customer.customer_id) != str(user_id):
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+        variants_data = request.data.get('variants', [])
+        if not isinstance(variants_data, list):
+            return Response({'error': 'variants must be a list'}, status=status.HTTP_400_BAD_REQUEST)
+
+        updated = []
+        errors = []
+
+        for v_data in variants_data:
+            variant_id = v_data.get('id')
+            if not variant_id:
+                errors.append({'error': 'id is required for each variant'})
+                continue
+
+            try:
+                variant = Variants.objects.get(id=variant_id, product=product)
+            except Variants.DoesNotExist:
+                errors.append({'id': variant_id, 'error': 'Variant not found or does not belong to this product'})
+                continue
+
+            # Fields allowed to update
+            update_fields = []
+
+            simple_str_fields = ['title', 'sku_code', 'weight_unit', 'swap_type',
+                                'swap_description', 'usage_unit']
+            for field in simple_str_fields:
+                if field in v_data:
+                    setattr(variant, field, v_data[field])
+                    update_fields.append(field)
+
+            simple_bool_fields = ['is_active', 'is_refundable', 'allow_swap']
+            for field in simple_bool_fields:
+                if field in v_data:
+                    val = v_data[field]
+                    if isinstance(val, bool):
+                        setattr(variant, field, val)
+                    else:
+                        setattr(variant, field, str(val).lower() in ('true', '1', 'yes'))
+                    update_fields.append(field)
+
+            int_fields = ['quantity', 'refund_days', 'critical_trigger', 'critical_stock']
+            for field in int_fields:
+                if field in v_data and v_data[field] is not None:
+                    try:
+                        setattr(variant, field, int(v_data[field]))
+                        update_fields.append(field)
+                    except (ValueError, TypeError):
+                        errors.append({'id': variant_id, 'field': field, 'error': f'Invalid integer value for {field}'})
+
+            decimal_fields = ['price', 'compare_price', 'weight',
+                            'original_price', 'minimum_additional_payment', 'maximum_additional_payment']
+            for field in decimal_fields:
+                if field in v_data:
+                    val = v_data[field]
+                    if val is None or val == '':
+                        setattr(variant, field, None)
+                        update_fields.append(field)
+                    else:
+                        try:
+                            setattr(variant, field, Decimal(str(val)))
+                            update_fields.append(field)
+                        except (ValueError, TypeError, Decimal.InvalidOperation):
+                            errors.append({'id': variant_id, 'field': field, 'error': f'Invalid decimal value for {field}'})
+
+            float_fields = ['usage_period', 'depreciation_rate']
+            for field in float_fields:
+                if field in v_data:
+                    val = v_data[field]
+                    if val is None or val == '':
+                        setattr(variant, field, None)
+                        update_fields.append(field)
+                    else:
+                        try:
+                            setattr(variant, field, float(val))
+                            update_fields.append(field)
+                        except (ValueError, TypeError):
+                            errors.append({'id': variant_id, 'field': field, 'error': f'Invalid float value for {field}'})
+
+            if update_fields:
+                update_fields.append('updated_at')
+                variant.save(update_fields=update_fields)
+
+            updated.append({
+                'id': str(variant.id),
+                'title': variant.title,
+                'price': str(variant.price) if variant.price else None,
+                'quantity': variant.quantity,
+                'is_active': variant.is_active,
+                'original_price': str(variant.original_price) if variant.original_price else None,
+                'usage_period': variant.usage_period,
+                'usage_unit': variant.usage_unit,
+                'depreciation_rate': variant.depreciation_rate,
+                'updated_fields': [f for f in update_fields if f != 'updated_at'],
+            })
+
+        return Response({
+            'success': True,
+            'updated_count': len(updated),
+            'updated': updated,
+            'errors': errors,
+            'message': f'Successfully updated {len(updated)} variant(s)'
+            + (f' with {len(errors)} error(s)' if errors else ''),
+        }, status=status.HTTP_200_OK)
+
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
@@ -34043,7 +34216,7 @@ class RiderScheduleViewSet(viewsets.ViewSet):
         """Get rider instance from user with validation"""
         if not hasattr(user, 'rider'):
             raise ValueError('User is not a rider')
-        return user.rider
+        return user.riderp
     
     @action(detail=False, methods=['get'])
     def get_schedule_data(self, request):
