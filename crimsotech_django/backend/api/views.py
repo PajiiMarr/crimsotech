@@ -7954,727 +7954,550 @@ class AdminVouchers(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
 
-class AdminRefunds(viewsets.ViewSet):    
+class AdminRefunds(viewsets.ViewSet):
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _base_queryset(self):
+        """Single source of truth for the fully-joined Refund queryset."""
+        return (
+            Refund.objects
+            .select_related(
+                'order',
+                'requested_by',
+                'processed_by',
+                'return_request',
+                # payment-detail one-to-ones
+                'wallet',
+                'bank',
+                'remittance',
+            )
+            .prefetch_related(
+                'proofs',
+                'order__payment_set',
+                Prefetch(
+                    'return_request__medias',
+                    queryset=ReturnRequestMedia.objects.all(),
+                    to_attr='prefetched_medias',
+                ),
+            )
+        )
+
+    def _serialize_refund(self, refund, request):
+        """Return a plain dict for a single Refund instance."""
+        order = refund.order
+
+        # amounts
+        order_total = float(order.total_amount) if order else 0.0
+        approved_amt = float(refund.approved_refund_amount) if refund.approved_refund_amount is not None else None
+        refund_fee = round(order_total * 0.05, 2) if order else None
+        total_refund = round(order_total - refund_fee, 2) if refund_fee is not None else None
+
+        data = {
+            'refund': str(refund.refund_id),
+            'order_id': str(order.order) if order else 'N/A',
+            'order_total_amount': order_total,
+            'status': refund.status or 'pending',
+            'reason': refund.reason or 'No reason provided',
+            'requested_at': refund.requested_at.isoformat() if refund.requested_at else None,
+            'processed_at': refund.processed_at.isoformat() if refund.processed_at else None,
+
+            # user info
+            'requested_by_username': refund.requested_by.username if refund.requested_by else 'Unknown',
+            'requested_by_email': refund.requested_by.email if refund.requested_by else 'N/A',
+            'processed_by_username': refund.processed_by.username if refund.processed_by else None,
+            'processed_by_email': refund.processed_by.email if refund.processed_by else None,
+
+            # amounts
+            'requested_refund_amount': order_total,
+            'refund_fee': refund_fee,
+            'total_refund_amount': total_refund,
+            'approved_refund_amount': approved_amt,
+
+            # logistics
+            'logistic_service': getattr(refund, 'logistic_service', None),
+            'tracking_number': getattr(refund, 'tracking_number', None),
+
+            # type / payment-status fields
+            'final_refund_type': getattr(refund, 'final_refund_type', None),
+            'refund_type': getattr(refund, 'refund_type', None),
+            'refund_payment_status': getattr(refund, 'refund_payment_status', None),
+
+            # refund method
+            'buyer_preferred_refund_method': getattr(refund, 'buyer_preferred_refund_method', None),
+            'preferred_refund_method': getattr(refund, 'preferred_refund_method', None),
+            'final_refund_method': getattr(refund, 'final_refund_method', None),
+
+            # payment-detail objects
+            'wallet': self._serialize_wallet(refund.wallet if hasattr(refund, 'wallet') else None),
+            'bank': self._serialize_bank(refund.bank if hasattr(refund, 'bank') else None),
+            'remittance': self._serialize_remittance(refund.remittance if hasattr(refund, 'remittance') else None),
+
+            # proofs
+            'proofs': self._serialize_proofs(refund, request),
+            'has_media': refund.refundmedia_set.exists() if hasattr(refund, 'refundmedia_set') else False,
+            'media_count': refund.refundmedia_set.count() if hasattr(refund, 'refundmedia_set') else 0,
+
+            # return request
+            'return_request': None,
+            'has_return_request': refund.return_request is not None,
+            'return_request_status': refund.return_request.status if refund.return_request else None,
+            'return_deadline': (
+                refund.return_request.return_deadline.isoformat()
+                if refund.return_request and refund.return_request.return_deadline
+                else None
+            ),
+        }
+
+        if refund.return_request:
+            data['return_request'] = self._serialize_return_request(refund.return_request, request)
+
+        return data
+
+    # ---------- tiny serializer helpers ----------
+
+    def _serialize_wallet(self, obj):
+        if not obj:
+            return None
+        return {
+            'provider': getattr(obj, 'provider', None),
+            'account_name': getattr(obj, 'account_name', None),
+            'account_number': getattr(obj, 'account_number', None),
+            'contact_number': getattr(obj, 'contact_number', None),
+        }
+
+    def _serialize_bank(self, obj):
+        if not obj:
+            return None
+        return {
+            'bank_name': getattr(obj, 'bank_name', None),
+            'account_name': getattr(obj, 'account_name', None),
+            'account_number': getattr(obj, 'account_number', None),
+            'account_type': getattr(obj, 'account_type', None),
+            'branch': getattr(obj, 'branch', None),
+        }
+
+    def _serialize_remittance(self, obj):
+        if not obj:
+            return None
+        return {
+            'provider': getattr(obj, 'provider', None),
+            'first_name': getattr(obj, 'first_name', None),
+            'middle_name': getattr(obj, 'middle_name', None),
+            'last_name': getattr(obj, 'last_name', None),
+            'contact_number': getattr(obj, 'contact_number', None),
+            'country': getattr(obj, 'country', None),
+            'city': getattr(obj, 'city', None),
+            'province': getattr(obj, 'province', None),
+            'barangay': getattr(obj, 'barangay', None),
+            'street': getattr(obj, 'street', None),
+            'zip_code': getattr(obj, 'zip_code', None),
+        }
+
+    def _serialize_proofs(self, refund, request):
+        result = []
+        try:
+            for p in refund.proofs.all():
+                file_url = None
+                if getattr(p, 'file_data', None):
+                    try:
+                        file_url = request.build_absolute_uri(p.file_data.url)
+                    except Exception:
+                        pass
+                result.append({
+                    'id': str(p.id),
+                    'file_url': file_url,
+                    'file_type': getattr(p, 'file_type', None),
+                    'notes': getattr(p, 'notes', None),
+                })
+        except Exception:
+            pass
+        return result
+
+    def _serialize_return_request(self, rr, request):
+        medias = []
+        try:
+            media_qs = getattr(rr, 'prefetched_medias', None) or rr.medias.all()
+            for m in media_qs:
+                file_url = None
+                if getattr(m, 'file_data', None):
+                    try:
+                        file_url = request.build_absolute_uri(m.file_data.url)
+                    except Exception:
+                        pass
+                medias.append({
+                    'id': str(getattr(m, 'id', '')),
+                    'file_url': file_url,
+                    'file_type': getattr(m, 'file_type', None),
+                    'notes': getattr(m, 'notes', None),
+                })
+        except Exception:
+            pass
+
+        return {
+            'id': str(rr.id),
+            'status': getattr(rr, 'status', None),
+            'tracking_number': getattr(rr, 'tracking_number', None),
+            'tracking_url': getattr(rr, 'tracking_url', None),
+            'shipped_at': rr.shipped_at.isoformat() if getattr(rr, 'shipped_at', None) else None,
+            'received_at': rr.received_at.isoformat() if getattr(rr, 'received_at', None) else None,
+            'logistic_service': getattr(rr, 'logistic_service', None),
+            'notes': getattr(rr, 'notes', None),
+            'medias': medias,
+        }
+
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
+
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
-        """Get refund metrics for admin dashboard"""
+        """Get refund metrics for the admin dashboard."""
         try:
-            # Dynamically resolve the Refund -> Order FK field name (handles 'order' or 'order_id')
-            order_field = None
-            for f in Refund._meta.get_fields():
-                if getattr(f, 'related_model', None) == Order and getattr(f, 'many_to_one', False):
-                    order_field = f.name
-                    break
-            if not order_field:
-                order_field = 'order_id'
+            qs = self._base_queryset()
 
-            refunds_queryset = Refund.objects.select_related(
-                order_field,
-                'requested_by',
-                'processed_by'
+            status_counts = {
+                item['status']: item['count']
+                for item in qs.values('status').annotate(count=Count('refund_id'))
+            }
+
+            approved_qs = qs.filter(status__in=['approved', 'completed'])
+            total_refund_amount = (
+                approved_qs.aggregate(total=Sum('approved_refund_amount'))['total']
+                or Decimal('0.00')
             )
-            
-            # Total counts by status
-            status_counts = refunds_queryset.values('status').annotate(
-                count=Count('refund_id')
+            avg_refund_amount = (
+                approved_qs.aggregate(avg=Avg('approved_refund_amount'))['avg']
+                or Decimal('0.00')
             )
-            
-            status_count_map = {item['status']: item['count'] for item in status_counts}
-            
-            # Total refund amount (only approved/completed refunds)
-            total_refund_amount = refunds_queryset.filter(
-                status__in=['approved', 'completed']
-            ).aggregate(
-                total_amount=Sum(f"{order_field}__total_amount")
-            )['total_amount'] or Decimal('0.00')
-            
-            # Average processing time in hours (for completed refunds)
-            completed_refunds = refunds_queryset.filter(
+
+            completed = qs.filter(
                 status='completed',
                 processed_at__isnull=False,
-                requested_at__isnull=False
+                requested_at__isnull=False,
             )
-            
-            if completed_refunds.exists():
+            avg_processing_hours = 0.0
+            if completed.exists():
                 total_seconds = sum(
-                    (refund.processed_at - refund.requested_at).total_seconds()
-                    for refund in completed_refunds
+                    (r.processed_at - r.requested_at).total_seconds()
+                    for r in completed
                 )
-                avg_processing_hours = total_seconds / (len(completed_refunds) * 3600)
-            else:
-                avg_processing_hours = Decimal('0.00')
-            
-            # Most common reason (excluding empty reasons)
-            common_reason = refunds_queryset.exclude(
-                Q(reason__isnull=True) | Q(reason__exact='')
-            ).values('reason').annotate(
-                count=Count('refund_id')
-            ).order_by('-count').first()
-            
-            # This month's refunds
-            current_month = timezone.now().month
-            current_year = timezone.now().year
-            
-            refunds_this_month = refunds_queryset.filter(
-                requested_at__month=current_month,
-                requested_at__year=current_year
+                avg_processing_hours = total_seconds / (completed.count() * 3600)
+
+            common_reason = (
+                qs.exclude(Q(reason__isnull=True) | Q(reason__exact=''))
+                .values('reason')
+                .annotate(count=Count('refund_id'))
+                .order_by('-count')
+                .first()
+            )
+
+            now = timezone.now()
+            refunds_this_month = qs.filter(
+                requested_at__month=now.month,
+                requested_at__year=now.year,
             ).count()
-            
-            # Average refund amount
-            avg_refund_amount = refunds_queryset.filter(
-                status__in=['approved', 'completed']
-            ).aggregate(
-                avg_amount=Avg(f"{order_field}__total_amount")
-            )['avg_amount'] or Decimal('0.00')
-            
-            metrics = {
-                'total_refunds': refunds_queryset.count(),
-                'pending_refunds': status_count_map.get('pending', 0),
-                'approved_refunds': status_count_map.get('approved', 0),
-                'rejected_refunds': status_count_map.get('rejected', 0),
-                'waiting_refunds': status_count_map.get('waiting', 0),
-                'to_process_refunds': status_count_map.get('to process', 0),
-                'completed_refunds': status_count_map.get('completed', 0),
+
+            return Response({
+                'total_refunds': qs.count(),
+                'pending_refunds': status_counts.get('pending', 0),
+                'approved_refunds': status_counts.get('approved', 0),
+                'rejected_refunds': status_counts.get('rejected', 0),
+                'waiting_refunds': status_counts.get('waiting', 0),
+                'to_process_refunds': status_counts.get('to process', 0),
+                'completed_refunds': status_counts.get('completed', 0),
                 'total_refund_amount': float(total_refund_amount),
-                'avg_processing_time_hours': round(float(avg_processing_hours), 1),
-                'most_common_reason': common_reason['reason'] if common_reason else "No refunds available",
+                'avg_processing_time_hours': round(avg_processing_hours, 1),
+                'most_common_reason': common_reason['reason'] if common_reason else 'No refunds available',
                 'refunds_this_month': refunds_this_month,
                 'avg_refund_amount': round(float(avg_refund_amount), 2),
-            }
-            
-            return Response(metrics, status=status.HTTP_200_OK)
-            
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
-            print(f"Metrics error: {str(e)}")  # Debug print
-            return Response(
-                {
-                    'error': f'Model access error: {str(e)}',
-                    'model_check': 'Refund model may not be properly defined or imported',
-                    'fallback_metrics': {
-                        'total_refunds': 0,
-                        'pending_refunds': 0,
-                        'approved_refunds': 0,
-                        'rejected_refunds': 0,
-                        'waiting_refunds': 0,
-                        'to_process_refunds': 0,
-                        'completed_refunds': 0,
-                        'total_refund_amount': 0.0,
-                        'avg_processing_time_hours': 0.0,
-                        'most_common_reason': "System configuration issue",
-                        'refunds_this_month': 0,
-                        'avg_refund_amount': 0.0,
-                    }
-                }, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
+            logger.error(f"Metrics error: {e}", exc_info=True)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=False, methods=['get'])
     def get_analytics(self, request):
-        """Get analytics data for charts"""
+        """Get analytics data for charts."""
         try:
-            # Use the correct model reference (based on which solution you chose)
-            # If you used Solution 1 (explicit imports), use Refund
-            # If you used Solution 2 (alias), use RefundModel
-            
-            # Status distribution - ACTUALLY QUERY THE DATABASE
-            status_distribution = Refund.objects.values('status').annotate(
-                count=Count('refund_id')
-            ).order_by('status')
-            
-            total_refunds = sum(item['count'] for item in status_distribution)
-            
-            status_data = []
-            for item in status_distribution:
-                percentage = (item['count'] / total_refunds * 100) if total_refunds > 0 else 0
-                status_data.append({
-                    'status': item['status'],
-                    'count': item['count'],
-                    'percentage': round(percentage, 1)
-                })
-            
-            # Monthly trend data (last 12 months)
-            from django.db.models.functions import TruncMonth
-            from datetime import timedelta
-            
+            # Status distribution
+            status_dist_qs = (
+                Refund.objects.values('status')
+                .annotate(count=Count('refund_id'))
+                .order_by('status')
+            )
+            total = sum(i['count'] for i in status_dist_qs)
+            status_data = [
+                {
+                    'status': i['status'],
+                    'count': i['count'],
+                    'percentage': round(i['count'] / total * 100, 1) if total else 0,
+                }
+                for i in status_dist_qs
+            ]
+
+            # Monthly trend (last 12 months)
             twelve_months_ago = timezone.now() - timedelta(days=365)
-            
-            monthly_data = Refund.objects.filter(
-                requested_at__gte=twelve_months_ago
-            ).annotate(
-                month=TruncMonth('requested_at')
-            ).values('month').annotate(
-                requested=Count('refund_id'),
-                processed=Count('refund_id', filter=Q(status__in=['completed', 'approved']))
-            ).order_by('month')
-            
-            monthly_trend = []
-            for item in monthly_data:
-                monthly_trend.append({
-                    'month': item['month'].strftime('%b %Y'),
-                    'requested': item['requested'],
-                    'processed': item['processed'],
-                    'full_month': item['month'].strftime('%B %Y')
-                })
-            
-              # Refund reasons (top 10)
-            refund_reasons = Refund.objects.exclude(
-                Q(reason__isnull=True) | Q(reason__exact='')
-            ).values('reason').annotate(
-                count=Count('refund_id')
-            ).order_by('-count')[:10]
-            
-            total_with_reasons = sum(item['count'] for item in refund_reasons)
-            
-            reasons_data = []
-            for item in refund_reasons:
-                percentage = (item['count'] / total_with_reasons * 100) if total_with_reasons > 0 else 0
-                reasons_data.append({
-                    'reason': item['reason'],
-                    'count': item['count'],
-                    'percentage': round(percentage, 1)
-                })
-            
-            # Refund methods distribution (use actual model field name)
-            refund_methods = Refund.objects.exclude(
-                Q(buyer_preferred_refund_method__isnull=True) | 
-                Q(buyer_preferred_refund_method__exact='')
-            ).values('buyer_preferred_refund_method').annotate(
-                count=Count('refund_id')
-            ).order_by('-count')
-            
-            total_with_methods = sum(item.get('count', 0) for item in refund_methods)
-            
-            methods_data = []
-            for item in refund_methods:
-                percentage = (item['count'] / total_with_methods * 100) if total_with_methods > 0 else 0
-                methods_data.append({
-                    'method': item['buyer_preferred_refund_method'],
-                    'count': item['count'],
-                    'percentage': round(percentage, 1)
-                })
-        
-            analytics_data = {
+            monthly_qs = (
+                Refund.objects.filter(requested_at__gte=twelve_months_ago)
+                .annotate(month=TruncMonth('requested_at'))
+                .values('month')
+                .annotate(
+                    requested=Count('refund_id'),
+                    processed=Count(
+                        'refund_id',
+                        filter=Q(status__in=['completed', 'approved']),
+                    ),
+                )
+                .order_by('month')
+            )
+            monthly_trend = [
+                {
+                    'month': i['month'].strftime('%b %Y'),
+                    'full_month': i['month'].strftime('%B %Y'),
+                    'requested': i['requested'],
+                    'processed': i['processed'],
+                }
+                for i in monthly_qs
+            ]
+
+            # Top 10 reasons
+            reasons_qs = (
+                Refund.objects.exclude(Q(reason__isnull=True) | Q(reason__exact=''))
+                .values('reason')
+                .annotate(count=Count('refund_id'))
+                .order_by('-count')[:10]
+            )
+            total_reasons = sum(i['count'] for i in reasons_qs)
+            reasons_data = [
+                {
+                    'reason': i['reason'],
+                    'count': i['count'],
+                    'percentage': round(i['count'] / total_reasons * 100, 1) if total_reasons else 0,
+                }
+                for i in reasons_qs
+            ]
+
+            # Refund method distribution
+            methods_qs = (
+                Refund.objects.exclude(
+                    Q(buyer_preferred_refund_method__isnull=True) |
+                    Q(buyer_preferred_refund_method__exact='')
+                )
+                .values('buyer_preferred_refund_method')
+                .annotate(count=Count('refund_id'))
+                .order_by('-count')
+            )
+            total_methods = sum(i['count'] for i in methods_qs)
+            methods_data = [
+                {
+                    'method': i['buyer_preferred_refund_method'],
+                    'count': i['count'],
+                    'percentage': round(i['count'] / total_methods * 100, 1) if total_methods else 0,
+                }
+                for i in methods_qs
+            ]
+
+            return Response({
                 'status_distribution': status_data,
                 'monthly_trend_data': monthly_trend,
                 'refund_reasons': reasons_data,
-                'refund_methods': methods_data
-            }
-            
-            return Response(analytics_data, status=status.HTTP_200_OK)
-            
+                'refund_methods': methods_data,
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
-            print(f"Analytics error: {str(e)}")  # Debug print
-            # Return fallback data with error info
-            return Response(
-                {
-                    'error': f'Analytics error: {str(e)}',
-                    'fallback_data': {
-                        'status_distribution': [
-                            {'status': 'pending', 'count': 0, 'percentage': 0},
-                            {'status': 'approved', 'count': 0, 'percentage': 0},
-                            {'status': 'rejected', 'count': 0, 'percentage': 0},
-                            {'status': 'waiting', 'count': 0, 'percentage': 0},
-                            {'status': 'to process', 'count': 0, 'percentage': 0},
-                            {'status': 'completed', 'count': 0, 'percentage': 0}
-                        ],
-                        'monthly_trend_data': [],
-                        'refund_reasons': [],
-                        'refund_methods': []
-                    }
-                }, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
+            logger.error(f"Analytics error: {e}", exc_info=True)
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=False, methods=['get'])
     def refund_list(self, request):
-        """Get all refund requests for admin/moderation team"""
+        """Get all refund requests for the admin / moderation team."""
         try:
-            # Resolve FK name used for Refund->Order relationship and fetch related data
-            order_field = None
-            for f in Refund._meta.get_fields():
-                if getattr(f, 'related_model', None) == Order and getattr(f, 'many_to_one', False):
-                    order_field = f.name
-                    break
-            if not order_field:
-                order_field = 'order_id'
-
-            refunds = Refund.objects.select_related(
-                order_field,
-                'requested_by',
-                'processed_by'
-            ).prefetch_related(
-                f'{order_field}__payment_set'  # Payments are a reverse FK (use payment_set)
-            ).all().order_by('-requested_at')  # Most recent first
-
-            refunds_data = []
-
-            for refund in refunds:
-                # Get refund amounts based on your model structure
-                requested_amount = None
-                refund_fee = None
-                total_refund_amount = None
-
-                # Calculate amounts using the resolved related order object
-                order_obj = getattr(refund, order_field, None)
-                if order_obj:
-                    requested_amount = float(order_obj.total_amount)
-                    # Example: 5% processing fee
-                    refund_fee = float(order_obj.total_amount) * 0.05
-                    total_refund_amount = requested_amount - refund_fee
-
-                refund_data = {
-                    'refund': str(getattr(refund, 'refund_id', getattr(refund, 'refund', ''))),
-                    'order_id': str(getattr(order_obj, 'order')) if order_obj else 'N/A',
-                    'order_total_amount': float(order_obj.total_amount) if order_obj else 0.0,
-                    
-                    # Requested by user info
-                    'requested_by_username': refund.requested_by.username if refund.requested_by else 'Unknown',
-                    'requested_by_email': refund.requested_by.email if refund.requested_by else 'N/A',
-                    
-                    # Processed by user info (if processed)
-                    'processed_by_username': refund.processed_by.username if refund.processed_by else None,
-                    'processed_by_email': refund.processed_by.email if refund.processed_by else None,
-                    
-                    # Refund details
-                    'reason': refund.reason or 'No reason provided',
-                    'status': refund.status or 'pending',
-                    'requested_at': refund.requested_at.isoformat() if refund.requested_at else None,
-                    'processed_at': refund.processed_at.isoformat() if refund.processed_at else None,
-                    
-                    # Amount information
-                    'requested_refund_amount': requested_amount,
-                    'refund_fee': refund_fee,
-                    'total_refund_amount': total_refund_amount,
-                    'approved_refund_amount': float(refund.approved_refund_amount) if getattr(refund, 'approved_refund_amount', None) is not None else None,
-                    
-                    # Shipping/logistics info (if available in your model)
-                    'logistic_service': refund.logistic_service if hasattr(refund, 'logistic_service') else None,
-                    'tracking_number': refund.tracking_number if hasattr(refund, 'tracking_number') else None,
-                    
-                    # Refund types and payment status
-                    'final_refund_type': getattr(refund, 'final_refund_type', None),
-                    'refund_type': getattr(refund, 'refund_type', None),
-                    'refund_payment_status': getattr(refund, 'refund_payment_status', None),
-
-                    # Return request serialized (if present) so clients can render return lifecycle UIs
-                    'return_request': None,
-                    'has_return_request': bool(getattr(refund, 'return_request', None)),
-                    'return_request_status': getattr(getattr(refund, 'return_request', None), 'status', None),
-                    'return_deadline': getattr(getattr(refund, 'return_request', None), 'return_deadline', None).isoformat() if (getattr(refund, 'return_request', None) and getattr(getattr(refund, 'return_request', None), 'return_deadline', None)) else None,
-
-                    # Refund method (provide both buyer_preferred_refund_method and preferred_refund_method for compatibility)
-                    'buyer_preferred_refund_method': getattr(refund, 'buyer_preferred_refund_method', getattr(refund, 'preferred_refund_method', None)),
-                    'preferred_refund_method': getattr(refund, 'preferred_refund_method', getattr(refund, 'buyer_preferred_refund_method', None)),
-                    'final_refund_method': refund.final_refund_method if hasattr(refund, 'final_refund_method') else None,
-                    
-                    # Media attachments
-                    'has_media': refund.refundmedia_set.exists() if hasattr(refund, 'refundmedia_set') else False,
-                    'media_count': refund.refundmedia_set.count() if hasattr(refund, 'refundmedia_set') else 0,
-                }
-                # If a ReturnRequestItem exists on the refund, include a serialized shape for UI consumption
-                rr_obj = getattr(refund, 'return_request', None)
-                if rr_obj:
-                    medias_list = []
-                    try:
-                        media_qs = rr_obj.medias.all() if hasattr(rr_obj, 'medias') else (rr_obj.returnrequestmedia_set.all() if hasattr(rr_obj, 'returnrequestmedia_set') else [])
-                        for m in media_qs:
-                            file_url = None
-                            if getattr(m, 'file_data', None):
-                                try:
-                                    file_url = request.build_absolute_uri(m.file_data.url)
-                                except Exception:
-                                    file_url = None
-                            medias_list.append({
-                                'id': str(getattr(m, 'id', None)),
-                                'file_url': file_url,
-                                'file_type': getattr(m, 'file_type', None),
-                                'notes': getattr(m, 'notes', None)
-                            })
-                    except Exception:
-                        medias_list = []
-
-                    refund_data['return_request'] = {
-                        'id': str(getattr(rr_obj, 'id', None)),
-                        'status': getattr(rr_obj, 'status', None),
-                        'tracking_number': getattr(rr_obj, 'tracking_number', None),
-                        'tracking_url': getattr(rr_obj, 'tracking_url', None),
-                        'shipped_at': getattr(rr_obj, 'shipped_at').isoformat() if getattr(rr_obj, 'shipped_at', None) else None,
-                        'received_at': getattr(rr_obj, 'received_at').isoformat() if getattr(rr_obj, 'received_at', None) else None,
-                        'logistic_service': getattr(rr_obj, 'logistic_service', None),
-                        'notes': getattr(rr_obj, 'notes', None),
-                        'medias': medias_list
-                    }
-
-                refunds_data.append(refund_data)
-
-            return Response(refunds_data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            print(f"Refund list error: {str(e)}")
+            refunds = self._base_queryset().order_by('-requested_at')
             return Response(
-                {'error': f'Failed to fetch refund list: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )  
-    
+                [self._serialize_refund(r, request) for r in refunds],
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error(f"Refund list error: {e}", exc_info=True)
+            return Response(
+                {'error': f'Failed to fetch refund list: {e}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
     @action(detail=True, methods=['post'])
     def admin_process_refund(self, request, pk=None):
-        """Process a refund - update refund_payment_status to 'processing'"""
+        """Set refund_payment_status to 'processing'."""
         try:
-            # Get the refund object using the pk parameter
-            # In a regular ViewSet, you need to get the object manually
             refund = Refund.objects.get(refund_id=pk)
-            
-            # Get the status from request
-            status_value = request.data.get('status') or request.POST.get('status')
-            
-            if status_value == 'processing':
-                # Update refund_payment_status to processing
-                refund.refund_payment_status = 'processing'
-                refund.save(update_fields=['refund_payment_status'])
-                
-                return Response({
-                    'success': True,
-                    'message': 'Refund payment status set to processing',
-                    'refund_payment_status': refund.refund_payment_status
-                }, status=status.HTTP_200_OK)
-            else:
-                return Response({
-                    'error': f'Invalid status value. Expected "processing", got: {status_value}'
-                }, status=status.HTTP_400_BAD_REQUEST)
-                
         except Refund.DoesNotExist:
-            return Response({
-                'error': 'Refund not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({
-                'error': str(e)
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Refund not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        status_value = request.data.get('status')
+        if status_value != 'processing':
+            return Response(
+                {'error': f'Invalid status. Expected "processing", got: {status_value}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        refund.refund_payment_status = 'processing'
+        refund.save(update_fields=['refund_payment_status'])
+        return Response({
+            'success': True,
+            'message': 'Refund payment status set to processing',
+            'refund_payment_status': refund.refund_payment_status,
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def add_proof(self, request, pk=None):
-        """
-        SELLER VIEW: Upload one or more proof files (images/pdf) for a refund. Only seller owning the shop can upload.
-        Accepts multipart/form-data fields:
-          - file_data (file) (can be multiple)
-          - file_type (optional)
-          - notes (optional)
-        Returns the updated refund payload.
-        """
+        """Upload proof files for a refund (seller or admin)."""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user = User.objects.get(id=user_id)
-
-            try:
-                try:
-                    refund = Refund.objects.get(refund_id=pk)
-                except (ValueError, TypeError):
-                    return Response({"error": "Invalid refund id"}, status=status.HTTP_400_BAD_REQUEST)
-            except Refund.DoesNotExist:
-                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
-
-            # Authorization check: seller must own the shop for this refund
-            # Allow admin/moderator to upload proofs for any shop
-            if not (user.is_admin or user.is_moderator):
-                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-                if err:
-                    return err
-
-            files = request.FILES.getlist('file_data') or []
-            if not files:
-                # Also accept single file under 'file'
-                single = request.FILES.get('file')
-                if single:
-                    files = [single]
-
-            if not files:
-                return Response({"error": "No files uploaded"}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Enforce server-side limit: max 4 proofs per refund
-            existing_count = RefundProof.objects.filter(refund=refund).count()
-            if existing_count + len(files) > 4:
-                remaining = max(0, 4 - existing_count)
-                return Response({"error": f"Cannot upload: only {remaining} proof(s) remaining"}, status=status.HTTP_400_BAD_REQUEST)
-
-            created = []
-            for f in files:
-                file_type = request.data.get('file_type') or f.content_type or ''
-                notes = request.data.get('notes', '')
-                try:
-                    rp = RefundProof.objects.create(
-                        refund=refund,
-                        uploaded_by=user,
-                        file_type=file_type,
-                        file_data=f,
-                        notes=notes
-                    )
-                    created.append(str(rp.id))
-                except Exception as e:
-                    # Log and continue saving the rest
-                    print('Failed to save refund proof', e)
-
-            data = self._get_refund_details_data(refund, request, user)
-            return Response({"message": "Proof(s) uploaded", "created": created, "refund": data}, status=status.HTTP_201_CREATED)
-
         except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-
-    def _get_refund_details_data(self, refund, request, user):
-        """
-        Internal helper to serialize a refund and its related payment details (wallet/bank/remittance/proofs)
-        Returns a plain dict safe for JSON response.
-        """
-        data = {}
         try:
-            # Basic refund identifiers
-            data['refund'] = str(getattr(refund, 'refund_id', getattr(refund, 'refund', '')))
-            data['status'] = getattr(refund, 'status', None)
-            data['requested_at'] = getattr(refund, 'requested_at').isoformat() if getattr(refund, 'requested_at', None) else None
-            data['processed_at'] = getattr(refund, 'processed_at').isoformat() if getattr(refund, 'processed_at', None) else None
+            refund = Refund.objects.get(refund_id=pk)
+        except (Refund.DoesNotExist, ValueError, TypeError):
+            return Response({'error': 'Refund not found'}, status=status.HTTP_404_NOT_FOUND)
 
-            # Amounts
-            data['total_refund_amount'] = float(getattr(refund, 'total_refund_amount', getattr(refund, 'approved_refund_amount', 0) or 0))
-            data['approved_refund_amount'] = float(getattr(refund, 'approved_refund_amount', 0) or 0)
-            data['order_total_amount'] = float(getattr(getattr(refund, 'order', None), 'total_amount', getattr(refund, 'order_total_amount', 0) or 0))
+        if not (user.is_admin or user.is_moderator):
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
 
-            # Refund method fields
-            data['buyer_preferred_refund_method'] = getattr(refund, 'buyer_preferred_refund_method', getattr(refund, 'preferred_refund_method', None))
-            data['preferred_refund_method'] = getattr(refund, 'preferred_refund_method', getattr(refund, 'buyer_preferred_refund_method', None))
-            data['final_refund_method'] = getattr(refund, 'final_refund_method', None)
+        files = request.FILES.getlist('file_data') or []
+        if not files:
+            single = request.FILES.get('file')
+            if single:
+                files = [single]
+        if not files:
+            return Response({'error': 'No files uploaded'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Try to attach wallet/bank/remittance related objects (OneToOne related_name: wallet, bank, remittance)
-            # Wallet
-            wallet_obj = None
+        existing_count = RefundProof.objects.filter(refund=refund).count()
+        remaining = 4 - existing_count
+        if len(files) > remaining:
+            return Response(
+                {'error': f'Cannot upload: only {remaining} proof(s) remaining'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        created = []
+        for f in files:
             try:
-                wallet_obj = refund.wallet
-            except Exception:
-                wallet_obj = None
-            if not wallet_obj:
-                # fallback attribute names
-                wallet_obj = getattr(refund, 'refundwallet', None) or getattr(refund, 'refund_wallet', None)
+                rp = RefundProof.objects.create(
+                    refund=refund,
+                    uploaded_by=user,
+                    file_type=request.data.get('file_type') or f.content_type or '',
+                    file_data=f,
+                    notes=request.data.get('notes', ''),
+                )
+                created.append(str(rp.id))
+            except Exception as e:
+                logger.warning(f'Failed to save refund proof: {e}')
 
-            if wallet_obj:
-                data['wallet'] = {
-                    'provider': getattr(wallet_obj, 'provider', None),
-                    'account_name': getattr(wallet_obj, 'account_name', None),
-                    'account_number': getattr(wallet_obj, 'account_number', None),
-                    'contact_number': getattr(wallet_obj, 'contact_number', None)
-                }
-            else:
-                data['wallet'] = None
-
-            # Bank
-            bank_obj = None
-            try:
-                bank_obj = refund.bank
-            except Exception:
-                bank_obj = None
-            if not bank_obj:
-                bank_obj = getattr(refund, 'refundbank', None) or getattr(refund, 'refund_bank', None)
-
-            if bank_obj:
-                data['bank'] = {
-                    'bank_name': getattr(bank_obj, 'bank_name', None),
-                    'account_name': getattr(bank_obj, 'account_name', None),
-                    'account_number': getattr(bank_obj, 'account_number', None),
-                    'account_type': getattr(bank_obj, 'account_type', None),
-                    'branch': getattr(bank_obj, 'branch', None)
-                }
-            else:
-                data['bank'] = None
-
-            # Remittance
-            rem_obj = None
-            try:
-                rem_obj = refund.remittance
-            except Exception:
-                rem_obj = None
-            if not rem_obj:
-                rem_obj = getattr(refund, 'refundremittance', None) or getattr(refund, 'refund_remittance', None)
-
-            if rem_obj:
-                data['remittance'] = {
-                    'provider': getattr(rem_obj, 'provider', None),
-                    'first_name': getattr(rem_obj, 'first_name', None),
-                    'middle_name': getattr(rem_obj, 'middle_name', None),
-                    'last_name': getattr(rem_obj, 'last_name', None),
-                    'contact_number': getattr(rem_obj, 'contact_number', None),
-                    'country': getattr(rem_obj, 'country', None),
-                    'city': getattr(rem_obj, 'city', None),
-                    'province': getattr(rem_obj, 'province', None),
-                    'barangay': getattr(rem_obj, 'barangay', None),
-                    'street': getattr(rem_obj, 'street', None),
-                    'zip_code': getattr(rem_obj, 'zip_code', None)
-                }
-            else:
-                data['remittance'] = None
-
-            # Proofs (RefundProof related_name = 'proofs')
-            proofs_list = []
-            try:
-                for p in getattr(refund, 'proofs').all():
-                    file_url = None
-                    try:
-                        file_url = request.build_absolute_uri(p.file_data.url) if getattr(p, 'file_data', None) else None
-                    except Exception:
-                        file_url = None
-                    proofs_list.append({
-                        'id': str(getattr(p, 'id', None)),
-                        'file_url': file_url,
-                        'file_type': getattr(p, 'file_type', None),
-                        'notes': getattr(p, 'notes', None)
-                    })
-            except Exception:
-                proofs_list = []
-
-            data['proofs'] = proofs_list
-
-            # Raw dispute fields placeholders (frontend expects some shapes)
-            data['dispute_request'] = None
-            data['dispute_details'] = None
-
-            return data
-        except Exception as e:
-            print(f"Error serializing refund details: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return {}
+        refund.refresh_from_db()
+        data = self._serialize_refund(
+            self._base_queryset().get(refund_id=refund.refund_id),
+            request,
+        )
+        return Response({'message': 'Proof(s) uploaded', 'created': created, 'refund': data},
+                        status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get'])
     def get_admin_refund_details(self, request, pk=None):
-        """
-        ADMIN VIEW: Get detailed refund information for admin
-        """
+        """Get detailed refund information for admin."""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({"error": "User ID required"}, 
-                            status=status.HTTP_400_BAD_REQUEST)
-        
+            return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             user = User.objects.get(id=user_id)
-            
-            # Check if user is admin
-            if not user.is_admin:
-                return Response({"error": "Admin access required"}, 
-                                status=status.HTTP_403_FORBIDDEN)
-            
-            # Get refund
-            try:
-                refund = Refund.objects.get(refund_id=pk)
-            except Refund.DoesNotExist:
-                return Response({"error": "Refund not found"}, 
-                                status=status.HTTP_404_NOT_FOUND)
-            except Exception as e:
-                print(f"Error fetching refund: {str(e)}")
-                return Response({"error": f"Invalid refund ID format: {str(e)}"}, 
-                                status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get comprehensive refund data
-            try:
-                data = self._get_refund_details_data(refund, request, user)
-            except Exception as e:
-                print(f"Error in _get_refund_details_data: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                return Response({"error": f"Failed to get refund details: {str(e)}"}, 
-                                status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-            # Add admin-specific information
-            data['admin_notes'] = refund.customer_note
-            data['processed_by'] = {
-                "id": str(refund.processed_by.id) if refund.processed_by else None,
-                "username": refund.processed_by.username if refund.processed_by else None,
-                "email": refund.processed_by.email if refund.processed_by else None
-            } if refund.processed_by else None
-            
-            # Add all related disputes
-            try:
-                disputes = DisputeRequest.objects.filter(refund_id=refund).order_by('-created_at')
-                print(f"Found {disputes.count()} disputes for refund {refund.refund_id}")
-                
-                data['disputes'] = []
-                for d in disputes:
-                    try:
-                        dispute_data = {
-                            "id": str(d.id),
-                            "requested_by": {
-                                "id": str(d.requested_by.id),
-                                "username": d.requested_by.username,
-                                "email": d.requested_by.email
-                            },
-                            "reason": d.reason,
-                            "status": d.status,
-                            "case_category": d.case_category,  # This is a JSONField
-                            "admin_notes": d.admin_notes,
-                            "created_at": d.created_at.isoformat() if d.created_at else None,
-                            "resolved_at": d.resolved_at.isoformat() if d.resolved_at else None
-                        }
-                        print(f"Dispute {d.id} case_category: {d.case_category}")
-                        data['disputes'].append(dispute_data)
-                    except Exception as e:
-                        print(f"Error serializing dispute {d.id}: {str(e)}")
-                        continue
-                        
-            except Exception as e:
-                print(f"Error fetching disputes: {str(e)}")
-                data['disputes'] = []
-            
-            # Add all counter requests
-            try:
-                counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
-                data['counter_requests'] = [
-                    {
-                        "counter_id": str(cr.counter_id),
-                        "requested_by": cr.requested_by,
-                        "seller": {
-                            "id": str(cr.seller_id.id),
-                            "username": cr.seller_id.username
-                        },
-                        "shop": {
-                            "id": str(cr.shop_id.id),
-                            "name": cr.shop_id.name
-                        },
-                        "counter_refund_method": cr.counter_refund_method,
-                        "counter_refund_type": cr.counter_refund_type,
-                        "counter_refund_amount": float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
-                        "notes": cr.notes,
-                        "status": cr.status,
-                        "requested_at": cr.requested_at.isoformat()
-                    }
-                    for cr in counter_requests
-                ]
-            except Exception as e:
-                print(f"Error fetching counter requests: {str(e)}")
-                data['counter_requests'] = []
-            
-            return Response(data)
-            
         except User.DoesNotExist:
-            return Response({"error": "User not found"}, 
-                            status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not user.is_admin:
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            refund = self._base_queryset().get(refund_id=pk)
+        except Refund.DoesNotExist:
+            return Response({'error': 'Refund not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            try:
-                logger.error(f"Error in get_my_refunds (personal): {str(e)}", exc_info=True)
-            except Exception:
-                print(f"Error in get_my_refunds (personal): {str(e)}")
-            return Response({"error": "Internal server error", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({'error': f'Invalid refund ID: {e}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            data = self._serialize_refund(refund, request)
         except Exception as e:
-            try:
-                logger.error(f"Error in get_my_refunds: {str(e)}", exc_info=True)
-            except Exception:
-                print(f"Error in get_my_refunds: {str(e)}")
-            return Response({"error": "Internal server error", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        except Exception as e:
-            print(f"Unexpected error in get_admin_refund_details: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return Response({"error": f"Internal server error: {str(e)}"}, 
+            logger.error(f'Error serializing refund {pk}: {e}', exc_info=True)
+            return Response({'error': f'Failed to serialize refund: {e}'},
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
+        # Admin-only extras
+        data['admin_notes'] = refund.customer_note
+        data['processed_by'] = (
+            {
+                'id': str(refund.processed_by.id),
+                'username': refund.processed_by.username,
+                'email': refund.processed_by.email,
+            }
+            if refund.processed_by else None
+        )
+
+        # Disputes
+        try:
+            disputes = DisputeRequest.objects.filter(refund_id=refund).order_by('-created_at')
+            data['disputes'] = [
+                {
+                    'id': str(d.id),
+                    'requested_by': {
+                        'id': str(d.requested_by.id),
+                        'username': d.requested_by.username,
+                        'email': d.requested_by.email,
+                    },
+                    'reason': d.reason,
+                    'status': d.status,
+                    'case_category': d.case_category,
+                    'admin_notes': d.admin_notes,
+                    'created_at': d.created_at.isoformat() if d.created_at else None,
+                    'resolved_at': d.resolved_at.isoformat() if d.resolved_at else None,
+                }
+                for d in disputes
+            ]
+        except Exception as e:
+            logger.error(f'Error fetching disputes: {e}', exc_info=True)
+            data['disputes'] = []
+
+        # Counter requests
+        try:
+            counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
+            data['counter_requests'] = [
+                {
+                    'counter_id': str(cr.counter_id),
+                    'requested_by': cr.requested_by,
+                    'seller': {'id': str(cr.seller_id.id), 'username': cr.seller_id.username},
+                    'shop': {'id': str(cr.shop_id.id), 'name': cr.shop_id.name},
+                    'counter_refund_method': cr.counter_refund_method,
+                    'counter_refund_type': cr.counter_refund_type,
+                    'counter_refund_amount': float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
+                    'notes': cr.notes,
+                    'status': cr.status,
+                    'requested_at': cr.requested_at.isoformat(),
+                }
+                for cr in counter_requests
+            ]
+        except Exception as e:
+            logger.error(f'Error fetching counter requests: {e}', exc_info=True)
+            data['counter_requests'] = []
+
+        return Response(data)
 
 class AdminUsers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])

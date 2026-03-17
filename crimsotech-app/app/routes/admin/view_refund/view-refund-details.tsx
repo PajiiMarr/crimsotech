@@ -52,6 +52,7 @@ import {
   MapPin, Phone, Mail, Store, Bike, Package as PackageIcon,
   Image as ImageIcon, File as FileIcon, Download, ExternalLink
 } from 'lucide-react';
+import type { Route } from './+types/view-refund-details';
 
 // ===== LIABILITY LABELS MAPPING =====
 const liabilityLabels: Record<string, string> = {
@@ -61,6 +62,14 @@ const liabilityLabels: Record<string, string> = {
   'shared_responsibility': 'Shared Responsibility',
   'platform_system_issue': 'Platform / System Issue'
 };
+
+export function meta(): Route.MetaDescriptors {
+    return [
+        {
+            title: "View Refund",
+        }
+    ]
+}
 
 // Helper to format case categories
 function formatCaseCategory(category: any): string {
@@ -1844,7 +1853,6 @@ export async function loader({ request, context, params }: any) {
   // Basic admin auth middleware
   try {
     ;
-    await registrationMiddleware({ request, context: undefined, params: {}, unstable_pattern: undefined } as any);
     const { requireRole } = await import('~/middleware/role-require.server');
     await requireRole(request, undefined, ['isAdmin'] as any);
   } catch (err) {
