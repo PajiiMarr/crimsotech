@@ -55,7 +55,8 @@ import {
   Landmark,
   Smartphone,
   Globe,
-  HelpCircle
+  HelpCircle,
+  PhilippinePeso
 } from "lucide-react";
 
 // ================================
@@ -395,12 +396,12 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
   const fetchWithdrawalRequests = async () => {
     try {
       setLoadingWithdrawals(true);
-      const response = await AxiosInstance.get('/withdrawal-requests/my_requests/', {
+      const response = await AxiosInstance.get('/wallet/withdrawal_history/', {
         headers: { 'X-User-Id': user.user_id }
       });
-      
+
       if (response.data.success) {
-        setWithdrawalRequests(response.data.withdrawal_requests || []);
+        setWithdrawalRequests(response.data.withdrawals || []);
       }
     } catch (error) {
       console.error('Error fetching withdrawal requests:', error);
@@ -420,64 +421,64 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
   }, [selectedPaymentMethod, paymentMethods]);
 
   // Handle withdrawal request
-  const handleWithdraw = async () => {
-    try {
-      setSaving(true);
-      setError(null);
-      
-      const amount = parseFloat(withdrawAmount);
-      if (isNaN(amount) || amount <= 0) {
-        setError('Please enter a valid amount');
-        return;
-      }
-      
-      if (amount > (wallet?.available_balance || 0)) {
-        setError(`Amount exceeds available balance (${formatCurrency(wallet?.available_balance || 0)})`);
-        return;
-      }
-      
-      if (!selectedPaymentMethod) {
-        setError('Please select a payment method');
-        return;
-      }
-      
-      // Get the selected payment method details
-      const selectedMethod = paymentMethods.find(m => m.payment_id === selectedPaymentMethod);
-      
-      if (!selectedMethod) {
-        setError('Selected payment method not found');
-        return;
-      }
-      
-      // Send withdrawal request
-      const response = await AxiosInstance.post('/withdrawal-requests/', {
-        amount: amount
-        // Note: Payment method is not in the model yet, so we don't send it
-        // The admin will manually process the payment to the user's saved payment method
-      }, {
-        headers: { 'X-User-Id': user.user_id }
-      });
-      
-      if (response.data.success) {
-        setSuccess('Withdrawal request submitted successfully!');
-        setShowWithdrawForm(false);
-        setWithdrawAmount('');
-        setSelectedPaymentMethod('');
-        setSelectedPaymentMethodDetails(null);
-        
-        // Refresh wallet data and withdrawal requests
-        fetchWalletData();
-        fetchWithdrawalRequests();
-      } else {
-        setError(response.data.error || 'Failed to submit withdrawal request');
-      }
-    } catch (error: any) {
-      console.error('Error submitting withdrawal:', error);
-      setError(error.response?.data?.error || 'Failed to submit withdrawal request');
-    } finally {
-      setSaving(false);
+const handleWithdraw = async () => {
+  try {
+    setSaving(true);
+    setError(null);
+
+    const amount = parseFloat(withdrawAmount);
+    if (isNaN(amount) || amount <= 0) {
+      setError('Please enter a valid amount');
+      return;
     }
-  };
+
+    if (amount < 100) {
+      setError('Minimum withdrawal amount is ₱100.00');
+      return;
+    }
+
+    if (amount > (wallet?.available_balance || 0)) {
+      setError(`Amount exceeds available balance (${formatCurrency(wallet?.available_balance || 0)})`);
+      return;
+    }
+
+    if (!selectedPaymentMethod) {
+      setError('Please select a payment method');
+      return;
+    }
+
+    const response = await AxiosInstance.post(
+      '/wallet/request_withdrawal/',
+      {
+        amount,
+        payment_method_id: selectedPaymentMethod,
+      },
+      { headers: { 'X-User-Id': user.user_id } }
+    );
+
+    if (response.data.success) {
+      setSuccess('Withdrawal request submitted successfully!');
+      setShowWithdrawForm(false);
+      setWithdrawAmount('');
+      setSelectedPaymentMethod('');
+      setSelectedPaymentMethodDetails(null);
+
+      // Refresh both wallet and withdrawal history
+      await Promise.all([fetchWalletData(), fetchWithdrawalRequests()]);
+    } else {
+      setError(response.data.error || 'Failed to submit withdrawal request');
+    }
+  } catch (error: any) {
+    const msg =
+      error.response?.data?.error ||
+      error.response?.data?.existing_request
+        ? `You already have a pending withdrawal of ${formatCurrency(error.response?.data?.existing_request?.amount)}.`
+        : 'Failed to submit withdrawal request';
+    setError(msg);
+  } finally {
+    setSaving(false);
+  }
+};
 
   // Filter transactions based on selected filter
   useEffect(() => {
@@ -1712,7 +1713,7 @@ function ProfileContent({ user, profile: initialProfile }: { user: any, profile?
                       className="w-full"
                       disabled={!wallet?.available_balance || wallet.available_balance <= 0}
                     >
-                      <DollarSign className="w-4 h-4 mr-2" />
+                      <PhilippinePeso className="w-4 h-4 mr-2" />
                       Request Withdrawal
                     </Button>
                   ) : (

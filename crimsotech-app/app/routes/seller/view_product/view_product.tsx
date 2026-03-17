@@ -721,7 +721,6 @@ export default function ViewProduct({ loaderData }: { loaderData: LoaderData }) 
                                                     {getUploadStatusBadge(product.upload_status)}
                                                     {getConditionBadge(product.condition)}
                                                     {product.category && <Badge variant="outline" className="bg-blue-50">{product.category.name}</Badge>}
-                                                    {product.category_admin && <Badge variant="outline" className="bg-purple-50">Admin: {product.category_admin.name}</Badge>}
                                                     {product.is_removed && <Badge variant="destructive" className="animate-pulse"><XCircle className="w-3 h-3 mr-1" />Removed</Badge>}
                                                     {product.status === 'Suspended' && <Badge variant="destructive"><Ban className="w-3 h-3 mr-1" />Suspended</Badge>}
                                                 </div>
