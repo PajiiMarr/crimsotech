@@ -17511,6 +17511,83 @@ class SellerProducts(viewsets.ModelViewSet):
             + (f' with {len(errors)} error(s)' if errors else ''),
         }, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['get', 'post'], url_path='media')
+    def media(self, request, pk=None):
+        """
+        GET  /seller-products/{product_id}/media/  — list media
+        POST /seller-products/{product_id}/media/  — upload media
+        """
+        try:
+            product = Product.objects.get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.method == 'GET':
+            media_items = ProductMedia.objects.filter(product=product)
+            media_data = [
+                {
+                    'id': str(m.id),
+                    'file_data': get_media_url(m.file_data) if m.file_data else None,
+                    'file_type': m.file_type,
+                }
+                for m in media_items
+            ]
+            return Response({
+                'success': True,
+                'media': media_data,
+                'count': len(media_data),
+            }, status=status.HTTP_200_OK)
+
+        # POST
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'error': 'file is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        media = ProductMedia.objects.create(
+            product=product,
+            file_data=file,
+            file_type=file.content_type or 'image/jpeg',
+        )
+
+        return Response({
+            'success': True,
+            'media': {
+                'id': str(media.id),
+                'file_data': get_media_url(media.file_data) if media.file_data else None,
+                'file_type': media.file_type,
+            },
+            'message': 'Media uploaded successfully',
+        }, status=status.HTTP_201_CREATED)
+
+
+    @action(detail=True, methods=['delete'], url_path='media/(?P<media_id>[^/.]+)')
+    def delete_media(self, request, pk=None, media_id=None):
+        """
+        DELETE /seller-products/{product_id}/media/{media_id}/
+        """
+        try:
+            product = Product.objects.get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            media = ProductMedia.objects.get(id=media_id, product=product)
+        except ProductMedia.DoesNotExist:
+            return Response({'error': 'Media not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if media.file_data:
+            try:
+                media.file_data.delete(save=False)
+            except Exception:
+                pass
+
+        media.delete()
+
+        return Response({
+            'success': True,
+            'message': 'Media deleted successfully',
+        }, status=status.HTTP_200_OK)
+    
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
