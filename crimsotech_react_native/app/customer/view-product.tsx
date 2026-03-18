@@ -586,7 +586,7 @@ export default function ViewProductPage() {
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
-        <CustomerLayout disableScroll>
+        <CustomerLayout disableScroll hideBottomTab={true}>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#F97316" />
             <Text style={styles.loadingText}>Loading product...</Text>
@@ -599,7 +599,7 @@ export default function ViewProductPage() {
   if (!product) {
     return (
       <SafeAreaView style={styles.container}>
-        <CustomerLayout disableScroll>
+        <CustomerLayout disableScroll hideBottomTab={true}>
           <View style={styles.errorContainer}>
             <MaterialIcons name="error-outline" size={64} color="#EF4444" />
             <Text style={styles.errorText}>Product not found</Text>
@@ -623,7 +623,7 @@ export default function ViewProductPage() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <CustomerLayout disableScroll>
+      <CustomerLayout disableScroll hideBottomTab={true}>
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Product Images */}
           <View style={styles.imageSection}>
@@ -896,18 +896,31 @@ export default function ViewProductPage() {
               </TouchableOpacity>
             )
           )}
-
-         
         </ScrollView>
 
-        {/* Fixed Action Bar */}
+        {/* Fixed Action Bar - Professional Minimalist Design */}
         <View style={styles.actionBar}>
+          {/* Left side - Price Summary */}
           <View style={styles.priceSummary}>
             <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalPrice}>
-              {isGift ? 'FREE' : `₱${(displayVariantPrice * quantity).toFixed(2)}`}
-            </Text>
+            <View style={styles.priceRow}>
+              <Text style={styles.totalPrice}>
+                {isGift ? 'FREE' : `₱${(displayVariantPrice * quantity).toFixed(2)}`}
+              </Text>
+              {!isGift && displayComparePrice && displayComparePrice > displayVariantPrice && (
+                <Text style={styles.originalPrice}>
+                  ₱{(displayComparePrice * quantity).toFixed(2)}
+                </Text>
+              )}
+            </View>
+            {!isGift && displayComparePrice && displayComparePrice > displayVariantPrice && (
+              <Text style={styles.savings}>
+                Save ₱{((displayComparePrice - displayVariantPrice) * quantity).toFixed(2)}
+              </Text>
+            )}
           </View>
+
+          {/* Right side - Action Buttons */}
           <View style={styles.actionButtonsContainer}>
             {/* Swap Button */}
             {!isGift && isAvailableForSwap && displayStock > 0 && (
@@ -919,10 +932,7 @@ export default function ViewProductPage() {
                 {startingSwap ? (
                   <ActivityIndicator color="#FFF" size="small" />
                 ) : (
-                  <>
-                    <MaterialCommunityIcons name="swap-horizontal" size={18} color="#FFF" />
-                    <Text style={styles.swapButtonText}>Swap</Text>
-                  </>
+                  <MaterialCommunityIcons name="swap-horizontal" size={18} color="#FFF" />
                 )}
               </TouchableOpacity>
             )}
@@ -932,7 +942,7 @@ export default function ViewProductPage() {
               style={[
                 styles.actionButton, 
                 styles.cartButton,
-                (!isGift && isAvailableForSwap) ? { flex: 1.2 } : { flex: 1 }
+                (!isGift && isAvailableForSwap) ? styles.cartButtonCompact : styles.cartButtonFull
               ]}
               onPress={handleAddToCart}
               disabled={addingToCart || displayStock <= 0}
@@ -942,8 +952,8 @@ export default function ViewProductPage() {
               ) : (
                 <>
                   <Ionicons name="cart-outline" size={18} color="#FFF" />
-                  <Text style={styles.cartButtonText}>
-                    {displayStock <= 0 ? "Out of Stock" : isGift ? "Add to Cart (Free)" : "Add to Cart"}
+                  <Text style={styles.buttonText}>
+                    {displayStock <= 0 ? "Out of Stock" : "Cart"}
                   </Text>
                 </>
               )}
@@ -954,13 +964,13 @@ export default function ViewProductPage() {
               style={[
                 styles.actionButton, 
                 styles.buyButton,
-                (!isGift && isAvailableForSwap) ? { flex: 1 } : { flex: 1 }
+                (!isGift && isAvailableForSwap) ? styles.buyButtonCompact : styles.buyButtonFull
               ]}
               onPress={handleAddToCart}
               disabled={displayStock <= 0}
             >
-              <Text style={styles.buyButtonText}>
-                {displayStock <= 0 ? "Out of Stock" : isGift ? "Claim Free Gift" : "Buy Now"}
+              <Text style={styles.buttonText}>
+                {displayStock <= 0 ? "Out of Stock" : isGift ? "Claim" : "Buy"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1530,71 +1540,107 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontStyle: 'italic',
   },
+  
+  // PROFESSIONAL MINIMALIST ACTION BAR
   actionBar: {
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    paddingHorizontal: 16,
+    borderTopColor: '#F0F0F0',
+    paddingHorizontal: 20,
     paddingVertical: 12,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: -2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.03,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
   },
   priceSummary: {
-    marginBottom: 12,
+    flex: 1,
+    marginRight: 16,
   },
   totalLabel: {
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#9CA3AF',
+    letterSpacing: 0.5,
     marginBottom: 2,
+    textTransform: 'uppercase',
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   totalPrice: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
+    color: '#1F2937',
+    letterSpacing: -0.5,
+  },
+  originalPrice: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
+    fontWeight: '400',
+  },
+  savings: {
+    fontSize: 11,
+    color: '#10B981',
+    fontWeight: '500',
+    marginTop: 2,
+    letterSpacing: 0.3,
   },
   actionButtonsContainer: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   actionButton: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 14,
-    borderRadius: 8,
-    marginHorizontal: 4,
+    justifyContent: 'center',
+    borderRadius: 10,
+    height: 46,
+    paddingHorizontal: 16,
+    gap: 6,
   },
   swapButton: {
     backgroundColor: '#059669',
-    flex: 0.8,
-  },
-  swapButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 6,
+    width: 46,
+    paddingHorizontal: 0,
   },
   cartButton: {
     backgroundColor: '#F97316',
   },
-  cartButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 6,
+  cartButtonCompact: {
+    width: 90,
+  },
+  cartButtonFull: {
+    width: 110,
   },
   buyButton: {
     backgroundColor: '#DC2626',
   },
-  buyButtonText: {
+  buyButtonCompact: {
+    width: 70,
+  },
+  buyButtonFull: {
+    width: 90,
+  },
+  buttonText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
+    letterSpacing: 0.3,
   },
   modalContainer: {
     flex: 1,

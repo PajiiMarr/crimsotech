@@ -1,4 +1,3 @@
-// app/customer/components/customerLayout.tsx
 import React, { ReactNode, useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, Platform, RefreshControlProps } from 'react-native';
 import CustomerHeader from './includes/customerHeader';
@@ -12,16 +11,26 @@ interface CustomerLayoutProps {
   disableScroll?: boolean;
   refreshControl?: React.ReactElement<RefreshControlProps> | null;
   hideHeader?: boolean;
+  hideBottomTab?: boolean; // Add this prop
 }
 
 export default function CustomerLayout({ 
   children, 
   disableScroll = false, 
   refreshControl = null,
-  hideHeader = false
+  hideHeader = false,
+  hideBottomTab = false // Add with default value
 }: CustomerLayoutProps) {
   const [interfaceType, setInterfaceType] = useState<'main' | 'management'>('main');
   const pathname = usePathname();
+
+  // Routes where bottom tab should be hidden regardless of interface type
+  const hideBottomTabRoutes = [
+    '/customer/product/view-product',
+    '/customer/product/',
+    '/customer/checkout',
+    '/customer/order-confirmation',
+  ];
 
   // Determine interface type based on current route
   useEffect(() => {
@@ -39,6 +48,15 @@ export default function CustomerLayout({
     const isManagement = managementRoutePrefixes.some(prefix => pathname.startsWith(prefix));
     setInterfaceType(isManagement ? 'management' : 'main');
   }, [pathname]);
+
+  // Check if current route should hide the tab
+  const shouldHideTabByRoute = hideBottomTabRoutes.some(route => 
+    pathname?.startsWith(route)
+  );
+
+  // Determine if bottom tab should be shown
+  // Hide if: explicitly hidden by prop OR hidden by route
+  const shouldHideTab = hideBottomTab || shouldHideTabByRoute;
 
   const handleInterfaceSwitch = () => {
     if (interfaceType === 'main') {
@@ -72,7 +90,8 @@ export default function CustomerLayout({
           </ScrollView>
         )}
         
-        {interfaceType === 'main' ? <BottomTab /> : <ManagementBottomTab />}
+        {/* Only show bottom tab if not hidden */}
+        {!shouldHideTab && (interfaceType === 'main' ? <BottomTab /> : <ManagementBottomTab />)}
       </View>
     </FilterModalProvider>
   );
