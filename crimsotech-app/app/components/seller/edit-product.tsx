@@ -69,6 +69,10 @@ interface Variant {
   price?: number | null;
   compare_price?: number | null;
   quantity: number;
+  length?: number | null;        // Added
+  width?: number | null;         // Added
+  height?: number | null;        // Added
+  dimension_unit?: string | null; // Added
   weight?: number | null;
   weight_unit: string;
   critical_trigger?: number | null;
@@ -93,7 +97,7 @@ interface Product {
   id: string;
   name: string;
   description: string;
-  condition: number; // Changed from string to number to match seller-product-list
+  condition: number;
   upload_status: string;
   status: string;
   is_refundable: boolean;
@@ -114,7 +118,6 @@ interface EditProductDialogProps {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-// Condition mapping for display (1-5 values)
 const CONDITION_OPTIONS = [
   { value: 1, label: "Poor", icon: "★", color: "bg-red-100 text-red-800 border-red-300" },
   { value: 2, label: "Fair", icon: "★★", color: "bg-orange-100 text-orange-800 border-orange-300" },
@@ -128,6 +131,7 @@ const USAGE_UNIT_OPTIONS = [
   { value: "months", label: "Months" },
   { value: "years", label: "Years" },
 ] as const;
+
 const WEIGHT_UNIT_OPTIONS = [
   { value: "g", label: "Grams (g)" },
   { value: "kg", label: "Kilograms (kg)" },
@@ -135,11 +139,18 @@ const WEIGHT_UNIT_OPTIONS = [
   { value: "oz", label: "Ounces (oz)" },
 ] as const;
 
+const DIMENSION_UNIT_OPTIONS = [  // Added
+  { value: "cm", label: "Centimeters (cm)" },
+  { value: "m", label: "Meters (m)" },
+  { value: "in", label: "Inches (in)" },
+  { value: "ft", label: "Feet (ft)" },
+] as const;
+
 // ─── Form State ───────────────────────────────────────────────────────────────
 interface FormState {
   name: string;
   description: string;
-  condition: number; // Changed from string to number
+  condition: number;
   upload_status: string;
   is_refundable: boolean;
   refund_days: number;
@@ -149,8 +160,12 @@ interface VariantFormState {
   id?: string;
   title: string;
   sku_code: string;
-  price: string;           // manual price when not using depreciation
+  price: string;
   quantity: string;
+  length: string;           // Added
+  width: string;            // Added
+  height: string;           // Added
+  dimension_unit: string;   // Added
   weight: string;
   weight_unit: string;
   critical_trigger: string;
@@ -184,7 +199,7 @@ function buildInitialForm(product: Product | null): FormState {
   return {
     name: product?.name ?? "",
     description: product?.description ?? "",
-    condition: product?.condition ?? 3, // Default to Good (3) if not provided
+    condition: product?.condition ?? 3,
     upload_status: product?.upload_status ?? "draft",
     is_refundable: product?.is_refundable ?? false,
     refund_days: product?.refund_days ?? 0,
@@ -198,6 +213,10 @@ function createEmptyVariant(): VariantFormState {
     sku_code: "",
     price: "",
     quantity: "0",
+    length: "",               // Added
+    width: "",                // Added
+    height: "",               // Added
+    dimension_unit: "cm",     // Added
     weight: "",
     weight_unit: "g",
     critical_trigger: "",
@@ -243,6 +262,10 @@ function variantToFormState(variant: Variant): VariantFormState {
     sku_code: variant.sku_code || "",
     price: variant.price?.toString() || "",
     quantity: variant.quantity?.toString() || "0",
+    length: variant.length?.toString() || "",               // Added
+    width: variant.width?.toString() || "",                 // Added
+    height: variant.height?.toString() || "",               // Added
+    dimension_unit: variant.dimension_unit || "cm",         // Added
     weight: variant.weight?.toString() || "",
     weight_unit: variant.weight_unit || "g",
     critical_trigger: variant.critical_trigger?.toString() || "",
@@ -519,7 +542,6 @@ function EditProductForm({
       if (!v.quantity || Number(v.quantity) < 0)
         variantIssues.push(`${label}: quantity must be 0 or more.`);
 
-      // Price validation: accept either calculated (depreciation) or manual price
       const hasCalculatedPrice = v.calculated_price && Number(v.calculated_price) > 0;
       const hasManualPrice = v.price && Number(v.price) > 0;
       if (!hasCalculatedPrice && !hasManualPrice) {
@@ -528,7 +550,6 @@ function EditProductForm({
         );
       }
 
-      // Depreciation fields — only validate if the seller has started filling them
       const hasDepreciationInput = v.original_price || v.usage_period;
       if (hasDepreciationInput) {
         if (!v.original_price || Number(v.original_price) <= 0)
@@ -577,7 +598,7 @@ function EditProductForm({
         user_id: userId,
         name: form.name.trim(),
         description: form.description.trim(),
-        condition: form.condition, // Now sending as number (1-5)
+        condition: form.condition,
         upload_status: form.upload_status,
         is_refundable: form.is_refundable,
         refund_days: form.is_refundable ? form.refund_days : 0,
@@ -589,18 +610,21 @@ function EditProductForm({
         payload
       );
 
-      // Variants bulk update
+      // Variants bulk update - with dimension fields added
       const variantsPayload = variants.map((v) => ({
         id: v.id,
         title: v.title,
         sku_code: v.sku_code,
-        // Use calculated (depreciation) price first, fall back to manual price
         price: v.calculated_price && Number(v.calculated_price) > 0
           ? parseFloat(v.calculated_price)
           : v.price && Number(v.price) > 0
           ? parseFloat(v.price)
           : null,
         quantity: parseInt(v.quantity) || 0,
+        length: v.length ? parseFloat(v.length) : null,           // Added
+        width: v.width ? parseFloat(v.width) : null,             // Added
+        height: v.height ? parseFloat(v.height) : null,          // Added
+        dimension_unit: v.dimension_unit || "cm",                // Added
         weight: v.weight ? parseFloat(v.weight) : null,
         weight_unit: v.weight_unit,
         critical_trigger: v.critical_trigger ? parseInt(v.critical_trigger) : null,
@@ -659,7 +683,7 @@ function EditProductForm({
         id: product.id,
         name: form.name.trim(),
         description: form.description.trim(),
-        condition: form.condition, // Now sending as number
+        condition: form.condition,
         upload_status: form.upload_status,
         is_refundable: form.is_refundable,
         refund_days: form.is_refundable ? form.refund_days : 0,
@@ -730,9 +754,8 @@ function EditProductForm({
 
   const totalImageCount = media.existing.length + media.pending.length;
 
-  // Helper to get condition display
   const getConditionDisplay = (value: number) => {
-    return CONDITION_OPTIONS.find(c => c.value === value) || CONDITION_OPTIONS[2]; // Default to Good (3)
+    return CONDITION_OPTIONS.find(c => c.value === value) || CONDITION_OPTIONS[2];
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -1035,7 +1058,6 @@ function EditProductForm({
                         <h4 className="font-medium text-sm">
                           {variant.title || `Variant ${index + 1}`}
                         </h4>
-                        {/* Show whichever price is active */}
                         {hasCalculatedPrice ? (
                           <Badge className="bg-orange-100 text-orange-700 border-orange-300 text-xs">
                             ₱{formatPrice(variant.calculated_price!)}
@@ -1338,7 +1360,6 @@ function EditProductForm({
                               </span>
                             )}
                           </div>
-                          {/* If calculator produced a price, show a clear button */}
                           {hasCalculatedPrice && (
                             <button
                               type="button"
@@ -1377,6 +1398,75 @@ function EditProductForm({
                         </Button>
                       </CollapsibleTrigger>
                       <CollapsibleContent className="space-y-3 pt-3">
+                        {/* Dimensions - NEW SECTION */}
+                        <div className="space-y-2 border rounded-md p-3 bg-gray-50">
+                          <Label className="text-sm font-medium">Physical Dimensions</Label>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Length</Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={variant.length}
+                                onChange={(e) =>
+                                  updateVariant(index, "length", e.target.value)
+                                }
+                                placeholder="0.0"
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Width</Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={variant.width}
+                                onChange={(e) =>
+                                  updateVariant(index, "width", e.target.value)
+                                }
+                                placeholder="0.0"
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Height</Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={variant.height}
+                                onChange={(e) =>
+                                  updateVariant(index, "height", e.target.value)
+                                }
+                                placeholder="0.0"
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                          </div>
+                          <div className="mt-2">
+                            <Label className="text-xs">Unit</Label>
+                            <Select
+                              value={variant.dimension_unit}
+                              onValueChange={(v) =>
+                                updateVariant(index, "dimension_unit", v)
+                              }
+                            >
+                              <SelectTrigger className="w-full h-8 text-xs mt-1">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {DIMENSION_UNIT_OPTIONS.map((opt) => (
+                                  <SelectItem key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
                         <div className="grid grid-cols-2 gap-2">
                           <div className="space-y-1.5">
                             <Label>Weight</Label>
