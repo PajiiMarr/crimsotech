@@ -305,8 +305,16 @@ export default function OrderHistory() {
   };
 
   // Format currency
-  const formatCurrency = (amount: number) => {
-    return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  const formatCurrency = (amount?: number | string | null) => {
+    const numericAmount =
+      typeof amount === 'number'
+        ? amount
+        : typeof amount === 'string'
+          ? Number(amount)
+          : 0;
+
+    const safeAmount = Number.isFinite(numericAmount) ? numericAmount : 0;
+    return `₱${safeAmount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
   };
 
   // Format time
