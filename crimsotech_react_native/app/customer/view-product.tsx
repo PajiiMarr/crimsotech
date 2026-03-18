@@ -1,5 +1,5 @@
 // app/(customer)/product/view-product.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   SafeAreaView,
   View,
@@ -252,6 +252,13 @@ const getProductDisplayPrice = (product: Product | null): string => {
   return product.price_display || "Price unavailable";
 };
 
+// Define thumbnail item type to match web version
+interface ThumbnailItem {
+  url: string;
+  type: 'product' | 'variant';
+  id?: string;
+}
+
 export default function ViewProductPage() {
   const params = useLocalSearchParams();
   const productId = params.productId as string;
@@ -271,6 +278,8 @@ export default function ViewProductPage() {
   const [swapError, setSwapError] = useState<string | null>(null);
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
+  const [thumbnailUrls, setThumbnailUrls] = useState<ThumbnailItem[]>([]);
+  const flatListRef = useRef<FlatList>(null);
 
   // Determine if this is a gift product
   const isGift = isProductGift(product);
@@ -399,19 +408,19 @@ export default function ViewProductPage() {
     }
   };
 
-  // Build media URLs
-  const getMediaUrls = () => {
-    if (!product) return ['https://via.placeholder.com/400'];
+  // Build thumbnail URLs (matching web version)
+  useEffect(() => {
+    if (!product) return;
     
-    const urls: string[] = [];
+    const urls: ThumbnailItem[] = [];
     const seen = new Set<string>();
 
-    // Add product media files
+    // Add product media files first
     if (product.media_files && Array.isArray(product.media_files)) {
       product.media_files.forEach((img) => {
         const url = ensureAbsoluteUrl(img.file_data || img.file_url);
         if (url && !seen.has(url)) {
-          urls.push(url);
+          urls.push({ url, type: 'product' });
           seen.add(url);
         }
       });
@@ -423,24 +432,46 @@ export default function ViewProductPage() {
         if (variant.image || variant.image_url) {
           const url = ensureAbsoluteUrl(variant.image || variant.image_url);
           if (url && !seen.has(url)) {
-            urls.push(url);
+            urls.push({ url, type: 'variant', id: variant.id });
             seen.add(url);
           }
         }
       });
     }
 
-    // Add primary image
+    // Add primary image if not already added
     if (product.primary_image?.url) {
       const url = ensureAbsoluteUrl(product.primary_image.url);
       if (url && !seen.has(url)) {
-        urls.unshift(url);
+        urls.unshift({ url, type: 'product' });
         seen.add(url);
       }
     }
 
-    return urls.length > 0 ? urls : ['https://via.placeholder.com/400'];
-  };
+    setThumbnailUrls(urls);
+    
+    // Reset active image when product changes
+    setActiveImage(0);
+  }, [product]);
+
+  // Ensure activeImage is within bounds
+  useEffect(() => {
+    if (activeImage >= thumbnailUrls.length) {
+      setActiveImage(0);
+    }
+  }, [thumbnailUrls.length, activeImage]);
+
+  // When variant changes, try to find and select its image
+  useEffect(() => {
+    if (currentVariant?.id && thumbnailUrls.length > 0) {
+      const variantImageIndex = thumbnailUrls.findIndex(
+        thumb => thumb.type === 'variant' && thumb.id === currentVariant.id
+      );
+      if (variantImageIndex !== -1) {
+        setActiveImage(variantImageIndex);
+      }
+    }
+  }, [currentVariant, thumbnailUrls]);
 
   const handleAddToCart = async () => {
     if (!product || !user?.id) {
@@ -615,11 +646,67 @@ export default function ViewProductPage() {
     );
   }
 
-  const mediaUrls = getMediaUrls();
-  const mainImageFromVariant = currentVariant?.image || currentVariant?.image_url 
-    ? ensureAbsoluteUrl(currentVariant.image || currentVariant.image_url) 
-    : null;
-  const displayImageUrl = mainImageFromVariant ?? mediaUrls[activeImage] ?? mediaUrls[0];
+  const displayImageUrl = thumbnailUrls.length > 0 ? thumbnailUrls[activeImage]?.url : 'https://via.placeholder.com/400';
+
+  const handleImageSelect = (index: number) => {
+    setActiveImage(index);
+  };
+
+  const handleImagePress = () => {
+    setImageModalVisible(true);
+  };
+
+  const handleLightboxThumbnailPress = (index: number) => {
+    setActiveImage(index);
+    flatListRef.current?.scrollToIndex({ index, animated: true });
+  };
+
+  const onMomentumScrollEnd = (event: any) => {
+    const index = Math.round(event.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+    setActiveImage(index);
+  };
+
+  const renderImageThumbnail = ({ item, index }: { item: ThumbnailItem; index: number }) => (
+    <TouchableOpacity
+      onPress={() => handleImageSelect(index)}
+      style={[
+        styles.thumbnailContainer,
+        activeImage === index && styles.thumbnailActive
+      ]}
+    >
+      <Image
+        source={{ uri: item.url }}
+        style={styles.thumbnail}
+        resizeMode="cover"
+      />
+    </TouchableOpacity>
+  );
+
+  const renderLightboxThumbnail = ({ item, index }: { item: ThumbnailItem; index: number }) => (
+    <TouchableOpacity
+      onPress={() => handleLightboxThumbnailPress(index)}
+      style={[
+        styles.lightboxThumbnail,
+        activeImage === index && styles.lightboxThumbnailActive
+      ]}
+    >
+      <Image
+        source={{ uri: item.url }}
+        style={styles.lightboxThumbnailImage}
+        resizeMode="cover"
+      />
+    </TouchableOpacity>
+  );
+
+  const renderLightboxItem = ({ item }: { item: ThumbnailItem }) => (
+    <View style={styles.modalImageContainer}>
+      <Image
+        source={{ uri: item.url }}
+        style={styles.modalImage}
+        resizeMode="contain"
+      />
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -629,31 +716,32 @@ export default function ViewProductPage() {
           <View style={styles.imageSection}>
             <TouchableOpacity 
               style={styles.mainImageContainer}
-              onPress={() => setImageModalVisible(true)}
+              onPress={handleImagePress}
               activeOpacity={0.9}
             >
               <Image
+                key={`main-image-${activeImage}`}
                 source={{ uri: displayImageUrl }}
                 style={styles.mainImage}
                 resizeMode="cover"
               />
               
               {/* Image counter */}
-              {mediaUrls.length > 1 && (
+              {thumbnailUrls.length > 1 && (
                 <View style={styles.imageCounter}>
                   <Text style={styles.imageCounterText}>
-                    {activeImage + 1} / {mediaUrls.length}
+                    {activeImage + 1} / {thumbnailUrls.length}
                   </Text>
                 </View>
               )}
               
               {/* Navigation arrows */}
-              {mediaUrls.length > 1 && (
+              {thumbnailUrls.length > 1 && (
                 <>
                   <TouchableOpacity
                     style={[styles.navArrow, styles.leftArrow]}
                     onPress={() => setActiveImage(prev => 
-                      prev === 0 ? mediaUrls.length - 1 : prev - 1
+                      prev === 0 ? thumbnailUrls.length - 1 : prev - 1
                     )}
                   >
                     <Ionicons name="chevron-back" size={24} color="#FFF" />
@@ -661,7 +749,7 @@ export default function ViewProductPage() {
                   <TouchableOpacity
                     style={[styles.navArrow, styles.rightArrow]}
                     onPress={() => setActiveImage(prev => 
-                      prev === mediaUrls.length - 1 ? 0 : prev + 1
+                      prev === thumbnailUrls.length - 1 ? 0 : prev + 1
                     )}
                   >
                     <Ionicons name="chevron-forward" size={24} color="#FFF" />
@@ -671,28 +759,15 @@ export default function ViewProductPage() {
             </TouchableOpacity>
 
             {/* Thumbnail strip */}
-            {mediaUrls.length > 1 && (
+            {thumbnailUrls.length > 1 && (
               <FlatList
                 horizontal
-                data={mediaUrls}
+                data={thumbnailUrls}
                 keyExtractor={(item, index) => index.toString()}
-                renderItem={({ item, index }) => (
-                  <TouchableOpacity
-                    onPress={() => setActiveImage(index)}
-                    style={[
-                      styles.thumbnailContainer,
-                      activeImage === index && styles.thumbnailActive
-                    ]}
-                  >
-                    <Image
-                      source={{ uri: item }}
-                      style={styles.thumbnail}
-                      resizeMode="cover"
-                    />
-                  </TouchableOpacity>
-                )}
+                renderItem={renderImageThumbnail}
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.thumbnailList}
+                extraData={activeImage}
               />
             )}
           </View>
@@ -984,49 +1059,57 @@ export default function ViewProductPage() {
           onRequestClose={() => setImageModalVisible(false)}
         >
           <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity
-                onPress={() => setImageModalVisible(false)}
-                style={styles.closeButton}
-              >
-                <Ionicons name="close" size={28} color="#FFF" />
-              </TouchableOpacity>
-            </View>
-            
-            <FlatList
-              data={mediaUrls}
-              keyExtractor={(item, index) => index.toString()}
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              initialScrollIndex={activeImage}
-              onMomentumScrollEnd={(event) => {
-                const index = Math.round(
-                  event.nativeEvent.contentOffset.x / SCREEN_WIDTH
-                );
-                setActiveImage(index);
-              }}
-              getItemLayout={(data, index) => ({
-                length: SCREEN_WIDTH,
-                offset: SCREEN_WIDTH * index,
-                index,
-              })}
-              renderItem={({ item }) => (
-                <View style={styles.modalImageContainer}>
-                  <Image
-                    source={{ uri: item }}
-                    style={styles.modalImage}
-                    resizeMode="contain"
-                  />
-                </View>
-              )}
-            />
-            
-            <View style={styles.modalFooter}>
-              <Text style={styles.modalImageCounter}>
-                {activeImage + 1} / {mediaUrls.length}
-              </Text>
-            </View>
+            {/* Close Button */}
+            <TouchableOpacity
+              onPress={() => setImageModalVisible(false)}
+              style={styles.modalCloseButton}
+            >
+              <Ionicons name="close" size={28} color="#FFF" />
+            </TouchableOpacity>
+
+            {/* Image Carousel */}
+            {thumbnailUrls.length > 0 && (
+              <FlatList
+                ref={flatListRef}
+                data={thumbnailUrls}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                initialScrollIndex={activeImage}
+                onMomentumScrollEnd={onMomentumScrollEnd}
+                getItemLayout={(data, index) => ({
+                  length: SCREEN_WIDTH,
+                  offset: SCREEN_WIDTH * index,
+                  index,
+                })}
+                keyExtractor={(item, index) => index.toString()}
+                renderItem={renderLightboxItem}
+              />
+            )}
+
+            {/* Thumbnail Strip in Lightbox */}
+            {thumbnailUrls.length > 1 && (
+              <View style={styles.modalThumbnailStrip}>
+                <FlatList
+                  horizontal
+                  data={thumbnailUrls}
+                  keyExtractor={(item, index) => `lightbox-thumb-${index}`}
+                  renderItem={renderLightboxThumbnail}
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.modalThumbnailList}
+                  extraData={activeImage}
+                />
+              </View>
+            )}
+
+            {/* Image Counter */}
+            {thumbnailUrls.length > 1 && (
+              <View style={styles.modalCounter}>
+                <Text style={styles.modalCounterText}>
+                  {activeImage + 1} / {thumbnailUrls.length}
+                </Text>
+              </View>
+            )}
           </View>
         </Modal>
       </CustomerLayout>
@@ -1455,91 +1538,6 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginLeft: 4,
   },
-  detailsSection: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  detailsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginHorizontal: -8,
-  },
-  detailItem: {
-    width: '50%',
-    paddingHorizontal: 8,
-    marginBottom: 16,
-  },
-  detailItemFull: {
-    width: '100%',
-    paddingHorizontal: 8,
-    marginBottom: 8,
-    marginTop: 8,
-  },
-  detailLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 4,
-  },
-  detailValue: {
-    fontSize: 14,
-    color: '#374151',
-    fontWeight: '500',
-  },
-  detailPrice: {
-    fontSize: 16,
-    color: '#F97316',
-    fontWeight: '700',
-  },
-  detailComparePrice: {
-    fontSize: 14,
-    color: '#9CA3AF',
-    textDecorationLine: 'line-through',
-  },
-  swapSection: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  swapInfo: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 12,
-    padding: 16,
-  },
-  swapType: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  swapTypeText: {
-    fontSize: 14,
-    color: '#065F46',
-    fontWeight: '600',
-    marginLeft: 8,
-    textTransform: 'capitalize',
-  },
-  swapPayment: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  swapPaymentLabel: {
-    fontSize: 13,
-    color: '#374151',
-  },
-  swapPaymentValue: {
-    fontSize: 13,
-    color: '#059669',
-    fontWeight: '600',
-  },
-  swapDescription: {
-    fontSize: 14,
-    color: '#374151',
-    lineHeight: 20,
-    marginTop: 8,
-    fontStyle: 'italic',
-  },
   
   // PROFESSIONAL MINIMALIST ACTION BAR
   actionBar: {
@@ -1642,24 +1640,23 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.3,
   },
+  
+  // Modal styles
   modalContainer: {
     flex: 1,
     backgroundColor: '#000000',
   },
-  modalHeader: {
+  modalCloseButton: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 44 : 16,
-    left: 16,
-    right: 16,
+    top: Platform.OS === 'ios' ? 50 : 20,
+    right: 20,
     zIndex: 10,
-  },
-  closeButton: {
     width: 40,
     height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    borderRadius: 20,
   },
   modalImageContainer: {
     width: SCREEN_WIDTH,
@@ -1671,20 +1668,43 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  modalFooter: {
+  modalThumbnailStrip: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 34 : 16,
+    bottom: Platform.OS === 'ios' ? 40 : 20,
     left: 0,
     right: 0,
-    alignItems: 'center',
-    zIndex: 10,
   },
-  modalImageCounter: {
-    color: '#FFFFFF',
-    fontSize: 14,
+  modalThumbnailList: {
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  modalCounter: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 100 : 80,
+    alignSelf: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
+  },
+  modalCounterText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  lightboxThumbnail: {
+    width: 50,
+    height: 50,
+    borderRadius: 6,
+    marginHorizontal: 4,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    overflow: 'hidden',
+  },
+  lightboxThumbnailActive: {
+    borderColor: '#F97316',
+  },
+  lightboxThumbnailImage: {
+    width: '100%',
+    height: '100%',
   },
 });

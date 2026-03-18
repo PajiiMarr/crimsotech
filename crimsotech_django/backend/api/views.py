@@ -18767,7 +18767,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                 'success': False,
                 'error': f'Image prediction failed: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
 class PublicProducts(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
 
@@ -18792,6 +18792,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             'shop',
             'shop__customer__customer',
             'customer',
+            'customer__customer',  # To get User from Customer
             'category',
             'category_admin'
         ).prefetch_related(
@@ -18805,8 +18806,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             )
         ).distinct()
 
+        # Exclude user's own products (both shop and personal listings)
         if user_id:
-            # Exclude user's own products and shops
             queryset = queryset.exclude(
                 Q(customer__customer__id=user_id) | 
                 Q(shop__customer__customer__id=user_id)
@@ -18815,9 +18816,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         # Filter to products that have at least one active variant
         queryset = queryset.filter(active_variant_count__gt=0)
         
-        # CRITICAL: Only show products that have total stock > 0
-        # This filters out products where all variants have quantity = 0
-        queryset = queryset.filter(total_variant_stock__gt=0)
+        # Show all products regardless of stock status
+        # We'll handle stock status in the serialized data
         
         print(f"PublicProducts: Returning {queryset.count()} products for user {user_id}")
         
@@ -18825,6 +18825,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
     def get_detail_queryset(self):
         """Detail view with all variants for single product page"""
+        user_id = self.request.headers.get('X-User-Id')
+        
         return Product.objects.filter(
             upload_status='published',
             is_removed=False
@@ -18837,6 +18839,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             'shop',
             'shop__customer__customer',
             'customer',
+            'customer__customer',
             'category',
             'category_admin'
         ).prefetch_related(
@@ -18898,13 +18901,39 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 variant_ordered[str(item['variant_id'])] = item['total']
         
         return variant_ordered
+
+    def _check_if_favorite(self, product_id, user_id):
+        """Check if a product is in user's favorites"""
+        if not user_id:
+            return False
+        
+        try:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            
+            # Get the customer instance for this user
+            customer = Customer.objects.filter(customer__id=user_id).first()
+            if not customer:
+                return False
+            
+            # Check if this product is in favorites
+            return Favorites.objects.filter(
+                product_id=product_id,
+                customer=customer
+            ).exists()
+        except Exception as e:
+            print(f"Error checking favorite: {e}")
+            return False
     
     def list(self, request, *args, **kwargs):
-        """Return list of products with only basic info and price range"""
+        """Return list of products with all necessary info for display"""
         queryset = self.get_queryset()
         
         # Debug logging
         print(f"PublicProducts.list: Found {queryset.count()} products")
+        
+        # Get user_id for favorite checking
+        user_id = request.headers.get('X-User-Id')
         
         # Get ordered quantities for all products in the queryset
         product_ids = [str(p.id) for p in queryset]
@@ -18917,34 +18946,62 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         for item in data:
             product_id = item.get('id')
             
-            # Set display price
-            if item.get('min_variant_price') and item.get('max_variant_price'):
-                if item['min_variant_price'] == item['max_variant_price']:
-                    item['display_price'] = f"₱{item['min_variant_price']}"
-                else:
-                    item['display_price'] = f"₱{item['min_variant_price']} - ₱{item['max_variant_price']}"
-            elif item.get('min_variant_price'):
-                item['display_price'] = f"₱{item['min_variant_price']}"
-            else:
-                item['display_price'] = "Price not available"
+            # Check if product is in user's favorites
+            item['is_favorite'] = self._check_if_favorite(product_id, user_id)
             
-            # Calculate available stock (total stock - ordered quantity)
-            total_stock = item.get('total_variant_stock', 0) or 0
+            # Use price_display from serializer (already correctly formatted)
+            item['display_price'] = item.get('price_display', 'Price unavailable')
+            
+            # Get total stock from the serializer field (uses model's total_stock property)
+            total_stock = item.get('total_stock', 0) or 0
+            
+            # Get ordered quantity for this product
             ordered_quantity = ordered_quantities.get(product_id, 0)
+            
+            # Calculate available stock
             available_stock = max(0, total_stock - ordered_quantity)
             
-            # Add total available stock from variants
-            item['total_stock'] = total_stock
+            # Set stock fields
+            item['total_stock'] = total_stock  # This is the sum of all variant quantities from model property
             item['available_stock'] = available_stock
             item['ordered_quantity'] = ordered_quantity
             
-            # Add availability status based on available stock, not total stock
+            # Count variants with stock > 0 (from annotation)
             in_stock_variant_count = item.get('in_stock_variant_count', 0)
+            
+            # Determine if product has any available stock
             item['has_stock'] = available_stock > 0
             item['in_stock_variant_count'] = in_stock_variant_count
             
-            # Add status message
-            if item['has_stock']:
+            # Add listing type (shop or personal)
+            if item.get('shop'):
+                item['listing_type'] = 'shop'
+                item['seller_id'] = str(item['shop']['id'])
+                item['seller_name'] = item['shop']['name']
+                item['seller_avatar'] = self._convert_to_public_url(item['shop'].get('shop_picture'))
+            elif item.get('customer'):
+                item['listing_type'] = 'personal'
+                # Get customer user info
+                if 'customer' in item and item['customer']:
+                    customer_data = item['customer']
+                    if isinstance(customer_data, dict):
+                        item['seller_id'] = customer_data.get('customer_id')
+                        item['seller_name'] = f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}".strip()
+                        if not item['seller_name']:
+                            item['seller_name'] = customer_data.get('username', 'Unknown Seller')
+                        item['seller_avatar'] = None
+                    else:
+                        item['seller_id'] = str(item['customer'])
+                        item['seller_name'] = 'Unknown Seller'
+                        item['seller_avatar'] = None
+            else:
+                item['listing_type'] = 'unknown'
+                item['seller_id'] = None
+                item['seller_name'] = 'Unknown Seller'
+                item['seller_avatar'] = None
+            
+            # Add status message based on available stock
+            if available_stock > 0:
                 item['availability_status'] = 'in_stock'
                 item['availability_message'] = f"{available_stock} items available"
             elif total_stock > 0 and ordered_quantity >= total_stock:
@@ -18954,11 +19011,25 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 item['availability_status'] = 'out_of_stock'
                 item['availability_message'] = 'Out of stock'
             
+            # Get primary image URL
+            if item.get('primary_image') and item['primary_image'].get('url'):
+                item['primary_image_url'] = self._convert_to_public_url(item['primary_image']['url'])
+            elif item.get('media_files') and len(item['media_files']) > 0:
+                # Use first media file as primary
+                first_media = item['media_files'][0]
+                if first_media.get('file_data'):
+                    item['primary_image_url'] = self._convert_to_public_url(first_media['file_data'])
+                elif first_media.get('file_url'):
+                    item['primary_image_url'] = self._convert_to_public_url(first_media['file_url'])
+                else:
+                    item['primary_image_url'] = None
+            else:
+                item['primary_image_url'] = None
+            
             # Remove variant details from list view to keep it light
             item.pop('variants', None)
         
         return Response(data)
-
     def retrieve(self, request, pk=None):
         """Return a single product with all variant details"""
         try:
@@ -18966,9 +19037,37 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         except Product.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        # Get user_id for favorite checking
+        user_id = request.headers.get('X-User-Id')
+        
         # Get the serializer data with full context
         serializer = ProductSerializer(product, context={'request': request})
         data = serializer.data
+        
+        # Check if product is in user's favorites
+        data['is_favorite'] = self._check_if_favorite(pk, user_id)
+        
+        # Add listing type
+        if data.get('shop'):
+            data['listing_type'] = 'shop'
+            data['seller_id'] = str(data['shop']['id'])
+            data['seller_name'] = data['shop']['name']
+        elif data.get('customer'):
+            data['listing_type'] = 'personal'
+            # Get customer user info
+            customer_data = data['customer']
+            if isinstance(customer_data, dict):
+                data['seller_id'] = customer_data.get('customer_id')
+                data['seller_name'] = f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}".strip()
+                if not data['seller_name']:
+                    data['seller_name'] = customer_data.get('username', 'Unknown Seller')
+            else:
+                data['seller_id'] = str(data['customer'])
+                data['seller_name'] = 'Unknown Seller'
+        else:
+            data['listing_type'] = 'unknown'
+            data['seller_id'] = None
+            data['seller_name'] = 'Unknown Seller'
         
         # Process variants
         if 'variants' in data and data['variants']:
@@ -19011,6 +19110,12 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                     variant['out_of_stock'] = False
                     variant['stock_status'] = 'in_stock'
                     variant['stock_quantity'] = available_qty
+                
+                # Convert image URLs
+                if variant.get('image'):
+                    variant['image'] = self._convert_to_public_url(variant['image'])
+                if variant.get('image_url'):
+                    variant['image_url'] = self._convert_to_public_url(variant['image_url'])
             
             data['in_stock_variant_count'] = len(in_stock_variants)
             data['has_stock'] = len(in_stock_variants) > 0
@@ -19043,22 +19148,31 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         
         # Convert media URLs to public format
         if data.get('primary_image'):
-            data['primary_image']['url'] = convert_s3_to_public_url(data['primary_image']['url'])
+            data['primary_image']['url'] = self._convert_to_public_url(data['primary_image']['url'])
         
         if data.get('media_files'):
             for media in data['media_files']:
                 if media.get('file_data'):
-                    media['file_data'] = convert_s3_to_public_url(media['file_data'])
+                    media['file_data'] = self._convert_to_public_url(media['file_data'])
+                if media.get('file_url'):
+                    media['file_url'] = self._convert_to_public_url(media['file_url'])
         
-        # Convert variant image URLs
-        if data.get('variants'):
-            for variant in data['variants']:
-                if variant.get('image'):
-                    variant['image'] = convert_s3_to_public_url(variant['image'])
-                if variant.get('image_url'):
-                    variant['image_url'] = convert_s3_to_public_url(variant['image_url'])
-
         return Response(data)
+
+    def _convert_to_public_url(self, url):
+        """Helper function to convert URLs to public format"""
+        if not url:
+            return None
+        # If it's already a full URL, return as is
+        if isinstance(url, str) and (url.startswith('http://') or url.startswith('https://')):
+            return url
+        # Otherwise, assume it's a relative path and prepend your media URL
+        from django.conf import settings
+        media_url = getattr(settings, 'MEDIA_URL', '/media/')
+        base_url = getattr(settings, 'BASE_URL', '')
+        if base_url:
+            return f"{base_url}{media_url}{url.lstrip('/')}"
+        return f"{media_url}{url.lstrip('/')}"
 
     @action(detail=False, methods=['get'])
     def get_variant_for_options(self, request):
@@ -19097,10 +19211,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             available_qty = max(0, total_qty - ordered_qty)
             
             # Build response with variant details
-            image_url = None
-            if matching_variant.image:
-                image_url = request.build_absolute_uri(matching_variant.image.url)
-                image_url = convert_s3_to_public_url(image_url)
+            image_url = self._convert_to_public_url(matching_variant.image.url) if matching_variant.image else None
             
             response_data = {
                 'id': str(matching_variant.id),
@@ -19198,10 +19309,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             ordered_qty = ordered_quantities.get(variant_id, 0)
             available_qty = max(0, total_qty - ordered_qty)
             
-            image_url = None
-            if variant.image:
-                image_url = request.build_absolute_uri(variant.image.url)
-                image_url = convert_s3_to_public_url(image_url)
+            image_url = self._convert_to_public_url(variant.image.url) if variant.image else None
             
             variant_data.append({
                 'id': variant_id,
@@ -19289,7 +19397,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             'variants': variants_data
         })
 
-
     @action(detail=True, methods=['get'], url_path='seller')
     def get_seller_info(self, request, pk=None):
         """
@@ -19310,7 +19417,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         except Product.DoesNotExist:
             return Response({"error": "Product not found"}, status=404)
         except Exception as e:
-            print(f"Error fetching product: {str(e)}")  # Use print for debugging
+            print(f"Error fetching product: {str(e)}")
             return Response({"error": "Database error"}, status=500)
 
         try:
@@ -19323,7 +19430,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                     'name': shop.name,
                     'address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}" if shop.street else None,
                     'avg_rating': float(shop.avg_rating) if shop.avg_rating else None,
-                    'shop_picture': convert_s3_to_public_url(shop.shop_picture.url) if shop.shop_picture and hasattr(shop.shop_picture, 'url') else None,
+                    'shop_picture': self._convert_to_public_url(shop.shop_picture.url) if shop.shop_picture and hasattr(shop.shop_picture, 'url') else None,
                     'description': shop.description,
                     'verified': shop.verified,
                     'total_sales': str(shop.total_sales),
@@ -19351,7 +19458,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                         address_parts.append(user.province)
                 address = ', '.join(address_parts) if address_parts else None
                 
-                # Safely get profile picture URL (Customer model doesn't have profile_picture, so set to None)
+                # Customers don't have profile pictures in the current model
                 profile_picture_url = None
                 
                 seller_data = {
@@ -19372,22 +19479,10 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             return Response({"error": "No seller information found"}, status=404)
             
         except Exception as e:
-            print(f"Error in get_seller_info: {str(e)}")  # Use print for debugging
+            print(f"Error in get_seller_info: {str(e)}")
             import traceback
             traceback.print_exc()
             return Response({"error": str(e)}, status=500)
-
-    def convert_s3_to_public_url(url):
-        """Helper function to convert URLs to public format"""
-        if not url:
-            return None
-        # If it's already a full URL, return as is
-        if url.startswith('http://') or url.startswith('https://'):
-            return url
-        # Otherwise, assume it's a relative path and prepend your media URL
-        media_url = getattr(settings, 'MEDIA_URL', '/media/')
-        return f"{media_url}{url.lstrip('/')}"
-    
 
 
         

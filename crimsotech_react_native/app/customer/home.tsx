@@ -11,7 +11,6 @@ import {
   ActivityIndicator,
   RefreshControl,
   Platform,
-  Alert
 } from 'react-native';
 import RoleGuard from '../guards/RoleGuard';
 import AxiosInstance from '../../contexts/axios';
@@ -27,21 +26,47 @@ interface Product {
   id: string;
   name: string;
   description: string;
-  price?: number;
+  condition?: number;
+  category?: any;
+  category_admin?: any;
+  shop?: {
+    id: string;
+    name: string;
+    shop_picture?: string;
+  } | null;
+  customer?: any;
+  
+  // Fields from the public products endpoint list() method
+  min_variant_price?: number;
+  max_variant_price?: number;
+  total_variant_stock?: number;
+  active_variant_count?: number;
+  in_stock_variant_count?: number;
+  
+  // Computed fields from the list method
+  display_price?: string;
+  total_stock?: number;
+  available_stock?: number;
+  ordered_quantity?: number;
+  has_stock?: boolean;
+  availability_status?: string;
+  availability_message?: string;
+  listing_type?: 'shop' | 'personal' | 'unknown';
+  seller_id?: string;
+  seller_name?: string;
+  seller_avatar?: string | null;
+  primary_image_url?: string | null;
+  is_favorite?: boolean;
+  
+  // Original serializer fields
+  primary_image?: { url: string } | null;
+  media_files?: Array<{ file_data?: string; file_url?: string }>;
   price_display?: string;
   price_range?: {
     min: number;
     max: number;
     is_range: boolean;
   };
-  primary_image?: { url: string } | null;
-  shop?: { name: string; shop_picture?: string };
-  condition?: string;
-  category?: any;
-  category_admin?: any;
-  open_for_swap?: boolean;
-  original_price?: number;
-  isFavorite?: boolean;
 }
 
 interface Category {
@@ -50,83 +75,90 @@ interface Category {
 }
 
 // ----------------------------
-// Get product price display - FIXED for FREE GIFT
+// Get product price (always show lowest price)
 // ----------------------------
-const getProductPrice = (product: Product): { display: string; isGift: boolean } => {
-  // SPECIAL CHECK: If product name indicates it's a gift, show FREE GIFT
+const getProductPrice = (product: Product): { 
+  displayPrice: string; 
+  isGift: boolean;
+  hasStock: boolean;
+} => {
+  // Check if it's a gift by name
   const nameLower = product.name?.toLowerCase() || '';
-  if (nameLower.includes('gift') || nameLower.includes('free') || nameLower.includes('giveaway')) {
-    return { display: "FREE GIFT", isGift: true };
-  }
-
-  // If price_display is provided from backend
-  if (product.price_display) {
-    // If it's "Price unavailable" but name suggests gift, override
-    if (product.price_display === "Price unavailable" || product.price_display === "Price not available") {
-      if (nameLower.includes('gift') || nameLower.includes('free')) {
-        return { display: "FREE GIFT", isGift: true };
-      }
-    }
-    // Check if price_display indicates zero
-    if (product.price_display === "₱0" || product.price_display === "₱0.00" || product.price_display === "0" || product.price_display === "0.00") {
-      return { display: "FREE GIFT", isGift: true };
-    }
-    return { display: product.price_display, isGift: false };
-  }
-  
-  // Check price_range
-  if (product.price_range) {
-    const min = product.price_range.min;
-    const max = product.price_range.max;
-    
-    if (!product.price_range.is_range) {
-      // Single price - check if zero
-      if (min === 0) {
-        return { display: "FREE GIFT", isGift: true };
-      }
-      return { display: `₱${min.toFixed(2)}`, isGift: false };
-    } else {
-      // Price range - check if min is zero
-      if (min === 0) {
-        return { display: `₱0 - ₱${max.toFixed(2)}`, isGift: max === 0 };
-      }
-      return { display: `₱${min.toFixed(2)} - ₱${max.toFixed(2)}`, isGift: false };
-    }
-  }
-  
-  // Legacy price field
-  if (product.price !== undefined) {
-    // Check if price is zero
-    if (product.price === 0 || Number(product.price) === 0) {
-      return { display: "FREE GIFT", isGift: true };
-    }
-    return { display: `₱${product.price.toFixed(2)}`, isGift: false };
-  }
-  
-  // Final check - if name suggests gift but we got here, still show FREE GIFT
   if (nameLower.includes('gift') || nameLower.includes('free')) {
-    return { display: "FREE GIFT", isGift: true };
+    return {
+      displayPrice: "FREE GIFT",
+      isGift: true,
+      hasStock: product.has_stock || false,
+    };
   }
   
-  return { display: "Price unavailable", isGift: false };
+  // Use min_variant_price to show the lowest price
+  if (product.min_variant_price !== undefined && product.min_variant_price !== null) {
+    const minPrice = product.min_variant_price;
+    
+    // Check if it's a gift (all variants have zero price)
+    if (minPrice === 0 && product.max_variant_price === 0) {
+      return {
+        displayPrice: "FREE GIFT",
+        isGift: true,
+        hasStock: product.has_stock || false,
+      };
+    }
+    
+    // Show only the lowest price
+    return {
+      displayPrice: `₱${minPrice.toFixed(2)}`,
+      isGift: false,
+      hasStock: product.has_stock || false,
+    };
+  }
+  
+  // Fallback to price_display from serializer
+  if (product.price_display && product.price_display !== "Price unavailable") {
+    // Check if price_display indicates a range, extract the lowest price
+    if (product.price_display.includes(' - ')) {
+      const lowestPrice = product.price_display.split(' - ')[0];
+      return {
+        displayPrice: lowestPrice,
+        isGift: false,
+        hasStock: product.has_stock || false,
+      };
+    }
+    
+    const isGift = product.price_display === "FREE GIFT" || 
+                   product.price_display.includes("FREE") ||
+                   product.price_display === "₱0" || 
+                   product.price_display === "₱0.00";
+    
+    return {
+      displayPrice: product.price_display,
+      isGift,
+      hasStock: product.has_stock || false,
+    };
+  }
+  
+  // Default fallback
+  return {
+    displayPrice: "Price unavailable",
+    isGift: false,
+    hasStock: false,
+  };
 };
 
 // ----------------------------
-// Product Card Component - FIXED
+// Product Card Component
 // ----------------------------
 const CompactProductCard = ({
   product,
   onPress,
-  onFavoritePress
 }: {
   product: Product;
   onPress: () => void;
-  onFavoritePress: () => void;
 }) => {
-  const [priceInfo, setPriceInfo] = useState({ display: "", isGift: false });
+  const [productInfo, setProductInfo] = useState(getProductPrice(product));
 
   useEffect(() => {
-    setPriceInfo(getProductPrice(product));
+    setProductInfo(getProductPrice(product));
   }, [product]);
 
   const categoryName = typeof product.category === 'string'
@@ -134,60 +166,100 @@ const CompactProductCard = ({
     : product.category?.name || product.category_admin?.name || '';
 
   const getImageUrl = () => {
-    const raw = typeof product.primary_image === 'string'
-      ? product.primary_image
-      : product.primary_image?.url || product.shop?.shop_picture || null;
-
-    if (!raw) return 'https://via.placeholder.com/150';
-    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
-
-    // Assume relative path -> prefix with Axios baseURL
-    const base = AxiosInstance?.defaults?.baseURL || '';
-    const normalizedBase = base.replace(/\/$/, '');
-    const normalizedRaw = raw.startsWith('/') ? raw : `/${raw}`;
-    return normalizedBase ? `${normalizedBase}${normalizedRaw}` : normalizedRaw;
+    // Use primary_image_url from the API first
+    if (product.primary_image_url) {
+      return product.primary_image_url;
+    }
+    
+    // Try primary_image object
+    if (product.primary_image?.url) {
+      const url = product.primary_image.url;
+      if (url.startsWith('http://') || url.startsWith('https://')) return url;
+      const base = AxiosInstance?.defaults?.baseURL || '';
+      const normalizedBase = base.replace(/\/$/, '');
+      const normalizedRaw = url.startsWith('/') ? url : `/${url}`;
+      return normalizedBase ? `${normalizedBase}${normalizedRaw}` : normalizedRaw;
+    }
+    
+    // Try media_files
+    if (product.media_files && product.media_files.length > 0) {
+      const media = product.media_files[0];
+      const url = media.file_data || media.file_url;
+      if (url) {
+        if (url.startsWith('http://') || url.startsWith('https://')) return url;
+        const base = AxiosInstance?.defaults?.baseURL || '';
+        const normalizedBase = base.replace(/\/$/, '');
+        const normalizedRaw = url.startsWith('/') ? url : `/${url}`;
+        return normalizedBase ? `${normalizedBase}${normalizedRaw}` : normalizedRaw;
+      }
+    }
+    
+    // Fallback to shop picture
+    if (product.shop?.shop_picture) {
+      const pic = product.shop.shop_picture;
+      if (pic.startsWith('http://') || pic.startsWith('https://')) return pic;
+      const base = AxiosInstance?.defaults?.baseURL || '';
+      const normalizedBase = base.replace(/\/$/, '');
+      const normalizedRaw = pic.startsWith('/') ? pic : `/${pic}`;
+      return normalizedBase ? `${normalizedBase}${normalizedRaw}` : normalizedRaw;
+    }
+    
+    return 'https://via.placeholder.com/150';
   };
 
   return (
     <TouchableOpacity style={styles.productCard} onPress={onPress} activeOpacity={0.7}>
-      {priceInfo.isGift ? (
+      {/* Gift Badge */}
+      {productInfo.isGift && (
         <View style={styles.giftBadge}>
           <MaterialIcons name="card-giftcard" size={10} color="#059669" />
           <Text style={styles.giftText}>FREE GIFT</Text>
         </View>
-      ) : product.open_for_swap ? (
-        <View style={styles.swapBadge}>
-          <MaterialIcons name="swap-horiz" size={10} color="#4F46E5" />
-          <Text style={styles.swapText}>SWAP</Text>
+      )}
+
+      {/* Out of stock badge */}
+      {!productInfo.hasStock && product.availability_status && (
+        <View style={styles.outOfStockBadge}>
+          <Text style={styles.outOfStockText}>
+            {product.availability_status === 'sold_out' ? 'SOLD OUT' : 'OUT OF STOCK'}
+          </Text>
         </View>
-      ) : null}
+      )}
 
-      <View style={styles.favoriteButton}>
-        <TouchableOpacity onPress={onFavoritePress}>
-          <MaterialIcons 
-            name={product.isFavorite ? 'favorite' : 'favorite-border'}
-            size={16} 
-            color={product.isFavorite ? '#EF4444' : '#666'}
-          />
-        </TouchableOpacity>
-      </View>
-
+      {/* Product image */}
       <View style={styles.productImageContainer}>
         <Image
           source={{ uri: getImageUrl() }}
-          style={styles.productImage}
+          style={[
+            styles.productImage,
+            !productInfo.hasStock && styles.outOfStockImage
+          ]}
           defaultSource={require('../../assets/images/icon.png')}
-          onError={(e: any) => console.warn('Failed to load image for product', product.id, getImageUrl(), e.nativeEvent?.error || e.nativeEvent)}
+          onError={(e: any) => console.warn('Failed to load image for product', product.id)}
         />
       </View>
 
+      {/* Product info */}
       <View style={styles.productInfo}>
         <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
         {categoryName ? <Text style={styles.categoryText}>{categoryName}</Text> : null}
-        {product.shop?.name ? <Text style={styles.shopText}>{product.shop.name}</Text> : null}
+        
+        {/* Seller info */}
+        <View style={styles.sellerRow}>
+          <MaterialIcons 
+            name={product.listing_type === 'shop' ? 'store' : 'person'} 
+            size={10} 
+            color="#6B7280" 
+          />
+          <Text style={styles.sellerText} numberOfLines={1}>
+            {product.seller_name || product.shop?.name || 'Unknown Seller'}
+          </Text>
+        </View>
+
+        {/* Price - Always shows lowest price */}
         <View style={styles.priceContainer}>
-          <Text style={priceInfo.isGift ? styles.freePrice : styles.price}>
-            {priceInfo.display}
+          <Text style={productInfo.isGift ? styles.freePrice : styles.price}>
+            {productInfo.displayPrice}
           </Text>
         </View>
       </View>
@@ -199,7 +271,6 @@ export default function CustomerHome() {
   const { user, registrationStage, loading: authLoading } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
@@ -207,10 +278,9 @@ export default function CustomerHome() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      await fetchFavorites();     // sets favoriteIds
-      const products = await fetchProducts(); // JUST fetch
-      setProducts(products);
-      await fetchCategories();
+      await fetchProducts();
+    } catch (error) {
+      console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -230,118 +300,34 @@ export default function CustomerHome() {
         productsList = productsData;
       } else if (productsData.results) {
         productsList = productsData.results;
-      } else if (productsData.products) {
-        productsList = productsData.products;
       } else {
         productsList = [];
       }
 
-      // Map favorite status
-      return productsList.map((p: any) => ({
-        ...p,
-        isFavorite: favoriteIds.includes(p.id)
-      }));
+      console.log(`Fetched ${productsList.length} products from public endpoint`);
+      
+      setProducts(productsList);
+      
+      // Extract unique categories from products
+      const categoryMap = new Map();
+      productsList.forEach((product: Product) => {
+        const cat = product.category || product.category_admin;
+        if (cat && cat.id && !categoryMap.has(cat.id)) {
+          categoryMap.set(cat.id, { id: cat.id, name: cat.name });
+        }
+      });
+      setCategories(Array.from(categoryMap.values()));
+      
     } catch (error) {
       console.error('Error fetching products:', error);
-      return [];
-    }
-  };
-
-  const fetchCategories = async () => {
-    try {
-      const response = await AxiosInstance.get('/customer-products/global-categories/');
-      if (response.status === 200) {
-        const categoriesData = response.data;
-        setCategories(categoriesData.categories || categoriesData || []);
-      }
-    } catch (error) {
-      console.error('Error fetching categories:', error);
+      setProducts([]);
       setCategories([]);
-    }
-  };
-
-  const fetchFavorites = async () => {
-    if (!user?.id) return;
-    try {
-      const response = await AxiosInstance.get('/customer-favorites/', { 
-        headers: { 'X-User-Id': String(user.id) } 
-      });
-      if (response.data.favorites) {
-        const favIds = response.data.favorites
-          .map((f: any) => typeof f.product === 'string' ? f.product : f.product?.id)
-          .filter(Boolean);
-        setFavoriteIds(favIds);
-        
-        // Update products with favorite status
-        setProducts(prev => prev.map(product => ({
-          ...product,
-          isFavorite: favIds.includes(product.id)
-        })));
-      }
-    } catch (error) {
-      console.error('Error fetching favorites:', error);
-    }
-  };
-
-  const toggleFavorite = async (productId: string, currentFavoriteStatus: boolean) => {
-    if (!user?.id) return;
-    
-    try {
-      if (currentFavoriteStatus) {
-        // Remove from favorites
-        await AxiosInstance.delete('/customer-favorites/', {
-          data: { product: productId, customer: user.id },
-          headers: { 'X-User-Id': String(user.id) },
-        });
-      } else {
-        // Add to favorites
-        await AxiosInstance.post('/customer-favorites/', 
-          { product: productId, customer: user.id }, 
-          { headers: { 'X-User-Id': String(user.id) } }
-        );
-      }
-      
-      // Update local state
-      setProducts(prev => prev.map(product => {
-        if (product.id === productId) {
-          return { ...product, isFavorite: !currentFavoriteStatus };
-        }
-        return product;
-      }));
-      
-      // Update favoriteIds state
-      setFavoriteIds(prev => {
-        if (currentFavoriteStatus) {
-          return prev.filter(id => id !== productId);
-        } else {
-          return [...prev, productId];
-        }
-      });
-      
-    } catch (error: any) {
-      console.error('Error toggling favorite:', error);
-      const status = error?.response?.status;
-      const data = error?.response?.data || {};
-      const message = data?.message || data?.error || (status === 404 ? 'Product not found' : 'Failed to toggle favorite');
-      Alert.alert('Error', message);
     }
   };
 
   useEffect(() => { 
     fetchData(); 
   }, []);
-
-  // Update products when favoriteIds change
-  useEffect(() => {
-    if (!products.length) return;
-
-    setProducts(prev =>
-      prev.map(product => ({
-        ...product,
-        isFavorite: favoriteIds.includes(product.id),
-      }))
-    );
-  }, [favoriteIds]);
 
   // Prevent access to home unless registration stage is 4
   useEffect(() => {
@@ -387,37 +373,39 @@ export default function CustomerHome() {
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
       }>
         {/* Categories */}
-        <View style={styles.categoriesSection}>
-          <Text style={styles.sectionTitle}>Categories</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoriesContent}>
-            <TouchableOpacity
-              style={[styles.categoryItem, selectedCategory === '' && styles.categoryItemActive]}
-              onPress={() => setSelectedCategory('')}
-            >
-              <View style={[styles.categoryIcon, selectedCategory === '' && styles.categoryIconActive]}>
-                <Text style={[styles.categoryInitial, selectedCategory === '' && styles.categoryInitialActive]}>A</Text>
-              </View>
-              <Text style={[styles.categoryName, selectedCategory === '' && styles.categoryNameActive]}>All</Text>
-            </TouchableOpacity>
-            {categories.map(cat => (
+        {categories.length > 0 && (
+          <View style={styles.categoriesSection}>
+            <Text style={styles.sectionTitle}>Categories</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoriesContent}>
               <TouchableOpacity
-                key={cat.id}
-                style={[styles.categoryItem, selectedCategory === cat.id && styles.categoryItemActive]}
-                onPress={() => setSelectedCategory(selectedCategory === cat.id ? '' : cat.id)}
+                style={[styles.categoryItem, selectedCategory === '' && styles.categoryItemActive]}
+                onPress={() => setSelectedCategory('')}
               >
-                <View style={[styles.categoryIcon, selectedCategory === cat.id && styles.categoryIconActive]}>
-                  <Text style={[styles.categoryInitial, selectedCategory === cat.id && styles.categoryInitialActive]}>{cat.name.charAt(0)}</Text>
+                <View style={[styles.categoryIcon, selectedCategory === '' && styles.categoryIconActive]}>
+                  <Text style={[styles.categoryInitial, selectedCategory === '' && styles.categoryInitialActive]}>All</Text>
                 </View>
-                <Text style={[styles.categoryName, selectedCategory === cat.id && styles.categoryNameActive]}>{cat.name}</Text>
+                <Text style={[styles.categoryName, selectedCategory === '' && styles.categoryNameActive]}>All</Text>
               </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
+              {categories.map(cat => (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[styles.categoryItem, selectedCategory === cat.id && styles.categoryItemActive]}
+                  onPress={() => setSelectedCategory(selectedCategory === cat.id ? '' : cat.id)}
+                >
+                  <View style={[styles.categoryIcon, selectedCategory === cat.id && styles.categoryIconActive]}>
+                    <Text style={[styles.categoryInitial, selectedCategory === cat.id && styles.categoryInitialActive]}>{cat.name.charAt(0)}</Text>
+                  </View>
+                  <Text style={[styles.categoryName, selectedCategory === cat.id && styles.categoryNameActive]}>{cat.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Products */}
         <View style={styles.productsSection}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Suggested For You</Text>
+            <Text style={styles.sectionTitle}>For You</Text>
             <Text style={styles.productCount}>{filteredProducts.length} items</Text>
           </View>
           {filteredProducts.length > 0 ? (
@@ -430,7 +418,6 @@ export default function CustomerHome() {
                     pathname: '/customer/view-product', 
                     params: { productId: item.id } 
                   })}
-                  onFavoritePress={() => toggleFavorite(item.id, favoriteIds.includes(item.id))}
                 />
               )}
               keyExtractor={item => item.id}
@@ -532,6 +519,7 @@ const styles = StyleSheet.create({
     borderColor: '#F3F4F6', 
     marginBottom: 12, 
     overflow: 'hidden', 
+    position: 'relative',
     ...Platform.select({ 
       ios: { 
         shadowColor: '#000', 
@@ -552,33 +540,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6, 
     paddingVertical: 2, 
     borderRadius: 4, 
-    zIndex: 1 
+    zIndex: 2 
   },
   giftText: { fontSize: 9, color: '#059669', fontWeight: '700', marginLeft: 2 },
-  swapBadge: { 
-    position: 'absolute', 
-    top: 8, 
-    left: 8, 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: '#E0E7FF', 
-    paddingHorizontal: 6, 
-    paddingVertical: 2, 
-    borderRadius: 4, 
-    zIndex: 1 
+  outOfStockBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    zIndex: 2,
   },
-  swapText: { fontSize: 9, color: '#4F46E5', fontWeight: '700', marginLeft: 2 },
-  favoriteButton: { 
-    position: 'absolute', 
-    top: 8, 
-    right: 8, 
-    zIndex: 1, 
-    backgroundColor: 'rgba(255,255,255,0.9)', 
-    borderRadius: 12, 
-    padding: 4 
+  outOfStockText: {
+    fontSize: 9,
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   productImageContainer: { width: '100%', aspectRatio: 0.95, backgroundColor: '#F9FAFB' },
   productImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  outOfStockImage: { opacity: 0.5 },
   productInfo: { padding: 10 },
   productName: { 
     fontSize: 12, 
@@ -589,8 +571,23 @@ const styles = StyleSheet.create({
     height: 30 
   },
   categoryText: { fontSize: 11, color: '#3B82F6', fontWeight: '500', marginBottom: 2 },
-  shopText: { fontSize: 10, color: '#6B7280', marginBottom: 8 },
-  priceContainer: { marginTop: 'auto' },
+  sellerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 2,
+  },
+  sellerText: { 
+    fontSize: 10, 
+    color: '#6B7280',
+    flex: 1,
+  },
+  priceContainer: { 
+    marginTop: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   freePrice: { fontSize: 12, fontWeight: '700', color: '#059669' },
   price: { fontSize: 14, fontWeight: '700', color: '#111827' },
   emptyContainer: { 
