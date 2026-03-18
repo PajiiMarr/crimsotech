@@ -1,5 +1,5 @@
 // app/(customer)/product/view-product.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from 'react';
 import {
   SafeAreaView,
   View,
@@ -14,21 +14,19 @@ import {
   FlatList,
   Modal,
   Platform,
-} from "react-native";
-import { useLocalSearchParams, router } from "expo-router";
-import CustomerLayout from "./CustomerLayout";
-import { useAuth } from "../../contexts/AuthContext";
-import AxiosInstance from "../../contexts/axios";
+} from 'react-native';
+import { useLocalSearchParams, router } from 'expo-router';
+import CustomerLayout from './CustomerLayout';
+import { useAuth } from '../../contexts/AuthContext';
+import AxiosInstance from '../../contexts/axios';
 
 // Ensure URLs are absolute
 const ensureAbsoluteUrl = (url?: string | null) => {
   if (!url) return null;
-  if (typeof url !== "string") return null;
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
-  const base =
-    AxiosInstance.defaults?.baseURL?.replace(/\/$/, "") ||
-    "http://localhost:8000";
-  if (url.startsWith("/")) return `${base}${url}`;
+  if (typeof url !== 'string') return null;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  const base = AxiosInstance.defaults?.baseURL?.replace(/\/$/, '') || 'http://localhost:8000';
+  if (url.startsWith('/')) return `${base}${url}`;
   return `${base}/${url}`;
 };
 
@@ -40,9 +38,9 @@ import {
   FontAwesome,
   AntDesign,
   Feather,
-} from "@expo/vector-icons";
+} from '@expo/vector-icons';
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_SIZE = SCREEN_WIDTH - 32;
 
 // Types
@@ -124,7 +122,7 @@ interface Shop {
 }
 
 interface SellerInfo {
-  type: "shop" | "seller";
+  type: 'shop' | 'seller';
   id: string;
   username?: string;
   email?: string;
@@ -199,79 +197,79 @@ const safeToNumber = (value: any, defaultValue: number = 0): number => {
 // Helper function to check if product is a gift
 const isProductGift = (product: Product | null): boolean => {
   if (!product) return false;
-
+  
   // Check by name
-  if (product.name.toLowerCase().includes("gift")) {
+  if (product.name.toLowerCase().includes('gift')) {
     return true;
   }
-
+  
   // Check price_display
-  if (
-    product.price_display === "FREE GIFT" ||
-    product.price_display === "₱0" ||
-    product.price_display === "₱0.00" ||
-    product.price_display === "Price unavailable" ||
-    product.price_display === "Price not available"
-  ) {
-    if (product.name.toLowerCase().includes("gift")) {
+  if (product.price_display === "FREE GIFT" || 
+      product.price_display === "₱0" || 
+      product.price_display === "₱0.00" ||
+      product.price_display === "Price unavailable" ||
+      product.price_display === "Price not available") {
+    
+    if (product.name.toLowerCase().includes('gift')) {
       return true;
     }
-
+    
     // Check if all variants have zero price
     if (product.variants && product.variants.length > 0) {
-      const allZeroPrices = product.variants.every(
-        (v) => safeToNumber(v.price) === 0,
-      );
+      const allZeroPrices = product.variants.every(v => safeToNumber(v.price) === 0);
       if (allZeroPrices) {
         return true;
       }
     }
   }
-
+  
   // Check if price_range has min and max both 0
   if (product.price_range) {
     if (product.price_range.min === 0 && product.price_range.max === 0) {
       return true;
     }
   }
-
+  
   // Check if any variant has price 0
   if (product.variants && product.variants.length > 0) {
-    const hasZeroPriceVariant = product.variants.some(
-      (v) => safeToNumber(v.price) === 0,
-    );
+    const hasZeroPriceVariant = product.variants.some(v => safeToNumber(v.price) === 0);
     if (hasZeroPriceVariant) {
       return true;
     }
   }
-
+  
   return false;
 };
 
 // Helper function to get display price
 const getProductDisplayPrice = (product: Product | null): string => {
   if (!product) return "Price unavailable";
-
+  
   if (isProductGift(product)) {
     return "FREE GIFT";
   }
-
+  
   return product.price_display || "Price unavailable";
 };
+
+// Define thumbnail item type to match web version
+interface ThumbnailItem {
+  url: string;
+  type: 'product' | 'variant';
+  id?: string;
+}
 
 export default function ViewProductPage() {
   const params = useLocalSearchParams();
   const productId = params.productId as string;
   const { user } = useAuth();
-
+  
   const [product, setProduct] = useState<Product | null>(null);
   const [sellerInfo, setSellerInfo] = useState<SellerInfo | null>(null);
   const [loadingSeller, setLoadingSeller] = useState(false);
   const [loading, setLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
-  const [selectedOptions, setSelectedOptions] = useState<
-    Record<string, string>
-  >({});
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
   const [activeImage, setActiveImage] = useState(0);
   const [addingToCart, setAddingToCart] = useState(false);
   const [cartError, setCartError] = useState<string | null>(null);
@@ -280,6 +278,8 @@ export default function ViewProductPage() {
   const [swapError, setSwapError] = useState<string | null>(null);
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
+  const [thumbnailUrls, setThumbnailUrls] = useState<ThumbnailItem[]>([]);
+  const flatListRef = useRef<FlatList>(null);
 
   // Determine if this is a gift product
   const isGift = isProductGift(product);
@@ -289,28 +289,19 @@ export default function ViewProductPage() {
   const isPersonalListing = !product?.shop;
 
   // Safely determine if product has variants
-  const hasVariants = !!(
-    product?.variants &&
-    Array.isArray(product.variants) &&
-    product.variants.length > 0
-  );
+  const hasVariants = !!(product?.variants && Array.isArray(product.variants) && product.variants.length > 0);
 
   // Refund policy
-  const isRefundable = !!(
-    currentVariant?.is_refundable || product?.is_refundable
-  );
-  const refundDays = currentVariant?.is_refundable
-    ? (currentVariant.refund_days ?? product?.refund_days ?? 0)
-    : product?.is_refundable
-      ? (product.refund_days ?? 0)
-      : 0;
-  const refundText = `refundable (${refundDays} day${refundDays === 1 ? "" : "s"})`;
+  const isRefundable = !!(currentVariant?.is_refundable || product?.is_refundable);
+  const refundDays = currentVariant?.is_refundable 
+    ? (currentVariant.refund_days ?? product?.refund_days ?? 0) 
+    : (product?.is_refundable ? (product.refund_days ?? 0) : 0);
+  const refundText = `refundable (${refundDays} day${refundDays === 1 ? '' : 's'})`;
 
-  const isExplicitlyNonRefundable =
-    currentVariant?.is_refundable === false || product?.is_refundable === false;
+  const isExplicitlyNonRefundable = (currentVariant?.is_refundable === false) || (product?.is_refundable === false);
 
   const isAvailableForSwap = hasVariants
-    ? currentVariant && currentVariant.allow_swap
+    ? (currentVariant && currentVariant.allow_swap)
     : false;
 
   // Fetch product data
@@ -324,9 +315,7 @@ export default function ViewProductPage() {
       if (product?.id && isPersonalListing) {
         setLoadingSeller(true);
         try {
-          const response = await AxiosInstance.get(
-            `/public-products/${product.id}/seller/`,
-          );
+          const response = await AxiosInstance.get(`/public-products/${product.id}/seller/`);
           setSellerInfo(response.data);
           console.log("Seller info loaded:", response.data);
         } catch (err) {
@@ -350,11 +339,9 @@ export default function ViewProductPage() {
   const fetchProduct = async () => {
     try {
       setLoading(true);
-      const response = await AxiosInstance.get(
-        `/public-products/${productId}/`,
-      );
+      const response = await AxiosInstance.get(`/public-products/${productId}/`);
       setProduct(response.data);
-
+      
       // Initialize variant selections
       if (response.data.variants?.length) {
         const initial: Record<string, string> = {};
@@ -362,8 +349,8 @@ export default function ViewProductPage() {
         setSelectedOptions(initial);
       }
     } catch (error) {
-      console.error("Error fetching product:", error);
-      Alert.alert("Error", "Failed to load product");
+      console.error('Error fetching product:', error);
+      Alert.alert('Error', 'Failed to load product');
     } finally {
       setLoading(false);
     }
@@ -372,18 +359,16 @@ export default function ViewProductPage() {
   const getAvailableOptionIdsForGroup = (
     variants: Variant[],
     selectedOptions: Record<string, string>,
-    groupId: string,
+    groupId: string
   ): Set<string> => {
     if (!variants || variants.length === 0) return new Set<string>();
-
+    
     const otherSelected = Object.entries(selectedOptions)
       .filter(([g, optId]) => g !== groupId && !!optId)
       .map(([, optId]) => String(optId));
 
     if (otherSelected.length === 0) {
-      return new Set<string>(
-        variants.flatMap((v) => (v.option_ids || []).map(String)),
-      );
+      return new Set<string>(variants.flatMap((v) => (v.option_ids || []).map(String)));
     }
 
     const matchingVariants = variants.filter((variant) => {
@@ -391,9 +376,7 @@ export default function ViewProductPage() {
       return otherSelected.every((id) => variantOptionIds.includes(id));
     });
 
-    return new Set<string>(
-      matchingVariants.flatMap((v) => (v.option_ids || []).map(String)),
-    );
+    return new Set<string>(matchingVariants.flatMap((v) => (v.option_ids || []).map(String)));
   };
 
   const handleSelectOption = (groupId: string, optionId: string) => {
@@ -403,10 +386,10 @@ export default function ViewProductPage() {
   // Get display values from current variant or product defaults
   const displayVariantPrice = currentVariant
     ? safeToNumber(currentVariant.price, 0)
-    : product?.price_range?.min || 0;
-
-  const displayComparePrice = currentVariant?.compare_price
-    ? safeToNumber(currentVariant.compare_price)
+    : (product?.price_range?.min || 0);
+  
+  const displayComparePrice = currentVariant?.compare_price 
+    ? safeToNumber(currentVariant.compare_price) 
     : undefined;
 
   const displayStock = currentVariant
@@ -415,29 +398,29 @@ export default function ViewProductPage() {
 
   const increaseQuantity = () => {
     if (quantity < displayStock) {
-      setQuantity((prev) => prev + 1);
+      setQuantity(prev => prev + 1);
     }
   };
 
   const decreaseQuantity = () => {
     if (quantity > 1) {
-      setQuantity((prev) => prev - 1);
+      setQuantity(prev => prev - 1);
     }
   };
 
-  // Build media URLs
-  const getMediaUrls = () => {
-    if (!product) return ["https://via.placeholder.com/400"];
-
-    const urls: string[] = [];
+  // Build thumbnail URLs (matching web version)
+  useEffect(() => {
+    if (!product) return;
+    
+    const urls: ThumbnailItem[] = [];
     const seen = new Set<string>();
 
-    // Add product media files
+    // Add product media files first
     if (product.media_files && Array.isArray(product.media_files)) {
       product.media_files.forEach((img) => {
         const url = ensureAbsoluteUrl(img.file_data || img.file_url);
         if (url && !seen.has(url)) {
-          urls.push(url);
+          urls.push({ url, type: 'product' });
           seen.add(url);
         }
       });
@@ -449,33 +432,55 @@ export default function ViewProductPage() {
         if (variant.image || variant.image_url) {
           const url = ensureAbsoluteUrl(variant.image || variant.image_url);
           if (url && !seen.has(url)) {
-            urls.push(url);
+            urls.push({ url, type: 'variant', id: variant.id });
             seen.add(url);
           }
         }
       });
     }
 
-    // Add primary image
+    // Add primary image if not already added
     if (product.primary_image?.url) {
       const url = ensureAbsoluteUrl(product.primary_image.url);
       if (url && !seen.has(url)) {
-        urls.unshift(url);
+        urls.unshift({ url, type: 'product' });
         seen.add(url);
       }
     }
 
-    return urls.length > 0 ? urls : ["https://via.placeholder.com/400"];
-  };
+    setThumbnailUrls(urls);
+    
+    // Reset active image when product changes
+    setActiveImage(0);
+  }, [product]);
+
+  // Ensure activeImage is within bounds
+  useEffect(() => {
+    if (activeImage >= thumbnailUrls.length) {
+      setActiveImage(0);
+    }
+  }, [thumbnailUrls.length, activeImage]);
+
+  // When variant changes, try to find and select its image
+  useEffect(() => {
+    if (currentVariant?.id && thumbnailUrls.length > 0) {
+      const variantImageIndex = thumbnailUrls.findIndex(
+        thumb => thumb.type === 'variant' && thumb.id === currentVariant.id
+      );
+      if (variantImageIndex !== -1) {
+        setActiveImage(variantImageIndex);
+      }
+    }
+  }, [currentVariant, thumbnailUrls]);
 
   const handleAddToCart = async () => {
     if (!product || !user?.id) {
-      Alert.alert("Login Required", "Please login to add items to cart");
+      Alert.alert('Login Required', 'Please login to add items to cart');
       return;
     }
 
     if (!currentVariant) {
-      Alert.alert("Selection Required", "Please select a variant");
+      Alert.alert('Selection Required', 'Please select a variant');
       return;
     }
 
@@ -495,16 +500,16 @@ export default function ViewProductPage() {
       if (response.data.success) {
         let message = "Product added to cart!";
         switch (response.data.action) {
-          case "updated":
+          case 'updated':
             message = `Cart updated! Quantity is now ${response.data.new_quantity}`;
             break;
-          case "recycled":
+          case 'recycled':
             message = "Item added to cart from previous order";
             break;
         }
-        Alert.alert("Success", message);
+        Alert.alert('Success', message);
       } else {
-        Alert.alert("Error", response.data.error || "Failed to add to cart");
+        Alert.alert('Error', response.data.error || "Failed to add to cart");
       }
     } catch (err: any) {
       console.error(err);
@@ -512,7 +517,7 @@ export default function ViewProductPage() {
       if (err.response?.data?.error) {
         errorMsg = err.response.data.error;
       }
-      Alert.alert("Error", errorMsg);
+      Alert.alert('Error', errorMsg);
     } finally {
       setAddingToCart(false);
     }
@@ -520,12 +525,12 @@ export default function ViewProductPage() {
 
   const handleStartSwap = async () => {
     if (!product || !user?.id) {
-      Alert.alert("Login Required", "Please login to start a swap");
+      Alert.alert('Login Required', 'Please login to start a swap');
       return;
     }
 
     if (!currentVariant || !currentVariant.allow_swap) {
-      Alert.alert("Not Available", "This variant is not available for swap");
+      Alert.alert('Not Available', 'This variant is not available for swap');
       return;
     }
 
@@ -533,12 +538,14 @@ export default function ViewProductPage() {
     setSwapError(null);
 
     try {
-      Alert.alert("Coming Soon", "Swap functionality will be available soon!", [
-        { text: "OK" },
-      ]);
+      Alert.alert(
+        'Coming Soon',
+        'Swap functionality will be available soon!',
+        [{ text: 'OK' }]
+      );
     } catch (err: any) {
       console.error(err);
-      Alert.alert("Error", "An error occurred while initiating swap");
+      Alert.alert('Error', 'An error occurred while initiating swap');
     } finally {
       setStartingSwap(false);
     }
@@ -547,19 +554,20 @@ export default function ViewProductPage() {
   const handleShare = async () => {
     try {
       const message = `Check out ${product?.name} on our app!\nPrice: ${displayPrice}`;
-
-      Alert.alert("Share Product", message, [
-        {
-          text: "Copy to Clipboard",
-          onPress: () => {
-            Alert.alert("Copied!", "Product info copied to clipboard");
-          },
-        },
-        { text: "Cancel", style: "cancel" },
-      ]);
+      
+      Alert.alert(
+        'Share Product',
+        message,
+        [
+          { text: 'Copy to Clipboard', onPress: () => {
+            Alert.alert('Copied!', 'Product info copied to clipboard');
+          }},
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
     } catch (error) {
-      console.error("Error sharing:", error);
-      Alert.alert("Error", "Failed to share product");
+      console.error('Error sharing:', error);
+      Alert.alert('Error', 'Failed to share product');
     }
   };
 
@@ -575,29 +583,23 @@ export default function ViewProductPage() {
 
   // Get seller display name
   const getSellerDisplayName = () => {
-    if (!sellerInfo) return "Unknown Seller";
-
+    if (!sellerInfo) return 'Unknown Seller';
+    
     if (sellerInfo.full_name) return sellerInfo.full_name;
     if (sellerInfo.first_name || sellerInfo.last_name) {
-      return `${sellerInfo.first_name || ""} ${sellerInfo.last_name || ""}`.trim();
+      return `${sellerInfo.first_name || ''} ${sellerInfo.last_name || ''}`.trim();
     }
     if (sellerInfo.username) return sellerInfo.username;
     if (sellerInfo.name) return sellerInfo.name;
-    return "Unknown Seller";
+    return 'Unknown Seller';
   };
 
   // Get seller profile picture
   const getSellerPicture = () => {
-    if (sellerInfo?.type === "shop") {
-      return (
-        ensureAbsoluteUrl(sellerInfo.shop_picture) ||
-        "https://via.placeholder.com/60"
-      );
+    if (sellerInfo?.type === 'shop') {
+      return ensureAbsoluteUrl(sellerInfo.shop_picture) || 'https://via.placeholder.com/60';
     } else {
-      return (
-        ensureAbsoluteUrl(sellerInfo?.profile_picture) ||
-        "https://via.placeholder.com/60"
-      );
+      return ensureAbsoluteUrl(sellerInfo?.profile_picture) || 'https://via.placeholder.com/60';
     }
   };
 
@@ -605,9 +607,9 @@ export default function ViewProductPage() {
     return Array.from({ length: 5 }).map((_, idx) => (
       <Ionicons
         key={idx}
-        name={idx < Math.floor(rating) ? "star" : "star-outline"}
+        name={idx < Math.floor(rating) ? 'star' : 'star-outline'}
         size={14}
-        color={idx < rating ? "#FFD700" : "#D1D5DB"}
+        color={idx < rating ? '#FFD700' : '#D1D5DB'}
       />
     ));
   };
@@ -615,7 +617,7 @@ export default function ViewProductPage() {
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
-        <CustomerLayout disableScroll>
+        <CustomerLayout disableScroll hideBottomTab={true}>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#F97316" />
             <Text style={styles.loadingText}>Loading product...</Text>
@@ -628,11 +630,14 @@ export default function ViewProductPage() {
   if (!product) {
     return (
       <SafeAreaView style={styles.container}>
-        <CustomerLayout disableScroll>
+        <CustomerLayout disableScroll hideBottomTab={true}>
           <View style={styles.errorContainer}>
             <MaterialIcons name="error-outline" size={64} color="#EF4444" />
             <Text style={styles.errorText}>Product not found</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={fetchProduct}>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={fetchProduct}
+            >
               <Text style={styles.retryButtonText}>Retry</Text>
             </TouchableOpacity>
           </View>
@@ -641,60 +646,111 @@ export default function ViewProductPage() {
     );
   }
 
-  const mediaUrls = getMediaUrls();
-  const mainImageFromVariant =
-    currentVariant?.image || currentVariant?.image_url
-      ? ensureAbsoluteUrl(currentVariant.image || currentVariant.image_url)
-      : null;
-  const displayImageUrl =
-    mainImageFromVariant ?? mediaUrls[activeImage] ?? mediaUrls[0];
+  const displayImageUrl = thumbnailUrls.length > 0 ? thumbnailUrls[activeImage]?.url : 'https://via.placeholder.com/400';
+
+  const handleImageSelect = (index: number) => {
+    setActiveImage(index);
+  };
+
+  const handleImagePress = () => {
+    setImageModalVisible(true);
+  };
+
+  const handleLightboxThumbnailPress = (index: number) => {
+    setActiveImage(index);
+    flatListRef.current?.scrollToIndex({ index, animated: true });
+  };
+
+  const onMomentumScrollEnd = (event: any) => {
+    const index = Math.round(event.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+    setActiveImage(index);
+  };
+
+  const renderImageThumbnail = ({ item, index }: { item: ThumbnailItem; index: number }) => (
+    <TouchableOpacity
+      onPress={() => handleImageSelect(index)}
+      style={[
+        styles.thumbnailContainer,
+        activeImage === index && styles.thumbnailActive
+      ]}
+    >
+      <Image
+        source={{ uri: item.url }}
+        style={styles.thumbnail}
+        resizeMode="cover"
+      />
+    </TouchableOpacity>
+  );
+
+  const renderLightboxThumbnail = ({ item, index }: { item: ThumbnailItem; index: number }) => (
+    <TouchableOpacity
+      onPress={() => handleLightboxThumbnailPress(index)}
+      style={[
+        styles.lightboxThumbnail,
+        activeImage === index && styles.lightboxThumbnailActive
+      ]}
+    >
+      <Image
+        source={{ uri: item.url }}
+        style={styles.lightboxThumbnailImage}
+        resizeMode="cover"
+      />
+    </TouchableOpacity>
+  );
+
+  const renderLightboxItem = ({ item }: { item: ThumbnailItem }) => (
+    <View style={styles.modalImageContainer}>
+      <Image
+        source={{ uri: item.url }}
+        style={styles.modalImage}
+        resizeMode="contain"
+      />
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
-      <CustomerLayout disableScroll>
+      <CustomerLayout disableScroll hideBottomTab={true}>
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Product Images */}
           <View style={styles.imageSection}>
-            <TouchableOpacity
+            <TouchableOpacity 
               style={styles.mainImageContainer}
-              onPress={() => setImageModalVisible(true)}
+              onPress={handleImagePress}
               activeOpacity={0.9}
             >
               <Image
+                key={`main-image-${activeImage}`}
                 source={{ uri: displayImageUrl }}
                 style={styles.mainImage}
                 resizeMode="cover"
               />
-
+              
               {/* Image counter */}
-              {mediaUrls.length > 1 && (
+              {thumbnailUrls.length > 1 && (
                 <View style={styles.imageCounter}>
                   <Text style={styles.imageCounterText}>
-                    {activeImage + 1} / {mediaUrls.length}
+                    {activeImage + 1} / {thumbnailUrls.length}
                   </Text>
                 </View>
               )}
-
+              
               {/* Navigation arrows */}
-              {mediaUrls.length > 1 && (
+              {thumbnailUrls.length > 1 && (
                 <>
                   <TouchableOpacity
                     style={[styles.navArrow, styles.leftArrow]}
-                    onPress={() =>
-                      setActiveImage((prev) =>
-                        prev === 0 ? mediaUrls.length - 1 : prev - 1,
-                      )
-                    }
+                    onPress={() => setActiveImage(prev => 
+                      prev === 0 ? thumbnailUrls.length - 1 : prev - 1
+                    )}
                   >
                     <Ionicons name="chevron-back" size={24} color="#FFF" />
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.navArrow, styles.rightArrow]}
-                    onPress={() =>
-                      setActiveImage((prev) =>
-                        prev === mediaUrls.length - 1 ? 0 : prev + 1,
-                      )
-                    }
+                    onPress={() => setActiveImage(prev => 
+                      prev === thumbnailUrls.length - 1 ? 0 : prev + 1
+                    )}
                   >
                     <Ionicons name="chevron-forward" size={24} color="#FFF" />
                   </TouchableOpacity>
@@ -703,28 +759,15 @@ export default function ViewProductPage() {
             </TouchableOpacity>
 
             {/* Thumbnail strip */}
-            {mediaUrls.length > 1 && (
+            {thumbnailUrls.length > 1 && (
               <FlatList
                 horizontal
-                data={mediaUrls}
+                data={thumbnailUrls}
                 keyExtractor={(item, index) => index.toString()}
-                renderItem={({ item, index }) => (
-                  <TouchableOpacity
-                    onPress={() => setActiveImage(index)}
-                    style={[
-                      styles.thumbnailContainer,
-                      activeImage === index && styles.thumbnailActive,
-                    ]}
-                  >
-                    <Image
-                      source={{ uri: item }}
-                      style={styles.thumbnail}
-                      resizeMode="cover"
-                    />
-                  </TouchableOpacity>
-                )}
+                renderItem={renderImageThumbnail}
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.thumbnailList}
+                extraData={activeImage}
               />
             )}
           </View>
@@ -737,35 +780,21 @@ export default function ViewProductPage() {
                 <Text style={styles.productName}>{product.name}</Text>
                 {isGift && (
                   <View style={styles.giftBadge}>
-                    <MaterialCommunityIcons
-                      name="gift"
-                      size={14}
-                      color="#9A3412"
-                    />
+                    <MaterialCommunityIcons name="gift" size={14} color="#9A3412" />
                     <Text style={styles.giftBadgeText}>FREE GIFT</Text>
                   </View>
                 )}
               </View>
               <View style={styles.actionButtons}>
-                <TouchableOpacity
-                  onPress={toggleFavorite}
-                  style={styles.iconButton}
-                >
-                  <Ionicons
-                    name={isFavorite ? "heart" : "heart-outline"}
-                    size={24}
-                    color={isFavorite ? "#EF4444" : "#6B7280"}
+                <TouchableOpacity onPress={toggleFavorite} style={styles.iconButton}>
+                  <Ionicons 
+                    name={isFavorite ? "heart" : "heart-outline"} 
+                    size={24} 
+                    color={isFavorite ? "#EF4444" : "#6B7280"} 
                   />
                 </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={handleShare}
-                  style={styles.iconButton}
-                >
-                  <Ionicons
-                    name="share-social-outline"
-                    size={24}
-                    color="#6B7280"
-                  />
+                <TouchableOpacity onPress={handleShare} style={styles.iconButton}>
+                  <Ionicons name="share-social-outline" size={24} color="#6B7280" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -774,37 +803,24 @@ export default function ViewProductPage() {
             <View style={styles.ratingRow}>
               <View style={styles.ratingContainer}>
                 {renderStars(product.shop?.avg_rating || 0)}
-                <Text style={styles.ratingText}>
-                  {product.shop?.avg_rating?.toFixed(1) || "0.0"}
-                </Text>
+                <Text style={styles.ratingText}>{product.shop?.avg_rating?.toFixed(1) || '0.0'}</Text>
               </View>
               <Text style={styles.conditionText}>{product.condition}</Text>
 
               {/* Refund info - only show if not a gift */}
-              {!isGift &&
-                (isRefundable ? (
+              {!isGift && (
+                isRefundable ? (
                   <View style={styles.refundableBadge}>
-                    <MaterialCommunityIcons
-                      name="shield-check"
-                      size={14}
-                      color="#065F46"
-                    />
+                    <MaterialCommunityIcons name="shield-check" size={14} color="#065F46" />
                     <Text style={styles.refundableText}>{refundText}</Text>
                   </View>
-                ) : (
-                  isExplicitlyNonRefundable && (
-                    <View style={styles.nonRefundableBadge}>
-                      <MaterialCommunityIcons
-                        name="shield-off"
-                        size={14}
-                        color="#991B1B"
-                      />
-                      <Text style={styles.nonRefundableText}>
-                        Non-refundable
-                      </Text>
-                    </View>
-                  )
-                ))}
+                ) : isExplicitlyNonRefundable && (
+                  <View style={styles.nonRefundableBadge}>
+                    <MaterialCommunityIcons name="shield-off" size={14} color="#991B1B" />
+                    <Text style={styles.nonRefundableText}>Non-refundable</Text>
+                  </View>
+                )
+              )}
             </View>
 
             {/* Price */}
@@ -812,34 +828,24 @@ export default function ViewProductPage() {
               <Text style={[styles.price, isGift && styles.giftPrice]}>
                 {displayPrice}
               </Text>
-              {!isGift &&
-                displayComparePrice &&
-                displayComparePrice > displayVariantPrice && (
-                  <Text style={styles.comparePrice}>
-                    ₱{displayComparePrice.toFixed(2)}
-                  </Text>
-                )}
+              {!isGift && displayComparePrice && displayComparePrice > displayVariantPrice && (
+                <Text style={styles.comparePrice}>₱{displayComparePrice.toFixed(2)}</Text>
+              )}
             </View>
 
             {/* Stock and Price Range */}
             <View style={styles.stockContainer}>
-              <Text
-                style={[
-                  styles.stockText,
-                  displayStock <= 0 && styles.outOfStock,
-                ]}
-              >
-                Stock: {displayStock}{" "}
-                {displayStock <= 0 ? "(Out of Stock)" : ""}
+              <Text style={[
+                styles.stockText,
+                displayStock <= 0 && styles.outOfStock
+              ]}>
+                Stock: {displayStock} {displayStock <= 0 ? "(Out of Stock)" : ""}
               </Text>
-              {!isGift &&
-                product.price_range &&
-                product.price_range.is_range && (
-                  <Text style={styles.priceRangeText}>
-                    Price range: ₱{product.price_range.min.toFixed(2)} - ₱
-                    {product.price_range.max.toFixed(2)}
-                  </Text>
-                )}
+              {!isGift && product.price_range && product.price_range.is_range && (
+                <Text style={styles.priceRangeText}>
+                  Price range: ₱{product.price_range.min.toFixed(2)} - ₱{product.price_range.max.toFixed(2)}
+                </Text>
+              )}
             </View>
 
             {/* Description */}
@@ -850,8 +856,7 @@ export default function ViewProductPage() {
           {!isGift && product.variant_count > 1 && (
             <View style={styles.variantInfo}>
               <Text style={styles.variantInfoText}>
-                This product has {product.variant_count} variants available.
-                Please select your preferred variant.
+                This product has {product.variant_count} variants available. Please select your preferred variant.
               </Text>
             </View>
           )}
@@ -869,33 +874,19 @@ export default function ViewProductPage() {
             <Text style={styles.sectionTitle}>Quantity</Text>
             <View style={styles.quantitySelector}>
               <TouchableOpacity
-                style={[
-                  styles.quantityButton,
-                  quantity <= 1 && styles.quantityButtonDisabled,
-                ]}
+                style={[styles.quantityButton, quantity <= 1 && styles.quantityButtonDisabled]}
                 onPress={decreaseQuantity}
                 disabled={quantity <= 1}
               >
-                <Ionicons
-                  name="remove"
-                  size={20}
-                  color={quantity <= 1 ? "#9CA3AF" : "#111827"}
-                />
+                <Ionicons name="remove" size={20} color={quantity <= 1 ? "#9CA3AF" : "#111827"} />
               </TouchableOpacity>
               <Text style={styles.quantityText}>{quantity}</Text>
               <TouchableOpacity
-                style={[
-                  styles.quantityButton,
-                  quantity >= displayStock && styles.quantityButtonDisabled,
-                ]}
+                style={[styles.quantityButton, quantity >= displayStock && styles.quantityButtonDisabled]}
                 onPress={increaseQuantity}
                 disabled={quantity >= displayStock}
               >
-                <Ionicons
-                  name="add"
-                  size={20}
-                  color={quantity >= displayStock ? "#9CA3AF" : "#111827"}
-                />
+                <Ionicons name="add" size={20} color={quantity >= displayStock ? "#9CA3AF" : "#111827"} />
               </TouchableOpacity>
             </View>
           </View>
@@ -908,9 +899,7 @@ export default function ViewProductPage() {
               {loadingSeller ? (
                 <View style={styles.loadingSeller}>
                   <ActivityIndicator size="small" color="#8B5CF6" />
-                  <Text style={styles.loadingSellerText}>
-                    Loading seller information...
-                  </Text>
+                  <Text style={styles.loadingSellerText}>Loading seller information...</Text>
                 </View>
               ) : sellerInfo ? (
                 <TouchableOpacity style={styles.sellerInfo}>
@@ -925,78 +914,57 @@ export default function ViewProductPage() {
                     )}
                   </View>
                   <View style={styles.sellerDetails}>
-                    <Text style={styles.sellerName}>
-                      {getSellerDisplayName()}
-                    </Text>
+                    <Text style={styles.sellerName}>{getSellerDisplayName()}</Text>
                     {sellerInfo.email && (
                       <Text style={styles.sellerEmail}>{sellerInfo.email}</Text>
                     )}
                     {sellerInfo.contact_number && (
-                      <Text style={styles.sellerContact}>
-                        Contact: {sellerInfo.contact_number}
-                      </Text>
+                      <Text style={styles.sellerContact}>Contact: {sellerInfo.contact_number}</Text>
                     )}
                     <View style={styles.personalListingBadge}>
-                      <Text style={styles.personalListingText}>
-                        Personal Listing
-                      </Text>
+                      <Text style={styles.personalListingText}>Personal Listing</Text>
                     </View>
                     {sellerInfo.created_at && (
                       <Text style={styles.memberSince}>
-                        Member since{" "}
-                        {new Date(sellerInfo.created_at).toLocaleDateString()}
+                        Member since {new Date(sellerInfo.created_at).toLocaleDateString()}
                       </Text>
                     )}
                   </View>
                 </TouchableOpacity>
               ) : (
-                <Text style={styles.noInfoText}>
-                  Seller information not available
-                </Text>
+                <Text style={styles.noInfoText}>Seller information not available</Text>
               )}
             </View>
           ) : (
             /* Shop Product - Show Shop Information */
             product.shop && (
-              <TouchableOpacity
-                onPress={handleVisitShop}
-                style={styles.shopSection}
-              >
+              <TouchableOpacity onPress={handleVisitShop} style={styles.shopSection}>
                 <Text style={styles.sectionTitle}>Shop Information</Text>
                 <View style={styles.shopInfo}>
                   <Image
-                    source={{
-                      uri:
-                        ensureAbsoluteUrl(product.shop.shop_picture) ||
-                        "https://via.placeholder.com/60",
+                    source={{ 
+                      uri: ensureAbsoluteUrl(product.shop.shop_picture) || 'https://via.placeholder.com/60'
                     }}
                     style={styles.shopImage}
                   />
                   <View style={styles.shopDetails}>
-                    <Text style={styles.shopName}>
-                      {product.shop.name || "Unknown Shop"}
-                    </Text>
+                    <Text style={styles.shopName}>{product.shop.name || "Unknown Shop"}</Text>
                     {product.shop.address && (
                       <View style={styles.shopAddress}>
-                        <Ionicons
-                          name="location-outline"
-                          size={14}
-                          color="#6B7280"
-                        />
+                        <Ionicons name="location-outline" size={14} color="#6B7280" />
                         <Text style={styles.shopAddressText} numberOfLines={1}>
                           {product.shop.address}
                         </Text>
                       </View>
                     )}
-                    {product.shop.avg_rating !== undefined &&
-                      product.shop.avg_rating !== null && (
-                        <View style={styles.shopRating}>
-                          {renderStars(product.shop.avg_rating)}
-                          <Text style={styles.shopRatingText}>
-                            {product.shop.avg_rating?.toFixed(1) || "N/A"}
-                          </Text>
-                        </View>
-                      )}
+                    {product.shop.avg_rating !== undefined && product.shop.avg_rating !== null && (
+                      <View style={styles.shopRating}>
+                        {renderStars(product.shop.avg_rating)}
+                        <Text style={styles.shopRatingText}>
+                          {product.shop.avg_rating?.toFixed(1) || "N/A"}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                   <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
                 </View>
@@ -1005,16 +973,29 @@ export default function ViewProductPage() {
           )}
         </ScrollView>
 
-        {/* Fixed Action Bar */}
+        {/* Fixed Action Bar - Professional Minimalist Design */}
         <View style={styles.actionBar}>
+          {/* Left side - Price Summary */}
           <View style={styles.priceSummary}>
             <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalPrice}>
-              {isGift
-                ? "FREE"
-                : `₱${(displayVariantPrice * quantity).toFixed(2)}`}
-            </Text>
+            <View style={styles.priceRow}>
+              <Text style={styles.totalPrice}>
+                {isGift ? 'FREE' : `₱${(displayVariantPrice * quantity).toFixed(2)}`}
+              </Text>
+              {!isGift && displayComparePrice && displayComparePrice > displayVariantPrice && (
+                <Text style={styles.originalPrice}>
+                  ₱{(displayComparePrice * quantity).toFixed(2)}
+                </Text>
+              )}
+            </View>
+            {!isGift && displayComparePrice && displayComparePrice > displayVariantPrice && (
+              <Text style={styles.savings}>
+                Save ₱{((displayComparePrice - displayVariantPrice) * quantity).toFixed(2)}
+              </Text>
+            )}
           </View>
+
+          {/* Right side - Action Buttons */}
           <View style={styles.actionButtonsContainer}>
             {/* Swap Button */}
             {!isGift && isAvailableForSwap && displayStock > 0 && (
@@ -1026,24 +1007,17 @@ export default function ViewProductPage() {
                 {startingSwap ? (
                   <ActivityIndicator color="#FFF" size="small" />
                 ) : (
-                  <>
-                    <MaterialCommunityIcons
-                      name="swap-horizontal"
-                      size={18}
-                      color="#FFF"
-                    />
-                    <Text style={styles.swapButtonText}>Swap</Text>
-                  </>
+                  <MaterialCommunityIcons name="swap-horizontal" size={18} color="#FFF" />
                 )}
               </TouchableOpacity>
             )}
-
+            
             {/* Add to Cart Button */}
             <TouchableOpacity
               style={[
-                styles.actionButton,
+                styles.actionButton, 
                 styles.cartButton,
-                !isGift && isAvailableForSwap ? { flex: 1.2 } : { flex: 1 },
+                (!isGift && isAvailableForSwap) ? styles.cartButtonCompact : styles.cartButtonFull
               ]}
               onPress={handleAddToCart}
               disabled={addingToCart || displayStock <= 0}
@@ -1053,33 +1027,25 @@ export default function ViewProductPage() {
               ) : (
                 <>
                   <Ionicons name="cart-outline" size={18} color="#FFF" />
-                  <Text style={styles.cartButtonText}>
-                    {displayStock <= 0
-                      ? "Out of Stock"
-                      : isGift
-                        ? "Add to Cart (Free)"
-                        : "Add to Cart"}
+                  <Text style={styles.buttonText}>
+                    {displayStock <= 0 ? "Out of Stock" : "Cart"}
                   </Text>
                 </>
               )}
             </TouchableOpacity>
-
+            
             {/* Buy Now Button */}
             <TouchableOpacity
               style={[
-                styles.actionButton,
+                styles.actionButton, 
                 styles.buyButton,
-                !isGift && isAvailableForSwap ? { flex: 1 } : { flex: 1 },
+                (!isGift && isAvailableForSwap) ? styles.buyButtonCompact : styles.buyButtonFull
               ]}
               onPress={handleAddToCart}
               disabled={displayStock <= 0}
             >
-              <Text style={styles.buyButtonText}>
-                {displayStock <= 0
-                  ? "Out of Stock"
-                  : isGift
-                    ? "Claim Free Gift"
-                    : "Buy Now"}
+              <Text style={styles.buttonText}>
+                {displayStock <= 0 ? "Out of Stock" : isGift ? "Claim" : "Buy"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1093,49 +1059,57 @@ export default function ViewProductPage() {
           onRequestClose={() => setImageModalVisible(false)}
         >
           <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity
-                onPress={() => setImageModalVisible(false)}
-                style={styles.closeButton}
-              >
-                <Ionicons name="close" size={28} color="#FFF" />
-              </TouchableOpacity>
-            </View>
+            {/* Close Button */}
+            <TouchableOpacity
+              onPress={() => setImageModalVisible(false)}
+              style={styles.modalCloseButton}
+            >
+              <Ionicons name="close" size={28} color="#FFF" />
+            </TouchableOpacity>
 
-            <FlatList
-              data={mediaUrls}
-              keyExtractor={(item, index) => index.toString()}
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              initialScrollIndex={activeImage}
-              onMomentumScrollEnd={(event) => {
-                const index = Math.round(
-                  event.nativeEvent.contentOffset.x / SCREEN_WIDTH,
-                );
-                setActiveImage(index);
-              }}
-              getItemLayout={(data, index) => ({
-                length: SCREEN_WIDTH,
-                offset: SCREEN_WIDTH * index,
-                index,
-              })}
-              renderItem={({ item }) => (
-                <View style={styles.modalImageContainer}>
-                  <Image
-                    source={{ uri: item }}
-                    style={styles.modalImage}
-                    resizeMode="contain"
-                  />
-                </View>
-              )}
-            />
+            {/* Image Carousel */}
+            {thumbnailUrls.length > 0 && (
+              <FlatList
+                ref={flatListRef}
+                data={thumbnailUrls}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                initialScrollIndex={activeImage}
+                onMomentumScrollEnd={onMomentumScrollEnd}
+                getItemLayout={(data, index) => ({
+                  length: SCREEN_WIDTH,
+                  offset: SCREEN_WIDTH * index,
+                  index,
+                })}
+                keyExtractor={(item, index) => index.toString()}
+                renderItem={renderLightboxItem}
+              />
+            )}
 
-            <View style={styles.modalFooter}>
-              <Text style={styles.modalImageCounter}>
-                {activeImage + 1} / {mediaUrls.length}
-              </Text>
-            </View>
+            {/* Thumbnail Strip in Lightbox */}
+            {thumbnailUrls.length > 1 && (
+              <View style={styles.modalThumbnailStrip}>
+                <FlatList
+                  horizontal
+                  data={thumbnailUrls}
+                  keyExtractor={(item, index) => `lightbox-thumb-${index}`}
+                  renderItem={renderLightboxThumbnail}
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.modalThumbnailList}
+                  extraData={activeImage}
+                />
+              </View>
+            )}
+
+            {/* Image Counter */}
+            {thumbnailUrls.length > 1 && (
+              <View style={styles.modalCounter}>
+                <Text style={styles.modalCounterText}>
+                  {activeImage + 1} / {thumbnailUrls.length}
+                </Text>
+              </View>
+            )}
           </View>
         </Modal>
       </CustomerLayout>
@@ -1146,79 +1120,79 @@ export default function ViewProductPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: '#FFFFFF',
   },
   loadingContainer: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: 20,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: "#6B7280",
+    color: '#6B7280',
   },
   errorContainer: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: 20,
   },
   errorText: {
     fontSize: 18,
-    color: "#374151",
+    color: '#374151',
     marginTop: 16,
     marginBottom: 24,
   },
   retryButton: {
-    backgroundColor: "#F97316",
+    backgroundColor: '#F97316',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
   },
   retryButtonText: {
-    color: "#FFFFFF",
+    color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: '600',
   },
   imageSection: {
-    backgroundColor: "#F9FAFB",
+    backgroundColor: '#F9FAFB',
   },
   mainImageContainer: {
     width: SCREEN_WIDTH,
     height: SCREEN_WIDTH,
-    backgroundColor: "#F3F4F6",
-    position: "relative",
+    backgroundColor: '#F3F4F6',
+    position: 'relative',
   },
   mainImage: {
-    width: "100%",
-    height: "100%",
+    width: '100%',
+    height: '100%',
   },
   imageCounter: {
-    position: "absolute",
+    position: 'absolute',
     top: 16,
     right: 16,
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
   },
   imageCounterText: {
-    color: "#FFFFFF",
+    color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: '600',
   },
   navArrow: {
-    position: "absolute",
-    top: "50%",
+    position: 'absolute',
+    top: '50%',
     marginTop: -20,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     width: 40,
     height: 40,
     borderRadius: 20,
-    justifyContent: "center",
-    alignItems: "center",
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   leftArrow: {
     left: 16,
@@ -1236,25 +1210,25 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginRight: 8,
     borderWidth: 2,
-    borderColor: "transparent",
-    overflow: "hidden",
+    borderColor: 'transparent',
+    overflow: 'hidden',
   },
   thumbnail: {
-    width: "100%",
-    height: "100%",
+    width: '100%',
+    height: '100%',
   },
   thumbnailActive: {
-    borderColor: "#F97316",
+    borderColor: '#F97316',
   },
   productInfo: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+    borderBottomColor: '#F3F4F6',
   },
   titleRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
     marginBottom: 8,
   },
   titleContainer: {
@@ -1263,60 +1237,60 @@ const styles = StyleSheet.create({
   },
   productName: {
     fontSize: 20,
-    fontWeight: "700",
-    color: "#111827",
+    fontWeight: '700',
+    color: '#111827',
     marginBottom: 4,
   },
   giftBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFEDD5",
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEDD5',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 16,
-    alignSelf: "flex-start",
+    alignSelf: 'flex-start',
     gap: 4,
   },
   giftBadgeText: {
     fontSize: 12,
-    fontWeight: "600",
-    color: "#9A3412",
+    fontWeight: '600',
+    color: '#9A3412',
   },
   actionButtons: {
-    flexDirection: "row",
+    flexDirection: 'row',
   },
   iconButton: {
     width: 40,
     height: 40,
-    justifyContent: "center",
-    alignItems: "center",
+    justifyContent: 'center',
+    alignItems: 'center',
     marginLeft: 8,
   },
   ratingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 8,
     marginBottom: 12,
   },
   ratingContainer: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   ratingText: {
     marginLeft: 4,
     fontSize: 14,
-    fontWeight: "600",
-    color: "#374151",
+    fontWeight: '600',
+    color: '#374151',
   },
   conditionText: {
     fontSize: 14,
-    color: "#6B7280",
+    color: '#6B7280',
   },
   refundableBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#D1FAE5",
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 16,
@@ -1324,13 +1298,13 @@ const styles = StyleSheet.create({
   },
   refundableText: {
     fontSize: 11,
-    color: "#065F46",
-    fontWeight: "600",
+    color: '#065F46',
+    fontWeight: '600',
   },
   nonRefundableBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FEE2E2",
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 16,
@@ -1338,26 +1312,26 @@ const styles = StyleSheet.create({
   },
   nonRefundableText: {
     fontSize: 11,
-    color: "#991B1B",
-    fontWeight: "600",
+    color: '#991B1B',
+    fontWeight: '600',
   },
   priceContainer: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 8,
   },
   price: {
     fontSize: 24,
-    fontWeight: "700",
-    color: "#F97316",
+    fontWeight: '700',
+    color: '#F97316',
   },
   giftPrice: {
-    color: "#9A3412",
+    color: '#9A3412',
   },
   comparePrice: {
     fontSize: 18,
-    color: "#9CA3AF",
-    textDecorationLine: "line-through",
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
     marginLeft: 12,
   },
   stockContainer: {
@@ -1365,97 +1339,97 @@ const styles = StyleSheet.create({
   },
   stockText: {
     fontSize: 14,
-    color: "#374151",
+    color: '#374151',
     marginBottom: 4,
   },
   outOfStock: {
-    color: "#EF4444",
+    color: '#EF4444',
   },
   priceRangeText: {
     fontSize: 13,
-    color: "#6B7280",
+    color: '#6B7280',
   },
   description: {
     fontSize: 14,
     lineHeight: 20,
-    color: "#4B5563",
+    color: '#4B5563',
   },
   variantInfo: {
     marginHorizontal: 16,
     marginTop: 8,
     padding: 12,
-    backgroundColor: "#EFF6FF",
+    backgroundColor: '#EFF6FF',
     borderRadius: 8,
   },
   variantInfoText: {
     fontSize: 13,
-    color: "#1E40AF",
-    textAlign: "center",
+    color: '#1E40AF',
+    textAlign: 'center',
   },
   variantsSection: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+    borderBottomColor: '#F3F4F6',
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: "600",
-    color: "#111827",
+    fontWeight: '600',
+    color: '#111827',
     marginBottom: 16,
   },
   quantitySection: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+    borderBottomColor: '#F3F4F6',
   },
   quantitySelector: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F9FAFB",
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
     borderRadius: 8,
     padding: 8,
-    alignSelf: "flex-start",
+    alignSelf: 'flex-start',
   },
   quantityButton: {
     width: 40,
     height: 40,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: '#E5E7EB',
   },
   quantityButtonDisabled: {
-    backgroundColor: "#F3F4F6",
-    borderColor: "#F3F4F6",
+    backgroundColor: '#F3F4F6',
+    borderColor: '#F3F4F6',
   },
   quantityText: {
     width: 60,
-    textAlign: "center",
+    textAlign: 'center',
     fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
+    fontWeight: '600',
+    color: '#111827',
   },
   sellerSection: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+    borderBottomColor: '#F3F4F6',
   },
   loadingSeller: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     padding: 20,
     gap: 8,
   },
   loadingSellerText: {
     fontSize: 14,
-    color: "#6B7280",
+    color: '#6B7280',
   },
   sellerInfo: {
-    flexDirection: "row",
-    backgroundColor: "#F9FAFB",
+    flexDirection: 'row',
+    backgroundColor: '#F9FAFB',
     borderRadius: 12,
     padding: 16,
   },
@@ -1463,14 +1437,14 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: "#EDE9FE",
-    justifyContent: "center",
-    alignItems: "center",
-    overflow: "hidden",
+    backgroundColor: '#EDE9FE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
   },
   sellerImage: {
-    width: "100%",
-    height: "100%",
+    width: '100%',
+    height: '100%',
   },
   sellerDetails: {
     flex: 1,
@@ -1478,52 +1452,52 @@ const styles = StyleSheet.create({
   },
   sellerName: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
+    fontWeight: '600',
+    color: '#111827',
     marginBottom: 2,
   },
   sellerEmail: {
     fontSize: 13,
-    color: "#6B7280",
+    color: '#6B7280',
     marginBottom: 2,
   },
   sellerContact: {
     fontSize: 13,
-    color: "#6B7280",
+    color: '#6B7280',
     marginBottom: 4,
   },
   personalListingBadge: {
-    backgroundColor: "#EDE9FE",
+    backgroundColor: '#EDE9FE',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 12,
-    alignSelf: "flex-start",
+    alignSelf: 'flex-start',
     marginBottom: 4,
   },
   personalListingText: {
     fontSize: 11,
-    color: "#6D28D9",
-    fontWeight: "600",
+    color: '#6D28D9',
+    fontWeight: '600',
   },
   memberSince: {
     fontSize: 11,
-    color: "#9CA3AF",
+    color: '#9CA3AF',
   },
   noInfoText: {
     fontSize: 14,
-    color: "#9CA3AF",
-    textAlign: "center",
+    color: '#9CA3AF',
+    textAlign: 'center',
     padding: 16,
   },
   shopSection: {
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+    borderBottomColor: '#F3F4F6',
   },
   shopInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F9FAFB",
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
     borderRadius: 12,
     padding: 16,
   },
@@ -1531,7 +1505,7 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: '#E5E7EB',
   },
   shopDetails: {
     flex: 1,
@@ -1540,224 +1514,197 @@ const styles = StyleSheet.create({
   },
   shopName: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
+    fontWeight: '600',
+    color: '#111827',
     marginBottom: 4,
   },
   shopAddress: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 4,
   },
   shopAddressText: {
     fontSize: 12,
-    color: "#6B7280",
+    color: '#6B7280',
     marginLeft: 4,
     flex: 1,
   },
   shopRating: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   shopRatingText: {
     fontSize: 12,
-    color: "#6B7280",
+    color: '#6B7280',
     marginLeft: 4,
   },
-  detailsSection: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  detailsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginHorizontal: -8,
-  },
-  detailItem: {
-    width: "50%",
-    paddingHorizontal: 8,
-    marginBottom: 16,
-  },
-  detailItemFull: {
-    width: "100%",
-    paddingHorizontal: 8,
-    marginBottom: 8,
-    marginTop: 8,
-  },
-  detailLabel: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginBottom: 4,
-  },
-  detailValue: {
-    fontSize: 14,
-    color: "#374151",
-    fontWeight: "500",
-  },
-  detailPrice: {
-    fontSize: 16,
-    color: "#F97316",
-    fontWeight: "700",
-  },
-  detailComparePrice: {
-    fontSize: 14,
-    color: "#9CA3AF",
-    textDecorationLine: "line-through",
-  },
-  swapSection: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  swapInfo: {
-    backgroundColor: "#F0FDF4",
-    borderRadius: 12,
-    padding: 16,
-  },
-  swapType: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  swapTypeText: {
-    fontSize: 14,
-    color: "#065F46",
-    fontWeight: "600",
-    marginLeft: 8,
-    textTransform: "capitalize",
-  },
-  swapPayment: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  swapPaymentLabel: {
-    fontSize: 13,
-    color: "#374151",
-  },
-  swapPaymentValue: {
-    fontSize: 13,
-    color: "#059669",
-    fontWeight: "600",
-  },
-  swapDescription: {
-    fontSize: 14,
-    color: "#374151",
-    lineHeight: 20,
-    marginTop: 8,
-    fontStyle: "italic",
-  },
+  
+  // PROFESSIONAL MINIMALIST ACTION BAR
   actionBar: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-    paddingHorizontal: 16,
+    borderTopColor: '#F0F0F0',
+    paddingHorizontal: 20,
     paddingVertical: 12,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: -2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.03,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
   },
   priceSummary: {
-    marginBottom: 12,
+    flex: 1,
+    marginRight: 16,
   },
   totalLabel: {
-    fontSize: 12,
-    color: "#6B7280",
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#9CA3AF',
+    letterSpacing: 0.5,
     marginBottom: 2,
+    textTransform: 'uppercase',
+  },
+  priceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   totalPrice: {
     fontSize: 20,
-    fontWeight: "700",
-    color: "#111827",
+    fontWeight: '700',
+    color: '#1F2937',
+    letterSpacing: -0.5,
+  },
+  originalPrice: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
+    fontWeight: '400',
+  },
+  savings: {
+    fontSize: 11,
+    color: '#10B981',
+    fontWeight: '500',
+    marginTop: 2,
+    letterSpacing: 0.3,
   },
   actionButtonsContainer: {
-    flexDirection: "row",
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   actionButton: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: 14,
-    borderRadius: 8,
-    marginHorizontal: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    height: 46,
+    paddingHorizontal: 16,
+    gap: 6,
   },
   swapButton: {
-    backgroundColor: "#059669",
-    flex: 0.8,
-  },
-  swapButtonText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "600",
-    marginLeft: 6,
+    backgroundColor: '#059669',
+    width: 46,
+    paddingHorizontal: 0,
   },
   cartButton: {
-    backgroundColor: "#F97316",
+    backgroundColor: '#F97316',
   },
-  cartButtonText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "600",
-    marginLeft: 6,
+  cartButtonCompact: {
+    width: 90,
+  },
+  cartButtonFull: {
+    width: 110,
   },
   buyButton: {
-    backgroundColor: "#DC2626",
+    backgroundColor: '#DC2626',
   },
-  buyButtonText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "600",
+  buyButtonCompact: {
+    width: 70,
   },
+  buyButtonFull: {
+    width: 90,
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  
+  // Modal styles
   modalContainer: {
     flex: 1,
-    backgroundColor: "#000000",
+    backgroundColor: '#000000',
   },
-  modalHeader: {
-    position: "absolute",
-    top: Platform.OS === "ios" ? 44 : 16,
-    left: 16,
-    right: 16,
+  modalCloseButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 50 : 20,
+    right: 20,
     zIndex: 10,
-  },
-  closeButton: {
     width: 40,
     height: 40,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalImageContainer: {
     width: SCREEN_WIDTH,
     height: SCREEN_WIDTH,
-    justifyContent: "center",
-    alignItems: "center",
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalImage: {
-    width: "100%",
-    height: "100%",
+    width: '100%',
+    height: '100%',
   },
-  modalFooter: {
-    position: "absolute",
-    bottom: Platform.OS === "ios" ? 34 : 16,
+  modalThumbnailStrip: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 40 : 20,
     left: 0,
     right: 0,
-    alignItems: "center",
-    zIndex: 10,
   },
-  modalImageCounter: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+  modalThumbnailList: {
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  modalCounter: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 100 : 80,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
+  },
+  modalCounterText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  lightboxThumbnail: {
+    width: 50,
+    height: 50,
+    borderRadius: 6,
+    marginHorizontal: 4,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    overflow: 'hidden',
+  },
+  lightboxThumbnailActive: {
+    borderColor: '#F97316',
+  },
+  lightboxThumbnailImage: {
+    width: '100%',
+    height: '100%',
   },
 });
