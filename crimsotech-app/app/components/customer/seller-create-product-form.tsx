@@ -1,20 +1,74 @@
 import { Link } from "react-router";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Textarea } from "~/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { Badge } from "~/components/ui/badge";
 import { Alert, AlertDescription } from "~/components/ui/alert";
 import { Switch } from "~/components/ui/switch";
 import { Separator } from "~/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
-import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles, Calculator, ChevronDown, ChevronUp, Info, GripVertical, Percent, Clock, Camera, Shield, Star } from "lucide-react";
-import { useState, useEffect, useCallback, useRef } from 'react';
-import AxiosInstance from '~/components/axios/Axios';
-import { useFetcher } from "react-router"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "~/components/ui/collapsible";
+import { Slider } from "~/components/ui/slider";
+import {
+  AlertCircle,
+  Store,
+  ArrowLeft,
+  Plus,
+  X,
+  Image as ImageIcon,
+  Video,
+  Upload,
+  Package,
+  Truck,
+  Loader2,
+  Sparkles,
+  Calculator,
+  ChevronDown,
+  ChevronUp,
+  Info,
+  GripVertical,
+  Percent,
+  Clock,
+  Camera,
+  Shield,
+  Star,
+  CalendarIcon,
+} from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import AxiosInstance from "~/components/axios/Axios";
+import { useFetcher } from "react-router";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "~/components/ui/popover";
+import { Calendar } from "~/components/ui/calendar";
+import {
+  format,
+  differenceInMonths,
+  differenceInWeeks,
+  differenceInYears,
+} from "date-fns";
+import { cn } from "~/lib/utils";
 
 interface User {
   id: string;
@@ -50,41 +104,42 @@ interface FormErrors {
 interface MediaPreview {
   file: File;
   preview: string;
-  type: 'image' | 'video';
+  type: "image" | "video";
 }
 
 interface ShippingZone {
   id: string;
-  name: 'Local' | 'Nearby City' | 'Far Province';
-  fee: number | '';
+  name: "Local" | "Nearby City" | "Far Province";
+  fee: number | "";
   freeShipping: boolean;
 }
 
 interface Depreciation {
-  originalPrice: number | '';
-  usagePeriod: number | '';
-  usageUnit: 'weeks' | 'months' | 'years';
-  depreciationRate: number | '';
-  calculatedPrice: number | '';
+  originalPrice: number | "";
+  usagePeriod: number | "";
+  usageUnit: "weeks" | "months" | "years";
+  depreciationRate: number | "";
+  calculatedPrice: number | "";
+  purchaseDate?: Date | null;
 }
 
 interface Variant {
   id: string;
   title: string;
-  price: number | '';
-  compare_price?: number | '';
-  quantity: number | '';
+  price: number | "";
+  compare_price?: number | "";
+  quantity: number | "";
   sku_code?: string;
   image?: File | null;
   imagePreview?: string;
   proofImage?: File | null;
   proofImagePreview?: string;
-  length?: number | '';
-  width?: number | '';
-  height?: number | '';
-  weight?: number | '';
-  weight_unit?: 'g' | 'kg' | 'lb' | 'oz';
-  critical_trigger?: number | '';
+  length?: number | "";
+  width?: number | "";
+  height?: number | "";
+  weight?: number | "";
+  weight_unit?: "g" | "kg" | "lb" | "oz";
+  critical_trigger?: number | "";
   is_active?: boolean;
   refundable?: boolean;
   depreciation: Depreciation;
@@ -129,16 +184,41 @@ interface PredictionResult {
 
 // Condition scale constants
 const CONDITION_SCALE = {
-  1: { label: "Poor - Heavy signs of use, may not function perfectly", color: "bg-red-100 text-red-800 border-red-300", icon: "★" },
-  2: { label: "Fair - Visible wear, fully functional", color: "bg-orange-100 text-orange-800 border-orange-300", icon: "★★" },
-  3: { label: "Good - Normal wear, well-maintained", color: "bg-yellow-100 text-yellow-800 border-yellow-300", icon: "★★★" },
-  4: { label: "Very Good - Minimal wear, almost like new", color: "bg-blue-100 text-blue-800 border-blue-300", icon: "★★★★" },
-  5: { label: "Like New - No signs of use, original packaging", color: "bg-green-100 text-green-800 border-green-300", icon: "★★★★★" },
+  1: {
+    label: "Poor - Heavy signs of use, may not function perfectly",
+    color: "bg-red-100 text-red-800 border-red-300",
+    icon: "★",
+  },
+  2: {
+    label: "Fair - Visible wear, fully functional",
+    color: "bg-orange-100 text-orange-800 border-orange-300",
+    icon: "★★",
+  },
+  3: {
+    label: "Good - Normal wear, well-maintained",
+    color: "bg-yellow-100 text-yellow-800 border-yellow-300",
+    icon: "★★★",
+  },
+  4: {
+    label: "Very Good - Minimal wear, almost like new",
+    color: "bg-blue-100 text-blue-800 border-blue-300",
+    icon: "★★★★",
+  },
+  5: {
+    label: "Like New - No signs of use, original packaging",
+    color: "bg-green-100 text-green-800 border-green-300",
+    icon: "★★★★★",
+  },
 } as const;
 
 type ConditionValue = keyof typeof CONDITION_SCALE;
 
-export default function CreateProductForm({ selectedShop, globalCategories, modelClasses, errors }: CreateProductFormProps) {
+export default function CreateProductForm({
+  selectedShop,
+  globalCategories,
+  modelClasses,
+  errors,
+}: CreateProductFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const mediaFilesRef = useRef<File[]>([]);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -150,90 +230,255 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
   };
 
-  const [productName, setProductName] = useState('');
-  const [productDescription, setProductDescription] = useState('');
-  const [productCondition, setProductCondition] = useState<ConditionValue | ''>('');
+  const [productName, setProductName] = useState("");
+  const [productDescription, setProductDescription] = useState("");
+  const [productCondition, setProductCondition] = useState<ConditionValue | "">(
+    "",
+  );
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
   const [variants, setVariants] = useState<Variant[]>([
     {
       id: generateId(),
       title: productName || "Default",
-      price: '',
-      quantity: '',
-      sku_code: '',
-      weight_unit: 'g',
+      price: "",
+      quantity: "",
+      sku_code: "",
+      weight_unit: "g",
       is_active: true,
       refundable: true,
       depreciation: {
-        originalPrice: '',
-        usagePeriod: '',
-        usageUnit: 'months',
+        originalPrice: "",
+        usagePeriod: "",
+        usageUnit: "months",
         depreciationRate: 10,
-        calculatedPrice: '',
-      }
-    }
+        calculatedPrice: "",
+        purchaseDate: null,
+      },
+    },
   ]);
   const [productRefundable, setProductRefundable] = useState(true);
   const [shippingZones, setShippingZones] = useState<ShippingZone[]>([
-    { id: generateId(), name: 'Local', fee: '', freeShipping: false },
-    { id: generateId(), name: 'Nearby City', fee: '', freeShipping: false },
-    { id: generateId(), name: 'Far Province', fee: '', freeShipping: false },
+    { id: generateId(), name: "Local", fee: "", freeShipping: false },
+    { id: generateId(), name: "Nearby City", fee: "", freeShipping: false },
+    { id: generateId(), name: "Far Province", fee: "", freeShipping: false },
   ]);
   const [isPredicting, setIsPredicting] = useState(false);
-  const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
+  const [predictionResult, setPredictionResult] =
+    useState<PredictionResult | null>(null);
   const [showPrediction, setShowPrediction] = useState(false);
-  const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string>("");
   const [predictionError, setPredictionError] = useState<string | null>(null);
   const [apiResponseError, setApiResponseError] = useState<string | null>(null);
-  const [apiResponseMessage, setApiResponseMessage] = useState<string | null>(null);
+  const [apiResponseMessage, setApiResponseMessage] = useState<string | null>(
+    null,
+  );
   const predictionAbortController = useRef<AbortController | null>(null);
-  const [closestMatch, setClosestMatch] = useState<{ name: string; score: number } | null>(null);
+  const [closestMatch, setClosestMatch] = useState<{
+    name: string;
+    score: number;
+  } | null>(null);
   const [appliedCategory, setAppliedCategory] = useState<Category | null>(null);
 
-  // REMOVED the useEffect that auto-sets first variant title from product name
-  
-  const calculateDepreciatedPrice = (originalPrice: number, usagePeriod: number, usageUnit: string, depreciationRate: number): number => {
-    if (!originalPrice || !usagePeriod || !depreciationRate) return originalPrice;
+  const calculateDepreciatedPrice = (
+    originalPrice: number,
+    usagePeriod: number,
+    usageUnit: string,
+    depreciationRate: number,
+  ): number => {
+    if (!originalPrice || !usagePeriod || !depreciationRate)
+      return originalPrice;
     let years = usagePeriod;
-    if (usageUnit === 'months') {
+    if (usageUnit === "months") {
       years = usagePeriod / 12;
-    } else if (usageUnit === 'weeks') {
+    } else if (usageUnit === "weeks") {
       years = usagePeriod / 52;
     }
     const rate = depreciationRate / 100;
-    const depreciatedValue = originalPrice * Math.pow((1 - rate), years);
+    const depreciatedValue = originalPrice * Math.pow(1 - rate, years);
     return Math.max(0, Math.round(depreciatedValue * 100) / 100);
   };
 
-  const handleDepreciationChange = (variantId: string, field: keyof Depreciation, value: any) => {
-    setVariants(prev => prev.map(v => {
-      if (v.id === variantId) {
-        const updatedDepreciation = { ...v.depreciation, [field]: value };
-        if (updatedDepreciation.originalPrice && updatedDepreciation.usagePeriod && updatedDepreciation.depreciationRate) {
-          const calculatedPrice = calculateDepreciatedPrice(
-            Number(updatedDepreciation.originalPrice),
-            Number(updatedDepreciation.usagePeriod),
-            updatedDepreciation.usageUnit || 'months',
-            Number(updatedDepreciation.depreciationRate)
-          );
-          updatedDepreciation.calculatedPrice = calculatedPrice;
-          return { ...v, depreciation: updatedDepreciation, price: calculatedPrice };
+  const calculateUsagePeriod = (
+    purchaseDate: Date,
+    unit: "weeks" | "months" | "years",
+  ): number => {
+    const today = new Date();
+    switch (unit) {
+      case "weeks":
+        return differenceInWeeks(today, purchaseDate);
+      case "months":
+        return differenceInMonths(today, purchaseDate);
+      case "years":
+        return differenceInYears(today, purchaseDate);
+      default:
+        return 0;
+    }
+  };
+
+  const handlePurchaseDateChange = (
+    variantId: string,
+    date: Date | undefined,
+  ) => {
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id === variantId) {
+          const updatedDepreciation = { ...v.depreciation, purchaseDate: date };
+          if (date) {
+            const usagePeriod = calculateUsagePeriod(
+              date,
+              v.depreciation.usageUnit || "months",
+            );
+            updatedDepreciation.usagePeriod = usagePeriod;
+
+            if (
+              updatedDepreciation.originalPrice &&
+              updatedDepreciation.depreciationRate
+            ) {
+              const calculatedPrice = calculateDepreciatedPrice(
+                Number(updatedDepreciation.originalPrice),
+                usagePeriod,
+                v.depreciation.usageUnit || "months",
+                Number(updatedDepreciation.depreciationRate),
+              );
+              updatedDepreciation.calculatedPrice = calculatedPrice;
+              return {
+                ...v,
+                depreciation: updatedDepreciation,
+                price: calculatedPrice,
+              };
+            }
+          }
+          return { ...v, depreciation: updatedDepreciation };
         }
-        return { ...v, depreciation: updatedDepreciation };
-      }
-      return v;
-    }));
+        return v;
+      }),
+    );
+  };
+
+  const handleUsageUnitChange = (
+    variantId: string,
+    value: "weeks" | "months" | "years",
+  ) => {
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id === variantId) {
+          const updatedDepreciation = { ...v.depreciation, usageUnit: value };
+          if (v.depreciation.purchaseDate) {
+            const usagePeriod = calculateUsagePeriod(
+              v.depreciation.purchaseDate,
+              value,
+            );
+            updatedDepreciation.usagePeriod = usagePeriod;
+
+            if (
+              updatedDepreciation.originalPrice &&
+              updatedDepreciation.depreciationRate
+            ) {
+              const calculatedPrice = calculateDepreciatedPrice(
+                Number(updatedDepreciation.originalPrice),
+                usagePeriod,
+                value,
+                Number(updatedDepreciation.depreciationRate),
+              );
+              updatedDepreciation.calculatedPrice = calculatedPrice;
+              return {
+                ...v,
+                depreciation: updatedDepreciation,
+                price: calculatedPrice,
+              };
+            }
+          }
+          return { ...v, depreciation: updatedDepreciation };
+        }
+        return v;
+      }),
+    );
+  };
+
+  const handleDepreciationChange = (
+    variantId: string,
+    field: keyof Depreciation,
+    value: any,
+  ) => {
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id === variantId) {
+          const updatedDepreciation = { ...v.depreciation, [field]: value };
+
+          // Recalculate if we have all required fields
+          if (
+            updatedDepreciation.originalPrice &&
+            updatedDepreciation.usagePeriod &&
+            updatedDepreciation.depreciationRate
+          ) {
+            const calculatedPrice = calculateDepreciatedPrice(
+              Number(updatedDepreciation.originalPrice),
+              Number(updatedDepreciation.usagePeriod),
+              updatedDepreciation.usageUnit || "months",
+              Number(updatedDepreciation.depreciationRate),
+            );
+            updatedDepreciation.calculatedPrice = calculatedPrice;
+            return {
+              ...v,
+              depreciation: updatedDepreciation,
+              price: calculatedPrice,
+            };
+          }
+          return { ...v, depreciation: updatedDepreciation };
+        }
+        return v;
+      }),
+    );
+  };
+
+  const handleDepreciationRateChange = (variantId: string, value: number[]) => {
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id === variantId) {
+          const rate = value[0];
+          const updatedDepreciation = {
+            ...v.depreciation,
+            depreciationRate: rate,
+          };
+
+          if (
+            updatedDepreciation.originalPrice &&
+            updatedDepreciation.usagePeriod
+          ) {
+            const calculatedPrice = calculateDepreciatedPrice(
+              Number(updatedDepreciation.originalPrice),
+              Number(updatedDepreciation.usagePeriod),
+              updatedDepreciation.usageUnit || "months",
+              rate,
+            );
+            updatedDepreciation.calculatedPrice = calculatedPrice;
+            return {
+              ...v,
+              depreciation: updatedDepreciation,
+              price: calculatedPrice,
+            };
+          }
+          return { ...v, depreciation: updatedDepreciation };
+        }
+        return v;
+      }),
+    );
   };
 
   const normalizeText = (s: string) => {
-    return s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).join(' ');
+    return s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+      .join(" ");
   };
 
   const tokenSimilarity = (a: string, b: string) => {
-    const ta = new Set(normalizeText(a).split(' '));
-    const tb = new Set(normalizeText(b).split(' '));
+    const ta = new Set(normalizeText(a).split(" "));
+    const tb = new Set(normalizeText(b).split(" "));
     if (ta.size === 0 || tb.size === 0) return 0;
-    const inter = [...ta].filter(x => tb.has(x)).length;
+    const inter = [...ta].filter((x) => tb.has(x)).length;
     const union = new Set([...ta, ...tb]).size;
     return union === 0 ? 0 : inter / union;
   };
@@ -255,17 +500,19 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       setSelectedCategoryName("");
       return;
     }
-    if (stringValue === 'Others' || stringValue === 'others') {
-      setSelectedCategoryName('others');
+    if (stringValue === "Others" || stringValue === "others") {
+      setSelectedCategoryName("others");
       return;
     }
     setSelectedCategoryName(stringValue);
   };
 
   const analyzeImages = async (files: File[]) => {
-    const imageFiles = (files || []).filter(f => f && f.type && f.type.startsWith('image/')) as File[];
+    const imageFiles = (files || []).filter(
+      (f) => f && f.type && f.type.startsWith("image/"),
+    ) as File[];
     if (imageFiles.length === 0) {
-      alert('No image files to analyze.');
+      alert("No image files to analyze.");
       return;
     }
     if (predictionAbortController.current) {
@@ -277,26 +524,29 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     try {
       const requests = imageFiles.map((file) => {
         const form = new FormData();
-        form.append('image', file);
-        return AxiosInstance.post('/predict/', form, {
+        form.append("image", file);
+        return AxiosInstance.post("/predict/", form, {
           signal: predictionAbortController.current!.signal,
         });
       });
       const settled = await Promise.allSettled(requests);
-      const successful = settled.filter(s => s.status === 'fulfilled') as PromiseFulfilledResult<any>[];
+      const successful = settled.filter(
+        (s) => s.status === "fulfilled",
+      ) as PromiseFulfilledResult<any>[];
       if (successful.length === 0) {
-        setPredictionError('All image predictions failed');
+        setPredictionError("All image predictions failed");
         return;
       }
       const aggregateScores: Record<string, number> = {};
       let count = 0;
-      successful.forEach(res => {
+      successful.forEach((res) => {
         const data = res.value?.data;
         if (!data || !data.success || !data.predictions) return;
         const p = data.predictions;
-        if (p.all_predictions && typeof p.all_predictions === 'object') {
+        if (p.all_predictions && typeof p.all_predictions === "object") {
           Object.entries(p.all_predictions).forEach(([cls, score]) => {
-            aggregateScores[cls] = (aggregateScores[cls] || 0) + Number(score || 0);
+            aggregateScores[cls] =
+              (aggregateScores[cls] || 0) + Number(score || 0);
           });
         } else if (p.predicted_class) {
           const cls = String(p.predicted_class);
@@ -306,36 +556,55 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
         count += 1;
       });
       if (count === 0) {
-        setPredictionError('No valid predictions received');
+        setPredictionError("No valid predictions received");
         return;
       }
-      Object.keys(aggregateScores).forEach(k => { aggregateScores[k] = aggregateScores[k] / count; });
-      const sorted = Object.entries(aggregateScores).sort((a, b) => b[1] - a[1]);
-      const topClass = sorted[0]?.[0] || 'Unknown';
+      Object.keys(aggregateScores).forEach((k) => {
+        aggregateScores[k] = aggregateScores[k] / count;
+      });
+      const sorted = Object.entries(aggregateScores).sort(
+        (a, b) => b[1] - a[1],
+      );
+      const topClass = sorted[0]?.[0] || "Unknown";
       const topConfidence = Number(sorted[0]?.[1] || 0);
       const mapped: PredictionResult = {
         success: true,
-        predicted_category: { category_name: topClass, confidence: topConfidence, category_uuid: null } as any,
-        alternative_categories: sorted.slice(1, 4).map(s => ({ category_name: s[0], confidence: s[1] })),
-        all_categories: globalCategories ? globalCategories.map((c: Category) => ({ uuid: c.id, name: c.name, id: c.id })) : [],
+        predicted_category: {
+          category_name: topClass,
+          confidence: topConfidence,
+          category_uuid: null,
+        } as any,
+        alternative_categories: sorted
+          .slice(1, 4)
+          .map((s) => ({ category_name: s[0], confidence: s[1] })),
+        all_categories: globalCategories
+          ? globalCategories.map((c: Category) => ({
+              uuid: c.id,
+              name: c.name,
+              id: c.id,
+            }))
+          : [],
         all_predictions: Object.fromEntries(sorted),
         predicted_class: topClass,
-        analyzed_images_count: count
+        analyzed_images_count: count,
       };
       setPredictionResult(mapped);
       setShowPrediction(true);
       if (mapped.predicted_category?.category_name && globalCategories) {
-        const predictedName = mapped.predicted_category.category_name.toLowerCase();
-        const found = globalCategories.find((gc: any) => gc.name.toLowerCase() === predictedName);
+        const predictedName =
+          mapped.predicted_category.category_name.toLowerCase();
+        const found = globalCategories.find(
+          (gc: any) => gc.name.toLowerCase() === predictedName,
+        );
         if (found) {
           setSelectedCategoryName(found.name);
         }
       }
     } catch (error: any) {
-      if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') return;
-      let errorMsg = 'Prediction request failed';
+      if (error.name === "AbortError" || error.code === "ERR_CANCELED") return;
+      let errorMsg = "Prediction request failed";
       if (error.response?.status === 404) {
-        errorMsg = 'Prediction endpoint not found.';
+        errorMsg = "Prediction endpoint not found.";
       } else if (error.response?.data?.error) {
         errorMsg = error.response.data.error;
       } else if (error.message) {
@@ -350,78 +619,93 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
 
   useEffect(() => {
     return () => {
-      if (predictionAbortController.current) predictionAbortController.current.abort();
-      mainMedia.forEach(item => URL.revokeObjectURL(item.preview));
-      variants.forEach(variant => { 
+      if (predictionAbortController.current)
+        predictionAbortController.current.abort();
+      mainMedia.forEach((item) => URL.revokeObjectURL(item.preview));
+      variants.forEach((variant) => {
         if (variant.imagePreview) URL.revokeObjectURL(variant.imagePreview);
-        if (variant.proofImagePreview) URL.revokeObjectURL(variant.proofImagePreview);
+        if (variant.proofImagePreview)
+          URL.revokeObjectURL(variant.proofImagePreview);
       });
     };
   }, []);
 
-  const updateShippingZoneFee = (zoneId: string, fee: number | '') => {
-    setShippingZones(prev => prev.map(zone => zone.id === zoneId ? { ...zone, fee } : zone));
+  const updateShippingZoneFee = (zoneId: string, fee: number | "") => {
+    setShippingZones((prev) =>
+      prev.map((zone) => (zone.id === zoneId ? { ...zone, fee } : zone)),
+    );
   };
 
   const handleCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     const maxMedia = 9;
-    const validFiles = files.filter(file => file.type.startsWith('image/'));
+    const validFiles = files.filter((file) => file.type.startsWith("image/"));
     const availableSlots = maxMedia - mainMedia.length;
     const filesToAdd = validFiles.slice(0, availableSlots);
     if (filesToAdd.length === 0 && files.length > 0) {
-      alert(`Only image files are supported and the maximum limit is ${maxMedia} total media files.`);
+      alert(
+        `Only image files are supported and the maximum limit is ${maxMedia} total media files.`,
+      );
       return;
     }
-    const newMedia = filesToAdd.map(file => ({
+    const newMedia = filesToAdd.map((file) => ({
       file,
       preview: URL.createObjectURL(file),
-      type: 'image' as 'image' | 'video'
+      type: "image" as "image" | "video",
     }));
     mediaFilesRef.current = [...mediaFilesRef.current, ...filesToAdd];
-    setMainMedia(prev => [...prev, ...newMedia]);
+    setMainMedia((prev) => [...prev, ...newMedia]);
     if (filesToAdd.length > 0) {
-      analyzeImages(filesToAdd as File[]).catch((err) => console.error('Auto image analysis failed:', err));
+      analyzeImages(filesToAdd as File[]).catch((err) =>
+        console.error("Auto image analysis failed:", err),
+      );
     }
-    if (cameraInputRef.current) cameraInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
   };
 
   const removeMainMedia = (index: number) => {
     URL.revokeObjectURL(mainMedia[index].preview);
     mediaFilesRef.current = mediaFilesRef.current.filter((_, i) => i !== index);
-    setMainMedia(prev => prev.filter((_, i) => i !== index));
+    setMainMedia((prev) => prev.filter((_, i) => i !== index));
   };
 
   const toggleZoneFreeShipping = (zoneId: string) => {
-    setShippingZones(prev => prev.map(zone => {
-      if (zone.id === zoneId) {
-        const newFreeShipping = !zone.freeShipping;
-        return { ...zone, freeShipping: newFreeShipping, fee: newFreeShipping ? 0 : '' };
-      }
-      return zone;
-    }));
+    setShippingZones((prev) =>
+      prev.map((zone) => {
+        if (zone.id === zoneId) {
+          const newFreeShipping = !zone.freeShipping;
+          return {
+            ...zone,
+            freeShipping: newFreeShipping,
+            fee: newFreeShipping ? 0 : "",
+          };
+        }
+        return zone;
+      }),
+    );
   };
 
   const addVariant = () => {
-    setVariants(prev => [
+    setVariants((prev) => [
       ...prev,
       {
         id: generateId(),
         title: `Variant ${prev.length + 1}`,
-        price: '',
-        quantity: '',
-        sku_code: '',
-        weight_unit: 'g',
+        price: "",
+        quantity: "",
+        sku_code: "",
+        weight_unit: "g",
         is_active: true,
         refundable: productRefundable,
         depreciation: {
-          originalPrice: '',
-          usagePeriod: '',
-          usageUnit: 'months',
+          originalPrice: "",
+          usagePeriod: "",
+          usageUnit: "months",
           depreciationRate: 10,
-          calculatedPrice: '',
-        }
-      }
+          calculatedPrice: "",
+          purchaseDate: null,
+        },
+      },
     ]);
   };
 
@@ -430,33 +714,56 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       alert("Products must have at least one variant.");
       return;
     }
-    const variant = variants.find(v => v.id === variantId);
+    const variant = variants.find((v) => v.id === variantId);
     if (variant?.imagePreview) URL.revokeObjectURL(variant.imagePreview);
-    if (variant?.proofImagePreview) URL.revokeObjectURL(variant.proofImagePreview);
-    setVariants(prev => prev.filter(v => v.id !== variantId));
+    if (variant?.proofImagePreview)
+      URL.revokeObjectURL(variant.proofImagePreview);
+    setVariants((prev) => prev.filter((v) => v.id !== variantId));
   };
 
-  const updateVariantField = (variantId: string, field: keyof Variant, value: any) => {
-    if (field === 'price') return;
-    setVariants(prev => prev.map(v => v.id === variantId ? { ...v, [field]: value } : v));
+  const updateVariantField = (
+    variantId: string,
+    field: keyof Variant,
+    value: any,
+  ) => {
+    if (field === "price") return;
+    setVariants((prev) =>
+      prev.map((v) => (v.id === variantId ? { ...v, [field]: value } : v)),
+    );
   };
 
-  const handleVariantImageChange = (variantId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVariantImageChange = (
+    variantId: string,
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
+    if (file && file.type.startsWith("image/")) {
       const preview = URL.createObjectURL(file);
-      setVariants(prev => prev.map(v => v.id === variantId ? { ...v, image: file, imagePreview: preview } : v));
+      setVariants((prev) =>
+        prev.map((v) =>
+          v.id === variantId ? { ...v, image: file, imagePreview: preview } : v,
+        ),
+      );
     }
-    e.target.value = '';
+    e.target.value = "";
   };
 
-  const handleVariantProofImageChange = (variantId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleVariantProofImageChange = (
+    variantId: string,
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
+    if (file && file.type.startsWith("image/")) {
       const preview = URL.createObjectURL(file);
-      setVariants(prev => prev.map(v => v.id === variantId ? { ...v, proofImage: file, proofImagePreview: preview } : v));
+      setVariants((prev) =>
+        prev.map((v) =>
+          v.id === variantId
+            ? { ...v, proofImage: file, proofImagePreview: preview }
+            : v,
+        ),
+      );
     }
-    e.target.value = '';
+    e.target.value = "";
   };
 
   const openVariantCamera = (variantId: string) => {
@@ -474,15 +781,23 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       alert("Products must have at least one variant.");
       return;
     }
-    const invalidVariants = variants.filter(v => v.price === '' || !v.quantity || Number(v.quantity) === 0);
+    const invalidVariants = variants.filter(
+      (v) => v.price === "" || !v.quantity || Number(v.quantity) === 0,
+    );
     if (invalidVariants.length > 0) {
-      alert("All variants must have a price (from depreciation calculation) and quantity set.");
+      alert(
+        "All variants must have a price (from depreciation calculation) and quantity set.",
+      );
       return;
     }
     const formData = new FormData();
     const basicFormData = new FormData(formRef.current);
     for (const [key, value] of basicFormData.entries()) {
-      if (key !== 'media_files' && !key.startsWith('variant_image_') && !key.startsWith('proof_image_')) {
+      if (
+        key !== "media_files" &&
+        !key.startsWith("variant_image_") &&
+        !key.startsWith("proof_image_")
+      ) {
         if (value instanceof File) {
           formData.append(key, value);
         } else {
@@ -490,28 +805,36 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
         }
       }
     }
-    
+
     // Add condition as integer value
     if (productCondition) {
-      formData.append('condition', productCondition.toString());
+      formData.append("condition", productCondition.toString());
     }
-    
+
     if (selectedCategoryName?.trim()) {
-      let match = globalCategories.find(gc => gc.name.toLowerCase() === selectedCategoryName.toLowerCase());
+      let match = globalCategories.find(
+        (gc) => gc.name.toLowerCase() === selectedCategoryName.toLowerCase(),
+      );
       if (!match) {
         const best = findBestCategoryMatch(selectedCategoryName);
         if (best && best.score >= 0.25) match = best.category;
       }
       if (match) {
-        formData.append('category_admin_id', match.id);
+        formData.append("category_admin_id", match.id);
         setSelectedCategoryName(match.name);
       } else {
-        const nameToSend = (selectedCategoryName && selectedCategoryName.toLowerCase() === 'others') ? 'others' : selectedCategoryName;
-        formData.append('category_admin_name', nameToSend);
+        const nameToSend =
+          selectedCategoryName &&
+          selectedCategoryName.toLowerCase() === "others"
+            ? "others"
+            : selectedCategoryName;
+        formData.append("category_admin_name", nameToSend);
       }
     }
-    mediaFilesRef.current.forEach(file => { if (file.size > 0) formData.append('media_files', file); });
-    const variantsPayload = variants.map(v => ({
+    mediaFilesRef.current.forEach((file) => {
+      if (file.size > 0) formData.append("media_files", file);
+    });
+    const variantsPayload = variants.map((v) => ({
       id: v.id,
       title: v.title,
       price: v.price,
@@ -531,42 +854,53 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       usage_period: v.depreciation.usagePeriod,
       usage_unit: v.depreciation.usageUnit,
       depreciation_rate: v.depreciation.depreciationRate,
+      purchase_date: v.depreciation.purchaseDate
+        ? v.depreciation.purchaseDate.toISOString()
+        : null,
       attributes: v.attributes || {},
     }));
-    formData.append('variants', JSON.stringify(variantsPayload));
-    variants.forEach(v => { 
+    formData.append("variants", JSON.stringify(variantsPayload));
+    variants.forEach((v) => {
       if (v.image) formData.append(`variant_image_${v.id}`, v.image);
       if (v.proofImage) formData.append(`proof_image_${v.id}`, v.proofImage);
     });
-    if (selectedShop) formData.append('shop', selectedShop.id);
-    fetcher.submit(formData, { method: 'post', encType: 'multipart/form-data' });
+    if (selectedShop) formData.append("shop", selectedShop.id);
+    fetcher.submit(formData, {
+      method: "post",
+      encType: "multipart/form-data",
+    });
   };
 
   useEffect(() => {
     if (fetcher && fetcher.data) {
       if (fetcher.data.errors) {
-        setApiResponseError(typeof fetcher.data.errors === 'string' ? fetcher.data.errors : JSON.stringify(fetcher.data.errors));
+        setApiResponseError(
+          typeof fetcher.data.errors === "string"
+            ? fetcher.data.errors
+            : JSON.stringify(fetcher.data.errors),
+        );
       } else if (fetcher.data.error) {
         setApiResponseError(fetcher.data.error);
       } else if (fetcher.data.success) {
         setApiResponseError(null);
-        setApiResponseMessage(fetcher.data.message || 'Product created');
+        setApiResponseMessage(fetcher.data.message || "Product created");
       }
     }
   }, [fetcher.data]);
 
   useEffect(() => {
     if (predictionResult && predictionResult.predicted_category) {
-      const predictedName = predictionResult.predicted_category.category_name || '';
-      if (!selectedCategoryName?.trim() || selectedCategoryName === 'others') {
+      const predictedName =
+        predictionResult.predicted_category.category_name || "";
+      if (!selectedCategoryName?.trim() || selectedCategoryName === "others") {
         setSelectedCategoryName(predictedName);
       }
     }
   }, [predictionResult, selectedCategoryName]);
 
-  const formatPrice = (price: number | ''): string => {
-    if (typeof price === 'number') return price.toFixed(2);
-    return '0.00';
+  const formatPrice = (price: number | ""): string => {
+    if (typeof price === "number") return price.toFixed(2);
+    return "0.00";
   };
 
   // Condition badge component
@@ -584,17 +918,27 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
       {/* Progress Steps */}
       <div className="flex items-center space-x-2 mb-6">
-        <Badge className="px-3 py-1 bg-orange-500 text-white">1. Basic Info</Badge>
+        <Badge className="px-3 py-1 bg-orange-500 text-white">
+          1. Basic Info
+        </Badge>
         <div className="h-0.5 w-8 bg-gray-300"></div>
-        <Badge variant={mainMedia.length > 0 ? "default" : "outline"}
-          className={`px-3 py-1 ${mainMedia.length > 0 ? 'bg-orange-500 text-white' : 'border-gray-300 text-gray-600'}`}>
+        <Badge
+          variant={mainMedia.length > 0 ? "default" : "outline"}
+          className={`px-3 py-1 ${mainMedia.length > 0 ? "bg-orange-500 text-white" : "border-gray-300 text-gray-600"}`}
+        >
           2. Media
         </Badge>
         <div className="h-0.5 w-8 bg-gray-300"></div>
-        <Badge className="px-3 py-1 bg-orange-500 text-white">3. Variants</Badge>
+        <Badge className="px-3 py-1 bg-orange-500 text-white">
+          3. Variants
+        </Badge>
         <div className="h-0.5 w-8 bg-gray-300"></div>
-        <Badge variant={variants.every(v => v.price && v.quantity) ? "default" : "outline"}
-          className={`px-3 py-1 ${variants.every(v => v.price && v.quantity) ? 'bg-orange-500 text-white' : 'border-gray-300 text-gray-600'}`}>
+        <Badge
+          variant={
+            variants.every((v) => v.price && v.quantity) ? "default" : "outline"
+          }
+          className={`px-3 py-1 ${variants.every((v) => v.price && v.quantity) ? "bg-orange-500 text-white" : "border-gray-300 text-gray-600"}`}
+        >
           4. Details
         </Badge>
       </div>
@@ -606,74 +950,109 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
             <Sparkles className="h-4 w-4 text-orange-600" />
           </div>
           <div>
-            <h2 className="text-xl font-semibold text-gray-800">Basic Information</h2>
-            <p className="text-sm text-gray-500">Start with product details. AI will suggest a category when you upload images.</p>
+            <h2 className="text-xl font-semibold text-gray-800">
+              Basic Information
+            </h2>
+            <p className="text-sm text-gray-500">
+              Start with product details. AI will suggest a category when you
+              upload images.
+            </p>
           </div>
         </div>
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label htmlFor="name" className="flex items-center gap-1 text-gray-700">
+              <Label
+                htmlFor="name"
+                className="flex items-center gap-1 text-gray-700"
+              >
                 Product Name *
                 <Info className="h-3 w-3 text-gray-400" />
               </Label>
               <Input
-                type="text" id="name" name="name" required
+                type="text"
+                id="name"
+                name="name"
+                required
                 placeholder="Enter product name"
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
                 className="border-gray-300 focus:border-orange-500 focus:ring-orange-500"
               />
-              {errors.name && <p className="text-sm text-red-600">{errors.name}</p>}
+              {errors.name && (
+                <p className="text-sm text-red-600">{errors.name}</p>
+              )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="condition" className="flex items-center gap-1 text-gray-700">
-                Condition Rating * 
-                </Label>
-              <Select 
-                name="condition" 
-                required 
-                value={productCondition ? productCondition.toString() : ''} 
-                onValueChange={(value) => setProductCondition(parseInt(value) as ConditionValue)}
+              <Label
+                htmlFor="condition"
+                className="flex items-center gap-1 text-gray-700"
+              >
+                Condition Rating *
+              </Label>
+              <Select
+                name="condition"
+                required
+                value={productCondition ? productCondition.toString() : ""}
+                onValueChange={(value) =>
+                  setProductCondition(parseInt(value) as ConditionValue)
+                }
               >
                 <SelectTrigger className="border-gray-300 focus:border-orange-500 focus:ring-orange-500">
                   <SelectValue placeholder="Select condition rating">
                     {productCondition && (
                       <div className="flex items-center gap-2">
-                        <span className="text-yellow-500">{CONDITION_SCALE[productCondition].icon}</span>
+                        <span className="text-yellow-500">
+                          {CONDITION_SCALE[productCondition].icon}
+                        </span>
                         <span>{CONDITION_SCALE[productCondition].label}</span>
                       </div>
                     )}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(CONDITION_SCALE).map(([value, { label, icon }]) => (
-                    <SelectItem key={value} value={value} className="flex items-center gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-yellow-500">{icon}</span>
-                        <span>{label}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
+                  {Object.entries(CONDITION_SCALE).map(
+                    ([value, { label, icon }]) => (
+                      <SelectItem
+                        key={value}
+                        value={value}
+                        className="flex items-center gap-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-yellow-500">{icon}</span>
+                          <span>{label}</span>
+                        </div>
+                      </SelectItem>
+                    ),
+                  )}
                 </SelectContent>
               </Select>
-              {errors.condition && <p className="text-sm text-red-600">{errors.condition}</p>}
-              
+              {errors.condition && (
+                <p className="text-sm text-red-600">{errors.condition}</p>
+              )}
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="description" className="flex items-center gap-1 text-gray-700">
+            <Label
+              htmlFor="description"
+              className="flex items-center gap-1 text-gray-700"
+            >
               Description *
               <Info className="h-3 w-3 text-gray-400" />
             </Label>
             <Textarea
-              id="description" name="description" required rows={4}
+              id="description"
+              name="description"
+              required
+              rows={4}
               placeholder="Describe your product in detail..."
               value={productDescription}
               onChange={(e) => setProductDescription(e.target.value)}
               className="border-gray-300 focus:border-orange-500 focus:ring-orange-500"
             />
-            {errors.description && <p className="text-sm text-red-600">{errors.description}</p>}
+            {errors.description && (
+              <p className="text-sm text-red-600">{errors.description}</p>
+            )}
           </div>
         </div>
       </div>
@@ -686,8 +1065,12 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
               <Camera className="h-4 w-4 text-orange-600" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-gray-800">Product Photos</h2>
-              <p className="text-sm text-gray-500">Take photos with your camera (max 9). First photo is the cover.</p>
+              <h2 className="text-xl font-semibold text-gray-800">
+                Product Photos
+              </h2>
+              <p className="text-sm text-gray-500">
+                Take photos with your camera (max 9). First photo is the cover.
+              </p>
             </div>
           </div>
           <Badge variant="outline" className="border-gray-300 text-gray-600">
@@ -699,9 +1082,13 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
           <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-orange-400 transition-colors">
             <div className="text-center">
               <Camera className="h-12 w-12 text-gray-400 mx-auto mb-3" />
-              <div className="text-xs text-gray-500 mb-4">Take photos of your product (max 9 photos)</div>
+              <div className="text-xs text-gray-500 mb-4">
+                Take photos of your product (max 9 photos)
+              </div>
               <Button
-                type="button" variant="outline" size="lg"
+                type="button"
+                variant="outline"
+                size="lg"
                 onClick={() => cameraInputRef.current?.click()}
                 className="border-gray-300 text-gray-700 hover:bg-orange-50 hover:text-orange-600 hover:border-orange-300"
               >
@@ -724,15 +1111,24 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
           {mainMedia.length > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
               {mainMedia.map((item, index) => (
-                <div key={index} className="relative group aspect-square border border-gray-200 rounded-lg overflow-hidden">
-                  <img src={item.preview} alt={`Photo ${index + 1}`} className="w-full h-full object-cover" />
+                <div
+                  key={index}
+                  className="relative group aspect-square border border-gray-200 rounded-lg overflow-hidden"
+                >
+                  <img
+                    src={item.preview}
+                    alt={`Photo ${index + 1}`}
+                    className="w-full h-full object-cover"
+                  />
                   {index === 0 && (
                     <Badge className="absolute top-2 left-2 bg-orange-500 text-white px-1.5 py-0.5 text-[10px]">
                       Cover
                     </Badge>
                   )}
                   <Button
-                    type="button" variant="destructive" size="sm"
+                    type="button"
+                    variant="destructive"
+                    size="sm"
                     className="absolute top-2 right-2 h-6 w-6 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 hover:bg-red-600"
                     onClick={() => removeMainMedia(index)}
                   >
@@ -758,30 +1154,52 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
             <CollapsibleTrigger className="flex w-full items-center justify-between p-4 hover:bg-orange-50 transition-colors">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-orange-600" />
-                <span className="font-medium text-gray-700">AI Category Prediction</span>
+                <span className="font-medium text-gray-700">
+                  AI Category Prediction
+                </span>
                 {predictionResult && (
-                  <Badge variant="outline" className="ml-2 bg-orange-100 text-orange-700 border-orange-300">Ready</Badge>
+                  <Badge
+                    variant="outline"
+                    className="ml-2 bg-orange-100 text-orange-700 border-orange-300"
+                  >
+                    Ready
+                  </Badge>
                 )}
               </div>
-              {predictionResult ? <ChevronUp className="h-4 w-4 text-gray-500" /> : <ChevronDown className="h-4 w-4 text-gray-500" />}
+              {predictionResult ? (
+                <ChevronUp className="h-4 w-4 text-gray-500" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-gray-500" />
+              )}
             </CollapsibleTrigger>
             <CollapsibleContent className="px-4 pb-4">
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-gray-600">Analyze photos to get AI category suggestions</p>
+                  <p className="text-sm text-gray-600">
+                    Analyze photos to get AI category suggestions
+                  </p>
                   <Button
-                    type="button" variant="outline" size="sm"
-                    onClick={() => analyzeImages(mainMedia.map(m => m.file))}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => analyzeImages(mainMedia.map((m) => m.file))}
                     disabled={mainMedia.length === 0 || isPredicting}
                     className="border-gray-300 text-gray-700 hover:bg-orange-50 hover:text-orange-600 hover:border-orange-300"
                   >
-                    {isPredicting && <Loader2 className="h-3 w-3 animate-spin mr-2 text-orange-600" />}
-                    {isPredicting ? 'Analyzing...' : 'Analyze Photos'}
+                    {isPredicting && (
+                      <Loader2 className="h-3 w-3 animate-spin mr-2 text-orange-600" />
+                    )}
+                    {isPredicting ? "Analyzing..." : "Analyze Photos"}
                   </Button>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="category" className="text-gray-700">Category</Label>
-                  <Select value={selectedCategoryName} onValueChange={handleCategoryChange}>
+                  <Label htmlFor="category" className="text-gray-700">
+                    Category
+                  </Label>
+                  <Select
+                    value={selectedCategoryName}
+                    onValueChange={handleCategoryChange}
+                  >
                     <SelectTrigger className="border-gray-300 focus:border-orange-500 focus:ring-orange-500">
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
@@ -789,35 +1207,58 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                       <SelectItem value="others">Others</SelectItem>
                       {modelClasses && modelClasses.length > 0 ? (
                         modelClasses.map((name) => (
-                          <SelectItem key={name} value={name}>{name}</SelectItem>
+                          <SelectItem key={name} value={name}>
+                            {name}
+                          </SelectItem>
                         ))
                       ) : (
-                        <SelectItem value="none" disabled>No categories available</SelectItem>
+                        <SelectItem value="none" disabled>
+                          No categories available
+                        </SelectItem>
                       )}
                     </SelectContent>
                   </Select>
-                  {selectedCategoryName && (!modelClasses || !modelClasses.includes(selectedCategoryName)) && (
-                    <p className="text-xs text-gray-600">Selected: {selectedCategoryName}</p>
-                  )}
+                  {selectedCategoryName &&
+                    (!modelClasses ||
+                      !modelClasses.includes(selectedCategoryName)) && (
+                      <p className="text-xs text-gray-600">
+                        Selected: {selectedCategoryName}
+                      </p>
+                    )}
                   {predictionResult && !predictionError && (
                     <div className="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-md">
-                      <div className="font-medium text-sm text-orange-800 mb-1">AI Suggestion</div>
+                      <div className="font-medium text-sm text-orange-800 mb-1">
+                        AI Suggestion
+                      </div>
                       <div className="text-sm text-orange-700">
-                        <span className="font-medium">{predictionResult.predicted_category?.category_name}</span>
+                        <span className="font-medium">
+                          {predictionResult.predicted_category?.category_name}
+                        </span>
                         <span className="ml-2 text-orange-600">
-                          ({Math.round((predictionResult.predicted_category?.confidence || 0) * 100)}% confidence)
+                          (
+                          {Math.round(
+                            (predictionResult.predicted_category?.confidence ||
+                              0) * 100,
+                          )}
+                          % confidence)
                         </span>
                       </div>
-                      {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
-                        <div className="text-xs text-orange-600 mt-1">
-                          Also considered: {predictionResult.alternative_categories.map(a => a.category_name).join(', ')}
-                        </div>
-                      )}
+                      {predictionResult.alternative_categories &&
+                        predictionResult.alternative_categories.length > 0 && (
+                          <div className="text-xs text-orange-600 mt-1">
+                            Also considered:{" "}
+                            {predictionResult.alternative_categories
+                              .map((a) => a.category_name)
+                              .join(", ")}
+                          </div>
+                        )}
                     </div>
                   )}
                   {predictionError && (
                     <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
-                      <div className="text-sm text-red-700">{predictionError}</div>
+                      <div className="text-sm text-red-700">
+                        {predictionError}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -835,15 +1276,24 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
               <Package className="h-4 w-4 text-orange-600" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-gray-800">Product Variants</h2>
-              <p className="text-sm text-gray-500">Each product must have at least one variant with price and stock</p>
+              <h2 className="text-xl font-semibold text-gray-800">
+                Product Variants
+              </h2>
+              <p className="text-sm text-gray-500">
+                Each product must have at least one variant with price and stock
+              </p>
             </div>
           </div>
-          <Badge className="bg-orange-100 text-orange-800 border-orange-300">Required</Badge>
+          <Badge className="bg-orange-100 text-orange-800 border-orange-300">
+            Required
+          </Badge>
         </div>
         <div className="space-y-6">
           {variants.map((variant, index) => (
-            <div key={variant.id} className="border border-gray-200 rounded-xl p-5 bg-white hover:border-orange-300 transition-colors relative">
+            <div
+              key={variant.id}
+              className="border border-gray-200 rounded-xl p-5 bg-white hover:border-orange-300 transition-colors relative"
+            >
               {/* Variant Header */}
               <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
                 <div className="flex items-center gap-3">
@@ -851,12 +1301,20 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                     {index + 1}
                   </div>
                   <div>
-                    <span className="font-medium text-gray-800">Variant {index + 1}</span>
-                    {index === 0 && <Badge className="ml-3 bg-orange-100 text-orange-700 border-0">Default</Badge>}
+                    <span className="font-medium text-gray-800">
+                      Variant {index + 1}
+                    </span>
+                    {index === 0 && (
+                      <Badge className="ml-3 bg-orange-100 text-orange-700 border-0">
+                        Default
+                      </Badge>
+                    )}
                   </div>
                 </div>
                 <Button
-                  type="button" variant="ghost" size="sm"
+                  type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => removeVariant(variant.id)}
                   disabled={variants.length === 1}
                   className="h-8 w-8 p-0 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full"
@@ -867,19 +1325,33 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
 
               {/* Variant Image */}
               <div className="mb-5">
-                <Label className="text-xs font-medium text-gray-700 mb-2 block">Variant Image</Label>
+                <Label className="text-xs font-medium text-gray-700 mb-2 block">
+                  Variant Image
+                </Label>
                 <div className="flex items-center gap-4">
-                  <div className={`relative w-24 h-24 border-2 rounded-lg overflow-hidden transition-all ${variant.imagePreview ? 'border-orange-400 shadow-sm' : 'border-dashed border-gray-300 hover:border-orange-400 bg-gray-50'}`}>
+                  <div
+                    className={`relative w-24 h-24 border-2 rounded-lg overflow-hidden transition-all ${variant.imagePreview ? "border-orange-400 shadow-sm" : "border-dashed border-gray-300 hover:border-orange-400 bg-gray-50"}`}
+                  >
                     {variant.imagePreview ? (
                       <>
-                        <img src={variant.imagePreview} alt={variant.title} className="w-full h-full object-cover" />
+                        <img
+                          src={variant.imagePreview}
+                          alt={variant.title}
+                          className="w-full h-full object-cover"
+                        />
                         <Button
-                          type="button" variant="destructive" size="sm"
+                          type="button"
+                          variant="destructive"
+                          size="sm"
                           className="absolute top-1 right-1 h-5 w-5 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 hover:bg-red-600"
                           onClick={() => {
                             URL.revokeObjectURL(variant.imagePreview!);
-                            updateVariantField(variant.id, 'image', null);
-                            updateVariantField(variant.id, 'imagePreview', undefined);
+                            updateVariantField(variant.id, "image", null);
+                            updateVariantField(
+                              variant.id,
+                              "imagePreview",
+                              undefined,
+                            );
                           }}
                         >
                           <X className="h-3 w-3" />
@@ -895,21 +1367,30 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                           className="flex flex-col items-center justify-center w-full h-full hover:bg-orange-100 transition-colors"
                         >
                           <Camera className="h-6 w-6 text-gray-400 mb-1" />
-                          <span className="text-[10px] text-gray-500">Add Photo</span>
+                          <span className="text-[10px] text-gray-500">
+                            Add Photo
+                          </span>
                         </Button>
                         <Input
                           ref={(el) => {
-                            if (el) variantImageInputRefs.current[variant.id] = el;
+                            if (el)
+                              variantImageInputRefs.current[variant.id] = el;
                           }}
                           id={`variant-image-${variant.id}`}
-                          type="file" accept="image/*" capture="environment"
-                          onChange={(e) => handleVariantImageChange(variant.id, e)}
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={(e) =>
+                            handleVariantImageChange(variant.id, e)
+                          }
                           className="hidden"
                         />
                       </div>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500">Main product image for this variant</p>
+                  <p className="text-xs text-gray-500">
+                    Main product image for this variant
+                  </p>
                 </div>
               </div>
 
@@ -922,7 +1403,9 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                   <Input
                     type="text"
                     value={variant.title}
-                    onChange={(e) => updateVariantField(variant.id, 'title', e.target.value)}
+                    onChange={(e) =>
+                      updateVariantField(variant.id, "title", e.target.value)
+                    }
                     placeholder="e.g., Small, Red, etc."
                     className="h-9 text-sm border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                     required
@@ -932,17 +1415,30 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                   <Label className="text-xs font-medium text-gray-700 flex items-center gap-1">
                     Final Price <span className="text-red-500">*</span>
                     {variant.depreciation.calculatedPrice && (
-                      <Badge variant="outline" className="text-[10px] bg-orange-100 text-orange-700 border-orange-300">Auto</Badge>
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-orange-100 text-orange-700 border-orange-300"
+                      >
+                        Auto
+                      </Badge>
                     )}
                   </Label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">₱</span>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">
+                      ₱
+                    </span>
                     <Input
-                      type="number" min="0" step="0.01"
+                      type="number"
+                      min="0"
+                      step="0.01"
                       value={variant.price}
                       disabled
-                      placeholder={variant.depreciation.calculatedPrice ? "Auto-calculated" : "Fill fields"}
-                      className={`h-9 text-sm pl-8 bg-gray-50 cursor-not-allowed border-gray-300 ${variant.depreciation.calculatedPrice ? 'text-orange-600 font-medium' : 'text-gray-400'}`}
+                      placeholder={
+                        variant.depreciation.calculatedPrice
+                          ? "Auto-calculated"
+                          : "Fill fields"
+                      }
+                      className={`h-9 text-sm pl-8 bg-gray-50 cursor-not-allowed border-gray-300 ${variant.depreciation.calculatedPrice ? "text-orange-600 font-medium" : "text-gray-400"}`}
                     />
                   </div>
                 </div>
@@ -951,9 +1447,16 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                     Stock <span className="text-red-500">*</span>
                   </Label>
                   <Input
-                    type="number" min="1"
+                    type="number"
+                    min="1"
                     value={variant.quantity}
-                    onChange={(e) => updateVariantField(variant.id, 'quantity', parseInt(e.target.value) || '')}
+                    onChange={(e) =>
+                      updateVariantField(
+                        variant.id,
+                        "quantity",
+                        parseInt(e.target.value) || "",
+                      )
+                    }
                     placeholder="0"
                     className="h-9 text-sm border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                     required
@@ -962,82 +1465,173 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
               </div>
 
               {/* Depreciation Section */}
-              <div className="mb-4 p-4 bg-orange-50 rounded-lg border border-orange-200">
-                <div className="flex items-center gap-2 mb-3">
-                  <Calculator className="h-4 w-4 text-orange-600" />
-                  <span className="text-sm font-medium text-orange-800">Price Depreciation Calculator</span>
-                  <Badge variant="outline" className="text-[10px] bg-white text-orange-700 border-orange-300">Auto-calculates final price</Badge>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="mb-4 p-4 bg-orange-50 rounded-lg border border-orange-200 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="gap-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Calculator className="h-4 w-4 text-orange-600" />
+                    <span className="text-sm font-medium text-orange-800">
+                      Price Depreciation Calculator
+                    </span>
+                  </div>
                   <div className="space-y-1">
-                    <Label className="text-xs font-medium text-orange-700">Original Price</Label>
+                    <Label className="text-xs font-medium text-orange-700">
+                      Original Price
+                    </Label>
                     <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">₱</span>
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">
+                        ₱
+                      </span>
                       <Input
-                        type="number" min="0" step="0.01"
-                        value={variant.depreciation.originalPrice || ''}
-                        onChange={(e) => handleDepreciationChange(variant.id, 'originalPrice', parseFloat(e.target.value) || '')}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={variant.depreciation.originalPrice || ""}
+                        onChange={(e) =>
+                          handleDepreciationChange(
+                            variant.id,
+                            "originalPrice",
+                            parseFloat(e.target.value) || "",
+                          )
+                        }
                         placeholder="Original price"
                         className="h-8 text-xs pl-8 border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                       />
                     </div>
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs font-medium text-orange-700">Usage Period</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        type="number" min="0" step="0.1"
-                        value={variant.depreciation.usagePeriod || ''}
-                        onChange={(e) => handleDepreciationChange(variant.id, 'usagePeriod', parseFloat(e.target.value) || '')}
-                        placeholder="Amount"
-                        className="h-8 text-xs flex-1 border-gray-300 focus:border-orange-500 focus:ring-orange-500"
-                      />
-                      <Select
-                        value={variant.depreciation.usageUnit}
-                        onValueChange={(value: 'weeks' | 'months' | 'years') => handleDepreciationChange(variant.id, 'usageUnit', value)}
+
+                  {/* Purchase Date Calendar Picker */}
+                  <div className="space-y-1 my-2">
+                    <Label className="text-xs font-medium text-orange-700">
+                      Purchase Date
+                    </Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant={"outline"}
+                          className={cn(
+                            "w-full h-8 text-xs justify-start text-left font-normal border-gray-300",
+                            !variant.depreciation.purchaseDate &&
+                              "text-muted-foreground",
+                          )}
+                        >
+                          <CalendarIcon className="mr-2 h-3 w-3" />
+                          {variant.depreciation.purchaseDate ? (
+                            format(variant.depreciation.purchaseDate, "PPP")
+                          ) : (
+                            <span>Pick a date</span>
+                          )}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0">
+                        <Calendar
+                          mode="single"
+                          selected={
+                            variant.depreciation.purchaseDate || undefined
+                          }
+                          onSelect={(date) =>
+                            handlePurchaseDateChange(variant.id, date)
+                          }
+                          initialFocus
+                          disabled={(date) => date > new Date()}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  {/* Depreciation Rate with Slider */}
+                  <div className="space-y-4 bg-orange-50/50 p-4 rounded-lg border border-orange-200 h-fit">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Percent className="h-4 w-4 text-orange-600" />
+                        <Label className="text-sm font-medium text-orange-800">
+                          Annual Depreciation Rate
+                        </Label>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className="bg-white text-orange-700 border-orange-300 font-semibold text-base px-3 py-1"
                       >
-                        <SelectTrigger className="w-20 h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="weeks">Weeks</SelectItem>
-                          <SelectItem value="months">Months</SelectItem>
-                          <SelectItem value="years">Years</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        {variant.depreciation.depreciationRate || 0}%
+                      </Badge>
                     </div>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs font-medium text-orange-700">Rate (%)</Label>
-                    <div className="relative">
-                      <Input
-                        type="number" min="0" max="100" step="0.1"
-                        value={variant.depreciation.depreciationRate || ''}
-                        onChange={(e) => handleDepreciationChange(variant.id, 'depreciationRate', parseFloat(e.target.value) || '')}
-                        placeholder="e.g., 10"
-                        className="h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+
+                    <div className="pt-2 pb-1">
+                      <Slider
+                        value={[variant.depreciation.depreciationRate || 0]}
+                        onValueChange={(value) =>
+                          handleDepreciationRateChange(variant.id, value)
+                        }
+                        max={100}
+                        step={0.5}
+                        className="w-full [&_[role=slider]]:bg-orange-600 [&_[role=slider]]:border-orange-600 [&_.relative]:bg-orange-200"
                       />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
                     </div>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs font-medium text-orange-700">Calculated</Label>
-                    <div className="h-8 px-3 bg-white border border-gray-300 rounded-md flex items-center">
-                      {variant.depreciation.calculatedPrice ? (
-                        <span className="text-sm font-medium text-orange-600">₱{formatPrice(variant.depreciation.calculatedPrice)}</span>
-                      ) : (
-                        <span className="text-xs text-gray-400">Fill fields</span>
-                      )}
+
+                    <div className="flex justify-between text-xs font-medium text-gray-600 px-1">
+                      <span className="flex flex-col items-center">
+                        <span className="text-gray-400">|</span>
+                        <span>0%</span>
+                      </span>
+                      <span className="flex flex-col items-center">
+                        <span className="text-gray-400">|</span>
+                        <span>25%</span>
+                      </span>
+                      <span className="flex flex-col items-center">
+                        <span className="text-gray-400">|</span>
+                        <span>50%</span>
+                      </span>
+                      <span className="flex flex-col items-center">
+                        <span className="text-gray-400">|</span>
+                        <span>75%</span>
+                      </span>
+                      <span className="flex flex-col items-center">
+                        <span className="text-gray-400">|</span>
+                        <span>100%</span>
+                      </span>
                     </div>
                   </div>
                 </div>
-                {variant.depreciation.originalPrice && variant.depreciation.usagePeriod && variant.depreciation.depreciationRate && (
-                  <div className="mt-3 text-xs text-gray-600 bg-white p-2 rounded border border-orange-200">
-                    <span className="font-medium">Calculation:</span> ₱{Number(variant.depreciation.originalPrice).toFixed(2)} ×
-                    (1 - {variant.depreciation.depreciationRate}% ÷ 100)^{variant.depreciation.usagePeriod} {variant.depreciation.usageUnit} =
-                    <span className="font-bold text-orange-600 ml-1">₱{formatPrice(variant.depreciation.calculatedPrice || 0)}</span>
+
+                <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-5 shadow-md flex flex-col h-full min-h-[180px] border">
+                  <div className="flex items-center gap-2">
+                    <Calculator className="h-5 w-5 text-white/90" />
+                    <Label className="text-xs font-medium text-white/80 uppercase tracking-wider">
+                      Calculated Price
+                    </Label>
                   </div>
-                )}
+
+                  <div className="flex-1 flex flex-col justify-center">
+                    {variant.depreciation.calculatedPrice ? (
+                      <div className="space-y-2">
+                        <div className="text-4xl font-bold text-white tracking-tight">
+                          ₱
+                          {Number(
+                            variant.depreciation.calculatedPrice,
+                          ).toLocaleString("en-PH", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-white/70 bg-white/10 p-2 rounded-md">
+                          <CalendarIcon className="h-3 w-3" />
+                          <span>
+                            Based on {variant.depreciation.usagePeriod}{" "}
+                            {variant.depreciation.usageUnit} of use
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center space-y-3">
+                        <div className="text-3xl font-light text-white/50">
+                          —
+                        </div>
+                        <div className="flex items-center gap-2 text-xs bg-white/10 px-3 py-2 rounded-full text-white/80">
+                          <Info className="h-3 w-3" />
+                          <span>Fill in original price & purchase date</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Status Toggles */}
@@ -1046,19 +1640,33 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                   <Switch
                     id={`active-${variant.id}`}
                     checked={variant.is_active !== false}
-                    onCheckedChange={(checked) => updateVariantField(variant.id, 'is_active', checked)}
+                    onCheckedChange={(checked) =>
+                      updateVariantField(variant.id, "is_active", checked)
+                    }
                     className="data-[state=checked]:bg-orange-500"
                   />
-                  <Label htmlFor={`active-${variant.id}`} className="text-sm text-gray-700 cursor-pointer">Active</Label>
+                  <Label
+                    htmlFor={`active-${variant.id}`}
+                    className="text-sm text-gray-700 cursor-pointer"
+                  >
+                    Active
+                  </Label>
                 </div>
                 <div className="flex items-center gap-3">
                   <Switch
                     id={`refundable-${variant.id}`}
                     checked={variant.refundable !== false}
-                    onCheckedChange={(checked) => updateVariantField(variant.id, 'refundable', checked)}
+                    onCheckedChange={(checked) =>
+                      updateVariantField(variant.id, "refundable", checked)
+                    }
                     className="data-[state=checked]:bg-orange-500"
                   />
-                  <Label htmlFor={`refundable-${variant.id}`} className="text-sm text-gray-700 cursor-pointer">Refundable</Label>
+                  <Label
+                    htmlFor={`refundable-${variant.id}`}
+                    className="text-sm text-gray-700 cursor-pointer"
+                  >
+                    Refundable
+                  </Label>
                 </div>
               </div>
 
@@ -1066,25 +1674,39 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
               <div className="space-y-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
                 <div className="flex items-center gap-2 mb-2">
                   <Info className="h-4 w-4 text-orange-600" />
-                  <span className="text-sm font-medium text-gray-700">Additional Details</span>
+                  <span className="text-sm font-medium text-gray-700">
+                    Additional Details
+                  </span>
                 </div>
 
                 {/* Weight and Stock Alert - First Row */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Weight */}
                   <div className="space-y-2">
-                    <Label className="text-xs font-medium text-gray-700 block">Weight</Label>
+                    <Label className="text-xs font-medium text-gray-700 block">
+                      Weight
+                    </Label>
                     <div className="flex gap-2">
                       <Input
-                        type="number" min="0" step="0.01"
-                        value={variant.weight || ''}
-                        onChange={(e) => updateVariantField(variant.id, 'weight', parseFloat(e.target.value) || '')}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={variant.weight || ""}
+                        onChange={(e) =>
+                          updateVariantField(
+                            variant.id,
+                            "weight",
+                            parseFloat(e.target.value) || "",
+                          )
+                        }
                         placeholder="0.00"
                         className="h-8 text-xs flex-1 border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                       />
                       <Select
-                        value={variant.weight_unit || 'g'}
-                        onValueChange={(value: 'g' | 'kg' | 'lb' | 'oz') => updateVariantField(variant.id, 'weight_unit', value)}
+                        value={variant.weight_unit || "g"}
+                        onValueChange={(value: "g" | "kg" | "lb" | "oz") =>
+                          updateVariantField(variant.id, "weight_unit", value)
+                        }
                       >
                         <SelectTrigger className="w-16 h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500">
                           <SelectValue />
@@ -1101,11 +1723,20 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
 
                   {/* Low Stock Alert */}
                   <div className="space-y-2">
-                    <Label className="text-xs font-medium text-gray-700 block">Low Stock Alert</Label>
+                    <Label className="text-xs font-medium text-gray-700 block">
+                      Low Stock Alert
+                    </Label>
                     <Input
-                      type="number" min="1"
-                      value={variant.critical_trigger || ''}
-                      onChange={(e) => updateVariantField(variant.id, 'critical_trigger', parseInt(e.target.value) || '')}
+                      type="number"
+                      min="1"
+                      value={variant.critical_trigger || ""}
+                      onChange={(e) =>
+                        updateVariantField(
+                          variant.id,
+                          "critical_trigger",
+                          parseInt(e.target.value) || "",
+                        )
+                      }
                       placeholder="Alert when stock below"
                       className="h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                     />
@@ -1119,17 +1750,33 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                     Proof Image
                   </Label>
                   <div className="flex items-center gap-4">
-                    <div className={`relative w-24 h-24 border-2 rounded-lg overflow-hidden transition-all ${variant.proofImagePreview ? 'border-green-400 shadow-sm' : 'border-dashed border-gray-300 hover:border-orange-400 bg-gray-50'}`}>
+                    <div
+                      className={`relative w-24 h-24 border-2 rounded-lg overflow-hidden transition-all ${variant.proofImagePreview ? "border-green-400 shadow-sm" : "border-dashed border-gray-300 hover:border-orange-400 bg-gray-50"}`}
+                    >
                       {variant.proofImagePreview ? (
                         <>
-                          <img src={variant.proofImagePreview} alt="Proof" className="w-full h-full object-cover" />
+                          <img
+                            src={variant.proofImagePreview}
+                            alt="Proof"
+                            className="w-full h-full object-cover"
+                          />
                           <Button
-                            type="button" variant="destructive" size="sm"
+                            type="button"
+                            variant="destructive"
+                            size="sm"
                             className="absolute top-1 right-1 h-5 w-5 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 hover:bg-red-600"
                             onClick={() => {
                               URL.revokeObjectURL(variant.proofImagePreview!);
-                              updateVariantField(variant.id, 'proofImage', null);
-                              updateVariantField(variant.id, 'proofImagePreview', undefined);
+                              updateVariantField(
+                                variant.id,
+                                "proofImage",
+                                null,
+                              );
+                              updateVariantField(
+                                variant.id,
+                                "proofImagePreview",
+                                undefined,
+                              );
                             }}
                           >
                             <X className="h-3 w-3" />
@@ -1145,21 +1792,31 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                             className="flex flex-col items-center justify-center w-full h-full hover:bg-orange-100 transition-colors"
                           >
                             <Camera className="h-6 w-6 text-gray-400 mb-1" />
-                            <span className="text-[10px] text-gray-500">Add Proof</span>
+                            <span className="text-[10px] text-gray-500">
+                              Add Proof
+                            </span>
                           </Button>
                           <Input
                             ref={(el) => {
-                              if (el) proofImageInputRefs.current[variant.id] = el;
+                              if (el)
+                                proofImageInputRefs.current[variant.id] = el;
                             }}
                             id={`proof-image-${variant.id}`}
-                            type="file" accept="image/*" capture="environment"
-                            onChange={(e) => handleVariantProofImageChange(variant.id, e)}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={(e) =>
+                              handleVariantProofImageChange(variant.id, e)
+                            }
                             className="hidden"
                           />
                         </div>
                       )}
                     </div>
-                    <p className="text-xs text-gray-500">Upload proof of authenticity or condition (receipt, certificate, etc.)</p>
+                    <p className="text-xs text-gray-500">
+                      Upload proof of authenticity or condition (receipt,
+                      certificate, etc.)
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1167,7 +1824,9 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
           ))}
 
           <Button
-            type="button" onClick={addVariant} variant="outline"
+            type="button"
+            onClick={addVariant}
+            variant="outline"
             className="w-full py-6 border-2 border-dashed border-gray-300 hover:border-orange-500 hover:bg-orange-50 text-gray-700 hover:text-orange-600 transition-colors"
           >
             <Plus className="h-5 w-5 mr-2" />
@@ -1176,7 +1835,11 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
 
           <div className="flex items-center justify-between text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-200">
             <span>Total Variants: {variants.length}</span>
-            <span>Total Stock: {variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units</span>
+            <span>
+              Total Stock:{" "}
+              {variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)}{" "}
+              units
+            </span>
           </div>
         </div>
       </div>
@@ -1185,14 +1848,19 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
       <div className="sticky bottom-6 bg-white border border-gray-200 rounded-lg shadow-lg p-6">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="space-y-1">
-            <div className="font-medium text-gray-800">Ready to create your product?</div>
+            <div className="font-medium text-gray-800">
+              Ready to create your product?
+            </div>
             <div className="text-sm text-gray-600">
-              {selectedShop ? `Creating product for: ${selectedShop.name}` : 'Please create a shop first'}
+              {selectedShop
+                ? `Creating product for: ${selectedShop.name}`
+                : "Please create a shop first"}
             </div>
           </div>
           <div className="flex items-center gap-3">
             <Button
-              type="button" variant="outline"
+              type="button"
+              variant="outline"
               onClick={() => window.history.back()}
               className="border-gray-300 text-gray-700 hover:bg-gray-50"
             >
@@ -1200,20 +1868,36 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
             </Button>
             <Button
               type="submit"
-              disabled={!selectedShop || fetcher.state === 'submitting' || variants.length === 0 || variants.some(v => !v.depreciation.calculatedPrice) || !productCondition}
+              disabled={
+                !selectedShop ||
+                fetcher.state === "submitting" ||
+                variants.length === 0 ||
+                variants.some((v) => !v.depreciation.calculatedPrice) ||
+                !productCondition
+              }
               className="min-w-[140px] bg-orange-500 hover:bg-orange-600 text-white disabled:bg-orange-300"
               size="lg"
             >
-              {fetcher.state === 'submitting' ? (
-                <><Loader2 className="h-4 w-4 animate-spin mr-2" />Creating...</>
-              ) : 'Create Product'}
+              {fetcher.state === "submitting" ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Creating...
+                </>
+              ) : (
+                "Create Product"
+              )}
             </Button>
           </div>
         </div>
         {apiResponseError && (
-          <Alert variant="destructive" className="mt-4 border-red-200 bg-red-50">
+          <Alert
+            variant="destructive"
+            className="mt-4 border-red-200 bg-red-50"
+          >
             <AlertCircle className="h-4 w-4 text-red-600" />
-            <AlertDescription className="text-red-700">{apiResponseError}</AlertDescription>
+            <AlertDescription className="text-red-700">
+              {apiResponseError}
+            </AlertDescription>
           </Alert>
         )}
         {apiResponseMessage && (

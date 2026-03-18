@@ -114,9 +114,11 @@ export async function action({ request }: Route.ActionArgs) {
   console.log('this is a formdata: ', formData);
 
   // Get basic product fields
-  const name = String(formData.get("name"));
-  const description = String(formData.get("description"));
-  const condition = String(formData.get("condition"));
+  const name = String(formData.get("name") || "");
+  const description = String(formData.get("description") || "");
+  const condition = String(formData.get("condition") || "");
+  const isRefundable = formData.get("is_refundable") === "true";
+  const refundDays = parseInt(String(formData.get("refund_days") || "0"));
   const category_admin_id = String(formData.get("category_admin_id") || "");
   const category_admin_name = String(formData.get("category_admin_name") || "");
 
@@ -157,6 +159,15 @@ export async function action({ request }: Route.ActionArgs) {
     }
   }
 
+  // Validate refund days if product is refundable
+  if (isRefundable) {
+    if (refundDays <= 0) {
+      errors.refund_days = "Refund days must be greater than 0 for refundable products";
+    } else if (refundDays > 365) {
+      errors.refund_days = "Refund days cannot exceed 365";
+    }
+  }
+
   // Validate media files - require at least 3 images
   const validImageFiles = media_files.filter(file => 
     file.size > 0 && file.type.startsWith('image/')
@@ -192,6 +203,7 @@ export async function action({ request }: Route.ActionArgs) {
       } else {
         // Validate each variant has required fields
         variants.forEach((variant, index) => {
+          // Required fields
           if (!variant.title || !variant.title.trim()) {
             errors[`variant_${index}_title`] = "Variant title is required";
           }
@@ -202,34 +214,116 @@ export async function action({ request }: Route.ActionArgs) {
             errors[`variant_${index}_quantity`] = "Variant quantity must be greater than 0";
           }
           
-          // Weight validation - optional
-          if (variant.weight && (Number(variant.weight) <= 0)) {
-            errors[`variant_${index}_weight`] = "Weight must be greater than 0 if provided";
+          // SKU validation - optional but if provided, should be valid
+          if (variant.sku_code && variant.sku_code.length > 100) {
+            errors[`variant_${index}_sku_code`] = "SKU code must be at most 100 characters";
+          }
+          
+          // Weight validation - optional but if provided
+          if (variant.weight) {
+            const weightNum = Number(variant.weight);
+            if (isNaN(weightNum) || weightNum <= 0) {
+              errors[`variant_${index}_weight`] = "Weight must be greater than 0 if provided";
+            }
           }
           
           // Weight unit validation - only required if weight is provided
           if (variant.weight && !variant.weight_unit) {
             errors[`variant_${index}_weight_unit`] = "Weight unit is required when weight is provided";
+          } else if (variant.weight_unit && !['g', 'kg', 'lb', 'oz'].includes(variant.weight_unit)) {
+            errors[`variant_${index}_weight_unit`] = "Invalid weight unit";
           }
           
           // Critical trigger validation - optional
-          if (variant.critical_trigger && Number(variant.critical_trigger) < 0) {
-            errors[`variant_${index}_critical_trigger`] = "Low stock alert cannot be negative";
+          if (variant.critical_trigger) {
+            const triggerNum = Number(variant.critical_trigger);
+            if (isNaN(triggerNum) || triggerNum < 0) {
+              errors[`variant_${index}_critical_trigger`] = "Low stock alert cannot be negative";
+            }
           }
           
-          // Validate depreciation fields if present
-          if (variant.original_price && Number(variant.original_price) <= 0) {
-            errors[`variant_${index}_original_price`] = "Original price must be greater than 0";
+          // Validate depreciation fields
+          if (variant.original_price) {
+            const originalPrice = Number(variant.original_price);
+            if (isNaN(originalPrice) || originalPrice <= 0) {
+              errors[`variant_${index}_original_price`] = "Original price must be greater than 0";
+            } else if (variant.price && Number(variant.price) > originalPrice) {
+              errors[`variant_${index}_price`] = "Current price cannot be greater than original price";
+            }
           }
-          if (variant.usage_period && Number(variant.usage_period) < 0) {
-            errors[`variant_${index}_usage_period`] = "Usage period cannot be negative";
+          
+          if (variant.usage_period) {
+            const usagePeriod = Number(variant.usage_period);
+            if (isNaN(usagePeriod) || usagePeriod < 0) {
+              errors[`variant_${index}_usage_period`] = "Usage period cannot be negative";
+            } else if (usagePeriod > 1000) {
+              errors[`variant_${index}_usage_period`] = "Usage period seems too high";
+            }
           }
-          if (variant.depreciation_rate && (Number(variant.depreciation_rate) < 0 || Number(variant.depreciation_rate) > 100)) {
-            errors[`variant_${index}_depreciation_rate`] = "Depreciation rate must be between 0 and 100";
+          
+          if (variant.usage_unit && !['weeks', 'months', 'years'].includes(variant.usage_unit)) {
+            errors[`variant_${index}_usage_unit`] = "Invalid usage unit";
+          }
+          
+          if (variant.depreciation_rate) {
+            const rateNum = Number(variant.depreciation_rate);
+            if (isNaN(rateNum) || rateNum < 0 || rateNum > 100) {
+              errors[`variant_${index}_depreciation_rate`] = "Depreciation rate must be between 0 and 100";
+            }
+          }
+          
+          // Validate compare price if provided
+          if (variant.compare_price) {
+            const comparePrice = Number(variant.compare_price);
+            if (isNaN(comparePrice) || comparePrice < 0) {
+              errors[`variant_${index}_compare_price`] = "Compare price must be greater than or equal to 0";
+            } else if (variant.price && comparePrice < Number(variant.price)) {
+              errors[`variant_${index}_compare_price`] = "Compare price should be higher than regular price";
+            }
+          }
+          
+          // Validate swap fields if allow_swap is true
+          if (variant.allow_swap) {
+            if (!variant.swap_type || !['direct_swap', 'swap_plus_payment'].includes(variant.swap_type)) {
+              errors[`variant_${index}_swap_type`] = "Swap type is required when swap is allowed";
+            }
+            
+            if (variant.swap_type === 'swap_plus_payment') {
+              if (variant.minimum_additional_payment) {
+                const minPayment = Number(variant.minimum_additional_payment);
+                if (isNaN(minPayment) || minPayment < 0) {
+                  errors[`variant_${index}_minimum_additional_payment`] = "Minimum additional payment must be 0 or greater";
+                }
+              }
+              
+              if (variant.maximum_additional_payment) {
+                const maxPayment = Number(variant.maximum_additional_payment);
+                if (isNaN(maxPayment) || maxPayment < 0) {
+                  errors[`variant_${index}_maximum_additional_payment`] = "Maximum additional payment must be 0 or greater";
+                }
+              }
+              
+              if (variant.minimum_additional_payment && variant.maximum_additional_payment) {
+                if (Number(variant.minimum_additional_payment) > Number(variant.maximum_additional_payment)) {
+                  errors[`variant_${index}_payment_range`] = "Minimum payment cannot be greater than maximum payment";
+                }
+              }
+            }
+          }
+          
+          // Validate purchase date
+          if (variant.purchase_date) {
+            const purchaseDate = new Date(variant.purchase_date);
+            if (isNaN(purchaseDate.getTime())) {
+              errors[`variant_${index}_purchase_date`] = "Invalid purchase date";
+            } else if (purchaseDate > new Date()) {
+              errors[`variant_${index}_purchase_date`] = "Purchase date cannot be in the future";
+            }
           }
         });
       }
     } catch (e) {
+      console.error("Error parsing variants:", e);
       errors.variants = "Invalid variants format";
     }
   }
@@ -253,7 +347,8 @@ export async function action({ request }: Route.ActionArgs) {
     apiFormData.append('description', description.trim());
     apiFormData.append('condition', condition.trim()); // Now sending integer 1-5
     apiFormData.append('shop', shop_id ?? "");
-    apiFormData.append('status', "active");
+    apiFormData.append('is_refundable', String(isRefundable));
+    apiFormData.append('refund_days', String(refundDays));
     apiFormData.append('customer_id', userId);
 
     // IMPORTANT FIX: Only append ONE category field - prefer ID over name
@@ -287,10 +382,22 @@ export async function action({ request }: Route.ActionArgs) {
     if (variantsRaw) {
       const variants = JSON.parse(String(variantsRaw));
       
-      // Ensure each variant has is_refundable flag
+      // Ensure each variant has required fields and proper types
       const processedVariants = variants.map((v: any) => ({
         ...v,
-        is_refundable: v.refundable !== undefined ? v.refundable : true
+        price: v.price ? Number(v.price) : null,
+        compare_price: v.compare_price ? Number(v.compare_price) : null,
+        quantity: v.quantity ? Number(v.quantity) : 0,
+        weight: v.weight ? Number(v.weight) : null,
+        critical_trigger: v.critical_trigger ? Number(v.critical_trigger) : null,
+        original_price: v.original_price ? Number(v.original_price) : null,
+        usage_period: v.usage_period ? Number(v.usage_period) : null,
+        depreciation_rate: v.depreciation_rate ? Number(v.depreciation_rate) : null,
+        minimum_additional_payment: v.minimum_additional_payment ? Number(v.minimum_additional_payment) : 0,
+        maximum_additional_payment: v.maximum_additional_payment ? Number(v.maximum_additional_payment) : 0,
+        is_active: v.is_active !== false,
+        is_refundable: v.refundable !== undefined ? v.refundable : isRefundable,
+        allow_swap: v.allow_swap || false,
       }));
       
       apiFormData.append('variants', JSON.stringify(processedVariants));
@@ -361,6 +468,8 @@ export async function action({ request }: Route.ActionArgs) {
       } else if (typeof apiErrors === 'string') {
         errorMessage = apiErrors;
       }
+    } else if (error.message) {
+      errorMessage = error.message;
     }
 
     return data({ errors: { message: errorMessage } }, { status: 500 });
@@ -373,6 +482,9 @@ interface FormErrors {
   name?: string;
   description?: string;
   condition?: string;
+  upload_status?: string;
+  is_refundable?: string;
+  refund_days?: string;
   shop?: string;
   category_admin_id?: string;
   variants?: string;

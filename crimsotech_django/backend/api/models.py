@@ -505,6 +505,7 @@ class Variants(models.Model):
         blank=True,
         help_text="Original price of the item when new"
     )
+    purchase_date = models.DateField(null=True, blank=True)
     usage_period = models.FloatField(
         null=True, 
         blank=True,

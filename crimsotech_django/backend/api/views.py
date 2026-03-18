@@ -15723,7 +15723,7 @@ class SellerProducts(viewsets.ModelViewSet):
         """
         Update basic product fields from the seller edit form.
         Editable: name, description, condition (1-5 integer),
-                  upload_status, is_refundable, refund_days, category_admin_id
+                upload_status, is_refundable, refund_days, category_admin_id
         """
         user_id = request.data.get('user_id')
         if not user_id:
@@ -15745,6 +15745,8 @@ class SellerProducts(viewsets.ModelViewSet):
         if name:
             if len(name) > 100:
                 return Response({"error": "Name cannot exceed 100 characters"}, status=status.HTTP_400_BAD_REQUEST)
+            if len(name) < 2:
+                return Response({"error": "Name must be at least 2 characters"}, status=status.HTTP_400_BAD_REQUEST)
             product.name = name
             update_fields.append('name')
 
@@ -15752,6 +15754,8 @@ class SellerProducts(viewsets.ModelViewSet):
         if description:
             if len(description) > 1000:
                 return Response({"error": "Description cannot exceed 1000 characters"}, status=status.HTTP_400_BAD_REQUEST)
+            if len(description) < 10:
+                return Response({"error": "Description must be at least 10 characters"}, status=status.HTTP_400_BAD_REQUEST)
             product.description = description
             update_fields.append('description')
 
@@ -15794,6 +15798,10 @@ class SellerProducts(viewsets.ModelViewSet):
         if refund_days is not None:
             try:
                 refund_days_int = int(refund_days)
+                if product.is_refundable and refund_days_int <= 0:
+                    return Response({"error": "Refund days must be greater than 0 for refundable products"}, status=status.HTTP_400_BAD_REQUEST)
+                if refund_days_int > 365:
+                    return Response({"error": "Refund days cannot exceed 365"}, status=status.HTTP_400_BAD_REQUEST)
                 if refund_days_int < 0:
                     return Response({"error": "refund_days cannot be negative"}, status=status.HTTP_400_BAD_REQUEST)
                 product.refund_days = refund_days_int
@@ -15842,7 +15850,6 @@ class SellerProducts(viewsets.ModelViewSet):
                 } if product.category_admin else None,
             }
         }, status=status.HTTP_200_OK)
-
         
     @action(detail=False, methods=['get'], url_path='global-categories')    
     def get_global_categories(self, request):
@@ -16299,6 +16306,14 @@ class SellerProducts(viewsets.ModelViewSet):
                 "error": "Condition must be a valid integer between 1 and 5"
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        # Validate upload_status if provided
+        upload_status = request.data.get('upload_status', 'draft')
+        valid_statuses = ['draft', 'published', 'archived']
+        if upload_status not in valid_statuses:
+            return Response({
+                "error": f"Invalid upload_status. Must be one of: {', '.join(valid_statuses)}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         # Check if variants are provided and not empty
         variants_raw = request.data.get('variants')
         if not variants_raw:
@@ -16325,15 +16340,37 @@ class SellerProducts(viewsets.ModelViewSet):
             if not hasattr(value, 'file'):
                 product_data[key] = value
         
-        # Set defaults
+        # Set required fields
         product_data['status'] = product_data.get('status', 'active')
-        product_data['upload_status'] = 'draft'
+        product_data['upload_status'] = upload_status
+        product_data['condition'] = condition_int
         
-        # Handle refundable flag - now primarily handled at variant level
-        if 'refundable' in product_data:
-            product_data['is_refundable'] = str(product_data['refundable']).lower() in ('true', '1')
-        elif 'is_refundable' not in product_data:
+        # Handle refundable flag
+        if 'is_refundable' in product_data:
+            product_data['is_refundable'] = str(product_data['is_refundable']).lower() in ('true', '1', 'yes')
+        else:
             product_data['is_refundable'] = True
+        
+        # Validate refund_days if product is refundable
+        refund_days = request.data.get('refund_days')
+        if refund_days:
+            try:
+                refund_days_int = int(refund_days)
+                if product_data['is_refundable'] and refund_days_int <= 0:
+                    return Response({
+                        "error": "Refund days must be greater than 0 for refundable products"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                if refund_days_int > 365:
+                    return Response({
+                        "error": "Refund days cannot exceed 365"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                product_data['refund_days'] = refund_days_int
+            except (ValueError, TypeError):
+                return Response({
+                    "error": "Invalid refund_days value"
+                }, status=status.HTTP_400_BAD_REQUEST)
+        elif product_data['is_refundable']:
+            product_data['refund_days'] = 30  # Default value
             
         product_data['customer'] = seller.customer_id
         
@@ -16403,14 +16440,21 @@ class SellerProducts(viewsets.ModelViewSet):
                 # Save product
                 product = serializer.save()
                 
-                # Set default refund_days if needed
-                if product.is_refundable and not product.refund_days:
-                    product.refund_days = 30
-                    product.save(update_fields=['refund_days'])
-
                 # Handle media files
                 media_files = request.FILES.getlist('media_files')
+                if len(media_files) < 3:
+                    raise ValidationError("Please upload at least 3 product images")
+                    
                 for media_file in media_files:
+                    # Validate file type
+                    valid_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4']
+                    if media_file.content_type not in valid_types:
+                        raise ValidationError(f"Invalid file type: {media_file.content_type}")
+                        
+                    # Validate file size (50MB max)
+                    if media_file.size > 50 * 1024 * 1024:
+                        raise ValidationError(f"File size exceeds 50MB: {media_file.name}")
+                        
                     try:
                         ProductMedia.objects.create(
                             product=product,
@@ -16420,7 +16464,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     except Exception as e:
                         logger.error(f"Error creating ProductMedia: {e}")
 
-                # Process variants with depreciation data
+                # Process variants with all new fields
                 created_variants = self._process_variants(variants_raw, request.FILES, product, shop)
                 
                 # Verify at least one variant was created
@@ -16443,7 +16487,6 @@ class SellerProducts(viewsets.ModelViewSet):
                 "error": "Failed to create product",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
 
     def _process_variants(self, variants_raw, files, product, shop):
         created_variants = []
@@ -16491,7 +16534,12 @@ class SellerProducts(viewsets.ModelViewSet):
                     refund_days = variant_data.get('refund_days')
                     if refund_days not in (None, ''):
                         try:
-                            variant_fields['refund_days'] = int(refund_days)
+                            refund_days_int = int(refund_days)
+                            if refund_days_int <= 0:
+                                raise ValidationError("Refund days must be greater than 0")
+                            if refund_days_int > 365:
+                                raise ValidationError("Refund days cannot exceed 365")
+                            variant_fields['refund_days'] = refund_days_int
                         except (ValueError, TypeError):
                             variant_fields['refund_days'] = 30
                     else:
@@ -16507,7 +16555,10 @@ class SellerProducts(viewsets.ModelViewSet):
                     value = variant_data.get(field)
                     if value not in (None, ''):
                         try:
-                            variant_fields[field] = Decimal(str(value))
+                            decimal_value = Decimal(str(value))
+                            if decimal_value < 0:
+                                raise ValidationError(f"{field} cannot be negative")
+                            variant_fields[field] = decimal_value
                         except (ValueError, TypeError, Decimal.InvalidOperation):
                             logger.warning(f"Invalid decimal value for {field}: {value}")
                             if 'payment' in field:
@@ -16519,7 +16570,10 @@ class SellerProducts(viewsets.ModelViewSet):
                 quantity_val = variant_data.get('quantity')
                 if quantity_val not in (None, ''):
                     try:
-                        variant_fields['quantity'] = int(quantity_val)
+                        quantity_int = int(quantity_val)
+                        if quantity_int < 0:
+                            raise ValidationError("Quantity cannot be negative")
+                        variant_fields['quantity'] = quantity_int
                     except (ValueError, TypeError):
                         variant_fields['quantity'] = 0
                 else:
@@ -16529,7 +16583,10 @@ class SellerProducts(viewsets.ModelViewSet):
                 trigger_val = variant_data.get('critical_trigger')
                 if trigger_val not in (None, ''):
                     try:
-                        variant_fields['critical_trigger'] = int(trigger_val)
+                        trigger_int = int(trigger_val)
+                        if trigger_int < 0:
+                            raise ValidationError("Critical trigger cannot be negative")
+                        variant_fields['critical_trigger'] = trigger_int
                     except (ValueError, TypeError):
                         variant_fields['critical_trigger'] = None
                 
@@ -16538,15 +16595,28 @@ class SellerProducts(viewsets.ModelViewSet):
                 original_price = variant_data.get('original_price')
                 if original_price not in (None, ''):
                     try:
-                        variant_fields['original_price'] = Decimal(str(original_price))
+                        original_price_decimal = Decimal(str(original_price))
+                        if original_price_decimal < 0:
+                            raise ValidationError("Original price cannot be negative")
+                        variant_fields['original_price'] = original_price_decimal
                     except (ValueError, TypeError, Decimal.InvalidOperation):
                         logger.warning(f"Invalid original_price value: {original_price}")
+                
+                # Validate price vs original price
+                if variant_fields.get('price') and variant_fields.get('original_price'):
+                    if variant_fields['price'] > variant_fields['original_price']:
+                        logger.warning(f"Current price ({variant_fields['price']}) is greater than original price ({variant_fields['original_price']})")
                 
                 # Usage Period
                 usage_period = variant_data.get('usage_period')
                 if usage_period not in (None, ''):
                     try:
-                        variant_fields['usage_period'] = float(usage_period)
+                        usage_period_float = float(usage_period)
+                        if usage_period_float < 0:
+                            raise ValidationError("Usage period cannot be negative")
+                        if usage_period_float > 1000:
+                            logger.warning(f"Usage period seems too high: {usage_period_float}")
+                        variant_fields['usage_period'] = usage_period_float
                     except (ValueError, TypeError):
                         logger.warning(f"Invalid usage_period value: {usage_period}")
                 
@@ -16554,14 +16624,48 @@ class SellerProducts(viewsets.ModelViewSet):
                 usage_unit = variant_data.get('usage_unit')
                 if usage_unit in ['weeks', 'months', 'years']:
                     variant_fields['usage_unit'] = usage_unit
+                elif usage_unit:
+                    logger.warning(f"Invalid usage_unit: {usage_unit}, using default")
+                    variant_fields['usage_unit'] = 'months'
                 
                 # Depreciation Rate
                 depreciation_rate = variant_data.get('depreciation_rate')
                 if depreciation_rate not in (None, ''):
                     try:
-                        variant_fields['depreciation_rate'] = float(depreciation_rate)
+                        rate_float = float(depreciation_rate)
+                        if rate_float < 0 or rate_float > 100:
+                            raise ValidationError("Depreciation rate must be between 0 and 100")
+                        variant_fields['depreciation_rate'] = rate_float
                     except (ValueError, TypeError):
                         logger.warning(f"Invalid depreciation_rate value: {depreciation_rate}")
+                
+                # Purchase Date
+                purchase_date = variant_data.get('purchase_date')
+                if purchase_date:
+                    try:
+                        from django.utils.dateparse import parse_datetime
+                        parsed_date = parse_datetime(purchase_date)
+                        if parsed_date:
+                            from django.utils import timezone
+                            if parsed_date > timezone.now():
+                                raise ValidationError("Purchase date cannot be in the future")
+                            variant_fields['purchase_date'] = parsed_date
+                    except Exception as e:
+                        logger.warning(f"Invalid purchase_date: {purchase_date}, error: {e}")
+                
+                # Validate swap fields
+                if variant_fields['allow_swap']:
+                    if not variant_fields['swap_type']:
+                        raise ValidationError("Swap type is required when swap is allowed")
+                    
+                    if variant_fields['swap_type'] == 'swap_plus_payment':
+                        if variant_fields.get('minimum_additional_payment', Decimal('0.00')) < 0:
+                            raise ValidationError("Minimum additional payment cannot be negative")
+                        if variant_fields.get('maximum_additional_payment', Decimal('0.00')) < 0:
+                            raise ValidationError("Maximum additional payment cannot be negative")
+                        if (variant_fields.get('minimum_additional_payment', Decimal('0.00')) > 
+                            variant_fields.get('maximum_additional_payment', Decimal('0.00'))):
+                            raise ValidationError("Minimum payment cannot be greater than maximum payment")
                 
                 # Handle variant image
                 provided_id = variant_data.get('id')
@@ -16599,7 +16703,6 @@ class SellerProducts(viewsets.ModelViewSet):
             import traceback
             traceback.print_exc()
             raise
-
     
     def _build_product_response(self, product, seller, status_code):
         """
@@ -17278,6 +17381,9 @@ class SellerProducts(viewsets.ModelViewSet):
                                 'swap_description', 'usage_unit']
             for field in simple_str_fields:
                 if field in v_data:
+                    if field == 'usage_unit' and v_data[field] not in ['weeks', 'months', 'years']:
+                        errors.append({'id': variant_id, 'field': field, 'error': f'Invalid {field}'})
+                        continue
                     setattr(variant, field, v_data[field])
                     update_fields.append(field)
 
@@ -17295,7 +17401,20 @@ class SellerProducts(viewsets.ModelViewSet):
             for field in int_fields:
                 if field in v_data and v_data[field] is not None:
                     try:
-                        setattr(variant, field, int(v_data[field]))
+                        int_val = int(v_data[field])
+                        if field == 'quantity' and int_val < 0:
+                            errors.append({'id': variant_id, 'field': field, 'error': f'{field} cannot be negative'})
+                            continue
+                        if field == 'refund_days' and variant.is_refundable and int_val <= 0:
+                            errors.append({'id': variant_id, 'field': field, 'error': 'Refund days must be > 0 for refundable variants'})
+                            continue
+                        if field == 'refund_days' and int_val > 365:
+                            errors.append({'id': variant_id, 'field': field, 'error': 'Refund days cannot exceed 365'})
+                            continue
+                        if field == 'critical_trigger' and int_val < 0:
+                            errors.append({'id': variant_id, 'field': field, 'error': 'Critical trigger cannot be negative'})
+                            continue
+                        setattr(variant, field, int_val)
                         update_fields.append(field)
                     except (ValueError, TypeError):
                         errors.append({'id': variant_id, 'field': field, 'error': f'Invalid integer value for {field}'})
@@ -17310,10 +17429,19 @@ class SellerProducts(viewsets.ModelViewSet):
                         update_fields.append(field)
                     else:
                         try:
-                            setattr(variant, field, Decimal(str(val)))
+                            decimal_val = Decimal(str(val))
+                            if decimal_val < 0:
+                                errors.append({'id': variant_id, 'field': field, 'error': f'{field} cannot be negative'})
+                                continue
+                            setattr(variant, field, decimal_val)
                             update_fields.append(field)
                         except (ValueError, TypeError, Decimal.InvalidOperation):
                             errors.append({'id': variant_id, 'field': field, 'error': f'Invalid decimal value for {field}'})
+
+            # Validate price vs original_price
+            if 'price' in update_fields and variant.original_price and variant.price:
+                if variant.price > variant.original_price:
+                    logger.warning(f"Variant {variant_id}: Current price ({variant.price}) is greater than original price ({variant.original_price})")
 
             float_fields = ['usage_period', 'depreciation_rate']
             for field in float_fields:
@@ -17324,10 +17452,53 @@ class SellerProducts(viewsets.ModelViewSet):
                         update_fields.append(field)
                     else:
                         try:
-                            setattr(variant, field, float(val))
+                            float_val = float(val)
+                            if field == 'usage_period' and float_val < 0:
+                                errors.append({'id': variant_id, 'field': field, 'error': f'{field} cannot be negative'})
+                                continue
+                            if field == 'usage_period' and float_val > 1000:
+                                logger.warning(f"Variant {variant_id}: Usage period seems too high: {float_val}")
+                            if field == 'depreciation_rate' and (float_val < 0 or float_val > 100):
+                                errors.append({'id': variant_id, 'field': field, 'error': f'{field} must be between 0 and 100'})
+                                continue
+                            setattr(variant, field, float_val)
                             update_fields.append(field)
                         except (ValueError, TypeError):
                             errors.append({'id': variant_id, 'field': field, 'error': f'Invalid float value for {field}'})
+
+            # Validate swap fields
+            if 'allow_swap' in update_fields and variant.allow_swap:
+                if not variant.swap_type:
+                    errors.append({'id': variant_id, 'error': 'Swap type is required when swap is allowed'})
+                elif variant.swap_type == 'swap_plus_payment':
+                    if variant.minimum_additional_payment < 0:
+                        errors.append({'id': variant_id, 'error': 'Minimum additional payment cannot be negative'})
+                    if variant.maximum_additional_payment < 0:
+                        errors.append({'id': variant_id, 'error': 'Maximum additional payment cannot be negative'})
+                    if variant.minimum_additional_payment > variant.maximum_additional_payment:
+                        errors.append({'id': variant_id, 'error': 'Minimum payment cannot be greater than maximum payment'})
+
+            # Purchase Date
+            purchase_date = v_data.get('purchase_date')
+            if purchase_date is not None:
+                if purchase_date == '' or purchase_date is None:
+                    variant.purchase_date = None
+                    update_fields.append('purchase_date')
+                else:
+                    try:
+                        from django.utils.dateparse import parse_datetime
+                        from django.utils import timezone
+                        parsed_date = parse_datetime(purchase_date)
+                        if parsed_date:
+                            if parsed_date > timezone.now():
+                                errors.append({'id': variant_id, 'error': 'Purchase date cannot be in the future'})
+                                continue
+                            variant.purchase_date = parsed_date
+                            update_fields.append('purchase_date')
+                        else:
+                            errors.append({'id': variant_id, 'error': 'Invalid purchase date format'})
+                    except Exception:
+                        errors.append({'id': variant_id, 'error': 'Invalid purchase date'})
 
             if update_fields:
                 update_fields.append('updated_at')
@@ -17343,6 +17514,8 @@ class SellerProducts(viewsets.ModelViewSet):
                 'usage_period': variant.usage_period,
                 'usage_unit': variant.usage_unit,
                 'depreciation_rate': variant.depreciation_rate,
+                'allow_swap': variant.allow_swap,
+                'swap_type': variant.swap_type,
                 'updated_fields': [f for f in update_fields if f != 'updated_at'],
             })
 
