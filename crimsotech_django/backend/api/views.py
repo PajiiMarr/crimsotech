@@ -35624,7 +35624,7 @@ class ProfileView(APIView):
             # Safely handle profile picture (user may not have this attribute)
             profile_pic = getattr(user, 'profile_picture', None)
             user_data['has_profile_picture'] = bool(profile_pic)
-            user_data['profile_picture_url'] = profile_pic.url if profile_pic else None
+            user_data['profile_picture_url'] = get_media_url(profile_pic) if profile_pic else None
 
             user_data['is_complete_profile'] = all([
                 user.first_name,
@@ -35765,7 +35765,7 @@ class ProfileView(APIView):
             )
 
     def post(self, request):
-        """Handle POST requests for payment methods"""
+        """Handle POST requests for payment methods and profile picture"""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response(
@@ -35783,6 +35783,10 @@ class ProfileView(APIView):
                 return self.delete_payment_method(request, user)
             elif action == 'set_default_payment':
                 return self.set_default_payment(request, user)
+            elif action == 'update_profile_picture':
+                return self.update_profile_picture(request, user)
+            elif action == 'remove_profile_picture':
+                return self.remove_profile_picture(request, user)
             else:
                 return Response(
                     {"error": "Invalid action"},
@@ -35798,6 +35802,137 @@ class ProfileView(APIView):
             logger.error(f"Error in profile POST: {str(e)}")
             return Response(
                 {"error": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def put(self, request):
+        """Handle PUT requests for updating user profile information"""
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response(
+                {"error": "X-User-Id header is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(id=user_id)
+            serializer = UserSerializer(user, data=request.data, partial=True)
+            
+            if serializer.is_valid():
+                serializer.save()
+                
+                # Return updated user data
+                user_data = serializer.data
+                profile_pic = getattr(user, 'profile_picture', None)
+                user_data['has_profile_picture'] = bool(profile_pic)
+                user_data['profile_picture_url'] = get_media_url(profile_pic) if profile_pic else None
+                user_data['full_name'] = " ".join(filter(None, [
+                    user.first_name, 
+                    user.middle_name, 
+                    user.last_name
+                ]))
+                
+                return Response({
+                    "success": True,
+                    "message": "Profile updated successfully",
+                    "user": user_data
+                })
+            else:
+                return Response({
+                    "success": False,
+                    "error": "Invalid data",
+                    "errors": serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        except User.DoesNotExist:
+            return Response(
+                {"error": "User not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error updating profile: {str(e)}")
+            return Response(
+                {"error": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def update_profile_picture(self, request, user):
+        """Update user profile picture"""
+        try:
+            # Check if file is in request.FILES (multipart form data)
+            if 'profile_picture' in request.FILES:
+                profile_picture = request.FILES['profile_picture']
+                
+                # Validate file type
+                allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif']
+                if profile_picture.content_type not in allowed_types:
+                    return Response(
+                        {"error": "Invalid file type. Only JPEG, PNG, and GIF are allowed."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Validate file size (max 5MB)
+                max_size = 5 * 1024 * 1024  # 5MB
+                if profile_picture.size > max_size:
+                    return Response(
+                        {"error": "File too large. Maximum size is 5MB."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Delete old profile picture if it exists
+                if user.profile_picture:
+                    user.profile_picture.delete(save=False)
+                
+                # Save new profile picture
+                user.profile_picture = profile_picture
+                user.save()
+                
+                # Return success response with updated URLs
+                return Response({
+                    "success": True,
+                    "message": "Profile picture updated successfully",
+                    "profile_picture_url": get_media_url(user.profile_picture),
+                    "has_profile_picture": True
+                })
+            else:
+                return Response(
+                    {"error": "No profile picture provided"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        except Exception as e:
+            logger.error(f"Error updating profile picture: {str(e)}")
+            return Response(
+                {"error": "Failed to update profile picture"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def remove_profile_picture(self, request, user):
+        """Remove user profile picture"""
+        try:
+            if user.profile_picture:
+                # Delete the file
+                user.profile_picture.delete(save=False)
+                user.profile_picture = None
+                user.save()
+                
+                return Response({
+                    "success": True,
+                    "message": "Profile picture removed successfully",
+                    "profile_picture_url": None,
+                    "has_profile_picture": False
+                })
+            else:
+                return Response({
+                    "success": True,
+                    "message": "No profile picture to remove",
+                    "has_profile_picture": False
+                })
+
+        except Exception as e:
+            logger.error(f"Error removing profile picture: {str(e)}")
+            return Response(
+                {"error": "Failed to remove profile picture"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -35944,7 +36079,6 @@ class ProfileView(APIView):
         if len(account_number) <= 4:
             return '*' * len(account_number)
         return '*' * (len(account_number) - 4) + account_number[-4:]
-
 
 
 class SellerBoosts(viewsets.ViewSet):

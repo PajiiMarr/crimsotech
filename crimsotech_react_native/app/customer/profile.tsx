@@ -17,6 +17,7 @@ import {
   Image,
   SafeAreaView,
 } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import AxiosInstance from "../../contexts/axios";
 import { getUserShops } from "../../utils/api";
 import { LinearGradient } from "expo-linear-gradient";
@@ -53,6 +54,7 @@ interface UserProfile {
   created_at: string;
   updated_at: string;
   has_profile_picture?: boolean;
+  profile_picture_url?: string | null;
   is_complete_profile?: boolean;
   registration_complete?: boolean;
 }
@@ -147,6 +149,7 @@ export default function ProfileScreen() {
   );
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [orderCounts, setOrderCounts] = useState({
     processing: 0,
     shipped: 0,
@@ -362,6 +365,155 @@ export default function ProfileScreen() {
     }
   };
 
+  // Handle picking image from gallery
+  const handlePickImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        await uploadProfilePicture(result.assets[0]);
+      }
+    } catch (error) {
+      console.error("Error picking image:", error);
+      Alert.alert("Error", "Failed to pick image");
+    }
+  };
+
+  // Handle taking photo with camera
+  const handleTakePhoto = async () => {
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        await uploadProfilePicture(result.assets[0]);
+      }
+    } catch (error) {
+      console.error("Error taking photo:", error);
+      Alert.alert("Error", "Failed to take photo");
+    }
+  };
+
+  // Upload profile picture to server
+  const uploadProfilePicture = async (asset: any) => {
+    if (!userId) return;
+
+    try {
+      setUploadingImage(true);
+
+      // Create form data
+      const formData = new FormData();
+      
+      // Get file name and type from URI
+      const uriParts = asset.uri.split('.');
+      const fileType = uriParts[uriParts.length - 1];
+      const fileName = `profile_${Date.now()}.${fileType}`;
+
+      // Append the file - React Native handles the file reading automatically
+      formData.append('profile_picture', {
+        uri: asset.uri,
+        type: `image/${fileType}`,
+        name: fileName,
+      } as any);
+
+      formData.append('action', 'update_profile_picture');
+
+      // Upload to server
+      const response = await AxiosInstance.post('/profile/', formData, {
+        headers: {
+          'X-User-Id': userId,
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      if (response.data.success) {
+        Alert.alert("Success", "Profile picture updated successfully");
+        // Refresh profile to get updated data
+        fetchProfile();
+      } else {
+        Alert.alert("Error", response.data.error || "Failed to upload profile picture");
+      }
+    } catch (error: any) {
+      console.error("Error uploading profile picture:", error);
+      Alert.alert(
+        "Error", 
+        error.response?.data?.error || "Failed to upload profile picture"
+      );
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  // Handle remove profile picture
+  const handleRemoveProfilePicture = async () => {
+    if (!userId) return;
+
+    Alert.alert(
+      "Remove Profile Picture",
+      "Are you sure you want to remove your profile picture?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setUploadingImage(true);
+              
+              const response = await AxiosInstance.post('/profile/', {
+                action: 'remove_profile_picture'
+              }, {
+                headers: {
+                  'X-User-Id': userId,
+                  'Content-Type': 'application/json',
+                },
+              });
+
+              if (response.data.success) {
+                Alert.alert("Success", "Profile picture removed successfully");
+                // Refresh profile to get updated data
+                fetchProfile();
+              } else {
+                Alert.alert("Error", response.data.error || "Failed to remove profile picture");
+              }
+            } catch (error: any) {
+              console.error("Error removing profile picture:", error);
+              Alert.alert(
+                "Error", 
+                error.response?.data?.error || "Failed to remove profile picture"
+              );
+            } finally {
+              setUploadingImage(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Show options for profile picture
+  const showProfilePictureOptions = () => {
+    Alert.alert(
+      "Profile Picture",
+      "Choose an option",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Take Photo", onPress: handleTakePhoto },
+        { text: "Choose from Gallery", onPress: handlePickImage },
+        ...(profile?.user?.has_profile_picture ? [{ text: "Remove Photo", style: "destructive" as const, onPress: handleRemoveProfilePicture }] : [])
+      ]
+    );
+  };
+
   useEffect(() => {
     if (!authLoading && userId) {
       fetchProfile();
@@ -510,18 +662,36 @@ export default function ProfileScreen() {
             <View style={styles.gradientHeader}>
               <View style={styles.headerContent}>
                 <View style={styles.avatarContainer}>
-                  <View style={styles.avatarWrapper}>
-                    <View style={styles.avatar}>
-                      <Text style={styles.avatarText}>
-                        {getInitials(
-                          profile?.user?.full_name,
-                          profile?.user?.email,
-                          profile?.user?.username,
-                        )}
-                      </Text>
-                    </View>
+                  <TouchableOpacity 
+                    style={styles.avatarWrapper}
+                    onPress={showProfilePictureOptions}
+                    disabled={uploadingImage}
+                  >
+                    {uploadingImage ? (
+                      <View style={[styles.avatar, styles.avatarUploading]}>
+                        <ActivityIndicator size="small" color="#DC2626" />
+                      </View>
+                    ) : profile?.user?.profile_picture_url ? (
+                      <Image 
+                        source={{ uri: profile.user.profile_picture_url }} 
+                        style={styles.avatarImage}
+                      />
+                    ) : (
+                      <View style={styles.avatar}>
+                        <Text style={styles.avatarText}>
+                          {getInitials(
+                            profile?.user?.full_name,
+                            profile?.user?.email,
+                            profile?.user?.username,
+                          )}
+                        </Text>
+                      </View>
+                    )}
                     <View style={styles.avatarGlow} />
-                  </View>
+                    <View style={styles.cameraIconContainer}>
+                      <MaterialIcons name="camera-alt" size={16} color="#FFFFFF" />
+                    </View>
+                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.headerTextContainer}>
@@ -560,7 +730,7 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* Shop Management Card - Modern Design */}
+          {/* Shop Management Card - Modern Design - Edge to Edge */}
           {profile?.customer?.is_customer && (
             <TouchableOpacity
               style={styles.modernShopCard}
@@ -597,8 +767,7 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           )}
 
-
-          {/* My Account - Modern Grid */}
+          {/* My Account - Modern Grid - Edge to Edge */}
           <View style={styles.modernCard}>
             <View style={styles.cardHeader}>
               <View style={styles.cardTitleRow}>
@@ -765,6 +934,16 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: "#E5E7EB",
   },
+  avatarImage: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 3,
+    borderColor: "#E5E7EB",
+  },
+  avatarUploading: {
+    backgroundColor: "rgba(0,0,0,0.1)",
+  },
   avatarGlow: {
     position: "absolute",
     width: 72,
@@ -778,6 +957,19 @@ const styles = StyleSheet.create({
     fontSize: 28,
     color: "#374151",
     fontWeight: "700",
+  },
+  cameraIconContainer: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    backgroundColor: "#F97316",
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
   },
   headerTextContainer: {
     flex: 1,
@@ -828,11 +1020,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  // Modern Shop Card
+  // Modern Shop Card - Edge to Edge
   modernShopCard: {
-    marginHorizontal: 20,
     marginBottom: 20,
-    borderRadius: 16,
+    borderRadius: 0,
     overflow: "hidden",
     ...Platform.select({
       ios: {
@@ -877,13 +1068,12 @@ const styles = StyleSheet.create({
     color: "#374151",
   },
 
-  // Modern Card Design
+  // Modern Card Design - Edge to Edge
   modernCard: {
     backgroundColor: "#FFFFFF",
-    marginHorizontal: 20,
     marginBottom: 20,
-    borderRadius: 16,
     padding: 20,
+    borderRadius: 0,
     ...Platform.select({
       ios: {
         shadowColor: "#000",

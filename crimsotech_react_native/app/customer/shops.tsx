@@ -133,7 +133,7 @@ export default function ShopsPage() {
       .join(", ");
   };
 
-  // Shop Card Component
+  // Shop Card Component - Edge to Edge
   const ShopCard = ({ shop }: { shop: Shop }) => {
     const location = getLocationString(shop);
 
@@ -302,7 +302,7 @@ export default function ShopsPage() {
           />
         }
       >
-        {/* Header */}
+        {/* Header - Edge to Edge */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <TouchableOpacity
@@ -329,7 +329,7 @@ export default function ShopsPage() {
           </TouchableOpacity>
         </View>
 
-        {/* Selected Shop Details (from query param) */}
+        {/* Selected Shop Details - Edge to Edge */}
         {selectedLoading ? (
           <View style={{ padding: 16 }}>
             <ActivityIndicator size="small" color="#111827" />
@@ -372,7 +372,7 @@ export default function ShopsPage() {
           </View>
         ) : null}
 
-        {/* No shops state */}
+        {/* No shops state - Edge to Edge */}
         {shops.length === 0 ? (
           <View style={styles.emptyContainer}>
             <MaterialIcons name="storefront" size={80} color="#E5E7EB" />
@@ -389,7 +389,7 @@ export default function ShopsPage() {
             </TouchableOpacity>
           </View>
         ) : (
-          /* Shops List */
+          /* Shops List - Edge to Edge cards */
           <View style={styles.shopsList}>
             {shops.map((shop) => (
               <ShopCard key={shop.id} shop={shop} />
@@ -420,6 +420,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#6B7280",
   },
+  // Header - Edge to Edge
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -430,6 +431,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
+    // Removed marginHorizontal
   },
   title: {
     fontSize: 24,
@@ -479,11 +481,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
+  // Empty state - Edge to Edge
   emptyContainer: {
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 48,
     paddingHorizontal: 20,
+    // Removed marginHorizontal
   },
   emptyTitle: {
     fontSize: 20,
@@ -513,14 +517,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
+  // Shops List container - Edge to Edge
   shopsList: {
     padding: 20,
+    // Removed marginHorizontal
   },
+  // Shop Card - Edge to Edge
   shopCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
+    // Removed marginHorizontal
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -648,7 +656,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
   },
-  /* Selected shop highlight */
+  /* Selected shop highlight - Edge to Edge */
   selectedShopCard: {
     backgroundColor: "#FFFFFF",
     marginHorizontal: isSmallDevice ? 12 : 20,

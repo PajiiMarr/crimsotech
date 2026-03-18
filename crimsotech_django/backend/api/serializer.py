@@ -23,6 +23,7 @@ def get_media_url(file_field):
 # Existing serializers (don't modify)
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    profile_picture_url = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -31,9 +32,9 @@ class UserSerializer(serializers.ModelSerializer):
             'last_name', 'middle_name', 'contact_number', 'date_of_birth',
             'age', 'sex', 'street', 'barangay', 'city', 'province',
             'state', 'zip_code', 'country', 'is_admin', 'is_customer',
-            'is_moderator', 'is_rider', 'registration_stage',
+            'is_moderator', 'is_rider', 'registration_stage','profile_picture', 'profile_picture_url',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'profile_picture_url']
         extra_kwargs = {
             'username': {'required': False, 'allow_blank': True},
             'password': {'write_only': True, 'required': False},
@@ -53,7 +54,12 @@ class UserSerializer(serializers.ModelSerializer):
             'state': {'required': False, 'allow_blank': True},
             'zip_code': {'required': False, 'allow_blank': True},
             'country': {'required': False, 'allow_blank': True},
+            'profile_picture': {'required': False, 'allow_null': True},
         }
+
+    def get_profile_picture_url(self, obj):
+        """Returns the full URL for the profile picture"""
+        return get_media_url(obj.profile_picture)
 
     def create(self, validated_data):
         # Ensure password is hashed on creation (handle missing/blank safely)
