@@ -40,6 +40,7 @@ class User(models.Model):
     suspended_until = models.DateTimeField(blank=True, null=True)
     warning_count = models.IntegerField(default=0)
     last_warning_date = models.DateTimeField(blank=True, null=True)
+    profile_picture = models.ImageField(upload_to='user/profile_pictures/', blank=True, null=True, default=None)
 
     class Meta:
         indexes = [
