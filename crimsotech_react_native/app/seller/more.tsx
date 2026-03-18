@@ -16,7 +16,6 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import AxiosInstance from '../../contexts/axios';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface ShopDetails {
   id: string;
@@ -81,40 +80,6 @@ export default function MorePage() {
     return [shop.street, shop.barangay, shop.city, shop.province]
       .filter(Boolean)
       .join(', ');
-  };
-
-  const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // Clear all stored data
-              await AsyncStorage.multiRemove([
-                'userToken',
-                'userRole',
-                'userId',
-                'userData'
-              ]);
-              
-              // Navigate to login screen
-              // router.replace('/log-out');
-            } catch (error) {
-              console.error('Logout error:', error);
-              Alert.alert('Error', 'Failed to logout. Please try again.');
-            }
-          },
-        },
-      ]
-    );
   };
 
   const MenuSection = ({ title, items }: { title: string; items: any[] }) => (
@@ -320,21 +285,6 @@ export default function MorePage() {
           {menuSections.map((section) => (
             <MenuSection key={section.title} title={section.title} items={section.items} />
           ))}
-
-          {/* Logout Button */}
-          <TouchableOpacity 
-            style={styles.logoutButton}
-            onPress={handleLogout}
-            activeOpacity={0.7}
-          >
-            <View style={[styles.menuIcon, { backgroundColor: '#FEE2E2' }]}>
-              <Ionicons name="log-out-outline" size={22} color="#EF4444" />
-            </View>
-            <View style={styles.menuContent}>
-              <Text style={styles.logoutText}>Logout</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
-          </TouchableOpacity>
 
           {/* Version Info */}
           <View style={styles.versionContainer}>

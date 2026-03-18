@@ -34376,7 +34376,7 @@ class RiderScheduleViewSet(viewsets.ViewSet):
         """Get rider instance from user with validation"""
         if not hasattr(user, 'rider'):
             raise ValueError('User is not a rider')
-        return user.riderp
+        return user.rider
     
     @action(detail=False, methods=['get'])
     def get_schedule_data(self, request):
