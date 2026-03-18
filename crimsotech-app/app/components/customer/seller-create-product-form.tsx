@@ -134,9 +134,10 @@ interface Variant {
   imagePreview?: string;
   proofImage?: File | null;
   proofImagePreview?: string;
-  length?: number | "";
-  width?: number | "";
-  height?: number | "";
+  length?: number | ""; // Added
+  width?: number | ""; // Added
+  height?: number | ""; // Added
+  dimension_unit?: string;
   weight?: number | "";
   weight_unit?: "g" | "kg" | "lb" | "oz";
   critical_trigger?: number | "";
@@ -728,7 +729,22 @@ export default function CreateProductForm({
   ) => {
     if (field === "price") return;
     setVariants((prev) =>
-      prev.map((v) => (v.id === variantId ? { ...v, [field]: value } : v)),
+      prev.map((v) => {
+        if (v.id === variantId) {
+          // For dimension fields, ensure we handle empty strings properly
+          if (
+            field === "length" ||
+            field === "width" ||
+            field === "height" ||
+            field === "weight"
+          ) {
+            // If value is empty string, set to empty string (will be converted to null in payload)
+            return { ...v, [field]: value };
+          }
+          return { ...v, [field]: value };
+        }
+        return v;
+      }),
     );
   };
 
@@ -834,36 +850,55 @@ export default function CreateProductForm({
     mediaFilesRef.current.forEach((file) => {
       if (file.size > 0) formData.append("media_files", file);
     });
+
+    // FIXED: Properly handle dimension fields with null/undefined checks
     const variantsPayload = variants.map((v) => ({
       id: v.id,
       title: v.title,
       price: v.price,
       compare_price: v.compare_price,
       quantity: v.quantity,
-      length: v.length,
-      width: v.width,
-      height: v.height,
-      weight: v.weight,
-      weight_unit: v.weight_unit,
+      // Dimension fields - ensure they're properly included with null fallback
+      length:
+        v.length !== undefined && v.length !== "" ? Number(v.length) : null,
+      width: v.width !== undefined && v.width !== "" ? Number(v.width) : null,
+      height:
+        v.height !== undefined && v.height !== "" ? Number(v.height) : null,
+      dimension_unit: v.dimension_unit || "cm",
+      weight:
+        v.weight !== undefined && v.weight !== "" ? Number(v.weight) : null,
+      weight_unit: v.weight_unit || "g",
       sku_code: v.sku_code,
       critical_trigger: v.critical_trigger || null,
       refundable: v.refundable ?? productRefundable,
       is_refundable: v.refundable ?? productRefundable,
       is_active: v.is_active ?? true,
-      original_price: v.depreciation.originalPrice,
-      usage_period: v.depreciation.usagePeriod,
-      usage_unit: v.depreciation.usageUnit,
-      depreciation_rate: v.depreciation.depreciationRate,
+      original_price:
+        v.depreciation.originalPrice !== ""
+          ? Number(v.depreciation.originalPrice)
+          : null,
+      usage_period:
+        v.depreciation.usagePeriod !== ""
+          ? Number(v.depreciation.usagePeriod)
+          : null,
+      usage_unit: v.depreciation.usageUnit || "months",
+      depreciation_rate:
+        v.depreciation.depreciationRate !== ""
+          ? Number(v.depreciation.depreciationRate)
+          : null,
       purchase_date: v.depreciation.purchaseDate
         ? v.depreciation.purchaseDate.toISOString()
         : null,
       attributes: v.attributes || {},
     }));
+
     formData.append("variants", JSON.stringify(variantsPayload));
+
     variants.forEach((v) => {
       if (v.image) formData.append(`variant_image_${v.id}`, v.image);
       if (v.proofImage) formData.append(`proof_image_${v.id}`, v.proofImage);
     });
+
     if (selectedShop) formData.append("shop", selectedShop.id);
     fetcher.submit(formData, {
       method: "post",
@@ -1413,7 +1448,7 @@ export default function CreateProductForm({
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium text-gray-700 flex items-center gap-1">
-                    Final Price <span className="text-red-500">*</span>
+                    Selling Price <span className="text-red-500">*</span>
                     {variant.depreciation.calculatedPrice && (
                       <Badge
                         variant="outline"
@@ -1679,8 +1714,82 @@ export default function CreateProductForm({
                   </span>
                 </div>
 
-                {/* Weight and Stock Alert - First Row */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Dimensions, Weight and Stock Alert - First Row */}
+                <div className="grid grid-cols-1 gap-4">
+                  {/* Dimensions */}
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium text-gray-700 block">
+                      Dimensions (L × W × H)
+                    </Label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={variant.length || ""}
+                        onChange={(e) =>
+                          updateVariantField(
+                            variant.id,
+                            "length",
+                            parseFloat(e.target.value) || "",
+                          )
+                        }
+                        placeholder="Length"
+                        className="h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={variant.width || ""}
+                        onChange={(e) =>
+                          updateVariantField(
+                            variant.id,
+                            "width",
+                            parseFloat(e.target.value) || "",
+                          )
+                        }
+                        placeholder="Width"
+                        className="h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value={variant.height || ""}
+                        onChange={(e) =>
+                          updateVariantField(
+                            variant.id,
+                            "height",
+                            parseFloat(e.target.value) || "",
+                          )
+                        }
+                        placeholder="Height"
+                        className="h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                      />
+                      <Select
+                        value={variant.dimension_unit || "cm"}
+                        onValueChange={(value) =>
+                          updateVariantField(
+                            variant.id,
+                            "dimension_unit",
+                            value,
+                          )
+                        }
+                      >
+                        <SelectTrigger className="w-14 h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500">
+                          <SelectValue placeholder="cm" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cm">cm</SelectItem>
+                          <SelectItem value="m">m</SelectItem>
+                          <SelectItem value="in">in</SelectItem>
+                          <SelectItem value="ft">ft</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
                   {/* Weight */}
                   <div className="space-y-2">
                     <Label className="text-xs font-medium text-gray-700 block">
@@ -1720,8 +1829,10 @@ export default function CreateProductForm({
                       </Select>
                     </div>
                   </div>
+                </div>
 
-                  {/* Low Stock Alert */}
+                {/* Second Row - Low Stock Alert */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label className="text-xs font-medium text-gray-700 block">
                       Low Stock Alert
@@ -1741,9 +1852,10 @@ export default function CreateProductForm({
                       className="h-8 text-xs border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                     />
                   </div>
+                  <div></div> {/* Empty div for grid alignment */}
                 </div>
 
-                {/* Proof Image - Second Row */}
+                {/* Proof Image - Third Row */}
                 <div>
                   <Label className="text-xs font-medium text-gray-700 mb-2 block flex items-center gap-1">
                     <Shield className="h-3 w-3 text-orange-600" />

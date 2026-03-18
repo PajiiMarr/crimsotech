@@ -549,6 +549,11 @@ class Variants(models.Model):
         null=True, 
         blank=True,
     )
+    dimension_unit = models.CharField(
+        max_length=10,
+        null=True,
+        blank=True,
+    )
 
     
 

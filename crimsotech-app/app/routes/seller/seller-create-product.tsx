@@ -219,11 +219,44 @@ export async function action({ request }: Route.ActionArgs) {
             errors[`variant_${index}_sku_code`] = "SKU code must be at most 100 characters";
           }
           
+          // DIMENSIONS VALIDATION
+          // Length validation - optional but if provided
+          if (variant.length) {
+            const lengthNum = Number(variant.length);
+            if (isNaN(lengthNum) || lengthNum <= 0) {
+              errors[`variant_${index}_length`] = "Length must be greater than 0 if provided";
+            } else if (lengthNum > 100000) {
+              errors[`variant_${index}_length`] = "Length value is too high";
+            }
+          }
+          
+          // Width validation - optional but if provided
+          if (variant.width) {
+            const widthNum = Number(variant.width);
+            if (isNaN(widthNum) || widthNum <= 0) {
+              errors[`variant_${index}_width`] = "Width must be greater than 0 if provided";
+            } else if (widthNum > 100000) {
+              errors[`variant_${index}_width`] = "Width value is too high";
+            }
+          }
+          
+          // Height validation - optional but if provided
+          if (variant.height) {
+            const heightNum = Number(variant.height);
+            if (isNaN(heightNum) || heightNum <= 0) {
+              errors[`variant_${index}_height`] = "Height must be greater than 0 if provided";
+            } else if (heightNum > 100000) {
+              errors[`variant_${index}_height`] = "Height value is too high";
+            }
+          }
+          
           // Weight validation - optional but if provided
           if (variant.weight) {
             const weightNum = Number(variant.weight);
             if (isNaN(weightNum) || weightNum <= 0) {
               errors[`variant_${index}_weight`] = "Weight must be greater than 0 if provided";
+            } else if (weightNum > 1000000) {
+              errors[`variant_${index}_weight`] = "Weight value is too high";
             }
           }
           
@@ -231,7 +264,7 @@ export async function action({ request }: Route.ActionArgs) {
           if (variant.weight && !variant.weight_unit) {
             errors[`variant_${index}_weight_unit`] = "Weight unit is required when weight is provided";
           } else if (variant.weight_unit && !['g', 'kg', 'lb', 'oz'].includes(variant.weight_unit)) {
-            errors[`variant_${index}_weight_unit`] = "Invalid weight unit";
+            errors[`variant_${index}_weight_unit`] = "Invalid weight unit. Must be g, kg, lb, or oz";
           }
           
           // Critical trigger validation - optional
@@ -388,7 +421,13 @@ export async function action({ request }: Route.ActionArgs) {
         price: v.price ? Number(v.price) : null,
         compare_price: v.compare_price ? Number(v.compare_price) : null,
         quantity: v.quantity ? Number(v.quantity) : 0,
+        // DIMENSION FIELDS - ensure proper number conversion
+        length: v.length ? Number(v.length) : null,
+        width: v.width ? Number(v.width) : null,
+        height: v.height ? Number(v.height) : null,
+        dimension_unit: v.dimension_unit || "cm",
         weight: v.weight ? Number(v.weight) : null,
+        weight_unit: v.weight_unit || 'g',
         critical_trigger: v.critical_trigger ? Number(v.critical_trigger) : null,
         original_price: v.original_price ? Number(v.original_price) : null,
         usage_period: v.usage_period ? Number(v.usage_period) : null,
@@ -434,6 +473,7 @@ export async function action({ request }: Route.ActionArgs) {
       console.log('Failed to iterate apiFormData entries for debug:', err);
     }
     
+    console.log(formData)
     const response = await AxiosInstance.post('/seller-products/', apiFormData);
     
     if (response.data.success) {

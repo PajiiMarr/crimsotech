@@ -16464,7 +16464,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     except Exception as e:
                         logger.error(f"Error creating ProductMedia: {e}")
 
-                # Process variants with all new fields
+                # Process variants with all new fields including dimensions and dimension_unit
                 created_variants = self._process_variants(variants_raw, request.FILES, product, shop)
                 
                 # Verify at least one variant was created
@@ -16521,6 +16521,28 @@ class SellerProducts(viewsets.ModelViewSet):
                     'swap_description': variant_data.get('swap_description', ''),
                     'critical_stock': variant_data.get('critical_stock'),
                 }
+                
+                # Handle dimension_unit field - UPDATED
+                dimension_unit = variant_data.get('dimension_unit')
+                if dimension_unit in ['cm', 'm', 'in', 'ft']:
+                    variant_fields['dimension_unit'] = dimension_unit
+                else:
+                    variant_fields['dimension_unit'] = 'cm'  # default
+                
+                # Handle dimension fields - length, width, height
+                dimension_fields = ['length', 'width', 'height']
+                for field in dimension_fields:
+                    value = variant_data.get(field)
+                    if value not in (None, ''):
+                        try:
+                            decimal_value = Decimal(str(value))
+                            if decimal_value <= 0:
+                                raise ValidationError(f"{field} must be greater than 0")
+                            if decimal_value > 100000:
+                                logger.warning(f"{field} value is very high: {decimal_value}")
+                            variant_fields[field] = decimal_value
+                        except (ValueError, TypeError, Decimal.InvalidOperation):
+                            logger.warning(f"Invalid decimal value for {field}: {value}")
                 
                 # Handle refundable flag
                 ref_flag = variant_data.get('is_refundable', variant_data.get('refundable', False))
@@ -16591,7 +16613,6 @@ class SellerProducts(viewsets.ModelViewSet):
                         variant_fields['critical_trigger'] = None
                 
                 # Handle depreciation fields
-                # Original Price
                 original_price = variant_data.get('original_price')
                 if original_price not in (None, ''):
                     try:
@@ -16607,7 +16628,6 @@ class SellerProducts(viewsets.ModelViewSet):
                     if variant_fields['price'] > variant_fields['original_price']:
                         logger.warning(f"Current price ({variant_fields['price']}) is greater than original price ({variant_fields['original_price']})")
                 
-                # Usage Period
                 usage_period = variant_data.get('usage_period')
                 if usage_period not in (None, ''):
                     try:
@@ -16620,7 +16640,6 @@ class SellerProducts(viewsets.ModelViewSet):
                     except (ValueError, TypeError):
                         logger.warning(f"Invalid usage_period value: {usage_period}")
                 
-                # Usage Unit
                 usage_unit = variant_data.get('usage_unit')
                 if usage_unit in ['weeks', 'months', 'years']:
                     variant_fields['usage_unit'] = usage_unit
@@ -16628,7 +16647,6 @@ class SellerProducts(viewsets.ModelViewSet):
                     logger.warning(f"Invalid usage_unit: {usage_unit}, using default")
                     variant_fields['usage_unit'] = 'months'
                 
-                # Depreciation Rate
                 depreciation_rate = variant_data.get('depreciation_rate')
                 if depreciation_rate not in (None, ''):
                     try:
@@ -16639,7 +16657,6 @@ class SellerProducts(viewsets.ModelViewSet):
                     except (ValueError, TypeError):
                         logger.warning(f"Invalid depreciation_rate value: {depreciation_rate}")
                 
-                # Purchase Date
                 purchase_date = variant_data.get('purchase_date')
                 if purchase_date:
                     try:
@@ -16703,10 +16720,10 @@ class SellerProducts(viewsets.ModelViewSet):
             import traceback
             traceback.print_exc()
             raise
-    
+
     def _build_product_response(self, product, seller, status_code):
         """
-        Build standardized product response with variant data
+        Build standardized product response with variant data including dimensions
         """
         variants_data = []
         for variant in product.variants.all():
@@ -16720,6 +16737,11 @@ class SellerProducts(viewsets.ModelViewSet):
                 "price": str(variant.price) if variant.price else None,
                 "compare_price": str(variant.compare_price) if variant.compare_price else None,
                 "quantity": variant.quantity,
+                # Dimension fields
+                "length": str(variant.length) if variant.length else None,
+                "width": str(variant.width) if variant.width else None,
+                "height": str(variant.height) if variant.height else None,
+                "dimension_unit": variant.dimension_unit,  # ADDED
                 "is_active": variant.is_active,
                 "is_refundable": variant.is_refundable,
                 "refund_days": variant.refund_days,
@@ -16760,7 +16782,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     "starting_price": min_price,
                     "status": product.status,
                     "upload_status": product.upload_status,
-                    "condition": product.condition,  # Now returns integer 1-5
+                    "condition": product.condition,
                     "is_refundable": product.is_refundable,
                     "refund_days": product.refund_days,
                     "shop": {
@@ -16790,6 +16812,7 @@ class SellerProducts(viewsets.ModelViewSet):
         }
         
         return Response(response_data, status=status_code)
+    
 
     def list(self, request):
         """
@@ -16826,6 +16849,11 @@ class SellerProducts(viewsets.ModelViewSet):
                         "price": str(variant.price) if variant.price else None,
                         "compare_price": str(variant.compare_price) if variant.compare_price else None,
                         "quantity": variant.quantity,
+                        # Dimension fields
+                        "length": str(variant.length) if variant.length else None,
+                        "width": str(variant.width) if variant.width else None,
+                        "height": str(variant.height) if variant.height else None,
+                        "dimension_unit": variant.dimension_unit,  # ADDED
                         "is_active": variant.is_active,
                         "is_refundable": variant.is_refundable,
                         "refund_days": variant.refund_days,
@@ -16864,7 +16892,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     "starting_price": min_price,
                     "status": product.status,
                     "upload_status": product.upload_status,
-                    "condition": product.condition,  # Now returns integer 1-5
+                    "condition": product.condition,
                     "is_refundable": product.is_refundable,
                     "is_removed": product.is_removed,
                     "removal_reason": product.removal_reason,
@@ -17110,6 +17138,11 @@ class SellerProducts(viewsets.ModelViewSet):
                     "price": str(variant.price) if variant.price else None,
                     "compare_price": str(variant.compare_price) if variant.compare_price else None,
                     "quantity": variant.quantity,
+                    # Dimension fields
+                    "length": str(variant.length) if variant.length else None,
+                    "width": str(variant.width) if variant.width else None,
+                    "height": str(variant.height) if variant.height else None,
+                    "dimension_unit": variant.dimension_unit,  # ADDED
                     "weight": str(variant.weight) if variant.weight else None,
                     "weight_unit": variant.weight_unit,
                     "critical_trigger": variant.critical_trigger,
@@ -17309,6 +17342,10 @@ class SellerProducts(viewsets.ModelViewSet):
                 'price': str(variant.price) if variant.price else None,
                 'compare_price': str(variant.compare_price) if variant.compare_price else None,
                 'quantity': variant.quantity,
+                # Dimension fields
+                'length': str(variant.length) if variant.length else None,
+                'width': str(variant.width) if variant.width else None,
+                'height': str(variant.height) if variant.height else None,
                 'weight': str(variant.weight) if variant.weight else None,
                 'weight_unit': variant.weight_unit,
                 'critical_trigger': variant.critical_trigger,
@@ -17378,11 +17415,14 @@ class SellerProducts(viewsets.ModelViewSet):
             update_fields = []
 
             simple_str_fields = ['title', 'sku_code', 'weight_unit', 'swap_type',
-                                'swap_description', 'usage_unit']
+                                'swap_description', 'usage_unit', 'dimension_unit']  # ADDED dimension_unit
             for field in simple_str_fields:
                 if field in v_data:
                     if field == 'usage_unit' and v_data[field] not in ['weeks', 'months', 'years']:
                         errors.append({'id': variant_id, 'field': field, 'error': f'Invalid {field}'})
+                        continue
+                    if field == 'dimension_unit' and v_data[field] not in ['cm', 'm', 'in', 'ft']:
+                        errors.append({'id': variant_id, 'field': field, 'error': f'Invalid {field}. Must be cm, m, in, or ft'})
                         continue
                     setattr(variant, field, v_data[field])
                     update_fields.append(field)
@@ -17419,6 +17459,26 @@ class SellerProducts(viewsets.ModelViewSet):
                     except (ValueError, TypeError):
                         errors.append({'id': variant_id, 'field': field, 'error': f'Invalid integer value for {field}'})
 
+            # Dimension fields - LENGTH, WIDTH, HEIGHT
+            dimension_fields = ['length', 'width', 'height']
+            for field in dimension_fields:
+                if field in v_data:
+                    val = v_data[field]
+                    if val is None or val == '':
+                        setattr(variant, field, None)
+                        update_fields.append(field)
+                    else:
+                        try:
+                            from decimal import Decimal
+                            decimal_val = Decimal(str(val))
+                            if decimal_val <= 0:
+                                errors.append({'id': variant_id, 'field': field, 'error': f'{field} must be greater than 0'})
+                                continue
+                            setattr(variant, field, decimal_val)
+                            update_fields.append(field)
+                        except (ValueError, TypeError, Decimal.InvalidOperation):
+                            errors.append({'id': variant_id, 'field': field, 'error': f'Invalid decimal value for {field}'})
+
             decimal_fields = ['price', 'compare_price', 'weight',
                             'original_price', 'minimum_additional_payment', 'maximum_additional_payment']
             for field in decimal_fields:
@@ -17429,6 +17489,7 @@ class SellerProducts(viewsets.ModelViewSet):
                         update_fields.append(field)
                     else:
                         try:
+                            from decimal import Decimal
                             decimal_val = Decimal(str(val))
                             if decimal_val < 0:
                                 errors.append({'id': variant_id, 'field': field, 'error': f'{field} cannot be negative'})
@@ -17509,6 +17570,11 @@ class SellerProducts(viewsets.ModelViewSet):
                 'title': variant.title,
                 'price': str(variant.price) if variant.price else None,
                 'quantity': variant.quantity,
+                # Dimension fields
+                'length': str(variant.length) if variant.length else None,
+                'width': str(variant.width) if variant.width else None,
+                'height': str(variant.height) if variant.height else None,
+                'dimension_unit': variant.dimension_unit,  # ADDED
                 'is_active': variant.is_active,
                 'original_price': str(variant.original_price) if variant.original_price else None,
                 'usage_period': variant.usage_period,
@@ -17527,7 +17593,7 @@ class SellerProducts(viewsets.ModelViewSet):
             'message': f'Successfully updated {len(updated)} variant(s)'
             + (f' with {len(errors)} error(s)' if errors else ''),
         }, status=status.HTTP_200_OK)
-
+    
     @action(detail=True, methods=['get', 'post'], url_path='media')
     def media(self, request, pk=None):
         """
@@ -17603,8 +17669,8 @@ class SellerProducts(viewsets.ModelViewSet):
         return Response({
             'success': True,
             'message': 'Media deleted successfully',
-        }, status=status.HTTP_200_OK)
-    
+        }, status=status.HTTP_200_OK)    
+
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
