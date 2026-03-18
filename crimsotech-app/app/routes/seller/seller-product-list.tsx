@@ -66,7 +66,7 @@ interface Product {
   id: string;
   name: string;
   description: string;
-  condition: string;
+  condition: number; // Changed from string to number (1-5)
   upload_status: string;
   status: string;
   is_refundable: boolean;
@@ -100,6 +100,35 @@ interface ProductListResponse {
   };
 }
 
+// Condition mapping for display
+const CONDITION_MAP: Record<number, { label: string; icon: string; color: string }> = {
+  1: {
+    label: "Poor",
+    icon: "★",
+    color: "bg-red-100 text-red-800 border-red-300",
+  },
+  2: {
+    label: "Fair",
+    icon: "★★",
+    color: "bg-orange-100 text-orange-800 border-orange-300",
+  },
+  3: {
+    label: "Good",
+    icon: "★★★",
+    color: "bg-yellow-100 text-yellow-800 border-yellow-300",
+  },
+  4: {
+    label: "Very Good",
+    icon: "★★★★",
+    color: "bg-blue-100 text-blue-800 border-blue-300",
+  },
+  5: {
+    label: "Like New",
+    icon: "★★★★★",
+    color: "bg-green-100 text-green-800 border-green-300",
+  },
+};
+
 function convertS3ToPublicUrl(s3Url: string | null | undefined): string | null {
   if (!s3Url) return null;
   try {
@@ -125,7 +154,6 @@ function getProductImage(product: Product): string | null {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
   let user = (context as any).user;
@@ -253,6 +281,15 @@ export default function SellerProductList() {
   const getCategoryName = (product: Product) =>
     product.category_admin?.name || product.category?.name || 'No Category';
 
+  // Helper function to get condition display
+  const getConditionDisplay = (condition: number): { label: string; icon: string; color: string } => {
+    return CONDITION_MAP[condition] || {
+      label: `Unknown (${condition})`,
+      icon: "★",
+      color: "bg-gray-100 text-gray-800 border-gray-300",
+    };
+  };
+
   const getStatusBadge = (status: string) => {
     const s = (status || '').toLowerCase();
     const map: Record<string, { variant: "default" | "secondary" | "outline" | "destructive", label: string }> = {
@@ -331,11 +368,19 @@ export default function SellerProductList() {
     {
       accessorKey: "condition",
       header: "Condition",
-      cell: ({ row }) => (
-        <Badge variant={row.original.is_removed ? "destructive" : "outline"} className="capitalize">
-          {row.original.condition}
-        </Badge>
-      ),
+      cell: ({ row }) => {
+        const condition = row.original.condition;
+        const conditionDisplay = getConditionDisplay(condition);
+        return (
+          <Badge 
+            variant={row.original.is_removed ? "destructive" : "outline"} 
+            className={`${!row.original.is_removed ? conditionDisplay.color : ''} flex items-center gap-1`}
+          >
+            <span className="text-yellow-500">{conditionDisplay.icon}</span>
+            <span>{conditionDisplay.label} ({condition}/5)</span>
+          </Badge>
+        );
+      },
     },
     {
       accessorKey: "upload_status",
@@ -436,7 +481,10 @@ export default function SellerProductList() {
 
   const filterConfig = {
     upload_status: { options: ["published", "draft", "archived"], placeholder: "Upload Status" },
-    condition: { options: ["New", "Like New", "Refurbished", "Used - Excellent", "Used - Good"], placeholder: "Condition" }
+    condition: { 
+      options: ["1 - Poor", "2 - Fair", "3 - Good", "4 - Very Good", "5 - Like New"], 
+      placeholder: "Condition" 
+    }
   };
 
   if (loading) {

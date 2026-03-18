@@ -93,7 +93,7 @@ interface Product {
   id: string;
   name: string;
   description: string;
-  condition: string;
+  condition: number; // Changed from string to number to match seller-product-list
   upload_status: string;
   status: string;
   is_refundable: boolean;
@@ -114,13 +114,15 @@ interface EditProductDialogProps {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+// Condition mapping for display (1-5 values)
 const CONDITION_OPTIONS = [
-  "New",
-  "Like New",
-  "Refurbished",
-  "Used - Excellent",
-  "Used - Good",
+  { value: 1, label: "Poor", icon: "★", color: "bg-red-100 text-red-800 border-red-300" },
+  { value: 2, label: "Fair", icon: "★★", color: "bg-orange-100 text-orange-800 border-orange-300" },
+  { value: 3, label: "Good", icon: "★★★", color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
+  { value: 4, label: "Very Good", icon: "★★★★", color: "bg-blue-100 text-blue-800 border-blue-300" },
+  { value: 5, label: "Like New", icon: "★★★★★", color: "bg-green-100 text-green-800 border-green-300" },
 ] as const;
+
 const USAGE_UNIT_OPTIONS = [
   { value: "weeks", label: "Weeks" },
   { value: "months", label: "Months" },
@@ -137,7 +139,7 @@ const WEIGHT_UNIT_OPTIONS = [
 interface FormState {
   name: string;
   description: string;
-  condition: string;
+  condition: number; // Changed from string to number
   upload_status: string;
   is_refundable: boolean;
   refund_days: number;
@@ -182,7 +184,7 @@ function buildInitialForm(product: Product | null): FormState {
   return {
     name: product?.name ?? "",
     description: product?.description ?? "",
-    condition: product?.condition ?? "New",
+    condition: product?.condition ?? 3, // Default to Good (3) if not provided
     upload_status: product?.upload_status ?? "draft",
     is_refundable: product?.is_refundable ?? false,
     refund_days: product?.refund_days ?? 0,
@@ -489,6 +491,8 @@ function EditProductForm({
       newErrors.description = "Max 1000 characters.";
 
     if (!form.condition) newErrors.condition = "Condition is required.";
+    else if (form.condition < 1 || form.condition > 5)
+      newErrors.condition = "Condition must be between 1 and 5.";
 
     if (form.is_refundable && form.refund_days < 1)
       newErrors.refund_days = "Must be at least 1 day.";
@@ -573,7 +577,7 @@ function EditProductForm({
         user_id: userId,
         name: form.name.trim(),
         description: form.description.trim(),
-        condition: form.condition,
+        condition: form.condition, // Now sending as number (1-5)
         upload_status: form.upload_status,
         is_refundable: form.is_refundable,
         refund_days: form.is_refundable ? form.refund_days : 0,
@@ -655,7 +659,7 @@ function EditProductForm({
         id: product.id,
         name: form.name.trim(),
         description: form.description.trim(),
-        condition: form.condition,
+        condition: form.condition, // Now sending as number
         upload_status: form.upload_status,
         is_refundable: form.is_refundable,
         refund_days: form.is_refundable ? form.refund_days : 0,
@@ -726,6 +730,11 @@ function EditProductForm({
 
   const totalImageCount = media.existing.length + media.pending.length;
 
+  // Helper to get condition display
+  const getConditionDisplay = (value: number) => {
+    return CONDITION_OPTIONS.find(c => c.value === value) || CONDITION_OPTIONS[2]; // Default to Good (3)
+  };
+
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col min-h-0 h-full">
@@ -743,6 +752,10 @@ function EditProductForm({
               from ₱{parseFloat(product.starting_price).toLocaleString()}
             </Badge>
           )}
+          <Badge className={`gap-1 text-xs ${getConditionDisplay(product.condition).color}`}>
+            <span className="text-yellow-500">{getConditionDisplay(product.condition).icon}</span>
+            {getConditionDisplay(product.condition).label}
+          </Badge>
         </div>
 
         {/* ── Product Images ──────────────────────────────────────────────── */}
@@ -893,16 +906,31 @@ function EditProductForm({
             <Label>
               Condition <span className="text-destructive">*</span>
             </Label>
-            <Select value={form.condition} onValueChange={set("condition")}>
+            <Select 
+              value={form.condition.toString()} 
+              onValueChange={(v) => set("condition")(parseInt(v))}
+            >
               <SelectTrigger
                 className={`w-full ${errors.condition ? "border-destructive" : ""}`}
               >
-                <SelectValue placeholder="Select condition" />
+                <SelectValue placeholder="Select condition">
+                  {form.condition && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-yellow-500">
+                        {getConditionDisplay(form.condition).icon}
+                      </span>
+                      <span>{getConditionDisplay(form.condition).label}</span>
+                    </div>
+                  )}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {CONDITION_OPTIONS.map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {c}
+                  <SelectItem key={c.value} value={c.value.toString()}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-yellow-500">{c.icon}</span>
+                      <span>{c.label} ({c.value}/5)</span>
+                    </div>
                   </SelectItem>
                 ))}
               </SelectContent>
