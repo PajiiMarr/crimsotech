@@ -15722,8 +15722,8 @@ class SellerProducts(viewsets.ModelViewSet):
     def update_product(self, request, pk=None):
         """
         Update basic product fields from the seller edit form.
-        Editable: name, description, condition, upload_status,
-                  is_refundable, refund_days, category_admin_id
+        Editable: name, description, condition (1-5 integer),
+                  upload_status, is_refundable, refund_days, category_admin_id
         """
         user_id = request.data.get('user_id')
         if not user_id:
@@ -15755,13 +15755,23 @@ class SellerProducts(viewsets.ModelViewSet):
             product.description = description
             update_fields.append('description')
 
+        # Condition field - now expects integer 1-5
         condition = request.data.get('condition')
-        valid_conditions = ['Like New', 'New', 'Refurbished', 'Used - Excellent', 'Used - Good']
-        if condition:
-            if condition not in valid_conditions:
-                return Response({"error": f"Invalid condition. Choose from: {', '.join(valid_conditions)}"}, status=status.HTTP_400_BAD_REQUEST)
-            product.condition = condition
-            update_fields.append('condition')
+        if condition is not None:
+            try:
+                condition_int = int(condition)
+                if condition_int < 1 or condition_int > 5:
+                    return Response(
+                        {"error": "Condition must be an integer between 1 and 5 (1=Poor, 5=Like New)"}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                product.condition = condition_int
+                update_fields.append('condition')
+            except (ValueError, TypeError):
+                return Response(
+                    {"error": "Condition must be a valid integer between 1 and 5"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         upload_status = request.data.get('upload_status')
         valid_statuses = ['draft', 'published', 'archived']
@@ -15919,12 +15929,20 @@ class SellerProducts(viewsets.ModelViewSet):
             
             # Validate data types
             try:
+                # Condition should be integer 1-5
+                condition_val = int(data['condition'])
+                if condition_val < 1 or condition_val > 5:
+                    return Response(
+                        {'success': False, 'error': 'Condition must be between 1 and 5'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
                 item_data = {
                     'name': str(data['name']),
                     'description': str(data['description']),
                     'quantity': int(data['quantity']),
                     'price': float(data['price']),
-                    'condition': str(data['condition'])
+                    'condition': condition_val
                 }
                 
                 if item_data['quantity'] < 0:
@@ -15968,22 +15986,15 @@ class SellerProducts(viewsets.ModelViewSet):
                 if feat_name in feature_columns:
                     features[feat_name] = feat_value
             
-            # Condition features
-            condition_lower = item_data['condition'].lower()
-            
-            condition_scores = {
-                'new': 3, 'like new': 2, 'refurbished': 1,
-                'excellent': 0, 'good': -1, 'fair': -2
-            }
+            # Condition features - now using integer value
+            condition_value = item_data['condition']
             
             if 'condition_score' in feature_columns:
-                features['condition_score'] = next(
-                    (score for keyword, score in condition_scores.items() 
-                     if keyword in condition_lower), 0
-                )
+                # Map 1-5 to a normalized score
+                features['condition_score'] = (condition_value - 1) / 4  # Normalized to 0-1
             
             if 'is_refurbished' in feature_columns:
-                features['is_refurbished'] = 1 if 'refurbished' in condition_lower else 0
+                features['is_refurbished'] = 0  # No longer based on condition string
             
             # Text features
             name_lower = item_data['name'].lower()
@@ -16045,11 +16056,11 @@ class SellerProducts(viewsets.ModelViewSet):
                 if brand_feature in feature_columns:
                     features[brand_feature] = 1 if brand in all_text else 0
             
-            # New/Used flags
+            # New/Used flags - based on condition value
             if 'is_new' in feature_columns:
-                features['is_new'] = 1 if 'new' in condition_lower else 0
+                features['is_new'] = 1 if condition_value >= 4 else 0  # 4-5 = Like New/Very Good
             if 'is_used' in feature_columns:
-                features['is_used'] = 1 if 'used' in condition_lower else 0
+                features['is_used'] = 1 if condition_value <= 3 else 0  # 1-3 = Used conditions
             
             # Create DataFrame with exactly the expected features
             X_item = pd.DataFrame([features])
@@ -16275,6 +16286,19 @@ class SellerProducts(viewsets.ModelViewSet):
                 "error": f"Cannot add more than {seller.product_limit} products. Current count: {seller.current_product_count}"
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        # Validate condition field - must be integer 1-5
+        condition = request.data.get("condition")
+        try:
+            condition_int = int(condition)
+            if condition_int < 1 or condition_int > 5:
+                return Response({
+                    "error": "Condition must be an integer between 1 and 5 (1=Poor, 5=Like New)"
+                }, status=status.HTTP_400_BAD_REQUEST)
+        except (ValueError, TypeError):
+            return Response({
+                "error": "Condition must be a valid integer between 1 and 5"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         # Check if variants are provided and not empty
         variants_raw = request.data.get('variants')
         if not variants_raw:
@@ -16301,9 +16325,9 @@ class SellerProducts(viewsets.ModelViewSet):
             if not hasattr(value, 'file'):
                 product_data[key] = value
         
-        # Set defaults - CHANGED upload_status to 'draft' instead of 'published'
+        # Set defaults
         product_data['status'] = product_data.get('status', 'active')
-        product_data['upload_status'] = 'draft'  # Changed from 'published' to 'draft'
+        product_data['upload_status'] = 'draft'
         
         # Handle refundable flag - now primarily handled at variant level
         if 'refundable' in product_data:
@@ -16629,13 +16653,11 @@ class SellerProducts(viewsets.ModelViewSet):
                     "id": str(product.id),
                     "name": product.name,
                     "description": product.description,
-                    # REMOVED: quantity and price from product level
-                    # These fields no longer exist, but we can provide aggregate info
                     "total_stock": total_quantity,
                     "starting_price": min_price,
                     "status": product.status,
                     "upload_status": product.upload_status,
-                    "condition": product.condition,
+                    "condition": product.condition,  # Now returns integer 1-5
                     "is_refundable": product.is_refundable,
                     "refund_days": product.refund_days,
                     "shop": {
@@ -16735,12 +16757,11 @@ class SellerProducts(viewsets.ModelViewSet):
                     "id": str(product.id),
                     "name": product.name,
                     "description": product.description,
-                    # REMOVED: quantity and price from product level
                     "total_stock": total_quantity,
                     "starting_price": min_price,
                     "status": product.status,
                     "upload_status": product.upload_status,
-                    "condition": product.condition,
+                    "condition": product.condition,  # Now returns integer 1-5
                     "is_refundable": product.is_refundable,
                     "is_removed": product.is_removed,
                     "removal_reason": product.removal_reason,
@@ -17070,7 +17091,7 @@ class SellerProducts(viewsets.ModelViewSet):
                 },
                 "upload_status": product.upload_status,
                 "status": product.status,
-                "condition": product.condition,
+                "condition": product.condition,  # Now returns integer 1-5
                 "is_refundable": product.is_refundable,
                 "refund_days": product.refund_days,
                 "created_at": product.created_at.isoformat() if product.created_at else None,

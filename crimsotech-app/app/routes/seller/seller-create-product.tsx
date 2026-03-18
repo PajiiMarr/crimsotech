@@ -147,8 +147,14 @@ export async function action({ request }: Route.ActionArgs) {
     errors.description = "Description should be at most 1000 characters";
   }
 
-  if (!condition.trim()) {
+  // Validate condition (now integer 1-5)
+  if (!condition || condition === '') {
     errors.condition = "Condition is required";
+  } else {
+    const conditionNum = parseInt(condition);
+    if (isNaN(conditionNum) || conditionNum < 1 || conditionNum > 5) {
+      errors.condition = "Condition must be between 1 and 5 (1=Poor, 5=Like New)";
+    }
   }
 
   // Validate media files - require at least 3 images
@@ -196,32 +202,30 @@ export async function action({ request }: Route.ActionArgs) {
             errors[`variant_${index}_quantity`] = "Variant quantity must be greater than 0";
           }
           
-          // Validate weight is required
-          if (!variant.weight || variant.weight === '' || Number(variant.weight) <= 0) {
-            errors[`variant_${index}_weight`] = "Weight is required";
+          // Weight validation - optional
+          if (variant.weight && (Number(variant.weight) <= 0)) {
+            errors[`variant_${index}_weight`] = "Weight must be greater than 0 if provided";
           }
           
-          // Validate weight_unit is required
-          if (!variant.weight_unit) {
-            errors[`variant_${index}_weight_unit`] = "Weight unit is required";
+          // Weight unit validation - only required if weight is provided
+          if (variant.weight && !variant.weight_unit) {
+            errors[`variant_${index}_weight_unit`] = "Weight unit is required when weight is provided";
           }
           
-          // Validate critical_trigger is required
-          if (!variant.critical_trigger || variant.critical_trigger === '' || Number(variant.critical_trigger) <= 0) {
-            errors[`variant_${index}_critical_trigger`] = "Low stock alert is required";
+          // Critical trigger validation - optional
+          if (variant.critical_trigger && Number(variant.critical_trigger) < 0) {
+            errors[`variant_${index}_critical_trigger`] = "Low stock alert cannot be negative";
           }
           
           // Validate depreciation fields if present
-          if (variant.original_price || variant.usage_period || variant.depreciation_rate) {
-            if (variant.original_price && Number(variant.original_price) <= 0) {
-              errors[`variant_${index}_original_price`] = "Original price must be greater than 0";
-            }
-            if (variant.usage_period && Number(variant.usage_period) < 0) {
-              errors[`variant_${index}_usage_period`] = "Usage period cannot be negative";
-            }
-            if (variant.depreciation_rate && (Number(variant.depreciation_rate) < 0 || Number(variant.depreciation_rate) > 100)) {
-              errors[`variant_${index}_depreciation_rate`] = "Depreciation rate must be between 0 and 100";
-            }
+          if (variant.original_price && Number(variant.original_price) <= 0) {
+            errors[`variant_${index}_original_price`] = "Original price must be greater than 0";
+          }
+          if (variant.usage_period && Number(variant.usage_period) < 0) {
+            errors[`variant_${index}_usage_period`] = "Usage period cannot be negative";
+          }
+          if (variant.depreciation_rate && (Number(variant.depreciation_rate) < 0 || Number(variant.depreciation_rate) > 100)) {
+            errors[`variant_${index}_depreciation_rate`] = "Depreciation rate must be between 0 and 100";
           }
         });
       }
@@ -247,7 +251,7 @@ export async function action({ request }: Route.ActionArgs) {
     // Append basic fields
     apiFormData.append('name', name.trim());
     apiFormData.append('description', description.trim());
-    apiFormData.append('condition', condition.trim());
+    apiFormData.append('condition', condition.trim()); // Now sending integer 1-5
     apiFormData.append('shop', shop_id ?? "");
     apiFormData.append('status', "active");
     apiFormData.append('customer_id', userId);

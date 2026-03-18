@@ -304,11 +304,7 @@ class Product(models.Model):
     ]
     
     CONDITION_CHOICES = [
-        ('Like New', 'Like New'),
-        ('New', 'New'),
-        ('Refurbished', 'Refurbished'),
-        ('Used - Excellent', 'Used - Excellent'),
-        ('Used - Good', 'Used - Good'),
+        1, 2, 3, 4, 5,
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
@@ -345,7 +341,7 @@ class Product(models.Model):
     
     upload_status = models.CharField(max_length=20, choices=[('draft','Draft'),('published','Published'),('archived','Archived')], default='draft')
     status = models.TextField()
-    condition = models.CharField(max_length=50, choices=CONDITION_CHOICES)
+    condition = models.IntegerField(default=0)
     is_refundable = models.BooleanField(null=True,blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

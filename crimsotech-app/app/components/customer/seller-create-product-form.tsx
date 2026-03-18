@@ -11,7 +11,7 @@ import { Switch } from "~/components/ui/switch";
 import { Separator } from "~/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
-import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles, Calculator, ChevronDown, ChevronUp, Info, GripVertical, Percent, Clock, Camera, Shield } from "lucide-react";
+import { AlertCircle, Store, ArrowLeft, Plus, X, Image as ImageIcon, Video, Upload, Package, Truck, Loader2, Sparkles, Calculator, ChevronDown, ChevronUp, Info, GripVertical, Percent, Clock, Camera, Shield, Star } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AxiosInstance from '~/components/axios/Axios';
 import { useFetcher } from "react-router"
@@ -127,6 +127,17 @@ interface PredictionResult {
   [key: string]: any;
 }
 
+// Condition scale constants
+const CONDITION_SCALE = {
+  1: { label: "Poor - Heavy signs of use, may not function perfectly", color: "bg-red-100 text-red-800 border-red-300", icon: "★" },
+  2: { label: "Fair - Visible wear, fully functional", color: "bg-orange-100 text-orange-800 border-orange-300", icon: "★★" },
+  3: { label: "Good - Normal wear, well-maintained", color: "bg-yellow-100 text-yellow-800 border-yellow-300", icon: "★★★" },
+  4: { label: "Very Good - Minimal wear, almost like new", color: "bg-blue-100 text-blue-800 border-blue-300", icon: "★★★★" },
+  5: { label: "Like New - No signs of use, original packaging", color: "bg-green-100 text-green-800 border-green-300", icon: "★★★★★" },
+} as const;
+
+type ConditionValue = keyof typeof CONDITION_SCALE;
+
 export default function CreateProductForm({ selectedShop, globalCategories, modelClasses, errors }: CreateProductFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const mediaFilesRef = useRef<File[]>([]);
@@ -141,7 +152,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
 
   const [productName, setProductName] = useState('');
   const [productDescription, setProductDescription] = useState('');
-  const [productCondition, setProductCondition] = useState('');
+  const [productCondition, setProductCondition] = useState<ConditionValue | ''>('');
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
   const [variants, setVariants] = useState<Variant[]>([
     {
@@ -179,14 +190,8 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
   const [closestMatch, setClosestMatch] = useState<{ name: string; score: number } | null>(null);
   const [appliedCategory, setAppliedCategory] = useState<Category | null>(null);
 
-  useEffect(() => {
-    if (variants.length > 0) {
-      setVariants(prev => prev.map((variant, index) =>
-        index === 0 ? { ...variant, title: productName || "Default" } : variant
-      ));
-    }
-  }, [productName]);
-
+  // REMOVED the useEffect that auto-sets first variant title from product name
+  
   const calculateDepreciatedPrice = (originalPrice: number, usagePeriod: number, usageUnit: string, depreciationRate: number): number => {
     if (!originalPrice || !usagePeriod || !depreciationRate) return originalPrice;
     let years = usagePeriod;
@@ -485,6 +490,12 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
         }
       }
     }
+    
+    // Add condition as integer value
+    if (productCondition) {
+      formData.append('condition', productCondition.toString());
+    }
+    
     if (selectedCategoryName?.trim()) {
       let match = globalCategories.find(gc => gc.name.toLowerCase() === selectedCategoryName.toLowerCase());
       if (!match) {
@@ -558,6 +569,17 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
     return '0.00';
   };
 
+  // Condition badge component
+  const ConditionBadge = ({ value }: { value: ConditionValue }) => {
+    const condition = CONDITION_SCALE[value];
+    return (
+      <Badge className={`${condition.color} border flex items-center gap-1`}>
+        <span className="text-yellow-500">{condition.icon}</span>
+        <span>{condition.label}</span>
+      </Badge>
+    );
+  };
+
   return (
     <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
       {/* Progress Steps */}
@@ -605,20 +627,38 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
               {errors.name && <p className="text-sm text-red-600">{errors.name}</p>}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="condition" className="text-gray-700">Condition *</Label>
-              <Select name="condition" required value={productCondition} onValueChange={setProductCondition}>
+              <Label htmlFor="condition" className="flex items-center gap-1 text-gray-700">
+                Condition Rating * 
+                </Label>
+              <Select 
+                name="condition" 
+                required 
+                value={productCondition ? productCondition.toString() : ''} 
+                onValueChange={(value) => setProductCondition(parseInt(value) as ConditionValue)}
+              >
                 <SelectTrigger className="border-gray-300 focus:border-orange-500 focus:ring-orange-500">
-                  <SelectValue placeholder="Select condition" />
+                  <SelectValue placeholder="Select condition rating">
+                    {productCondition && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-yellow-500">{CONDITION_SCALE[productCondition].icon}</span>
+                        <span>{CONDITION_SCALE[productCondition].label}</span>
+                      </div>
+                    )}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Like New">Like New</SelectItem>
-                  <SelectItem value="New">New</SelectItem>
-                  <SelectItem value="Refurbished">Refurbished</SelectItem>
-                  <SelectItem value="Used - Excellent">Used - Excellent</SelectItem>
-                  <SelectItem value="Used - Good">Used - Good</SelectItem>
+                  {Object.entries(CONDITION_SCALE).map(([value, { label, icon }]) => (
+                    <SelectItem key={value} value={value} className="flex items-center gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-yellow-500">{icon}</span>
+                        <span>{label}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               {errors.condition && <p className="text-sm text-red-600">{errors.condition}</p>}
+              
             </div>
           </div>
           <div className="space-y-2">
@@ -884,9 +924,8 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
                     value={variant.title}
                     onChange={(e) => updateVariantField(variant.id, 'title', e.target.value)}
                     placeholder="e.g., Small, Red, etc."
-                    className={`h-9 text-sm border-gray-300 focus:border-orange-500 focus:ring-orange-500 ${index === 0 ? 'bg-gray-50' : ''}`}
+                    className="h-9 text-sm border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                     required
-                    readOnly={index === 0}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -1161,7 +1200,7 @@ export default function CreateProductForm({ selectedShop, globalCategories, mode
             </Button>
             <Button
               type="submit"
-              disabled={!selectedShop || fetcher.state === 'submitting' || variants.length === 0 || variants.some(v => !v.depreciation.calculatedPrice)}
+              disabled={!selectedShop || fetcher.state === 'submitting' || variants.length === 0 || variants.some(v => !v.depreciation.calculatedPrice) || !productCondition}
               className="min-w-[140px] bg-orange-500 hover:bg-orange-600 text-white disabled:bg-orange-300"
               size="lg"
             >
