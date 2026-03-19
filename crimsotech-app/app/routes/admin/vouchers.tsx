@@ -73,6 +73,16 @@ import { format } from 'date-fns';
 import { Switch } from '~/components/ui/switch';
 import { Alert, AlertDescription } from '~/components/ui/alert';
 import { ScrollArea } from '~/components/ui/scroll-area';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '~/components/ui/alert-dialog';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -82,7 +92,7 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
-// Interface to match Django Voucher model
+// Interface to match Django Voucher model - REMOVED valid_until
 interface Voucher {
   id: string;
   name: string;
@@ -93,7 +103,8 @@ interface Voucher {
   } | null;
   discount_type: string;
   value: number;
-  valid_until: string;
+  start_date: string;
+  end_date: string | null;
   added_at: string;
   created_by: {
     id: string;
@@ -106,6 +117,7 @@ interface Voucher {
   shopName?: string;
   minimum_spend: number;
   maximum_usage: number;
+  usage_count?: number;
 }
 
 interface LoaderData {
@@ -114,6 +126,7 @@ interface LoaderData {
     total_vouchers: number;
     active_vouchers: number;
     expired_vouchers: number;
+    scheduled_vouchers: number;
     total_usage: number;
     total_discount: number;
   };
@@ -125,11 +138,20 @@ interface LoaderData {
   };
   shops: { id: string; name: string }[];
   userId: string | null;
+  pagination: {
+    page: number;
+    page_size: number;
+    total_count: number;
+    total_pages: number;
+  };
+  filterOptions: {
+    discount_types: string[];
+    shops: string[];
+    statuses: string[];
+  };
 }
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
-
-
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
 
@@ -145,35 +167,57 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const session = await getSession(request.headers.get("Cookie"));
   const userId = session.get("userId") || null;
 
-  // Parse URL search params for date range
+  // Parse URL search params for date range and filters
   const url = new URL(request.url);
   const startParam = url.searchParams.get('start');
   const endParam = url.searchParams.get('end');
   const rangeTypeParam = url.searchParams.get('rangeType');
+  const pageParam = url.searchParams.get('page');
+  const pageSizeParam = url.searchParams.get('page_size');
+  const searchParam = url.searchParams.get('search');
+  const statusParam = url.searchParams.get('status');
+  const discountTypeParam = url.searchParams.get('discount_type');
+  const shopParam = url.searchParams.get('shop');
 
-  // Set default date range (last 7 days)
-  const defaultStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  // Set default date range (last 30 days)
+  const defaultStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const defaultEnd = new Date();
   
   const startDate = startParam ? new Date(startParam) : defaultStart;
   const endDate = endParam ? new Date(endParam) : defaultEnd;
-  const rangeType = rangeTypeParam || 'weekly';
+  const rangeType = rangeTypeParam || 'monthly';
 
   // Validate dates
   const validStart = !isNaN(startDate.getTime()) ? startDate : defaultStart;
   const validEnd = !isNaN(endDate.getTime()) ? endDate : defaultEnd;
+
+  // Pagination params
+  const page = pageParam ? parseInt(pageParam) : 1;
+  const pageSize = pageSizeParam ? parseInt(pageSizeParam) : 10;
 
   // Initialize empty data structures
   let voucherMetrics = {
     total_vouchers: 0,
     active_vouchers: 0,
     expired_vouchers: 0,
+    scheduled_vouchers: 0,
     total_usage: 0,
     total_discount: 0,
   };
 
   let vouchersList: Voucher[] = [];
   let shopsList: { id: string; name: string }[] = [];
+  let pagination = {
+    page: 1,
+    page_size: 10,
+    total_count: 0,
+    total_pages: 0
+  };
+  let filterOptions = {
+    discount_types: [] as string[],
+    shops: [] as string[],
+    statuses: ['active', 'expired', 'scheduled', 'inactive']
+  };
 
   // Create headers conditionally
   const headers = userId ? { "X-User-Id": userId } : {};
@@ -182,8 +226,8 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     // Fetch real data from API with date range parameters
     const metricsResponse = await AxiosInstance.get('/admin-vouchers/get_metrics/', {
       params: {
-        start_date: validStart.toISOString(),
-        end_date: validEnd.toISOString()
+        start_date: validStart.toISOString().split('T')[0],
+        end_date: validEnd.toISOString().split('T')[0]
       },
       headers
     });
@@ -192,19 +236,29 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
       voucherMetrics = metricsResponse.data.metrics || voucherMetrics;
     }
 
-    // Fetch vouchers list from API with date range parameters
+    // Fetch vouchers list from API with all filters
     const vouchersResponse = await AxiosInstance.get('/admin-vouchers/vouchers_list/', {
       headers,
       params: {
-        start_date: validStart.toISOString(),
-        end_date: validEnd.toISOString(),
-        page: 1,
-        page_size: 50
+        start_date: validStart.toISOString().split('T')[0],
+        end_date: validEnd.toISOString().split('T')[0],
+        page: page,
+        page_size: pageSize,
+        search: searchParam || '',
+        status: statusParam || '',
+        discount_type: discountTypeParam || '',
+        shop: shopParam || ''
       }
     });
 
     if (vouchersResponse.data.success) {
       vouchersList = vouchersResponse.data.vouchers || [];
+      pagination = vouchersResponse.data.pagination || pagination;
+      filterOptions = {
+        ...filterOptions,
+        discount_types: vouchersResponse.data.filter_options?.discount_types || [],
+        shops: vouchersResponse.data.filter_options?.shops || []
+      };
     }
 
     // Fetch shops for dropdown
@@ -235,7 +289,9 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
       end: validEnd.toISOString(),
       rangeType
     },
-    userId
+    userId,
+    pagination,
+    filterOptions
   };
 }
 
@@ -270,8 +326,9 @@ interface AddVoucherFormData {
   value: number | '';
   minimum_spend: number | '';
   maximum_usage: number | '';
-  valid_until: Date | undefined;
-  shop_id: string | null;
+  start_date: Date | undefined;
+  end_date: Date | undefined;
+  shop: string | null;
   is_active: boolean;
 }
 
@@ -293,8 +350,9 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
     value: '',
     minimum_spend: '',
     maximum_usage: '',
-    valid_until: undefined,
-    shop_id: null,
+    start_date: new Date(),
+    end_date: undefined,
+    shop: null,
     is_active: true
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -309,8 +367,9 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
       value: '',
       minimum_spend: '',
       maximum_usage: '',
-      valid_until: undefined,
-      shop_id: null,
+      start_date: new Date(),
+      end_date: undefined,
+      shop: null,
       is_active: true
     });
     setError(null);
@@ -327,7 +386,6 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
     const { name, value, type } = e.target;
     
     if (type === 'number') {
-      // Allow empty string or valid number
       if (value === '') {
         setFormData(prev => ({
           ...prev,
@@ -351,10 +409,17 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
   };
 
   const handleSelectChange = (name: string, value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    if (name === 'shop') {
+      setFormData(prev => ({
+        ...prev,
+        [name]: value === 'global' ? null : value
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        [name]: value
+      }));
+    }
   };
 
   const handleSwitchChange = (checked: boolean) => {
@@ -364,10 +429,17 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
     }));
   };
 
-  const handleDateChange = (date: Date | undefined) => {
+  const handleStartDateChange = (date: Date | undefined) => {
     setFormData(prev => ({
       ...prev,
-      valid_until: date
+      start_date: date
+    }));
+  };
+
+  const handleEndDateChange = (date: Date | undefined) => {
+    setFormData(prev => ({
+      ...prev,
+      end_date: date
     }));
   };
 
@@ -391,8 +463,12 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
       setError('Discount value must be greater than 0');
       return false;
     }
-    if (!formData.valid_until) {
-      setError('Valid until date is required');
+    if (!formData.end_date) {
+      setError('End date is required');
+      return false;
+    }
+    if (formData.start_date && formData.end_date && formData.start_date > formData.end_date) {
+      setError('End date must be after start date');
       return false;
     }
     return true;
@@ -405,30 +481,52 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
     setError(null);
 
     try {
-      // Format data for API
-      const payload = {
+      // Format data for API - match the Voucher model exactly
+      const payload: any = {
         name: formData.name,
-        code: formData.code,
+        code: formData.code.toUpperCase(),
         discount_type: formData.discount_type,
-        value: formData.value,
-        minimum_spend: formData.minimum_spend === '' ? 0 : formData.minimum_spend,
-        maximum_usage: formData.maximum_usage === '' ? 0 : formData.maximum_usage,
-        valid_until: formData.valid_until?.toISOString().split('T')[0],
-        shop: formData.shop_id === 'global' ? null : formData.shop_id,
+        value: Number(formData.value),
+        minimum_spend: formData.minimum_spend === '' ? 0 : Number(formData.minimum_spend),
+        maximum_usage: formData.maximum_usage === '' ? 0 : Number(formData.maximum_usage),
+        start_date: formData.start_date ? format(formData.start_date, 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd'),
+        end_date: formData.end_date ? format(formData.end_date, 'yyyy-MM-dd') : null,
         is_active: formData.is_active
       };
 
+      // Handle shop field - send as null for global, or the actual shop ID
+      payload.shop = formData.shop;
+
       // Create headers conditionally
-      const headers = userId ? { "X-User-Id": userId } : {};
+      const headers: Record<string, string> = {};
+      if (userId) {
+        headers["X-User-Id"] = userId;
+      }
+
+      console.log('Submitting voucher payload:', payload);
       
-      await AxiosInstance.post('/admin-vouchers/create/', payload, {
+      const response = await AxiosInstance.post('/admin-vouchers/add_voucher/', payload, {
         headers
       });
 
-      handleOpenChange(false);
-      onSuccess();
+      console.log('Voucher creation response:', response.data);
+
+      if (response.data.success) {
+        handleOpenChange(false);
+        onSuccess();
+      } else {
+        setError(response.data.error || response.data.message || 'Failed to create voucher. Please try again.');
+      }
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to create voucher. Please try again.');
+      console.error('Error creating voucher:', err);
+      console.error('Error response:', err.response?.data);
+      
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.message || 
+                          err.response?.data?.detail ||
+                          err.message ||
+                          'Failed to create voucher. Please try again.';
+      setError(errorMessage);
     } finally {
       setIsSubmitting(false);
     }
@@ -574,39 +672,68 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
         </div>
       </div>
 
-      <div className="grid gap-2">
-        <Label>Valid Until *</Label>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              className={cn(
-                "w-full justify-start text-left font-normal",
-                !formData.valid_until && "text-muted-foreground"
-              )}
-              disabled={isSubmitting}
-            >
-              <CalendarIcon className="mr-2 h-4 w-4" />
-              {formData.valid_until ? format(formData.valid_until, "PPP") : <span>Pick a date</span>}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0">
-            <CalendarComponent
-              mode="single"
-              selected={formData.valid_until}
-              onSelect={handleDateChange}
-              initialFocus
-              disabled={(date) => date < new Date()}
-            />
-          </PopoverContent>
-        </Popover>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-2">
+          <Label>Start Date *</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                className={cn(
+                  "w-full justify-start text-left font-normal",
+                  !formData.start_date && "text-muted-foreground"
+                )}
+                disabled={isSubmitting}
+              >
+                <CalendarIcon className="mr-2 h-4 w-4" />
+                {formData.start_date ? format(formData.start_date, "PPP") : <span>Pick a date</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0">
+              <CalendarComponent
+                mode="single"
+                selected={formData.start_date}
+                onSelect={handleStartDateChange}
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        <div className="grid gap-2">
+          <Label>End Date *</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                className={cn(
+                  "w-full justify-start text-left font-normal",
+                  !formData.end_date && "text-muted-foreground"
+                )}
+                disabled={isSubmitting}
+              >
+                <CalendarIcon className="mr-2 h-4 w-4" />
+                {formData.end_date ? format(formData.end_date, "PPP") : <span>Pick a date</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0">
+              <CalendarComponent
+                mode="single"
+                selected={formData.end_date}
+                onSelect={handleEndDateChange}
+                initialFocus
+                disabled={(date) => formData.start_date ? date < formData.start_date : date < new Date()}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
 
       <div className="grid gap-2">
-        <Label htmlFor="shop_id">Shop (Optional)</Label>
+        <Label htmlFor="shop">Shop (Optional)</Label>
         <Select
-          value={formData.shop_id || 'global'}
-          onValueChange={(value) => handleSelectChange('shop_id', value)}
+          value={formData.shop === null ? 'global' : formData.shop || ''}
+          onValueChange={(value) => handleSelectChange('shop', value)}
           disabled={isSubmitting}
         >
           <SelectTrigger>
@@ -621,7 +748,7 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground">Leave empty to make this a global voucher</p>
+        <p className="text-xs text-muted-foreground">Select a shop or choose Global for all shops</p>
       </div>
 
       <div className="flex items-center space-x-2 pt-2">
@@ -664,8 +791,6 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
 
   return (
     <Drawer open={open} onOpenChange={handleOpenChange}>
-      {/* ✅ FIX: Use a fixed height instead of h-[95vh] with flex,
-          so the DrawerFooter is never pushed off-screen by ScrollArea */}
       <DrawerContent className="flex flex-col max-h-[95vh]">
         <DrawerHeader className="text-left border-b px-4 py-3 flex-shrink-0">
           <DrawerTitle className="text-xl">Create New Voucher</DrawerTitle>
@@ -674,7 +799,6 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
           </DrawerDescription>
         </DrawerHeader>
 
-        {/* ✅ FIX: overflow-y-auto with a calculated height instead of flex-1 ScrollArea */}
         <div className="overflow-y-auto flex-1 px-4 py-2">
           {formContent}
         </div>
@@ -696,13 +820,685 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
   );
 };
 
+// Edit Voucher Modal Component
+interface EditVoucherModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSuccess: () => void;
+  voucher: Voucher | null;
+  shops: { id: string; name: string }[];
+  userId: string | null;
+}
+
+const EditVoucherModal = ({ open, onOpenChange, onSuccess, voucher, shops, userId }: EditVoucherModalProps) => {
+  const isMobile = useIsMobile();
+  const [formData, setFormData] = useState<AddVoucherFormData>({
+    name: '',
+    code: '',
+    description: '',
+    discount_type: 'percentage',
+    value: '',
+    minimum_spend: '',
+    maximum_usage: '',
+    start_date: undefined,
+    end_date: undefined,
+    shop: null,
+    is_active: true
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (voucher) {
+      setFormData({
+        name: voucher.name || '',
+        code: voucher.code || '',
+        description: '',
+        discount_type: (voucher.discount_type as 'percentage' | 'fixed') || 'percentage',
+        value: voucher.value || '',
+        minimum_spend: voucher.minimum_spend || '',
+        maximum_usage: voucher.maximum_usage || '',
+        start_date: voucher.start_date ? new Date(voucher.start_date) : undefined,
+        end_date: voucher.end_date ? new Date(voucher.end_date) : undefined,
+        shop: voucher.shop?.id || null,
+        is_active: voucher.is_active
+      });
+    }
+  }, [voucher]);
+
+  const resetForm = () => {
+    setFormData({
+      name: '',
+      code: '',
+      description: '',
+      discount_type: 'percentage',
+      value: '',
+      minimum_spend: '',
+      maximum_usage: '',
+      start_date: undefined,
+      end_date: undefined,
+      shop: null,
+      is_active: true
+    });
+    setError(null);
+  };
+
+  const handleOpenChange = (newOpen: boolean) => {
+    if (!newOpen) {
+      resetForm();
+    }
+    onOpenChange(newOpen);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value, type } = e.target;
+    
+    if (type === 'number') {
+      if (value === '') {
+        setFormData(prev => ({
+          ...prev,
+          [name]: ''
+        }));
+      } else {
+        const numValue = parseFloat(value);
+        if (!isNaN(numValue)) {
+          setFormData(prev => ({
+            ...prev,
+            [name]: numValue
+          }));
+        }
+      }
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        [name]: value
+      }));
+    }
+  };
+
+  const handleSelectChange = (name: string, value: string) => {
+    if (name === 'shop') {
+      setFormData(prev => ({
+        ...prev,
+        [name]: value === 'global' ? null : value
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        [name]: value
+      }));
+    }
+  };
+
+  const handleSwitchChange = (checked: boolean) => {
+    setFormData(prev => ({
+      ...prev,
+      is_active: checked
+    }));
+  };
+
+  const handleStartDateChange = (date: Date | undefined) => {
+    setFormData(prev => ({
+      ...prev,
+      start_date: date
+    }));
+  };
+
+  const handleEndDateChange = (date: Date | undefined) => {
+    setFormData(prev => ({
+      ...prev,
+      end_date: date
+    }));
+  };
+
+  const generateNewCode = () => {
+    setFormData(prev => ({
+      ...prev,
+      code: generateVoucherCode()
+    }));
+  };
+
+  const validateForm = (): boolean => {
+    if (!formData.name.trim()) {
+      setError('Voucher name is required');
+      return false;
+    }
+    if (!formData.code.trim()) {
+      setError('Voucher code is required');
+      return false;
+    }
+    if (formData.value === '' || formData.value <= 0) {
+      setError('Discount value must be greater than 0');
+      return false;
+    }
+    if (!formData.end_date) {
+      setError('End date is required');
+      return false;
+    }
+    if (formData.start_date && formData.end_date && formData.start_date > formData.end_date) {
+      setError('End date must be after start date');
+      return false;
+    }
+    return true;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm() || !voucher) return;
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      const payload: any = {
+        name: formData.name,
+        code: formData.code.toUpperCase(),
+        discount_type: formData.discount_type,
+        value: Number(formData.value),
+        minimum_spend: formData.minimum_spend === '' ? 0 : Number(formData.minimum_spend),
+        maximum_usage: formData.maximum_usage === '' ? 0 : Number(formData.maximum_usage),
+        start_date: formData.start_date ? format(formData.start_date, 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd'),
+        end_date: formData.end_date ? format(formData.end_date, 'yyyy-MM-dd') : null,
+        is_active: formData.is_active
+      };
+
+      payload.shop = formData.shop;
+
+      const headers: Record<string, string> = {};
+      if (userId) {
+        headers["X-User-Id"] = userId;
+      }
+
+      const response = await AxiosInstance.put(`/admin-vouchers/update_voucher/${voucher.id}/`, payload, {
+        headers
+      });
+
+      if (response.data.success) {
+        handleOpenChange(false);
+        onSuccess();
+      } else {
+        setError(response.data.error || response.data.message || 'Failed to update voucher.');
+      }
+    } catch (err: any) {
+      console.error('Error updating voucher:', err);
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.message || 
+                          err.message ||
+                          'Failed to update voucher.';
+      setError(errorMessage);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const formContent = (
+    <div className="grid gap-4 py-4">
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid gap-2">
+        <Label htmlFor="name">Voucher Name *</Label>
+        <Input
+          id="name"
+          name="name"
+          value={formData.name}
+          onChange={handleInputChange}
+          placeholder="e.g., Summer Sale 2024"
+          disabled={isSubmitting}
+        />
+      </div>
+
+      <div className="grid gap-2">
+        <Label htmlFor="code">Voucher Code *</Label>
+        <div className="flex gap-2">
+          <Input
+            id="code"
+            name="code"
+            value={formData.code}
+            onChange={handleInputChange}
+            placeholder="VOUCHER123"
+            disabled={isSubmitting}
+            className="uppercase"
+          />
+          <Button 
+            type="button" 
+            variant="outline" 
+            onClick={generateNewCode}
+            disabled={isSubmitting}
+          >
+            Generate
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-2">
+        <Label>Discount Type *</Label>
+        <RadioGroup
+          value={formData.discount_type}
+          onValueChange={(value) => handleSelectChange('discount_type', value as 'percentage' | 'fixed')}
+          className="flex gap-4"
+          disabled={isSubmitting}
+        >
+          <div className="flex items-center space-x-2">
+            <RadioGroupItem value="percentage" id="edit-percentage" />
+            <Label htmlFor="edit-percentage" className="cursor-pointer">Percentage (%)</Label>
+          </div>
+          <div className="flex items-center space-x-2">
+            <RadioGroupItem value="fixed" id="edit-fixed" />
+            <Label htmlFor="edit-fixed" className="cursor-pointer">Fixed Amount (₱)</Label>
+          </div>
+        </RadioGroup>
+      </div>
+
+      <div className="grid gap-2">
+        <Label htmlFor="value">
+          {formData.discount_type === 'percentage' ? 'Discount Percentage *' : 'Discount Amount *'}
+        </Label>
+        <div className="relative">
+          {formData.discount_type === 'fixed' && (
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">₱</span>
+          )}
+          <Input
+            id="value"
+            name="value"
+            type="number"
+            min="0"
+            step={formData.discount_type === 'percentage' ? "1" : "0.01"}
+            value={formData.value}
+            onChange={handleInputChange}
+            placeholder={formData.discount_type === 'percentage' ? "20" : "100"}
+            disabled={isSubmitting}
+            className={formData.discount_type === 'fixed' ? "pl-8" : ""}
+          />
+          {formData.discount_type === 'percentage' && (
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-2">
+          <Label htmlFor="minimum_spend">Minimum Spend</Label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">₱</span>
+            <Input
+              id="minimum_spend"
+              name="minimum_spend"
+              type="number"
+              min="0"
+              step="0.01"
+              value={formData.minimum_spend}
+              onChange={handleInputChange}
+              placeholder="0"
+              disabled={isSubmitting}
+              className="pl-8"
+            />
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          <Label htmlFor="maximum_usage">Max Usage</Label>
+          <Input
+            id="maximum_usage"
+            name="maximum_usage"
+            type="number"
+            min="0"
+            step="1"
+            value={formData.maximum_usage}
+            onChange={handleInputChange}
+            placeholder="0"
+            disabled={isSubmitting}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-2">
+          <Label>Start Date *</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                className={cn(
+                  "w-full justify-start text-left font-normal",
+                  !formData.start_date && "text-muted-foreground"
+                )}
+                disabled={isSubmitting}
+              >
+                <CalendarIcon className="mr-2 h-4 w-4" />
+                {formData.start_date ? format(formData.start_date, "PPP") : <span>Pick a date</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0">
+              <CalendarComponent
+                mode="single"
+                selected={formData.start_date}
+                onSelect={handleStartDateChange}
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        <div className="grid gap-2">
+          <Label>End Date *</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                className={cn(
+                  "w-full justify-start text-left font-normal",
+                  !formData.end_date && "text-muted-foreground"
+                )}
+                disabled={isSubmitting}
+              >
+                <CalendarIcon className="mr-2 h-4 w-4" />
+                {formData.end_date ? format(formData.end_date, "PPP") : <span>Pick a date</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0">
+              <CalendarComponent
+                mode="single"
+                selected={formData.end_date}
+                onSelect={handleEndDateChange}
+                initialFocus
+                disabled={(date) => formData.start_date ? date < formData.start_date : date < new Date()}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
+      </div>
+
+      <div className="grid gap-2">
+        <Label htmlFor="shop">Shop</Label>
+        <Select
+          value={formData.shop === null ? 'global' : formData.shop || ''}
+          onValueChange={(value) => handleSelectChange('shop', value)}
+          disabled={isSubmitting}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select a shop" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="global">Global Voucher (All Shops)</SelectItem>
+            {shops.map((shop) => (
+              <SelectItem key={shop.id} value={shop.id}>
+                {shop.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="flex items-center space-x-2 pt-2">
+        <Switch
+          id="edit-is_active"
+          checked={formData.is_active}
+          onCheckedChange={handleSwitchChange}
+          disabled={isSubmitting}
+        />
+        <Label htmlFor="edit-is_active">Active</Label>
+      </div>
+    </div>
+  );
+
+  if (!isMobile) {
+    return (
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent className="sm:max-w-[600px] p-0">
+          <DialogHeader className="px-6 pt-6">
+            <DialogTitle className="text-xl">Edit Voucher</DialogTitle>
+            <DialogDescription>
+              Update the voucher details below.
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh] px-6">
+            {formContent}
+          </ScrollArea>
+          <DialogFooter className="px-6 pb-6 pt-2">
+            <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700">
+              {isSubmitting ? 'Updating...' : 'Update Voucher'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Drawer open={open} onOpenChange={handleOpenChange}>
+      <DrawerContent className="flex flex-col max-h-[95vh]">
+        <DrawerHeader className="text-left border-b px-4 py-3 flex-shrink-0">
+          <DrawerTitle className="text-xl">Edit Voucher</DrawerTitle>
+          <DrawerDescription>
+            Update the voucher details below.
+          </DrawerDescription>
+        </DrawerHeader>
+
+        <div className="overflow-y-auto flex-1 px-4 py-2">
+          {formContent}
+        </div>
+
+        <DrawerFooter className="border-t pt-3 pb-4 px-4 flex-shrink-0">
+          <div className="flex flex-col gap-2">
+            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 w-full">
+              {isSubmitting ? 'Updating...' : 'Update Voucher'}
+            </Button>
+            <DrawerClose asChild>
+              <Button variant="outline" disabled={isSubmitting} className="w-full">
+                Cancel
+              </Button>
+            </DrawerClose>
+          </div>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
+  );
+};
+
+// Delete Confirmation Dialog
+interface DeleteVoucherDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSuccess: () => void;
+  voucher: Voucher | null;
+  userId: string | null;
+}
+
+const DeleteVoucherDialog = ({ open, onOpenChange, onSuccess, voucher, userId }: DeleteVoucherDialogProps) => {
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleDelete = async () => {
+    if (!voucher) return;
+
+    setIsDeleting(true);
+    setError(null);
+
+    try {
+      const headers: Record<string, string> = {};
+      if (userId) {
+        headers["X-User-Id"] = userId;
+      }
+
+      const response = await AxiosInstance.delete(`/admin-vouchers/delete_voucher/${voucher.id}/`, {
+        headers
+      });
+
+      if (response.data.success) {
+        onOpenChange(false);
+        onSuccess();
+      } else {
+        setError(response.data.error || response.data.message || 'Failed to delete voucher.');
+      }
+    } catch (err: any) {
+      console.error('Error deleting voucher:', err);
+      setError(err.response?.data?.error || err.message || 'Failed to delete voucher.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This action cannot be undone. This will permanently delete the voucher
+            "{voucher?.name}" (Code: {voucher?.code}).
+            {voucher?.usage_count && voucher.usage_count > 0 && (
+              <span className="block mt-2 text-yellow-600">
+                Note: This voucher has been used {voucher.usage_count} times. It will be deactivated instead of deleted.
+              </span>
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="bg-red-600 hover:bg-red-700"
+          >
+            {isDeleting ? 'Deleting...' : 'Delete'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+};
+
+// View Voucher Details Dialog
+interface ViewVoucherDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  voucher: Voucher | null;
+}
+
+const ViewVoucherDialog = ({ open, onOpenChange, voucher }: ViewVoucherDialogProps) => {
+  if (!voucher) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle>Voucher Details</DialogTitle>
+          <DialogDescription>
+            Detailed information about this voucher.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-4">
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Name:</div>
+            <div className="col-span-2">{voucher.name}</div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Code:</div>
+            <div className="col-span-2">
+              <Badge variant="secondary" className="font-mono">
+                {voucher.code}
+              </Badge>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Shop:</div>
+            <div className="col-span-2">{voucher.shop?.name || 'Global'}</div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Discount Type:</div>
+            <div className="col-span-2 capitalize">{voucher.discount_type}</div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Value:</div>
+            <div className="col-span-2">
+              {voucher.discount_type === 'percentage' ? `${voucher.value}%` : `₱${voucher.value}`}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Minimum Spend:</div>
+            <div className="col-span-2">₱{voucher.minimum_spend || 0}</div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Maximum Usage:</div>
+            <div className="col-span-2">{voucher.maximum_usage || 'Unlimited'}</div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Usage Count:</div>
+            <div className="col-span-2">{voucher.usage_count || 0}</div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Start Date:</div>
+            <div className="col-span-2">
+              {voucher.start_date ? new Date(voucher.start_date).toLocaleDateString() : 'N/A'}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">End Date:</div>
+            <div className="col-span-2">
+              {voucher.end_date ? new Date(voucher.end_date).toLocaleDateString() : 'N/A'}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Added At:</div>
+            <div className="col-span-2">
+              {voucher.added_at ? new Date(voucher.added_at).toLocaleDateString() : 'N/A'}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Created By:</div>
+            <div className="col-span-2">
+              {voucher.created_by ? `${voucher.created_by.first_name} ${voucher.created_by.last_name}` : 'System'}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Status:</div>
+            <div className="col-span-2">
+              <Badge 
+                variant="secondary"
+                className="capitalize"
+                style={{ 
+                  backgroundColor: voucher.status === 'active' ? '#10b98120' : 
+                                 voucher.status === 'scheduled' ? '#3b82f620' : 
+                                 voucher.status === 'expired' ? '#ef444420' : '#6b728020',
+                  color: voucher.status === 'active' ? '#10b981' : 
+                        voucher.status === 'scheduled' ? '#3b82f6' : 
+                        voucher.status === 'expired' ? '#ef4444' : '#6b7280'
+                }}
+              >
+                {voucher.status}
+              </Badge>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="font-semibold">Active:</div>
+            <div className="col-span-2">{voucher.is_active ? 'Yes' : 'No'}</div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 export default function Vouchers() {
   const loaderData = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user, voucherMetrics, vouchers, dateRange, shops, userId } = loaderData;
+  const { user, voucherMetrics, vouchers, dateRange, shops, userId, pagination, filterOptions } = loaderData;
 
-  // State management for date range
+  // State management
   const [currentDateRange, setCurrentDateRange] = useState({
     start: new Date(dateRange.start),
     end: new Date(dateRange.end),
@@ -711,18 +1507,21 @@ export default function Vouchers() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [isAddVoucherOpen, setIsAddVoucherOpen] = useState(false);
+  const [isEditVoucherOpen, setIsEditVoucherOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+  const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
 
-  // Handle date range change - update URL search params
+  // Handle date range change
   const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
     setIsLoading(true);
     
-    // Update URL search params
     const newSearchParams = new URLSearchParams(searchParams);
     newSearchParams.set('start', range.start.toISOString());
     newSearchParams.set('end', range.end.toISOString());
     newSearchParams.set('rangeType', range.rangeType);
+    newSearchParams.set('page', '1'); // Reset to first page
     
-    // Navigate to update the URL, which will trigger a new loader call
     navigate(`?${newSearchParams.toString()}`, { replace: true });
     
     setCurrentDateRange({
@@ -732,15 +1531,56 @@ export default function Vouchers() {
     });
   };
 
-  // Reset loading state when loader data changes
+  // Handle filter change
+  const handleFilterChange = (key: string, value: string) => {
+    setIsLoading(true);
+    
+    const newSearchParams = new URLSearchParams(searchParams);
+    if (value) {
+      newSearchParams.set(key, value);
+    } else {
+      newSearchParams.delete(key);
+    }
+    newSearchParams.set('page', '1'); // Reset to first page
+    
+    navigate(`?${newSearchParams.toString()}`, { replace: true });
+  };
+
+  // Handle page change
+  const handlePageChange = (newPage: number) => {
+    setIsLoading(true);
+    
+    const newSearchParams = new URLSearchParams(searchParams);
+    newSearchParams.set('page', newPage.toString());
+    
+    navigate(`?${newSearchParams.toString()}`, { replace: true });
+  };
+
+  // Reset loading state
   useEffect(() => {
     setIsLoading(false);
   }, [loaderData]);
 
-  // Handle successful voucher creation
-  const handleVoucherCreated = () => {
-    // Refresh the page to show new voucher
+  // Handle successful voucher creation/update/deletion
+  const handleVoucherChanged = () => {
+    // Refresh the page
     navigate('.', { replace: true });
+  };
+
+  // Action handlers
+  const handleView = (voucher: Voucher) => {
+    setSelectedVoucher(voucher);
+    setIsViewDialogOpen(true);
+  };
+
+  const handleEdit = (voucher: Voucher) => {
+    setSelectedVoucher(voucher);
+    setIsEditVoucherOpen(true);
+  };
+
+  const handleDelete = (voucher: Voucher) => {
+    setSelectedVoucher(voucher);
+    setIsDeleteDialogOpen(true);
   };
 
   if (!loaderData) {
@@ -756,51 +1596,52 @@ export default function Vouchers() {
     total_vouchers: 0,
     active_vouchers: 0,
     expired_vouchers: 0,
+    scheduled_vouchers: 0,
     total_usage: 0,
     total_discount: 0,
   };
 
   const hasVouchers = safeVouchers.length > 0;
 
-  // Calculate status based on is_active and valid_until date
+  // Get status based on voucher data
   const getVoucherStatus = (voucher: Voucher) => {
     const now = new Date();
-    const validUntil = new Date(voucher.valid_until);
+    const startDate = voucher.start_date ? new Date(voucher.start_date) : null;
+    const endDate = voucher.end_date ? new Date(voucher.end_date) : null;
     
     if (!voucher.is_active) {
-      if (validUntil > now) return 'scheduled';
-      return 'expired';
+      if (endDate && endDate < now) return 'expired';
+      if (startDate && startDate > now) return 'scheduled';
+      return 'inactive';
     }
     
-    if (validUntil < now) return 'expired';
+    if (endDate && endDate < now) return 'expired';
+    if (startDate && startDate > now) return 'scheduled';
     return 'active';
   };
 
-  // Add status field to vouchers for filtering
+  // Add status field to vouchers
   const vouchersWithStatus = safeVouchers.map(voucher => ({
     ...voucher,
     status: voucher.status || getVoucherStatus(voucher),
     shopName: voucher.shopName || voucher.shop?.name || 'Global'
   }));
 
-  // Get unique filter options from actual data
-  const discountTypes = [...new Set(safeVouchers.map(voucher => voucher.discount_type).filter(Boolean))] as string[];
-  const shopNames = [...new Set(vouchersWithStatus.map(voucher => voucher.shopName).filter(Boolean))];
-
+  // Filter config from API data
   const voucherFilterConfig = {
     status: {
       accessorKey: "status",
-      options: ['active', 'scheduled', 'expired'],
+      options: filterOptions.statuses,
       placeholder: 'Status'
     },
     discount_type: {
       accessorKey: "discount_type",
-      options: discountTypes.length > 0 ? discountTypes : ['percentage', 'fixed'],
+      options: filterOptions.discount_types.length > 0 ? filterOptions.discount_types : ['percentage', 'fixed'],
       placeholder: 'Discount Type'
     },
     shop: {
       accessorKey: "shopName",
-      options: shopNames.length > 0 ? shopNames : ['Global'],
+      options: filterOptions.shops.length > 0 ? filterOptions.shops : ['Global'],
       placeholder: 'Shop'
     }
   };
@@ -823,13 +1664,36 @@ export default function Vouchers() {
             </Button>
           </div>
 
-          {/* Add Voucher Modal/Drawer */}
+          {/* Modals/Drawers */}
           <AddVoucherModal 
             open={isAddVoucherOpen}
             onOpenChange={setIsAddVoucherOpen}
-            onSuccess={handleVoucherCreated}
+            onSuccess={handleVoucherChanged}
             shops={shops}
             userId={userId}
+          />
+
+          <EditVoucherModal 
+            open={isEditVoucherOpen}
+            onOpenChange={setIsEditVoucherOpen}
+            onSuccess={handleVoucherChanged}
+            voucher={selectedVoucher}
+            shops={shops}
+            userId={userId}
+          />
+
+          <DeleteVoucherDialog 
+            open={isDeleteDialogOpen}
+            onOpenChange={setIsDeleteDialogOpen}
+            onSuccess={handleVoucherChanged}
+            voucher={selectedVoucher}
+            userId={userId}
+          />
+
+          <ViewVoucherDialog 
+            open={isViewDialogOpen}
+            onOpenChange={setIsViewDialogOpen}
+            voucher={selectedVoucher}
           />
 
           {/* Date Range Filter */}
@@ -907,13 +1771,18 @@ export default function Vouchers() {
               <div>
                 <CardTitle className="text-lg sm:text-xl">All Vouchers</CardTitle>
                 <CardDescription>
-                  {isLoading ? 'Loading vouchers...' : `Showing ${vouchersWithStatus.length} vouchers`}
+                  {isLoading ? 'Loading vouchers...' : `Showing ${vouchersWithStatus.length} of ${pagination.total_count} vouchers`}
                 </CardDescription>
               </div>
               <Button 
                 variant="outline" 
                 size="sm"
                 className="flex items-center gap-2"
+                onClick={() => {
+                  // Handle export
+                  const params = new URLSearchParams(searchParams);
+                  window.open(`/api/admin-vouchers/export/?${params.toString()}`, '_blank');
+                }}
               >
                 <Download className="w-4 h-4" />
                 Export
@@ -922,15 +1791,15 @@ export default function Vouchers() {
             <CardContent>
               {isLoading ? (
                 <div className="space-y-3">
-                  <div className="h-10 bg-gray-200 rounded"></div>
+                  <div className="h-10 bg-gray-200 rounded animate-pulse"></div>
                   {[1, 2, 3, 4, 5].map((i) => (
-                    <div key={i} className="h-12 bg-gray-200 rounded"></div>
+                    <div key={i} className="h-12 bg-gray-200 rounded animate-pulse"></div>
                   ))}
                 </div>
               ) : hasVouchers ? (
                 <div className="rounded-md">
                   <DataTable 
-                    columns={columns} 
+                    columns={columns(handleView, handleEdit, handleDelete)} 
                     data={vouchersWithStatus}
                     filterConfig={voucherFilterConfig}
                     searchConfig={{
@@ -951,7 +1820,12 @@ export default function Vouchers() {
   );
 }
 
-const columns: ColumnDef<any>[] = [
+// Update columns to accept handlers
+const columns = (
+  onView: (voucher: Voucher) => void,
+  onEdit: (voucher: Voucher) => void,
+  onDelete: (voucher: Voucher) => void
+): ColumnDef<any>[] => [
   {
     accessorKey: "name",
     header: "Name",
@@ -982,6 +1856,21 @@ const columns: ColumnDef<any>[] = [
           >
             <Copy className="w-3 h-3" />
           </Button>
+        </div>
+      );
+    },
+  },
+  {
+    accessorKey: "usage_count",
+    header: "Usage",
+    cell: ({ row }: { row: any}) => {
+      const usage = row.original.usage_count || 0;
+      const maxUsage = row.original.maximum_usage;
+      
+      return (
+        <div className="text-xs sm:text-sm">
+          {usage}
+          {maxUsage > 0 && <span className="text-muted-foreground">/{maxUsage}</span>}
         </div>
       );
     },
@@ -1041,11 +1930,14 @@ const columns: ColumnDef<any>[] = [
     },
   },
   {
-    accessorKey: "valid_until",
+    accessorKey: "end_date",
     header: "Valid Until",
     cell: ({ row }: { row: any}) => {
-      const date = new Date(row.getValue("valid_until"));
-      if (isNaN(date.getTime())) return <div className="text-muted-foreground">N/A</div>;
+      const dateStr = row.original.end_date;
+      if (!dateStr) return <div className="text-muted-foreground">No end date</div>;
+      
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return <div className="text-muted-foreground">Invalid date</div>;
       
       const formattedDate = date.toLocaleDateString('en-US', {
         month: 'short',
@@ -1058,27 +1950,6 @@ const columns: ColumnDef<any>[] = [
       return (
         <div className={`flex items-center gap-1 text-xs sm:text-sm ${isExpired ? 'text-red-600' : ''}`}>
           <Calendar className="w-3 h-3" />
-          {formattedDate}
-          {isExpired && <span className="text-xs">(Expired)</span>}
-        </div>
-      );
-    },
-  },
-  {
-    accessorKey: "added_at",
-    header: "Added At",
-    cell: ({ row }: { row: any}) => {
-      const date = new Date(row.getValue("added_at"));
-      if (isNaN(date.getTime())) return <div className="text-muted-foreground">N/A</div>;
-      
-      const formattedDate = date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      });
-      
-      return (
-        <div className="text-xs sm:text-sm">
           {formattedDate}
         </div>
       );
@@ -1118,13 +1989,28 @@ const columns: ColumnDef<any>[] = [
       
       return (
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-8 w-8 p-0"
+            onClick={() => onView(voucher)}
+          >
             <Eye className="w-3 h-3" />
           </Button>
-          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-8 w-8 p-0"
+            onClick={() => onEdit(voucher)}
+          >
             <Edit className="w-3 h-3" />
           </Button>
-          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-red-600 hover:text-red-700">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-8 w-8 p-0 text-red-600 hover:text-red-700"
+            onClick={() => onDelete(voucher)}
+          >
             <Trash2 className="w-3 h-3" />
           </Button>
         </div>

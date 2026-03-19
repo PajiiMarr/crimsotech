@@ -7625,14 +7625,82 @@ class AdminRiders(viewsets.ViewSet):
             }, status=status.HTTP_404_NOT_FOUND)
 
 class AdminVouchers(viewsets.ViewSet):
+    @action(detail=False, methods=['post'])
+    def add_voucher(self, request):
+        """
+        Add a new voucher
+        """
+        try:
+            data = request.data.copy()
+            
+            # Set created_by to current user
+            data['created_by'] = request.user.id if request.user.is_authenticated else None
+            
+            # Validate required fields
+            required_fields = ['name', 'code', 'discount_type', 'value']
+            for field in required_fields:
+                if field not in data or not data[field]:
+                    return Response({
+                        'success': False,
+                        'error': f'{field} is required'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check if voucher code already exists
+            if Voucher.objects.filter(code=data['code']).exists():
+                return Response({
+                    'success': False,
+                    'error': 'Voucher code already exists'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle date fields
+            if 'start_date' in data and data['start_date']:
+                if isinstance(data['start_date'], str):
+                    data['start_date'] = parse_date(data['start_date'])
+            
+            if 'end_date' in data and data['end_date']:
+                if isinstance(data['end_date'], str):
+                    data['end_date'] = parse_date(data['end_date'])
+            
+            # Create voucher
+            serializer = VoucherSerializer(data=data)
+            if serializer.is_valid():
+                voucher = serializer.save()
+                
+                return Response({
+                    'success': True,
+                    'message': 'Voucher created successfully',
+                    'voucher': {
+                        'id': str(voucher.id),
+                        'name': voucher.name,
+                        'code': voucher.code,
+                        'discount_type': voucher.discount_type,
+                        'value': float(voucher.value),
+                        'start_date': voucher.start_date.isoformat() if voucher.start_date else None,
+                        'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
+                        'is_active': voucher.is_active
+                    }
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response({
+                    'success': False,
+                    'error': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            import traceback
+            print(f"Error in add_voucher: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """
         Get voucher metrics for admin dashboard with date range filtering
         """
         try:
-            from django.utils.dateparse import parse_datetime, parse_date
-            
             # Parse date range parameters
             start_date_str = request.GET.get('start_date')
             end_date_str = request.GET.get('end_date')
@@ -7641,112 +7709,78 @@ class AdminVouchers(viewsets.ViewSet):
             date_filter = {}
             
             if start_date_str:
-                try:
-                    # Try parsing as datetime first, then as date
-                    start_date = parse_datetime(start_date_str)
-                    if start_date:
-                        date_filter['added_at__gte'] = start_date.date()
-                    else:
-                        # Try parsing as date string
-                        start_date = parse_date(start_date_str)
-                        if start_date:
-                            date_filter['added_at__gte'] = start_date
-                except (ValueError, TypeError, AttributeError) as e:
-                    print(f"Error parsing start date: {e}")
-                    pass
-                    
+                start_date = parse_date(start_date_str)
+                if start_date:
+                    date_filter['added_at__gte'] = start_date
+            
             if end_date_str:
-                try:
-                    # Try parsing as datetime first, then as date
-                    end_date = parse_datetime(end_date_str)
-                    if end_date:
-                        date_filter['added_at__lte'] = end_date.date()
-                    else:
-                        # Try parsing as date string
-                        end_date = parse_date(end_date_str)
-                        if end_date:
-                            date_filter['added_at__lte'] = end_date
-                except (ValueError, TypeError, AttributeError) as e:
-                    print(f"Error parsing end date: {e}")
-                    pass
+                end_date = parse_date(end_date_str)
+                if end_date:
+                    date_filter['added_at__lte'] = end_date
             
             print(f"Date filter: {date_filter}")
             
             # Calculate total vouchers with date filter
             total_vouchers = Voucher.objects.filter(**date_filter).count()
             
-            # Calculate active vouchers (is_active=True and not expired)
+            # Calculate active vouchers (is_active=True and within date range)
             now = timezone.now().date()
             active_filter = date_filter.copy()
             active_filter.update({
                 'is_active': True,
-                'valid_until__gte': now
+                'start_date__lte': now,
             })
+            
+            # Add end_date condition if it exists
+            active_filter['end_date__gte'] = now
+            
             active_vouchers = Voucher.objects.filter(**active_filter).count()
             
-            # Calculate expired vouchers
+            # Calculate expired vouchers (end_date < now)
             expired_filter = date_filter.copy()
-            expired_filter['valid_until__lt'] = now
+            expired_filter['end_date__lt'] = now
             expired_vouchers = Voucher.objects.filter(**expired_filter).count()
+            
+            # Calculate scheduled vouchers (future start date)
+            scheduled_filter = date_filter.copy()
+            scheduled_filter['start_date__gt'] = now
+            scheduled_vouchers = Voucher.objects.filter(**scheduled_filter).count()
             
             # Calculate total usage from Checkout model with date range
             usage_filter = {}
             if start_date_str:
-                try:
-                    start_date = parse_datetime(start_date_str)
-                    if start_date:
-                        usage_filter['created_at__gte'] = start_date
-                    else:
-                        start_date = parse_date(start_date_str)
-                        if start_date:
-                            # Convert date to datetime for start of day
-                            start_datetime = timezone.make_aware(
-                                datetime.combine(start_date, datetime.min.time())
-                            )
-                            usage_filter['created_at__gte'] = start_datetime
-                except (ValueError, TypeError, AttributeError) as e:
-                    print(f"Error parsing start date for usage: {e}")
-                    pass
+                start_date = parse_date(start_date_str)
+                if start_date:
+                    start_datetime = timezone.make_aware(
+                        datetime.combine(start_date, datetime.min.time())
+                    )
+                    usage_filter['created_at__gte'] = start_datetime
                     
             if end_date_str:
-                try:
-                    end_date = parse_datetime(end_date_str)
-                    if end_date:
-                        # Include the entire end date (up to end of day)
-                        end_date = end_date.replace(hour=23, minute=59, second=59)
-                        usage_filter['created_at__lte'] = end_date
-                    else:
-                        end_date = parse_date(end_date_str)
-                        if end_date:
-                            # Convert date to datetime for end of day
-                            end_datetime = timezone.make_aware(
-                                datetime.combine(end_date, datetime.max.time())
-                            ).replace(second=59)
-                            usage_filter['created_at__lte'] = end_datetime
-                except (ValueError, TypeError, AttributeError) as e:
-                    print(f"Error parsing end date for usage: {e}")
-                    pass
+                end_date = parse_date(end_date_str)
+                if end_date:
+                    end_datetime = timezone.make_aware(
+                        datetime.combine(end_date, datetime.max.time())
+                    )
+                    usage_filter['created_at__lte'] = end_datetime
             
-            print(f"Usage filter: {usage_filter}")
-            
-            total_usage = Checkout.objects.filter(
+            # Get checkouts that used vouchers
+            checkouts_with_voucher = Checkout.objects.filter(
                 voucher__isnull=False,
                 **usage_filter
-            ).count()
-            
-            # Calculate total discount amount with date range
-            total_discount_result = Checkout.objects.filter(
-                voucher__isnull=False,
-                **usage_filter
-            ).aggregate(
-                total_discount=Sum('voucher__value')
             )
-            total_discount = total_discount_result['total_discount'] or 0
+            
+            total_usage = checkouts_with_voucher.count()
+            
+            # Since there's no discount_amount field, we'll set total_discount to 0
+            # You can calculate this differently if needed, perhaps by summing voucher values
+            total_discount = 0
             
             metrics = {
                 'total_vouchers': total_vouchers,
                 'active_vouchers': active_vouchers,
                 'expired_vouchers': expired_vouchers,
+                'scheduled_vouchers': scheduled_vouchers,
                 'total_usage': total_usage,
                 'total_discount': float(total_discount),
             }
@@ -7771,9 +7805,6 @@ class AdminVouchers(viewsets.ViewSet):
         Get paginated list of vouchers with all required fields and date range filtering
         """
         try:
-            from django.utils.dateparse import parse_datetime, parse_date
-            from datetime import datetime
-            
             # Get query parameters
             page = int(request.GET.get('page', 1))
             page_size = int(request.GET.get('page_size', 10))
@@ -7790,42 +7821,20 @@ class AdminVouchers(viewsets.ViewSet):
             date_filter = {}
             
             if start_date_str:
-                try:
-                    # Try parsing as datetime first, then as date
-                    start_date = parse_datetime(start_date_str)
-                    if start_date:
-                        date_filter['added_at__gte'] = start_date.date()
-                    else:
-                        # Try parsing as date string
-                        start_date = parse_date(start_date_str)
-                        if start_date:
-                            date_filter['added_at__gte'] = start_date
-                except (ValueError, TypeError, AttributeError) as e:
-                    print(f"Error parsing start date: {e}")
-                    pass
+                start_date = parse_date(start_date_str)
+                if start_date:
+                    date_filter['added_at__gte'] = start_date
                     
             if end_date_str:
-                try:
-                    # Try parsing as datetime first, then as date
-                    end_date = parse_datetime(end_date_str)
-                    if end_date:
-                        date_filter['added_at__lte'] = end_date.date()
-                    else:
-                        # Try parsing as date string
-                        end_date = parse_date(end_date_str)
-                        if end_date:
-                            date_filter['added_at__lte'] = end_date
-                except (ValueError, TypeError, AttributeError) as e:
-                    print(f"Error parsing end date: {e}")
-                    pass
+                end_date = parse_date(end_date_str)
+                if end_date:
+                    date_filter['added_at__lte'] = end_date
             
             print(f"Date filter for vouchers_list: {date_filter}")
             
             # Start with all vouchers with date filter
             vouchers_qs = Voucher.objects.select_related(
                 'shop', 'created_by'
-            ).prefetch_related(
-                'checkout_set'
             ).filter(**date_filter)
             
             # Apply search filter
@@ -7841,16 +7850,16 @@ class AdminVouchers(viewsets.ViewSet):
                 if status_filter == 'active':
                     vouchers_qs = vouchers_qs.filter(
                         is_active=True,
-                        valid_until__gte=now
+                        start_date__lte=now,
+                        end_date__gte=now
                     )
                 elif status_filter == 'expired':
                     vouchers_qs = vouchers_qs.filter(
-                        valid_until__lt=now
+                        end_date__lt=now
                     )
                 elif status_filter == 'scheduled':
                     vouchers_qs = vouchers_qs.filter(
-                        is_active=False,
-                        valid_until__gte=now
+                        start_date__gt=now
                     )
             
             # Apply discount type filter
@@ -7897,14 +7906,17 @@ class AdminVouchers(viewsets.ViewSet):
                     }
                 
                 # Determine status
-                status_value = 'active'
-                if not voucher.is_active:
-                    if voucher.valid_until >= now:
-                        status_value = 'scheduled'
-                    else:
-                        status_value = 'expired'
-                elif voucher.valid_until < now:
+                if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
+                    status_value = 'active'
+                elif voucher.end_date and voucher.end_date < now:
                     status_value = 'expired'
+                elif not voucher.is_active and voucher.start_date > now:
+                    status_value = 'scheduled'
+                else:
+                    status_value = 'inactive'
+                
+                # Calculate usage count
+                usage_count = Checkout.objects.filter(voucher=voucher).count()
                 
                 voucher_data = {
                     'id': str(voucher.id),
@@ -7913,24 +7925,26 @@ class AdminVouchers(viewsets.ViewSet):
                     'shop': shop_data,
                     'discount_type': voucher.discount_type,
                     'value': float(voucher.value),
-                    'valid_until': voucher.valid_until.isoformat(),
+                    'minimum_spend': float(voucher.minimum_spend),
+                    'maximum_usage': voucher.maximum_usage,
+                    'start_date': voucher.start_date.isoformat() if voucher.start_date else None,
+                    'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
                     'added_at': voucher.added_at.isoformat(),
                     'created_by': created_by_data,
                     'is_active': voucher.is_active,
                     'status': status_value,
+                    'usage_count': usage_count,
                     'shopName': shop_data['name'] if shop_data else 'Global'
                 }
                 vouchers_data.append(voucher_data)
             
-            # Get filter options for frontend (respecting date range)
-            # Get shops that have vouchers in the current date range
-            shop_ids = vouchers_qs.filter(shop__isnull=False).values_list('shop_id', flat=True).distinct()
-            shops_with_vouchers = Shop.objects.filter(id__in=shop_ids)
-            
+            # Get filter options for frontend
             filter_options = {
-                'discount_types': list(Voucher.objects.filter(**date_filter).values_list('discount_type', flat=True).distinct()),
-                'shops': list(shops_with_vouchers.values_list('name', flat=True).distinct()),
-                'statuses': ['active', 'expired', 'scheduled']
+                'discount_types': list(Voucher.objects.values_list('discount_type', flat=True).distinct()),
+                'shops': list(Shop.objects.filter(
+                    id__in=Voucher.objects.filter(shop__isnull=False).values_list('shop_id', flat=True).distinct()
+                ).values_list('name', flat=True)),
+                'statuses': ['active', 'expired', 'scheduled', 'inactive']
             }
             
             return Response({
@@ -7952,8 +7966,118 @@ class AdminVouchers(viewsets.ViewSet):
             return Response({
                 'success': False,
                 'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['put', 'patch'])
+    def update_voucher(self, request, pk=None):
+        """
+        Update an existing voucher
+        """
+        try:
+            # Get voucher by UUID
+            try:
+                voucher = Voucher.objects.get(id=pk)
+            except Voucher.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Voucher not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            data = request.data.copy()
+            
+            # Check if code is being changed and if it already exists
+            if 'code' in data and data['code'] != voucher.code:
+                if Voucher.objects.filter(code=data['code']).exists():
+                    return Response({
+                        'success': False,
+                        'error': 'Voucher code already exists'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle date fields
+            if 'start_date' in data and data['start_date']:
+                if isinstance(data['start_date'], str):
+                    data['start_date'] = parse_date(data['start_date'])
+            
+            if 'end_date' in data and data['end_date']:
+                if isinstance(data['end_date'], str):
+                    data['end_date'] = parse_date(data['end_date'])
+            
+            # Update voucher
+            serializer = VoucherSerializer(voucher, data=data, partial=True)
+            if serializer.is_valid():
+                updated_voucher = serializer.save()
+                
+                return Response({
+                    'success': True,
+                    'message': 'Voucher updated successfully',
+                    'voucher': {
+                        'id': str(updated_voucher.id),
+                        'name': updated_voucher.name,
+                        'code': updated_voucher.code,
+                        'discount_type': updated_voucher.discount_type,
+                        'value': float(updated_voucher.value),
+                        'start_date': updated_voucher.start_date.isoformat() if updated_voucher.start_date else None,
+                        'end_date': updated_voucher.end_date.isoformat() if updated_voucher.end_date else None,
+                        'is_active': updated_voucher.is_active
+                    }
+                })
+            else:
+                return Response({
+                    'success': False,
+                    'error': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            import traceback
+            print(f"Error in update_voucher: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['delete'])
+    def delete_voucher(self, request, pk=None):
+        """
+        Delete a voucher
+        """
+        try:
+            # Get voucher by UUID
+            try:
+                voucher = Voucher.objects.get(id=pk)
+            except Voucher.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Voucher not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if voucher has been used
+            usage_count = Checkout.objects.filter(voucher=voucher).count()
+            if usage_count > 0:
+                # Instead of deleting, just deactivate it
+                voucher.is_active = False
+                voucher.save()
+                return Response({
+                    'success': True,
+                    'message': 'Voucher has been used and cannot be deleted. It has been deactivated instead.',
+                    'deactivated': True
+                })
+            
+            # Delete if not used
+            voucher.delete()
+            return Response({
+                'success': True,
+                'message': 'Voucher deleted successfully'
+            })
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in delete_voucher: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
 class AdminRefunds(viewsets.ViewSet):
 
     # ------------------------------------------------------------------
@@ -19640,12 +19764,111 @@ class AddToCartView(APIView):
                 "details": str(e)
             }, status=500)
 
-
 class CartListView(APIView):
+    def get_available_vouchers(self, cart_items, user, applied_voucher_code=None):
+        """
+        Get all available vouchers that can be applied to the cart
+        """
+        now = timezone.now().date()
+        cart_total = sum(self.get_item_total(item) for item in cart_items)
+        
+        # Get all active vouchers
+        vouchers_qs = Voucher.objects.filter(
+            is_active=True,
+            start_date__lte=now,
+            end_date__gte=now
+        )
+        
+        available_vouchers = []
+        
+        for voucher in vouchers_qs:
+            # Skip if this is the currently applied voucher
+            if applied_voucher_code and voucher.code == applied_voucher_code:
+                continue
+                
+            # Check minimum spend
+            if voucher.minimum_spend and cart_total < voucher.minimum_spend:
+                continue
+            
+            # Check maximum usage
+            if voucher.maximum_usage > 0:
+                usage_count = Checkout.objects.filter(voucher=voucher).count()
+                if usage_count >= voucher.maximum_usage:
+                    continue
+            
+            # Calculate discount amount for display
+            discount_amount = 0
+            if voucher.discount_type == 'percentage':
+                discount_amount = (cart_total * voucher.value) / 100
+            elif voucher.discount_type == 'fixed':
+                discount_amount = min(voucher.value, cart_total)
+            
+            available_vouchers.append({
+                'id': str(voucher.id),
+                'name': voucher.name,
+                'code': voucher.code,
+                'discount_type': voucher.discount_type,
+                'value': float(voucher.value),
+                'discount_amount': float(discount_amount),
+                'minimum_spend': float(voucher.minimum_spend),
+                'shop_id': str(voucher.shop.id) if voucher.shop else None,
+                'shop_name': voucher.shop.name if voucher.shop else 'Global',
+                'voucher_type': voucher.voucher_type
+            })
+        
+        # Sort by discount amount (highest first)
+        available_vouchers.sort(key=lambda x: x['discount_amount'], reverse=True)
+        
+        return available_vouchers
+
+    def get_item_total(self, cart_item):
+        """Calculate total price for a cart item"""
+        if cart_item.variant and cart_item.variant.price:
+            return cart_item.variant.price * cart_item.quantity
+        elif cart_item.product and cart_item.product.price:
+            return cart_item.product.price * cart_item.quantity
+        return 0
+
+    def calculate_cart_totals(self, cart_items, applied_voucher=None):
+        """
+        Calculate cart totals including discounts
+        """
+        subtotal = sum(self.get_item_total(item) for item in cart_items)
+        
+        discount = 0
+        applied_voucher_data = None
+        
+        if applied_voucher:
+            if applied_voucher.discount_type == 'percentage':
+                discount = (subtotal * applied_voucher.value) / 100
+            elif applied_voucher.discount_type == 'fixed':
+                discount = min(applied_voucher.value, subtotal)
+            
+            applied_voucher_data = {
+                'id': str(applied_voucher.id),
+                'name': applied_voucher.name,
+                'code': applied_voucher.code,
+                'discount_type': applied_voucher.discount_type,
+                'value': float(applied_voucher.value),
+                'discount_amount': float(discount)
+            }
+        
+        total = subtotal - discount
+        
+        return {
+            'subtotal': float(subtotal),
+            'discount': float(discount),
+            'total': float(total),
+            'applied_voucher': applied_voucher_data
+        }
+
     def get(self, request):
         user_id = request.GET.get("user_id")
+        voucher_code = request.GET.get("voucher_code")  # Optional voucher code to apply
+        
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
+            
         try:
             user = User.objects.get(pk=user_id)
         except User.DoesNotExist:
@@ -19658,9 +19881,66 @@ class CartListView(APIView):
                 .order_by('-added_at')
 
             serializer = CartItemSerializer(cart_items, many=True, context={"request": request})
-            return Response({"success": True, "cart_items": serializer.data})
+            
+            # Calculate totals
+            applied_voucher = None
+            voucher_error = None
+            
+            # If voucher code is provided, try to apply it
+            if voucher_code:
+                try:
+                    now = timezone.now().date()
+                    voucher = Voucher.objects.get(
+                        code=voucher_code,
+                        is_active=True,
+                        start_date__lte=now,
+                        end_date__gte=now
+                    )
+                    
+                    # Validate voucher
+                    cart_total = sum(self.get_item_total(item) for item in cart_items)
+                    
+                    if voucher.minimum_spend and cart_total < voucher.minimum_spend:
+                        voucher_error = f"Minimum spend of ₱{voucher.minimum_spend} required"
+                    elif voucher.maximum_usage > 0:
+                        usage_count = Checkout.objects.filter(voucher=voucher).count()
+                        if usage_count >= voucher.maximum_usage:
+                            voucher_error = "Voucher usage limit reached"
+                    else:
+                        applied_voucher = voucher
+                        
+                except Voucher.DoesNotExist:
+                    voucher_error = "Invalid or expired voucher code"
+            
+            # Calculate totals with applied voucher
+            totals = self.calculate_cart_totals(cart_items, applied_voucher)
+            
+            # Get available vouchers (excluding the currently applied one)
+            available_vouchers = self.get_available_vouchers(
+                cart_items, 
+                user, 
+                applied_voucher.code if applied_voucher else None
+            )
+            
+            response_data = {
+                "success": True,
+                "cart_items": serializer.data,
+                "totals": totals,
+                "available_vouchers": available_vouchers
+            }
+            
+            if voucher_error:
+                response_data["voucher_error"] = voucher_error
+                response_data["totals"] = self.calculate_cart_totals(cart_items, None)
+            
+            return Response(response_data)
+            
         except Exception as e:
-            return Response({"success": False, "error": "Failed to fetch cart items", "details": str(e)}, status=500)
+            return Response({
+                "success": False, 
+                "error": "Failed to fetch cart items", 
+                "details": str(e)
+            }, status=500)
 
     def put(self, request, item_id):
         user_id = request.data.get("user_id")
@@ -19709,18 +19989,22 @@ class CartListView(APIView):
             cart_item.quantity = quantity
             cart_item.save()
 
+            # Recalculate totals with updated cart
+            cart_items = CartItem.objects.filter(user_id=user_id, is_ordered=False)
+            totals = self.calculate_cart_totals(cart_items)
+
             serializer = CartItemSerializer(cart_item, context={"request": request})
             return Response({
                 "success": True,
                 "message": "Quantity updated successfully",
-                "cart_item": serializer.data
+                "cart_item": serializer.data,
+                "totals": totals
             })
 
         except Exception as e:
             return Response({"success": False, "error": "Failed to update quantity", "details": str(e)}, status=500)
 
     def delete(self, request, item_id):
-        # Use GET params instead of request.data — more reliable for DELETE requests
         user_id = request.GET.get("user_id")
 
         if not user_id:
@@ -19741,18 +20025,23 @@ class CartListView(APIView):
             }
 
             cart_item.delete()
+            
+            # Recalculate totals for remaining items
+            cart_items = CartItem.objects.filter(user_id=user_id, is_ordered=False)
+            totals = self.calculate_cart_totals(cart_items)
 
             return Response({
                 "success": True,
                 "message": "Item removed from cart",
-                "removed_item": item_info
+                "removed_item": item_info,
+                "totals": totals
             })
 
         except CartItem.DoesNotExist:
             return Response({"error": "Cart item not found"}, status=404)
         except Exception as e:
             return Response({"success": False, "error": "Failed to remove item", "details": str(e)}, status=500)
-
+        
 # Add this separate view for bulk operations if needed
 class CartBulkUpdateView(APIView):
     """
@@ -43303,3 +43592,650 @@ class RiderWalletView(APIView):
                 {'success': False, 'error': 'Failed to process withdrawal'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+class SellerVouchers(viewsets.ViewSet):
+    """
+    ViewSet for seller voucher management following SellerOrderList pattern
+    """
+    
+    def _get_shop(self, shop_id):
+        """Get shop by ID"""
+        try:
+            return Shop.objects.get(id=shop_id)
+        except Shop.DoesNotExist:
+            return None
+
+    @action(detail=False, methods=['get'])
+    def list_vouchers(self, request):
+        """
+        Get paginated list of seller's vouchers with filters
+        """
+        try:
+            # Get shop_id from query parameters
+            shop_id = request.GET.get('shop_id')
+            if not shop_id:
+                return Response({
+                    'success': False,
+                    'error': 'shop_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get shop
+            shop = self._get_shop(shop_id)
+            if not shop:
+                return Response({
+                    'success': False,
+                    'error': 'Shop not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get query parameters
+            page = int(request.GET.get('page', 1))
+            page_size = int(request.GET.get('page_size', 10))
+            search = request.GET.get('search', '')
+            status_filter = request.GET.get('status', '')
+            voucher_type = request.GET.get('voucher_type', '')
+            
+            # Base queryset for seller's shop
+            vouchers_qs = Voucher.objects.filter(
+                shop=shop
+            ).select_related('created_by').order_by('-added_at')
+            
+            # Apply search filter
+            if search:
+                vouchers_qs = vouchers_qs.filter(
+                    Q(name__icontains=search) |
+                    Q(code__icontains=search)
+                )
+            
+            # Apply voucher type filter
+            if voucher_type:
+                vouchers_qs = vouchers_qs.filter(voucher_type=voucher_type)
+            
+            # Apply status filter
+            now = timezone.now().date()
+            if status_filter:
+                if status_filter == 'active':
+                    vouchers_qs = vouchers_qs.filter(
+                        is_active=True,
+                        start_date__lte=now,
+                        end_date__gte=now
+                    )
+                elif status_filter == 'expired':
+                    vouchers_qs = vouchers_qs.filter(
+                        end_date__lt=now
+                    )
+                elif status_filter == 'scheduled':
+                    vouchers_qs = vouchers_qs.filter(
+                        start_date__gt=now
+                    )
+                elif status_filter == 'inactive':
+                    vouchers_qs = vouchers_qs.filter(
+                        is_active=False
+                    )
+            
+            # Calculate total count
+            total_count = vouchers_qs.count()
+            
+            # Apply pagination
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            vouchers_page = vouchers_qs[start_index:end_index]
+            
+            # Prepare voucher data with usage stats
+            vouchers_data = []
+            for voucher in vouchers_page:
+                # Calculate usage count from Checkout model
+                usage_count = Checkout.objects.filter(
+                    voucher=voucher
+                ).count()
+                
+                # Calculate total discount given (if you have discount_amount field)
+                total_discount = 0
+                # Uncomment if you have discount_amount field
+                # total_discount = Checkout.objects.filter(
+                #     voucher=voucher
+                # ).aggregate(
+                #     total=Sum('discount_amount')
+                # )['total'] or 0
+                
+                # Determine status
+                if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
+                    status_value = 'active'
+                elif voucher.end_date and voucher.end_date < now:
+                    status_value = 'expired'
+                elif voucher.start_date > now:
+                    status_value = 'scheduled'
+                else:
+                    status_value = 'inactive'
+                
+                # Get created_by name - FIXED: Don't use get_full_name()
+                created_by_name = 'System'
+                if voucher.created_by:
+                    # Try different ways to get the user's name
+                    if hasattr(voucher.created_by, 'get_full_name') and callable(voucher.created_by.get_full_name):
+                        created_by_name = voucher.created_by.get_full_name() or voucher.created_by.username
+                    else:
+                        # Manual construction of full name
+                        first_name = getattr(voucher.created_by, 'first_name', '')
+                        last_name = getattr(voucher.created_by, 'last_name', '')
+                        if first_name or last_name:
+                            created_by_name = f"{first_name} {last_name}".strip()
+                        else:
+                            created_by_name = voucher.created_by.username or 'Unknown'
+                
+                voucher_data = {
+                    'id': str(voucher.id),
+                    'name': voucher.name,
+                    'code': voucher.code,
+                    'voucher_type': voucher.voucher_type,
+                    'discount_type': voucher.discount_type,
+                    'value': float(voucher.value),
+                    'minimum_spend': float(voucher.minimum_spend),
+                    'maximum_usage': voucher.maximum_usage,
+                    'current_usage': usage_count,
+                    'total_discount_given': float(total_discount),
+                    'start_date': voucher.start_date.isoformat() if voucher.start_date else None,
+                    'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
+                    'added_at': voucher.added_at.isoformat(),
+                    'created_by': {
+                        'id': str(voucher.created_by.id) if voucher.created_by else None,
+                        'name': created_by_name
+                    } if voucher.created_by else None,
+                    'is_active': voucher.is_active,
+                    'status': status_value,
+                    'shop': {
+                        'id': str(shop.id),
+                        'name': shop.name
+                    }
+                }
+                vouchers_data.append(voucher_data)
+            
+            # Get filter options
+            filter_options = {
+                'voucher_types': list(Voucher.objects.filter(shop=shop).values_list('voucher_type', flat=True).distinct()),
+                'discount_types': list(Voucher.objects.filter(shop=shop).values_list('discount_type', flat=True).distinct()),
+                'statuses': ['active', 'expired', 'scheduled', 'inactive']
+            }
+            
+            return Response({
+                'success': True,
+                'vouchers': vouchers_data,
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total_count': total_count,
+                    'total_pages': (total_count + page_size - 1) // page_size
+                },
+                'filter_options': filter_options
+            })
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in list_vouchers: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'])
+    def create_voucher(self, request):
+        """
+        Create a new voucher for the seller's shop
+        """
+        try:
+            data = request.data.copy()
+            
+            # Get shop_id from request data
+            shop_id = data.get('shop_id')
+            if not shop_id:
+                return Response({
+                    'success': False,
+                    'error': 'shop_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get shop
+            shop = self._get_shop(shop_id)
+            if not shop:
+                return Response({
+                    'success': False,
+                    'error': 'Shop not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get user_id from header (optional - for created_by)
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    user = User.objects.get(id=user_id)
+                    data['created_by'] = user.id
+                except User.DoesNotExist:
+                    pass
+            
+            # Set shop
+            data['shop'] = shop.id
+            
+            # Remove shop_id from data as it's not in the model
+            if 'shop_id' in data:
+                del data['shop_id']
+            
+            # Validate required fields
+            required_fields = ['name', 'code', 'voucher_type', 'discount_type', 'value', 'end_date']
+            for field in required_fields:
+                if field not in data or not data[field]:
+                    return Response({
+                        'success': False,
+                        'error': f'{field} is required'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check if voucher code already exists for this shop
+            if Voucher.objects.filter(shop=shop, code=data['code']).exists():
+                return Response({
+                    'success': False,
+                    'error': 'Voucher code already exists for your shop'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle date fields
+            if 'start_date' in data and data['start_date']:
+                if isinstance(data['start_date'], str):
+                    data['start_date'] = parse_date(data['start_date'])
+            else:
+                data['start_date'] = timezone.now().date()
+            
+            if 'end_date' in data and data['end_date']:
+                if isinstance(data['end_date'], str):
+                    data['end_date'] = parse_date(data['end_date'])
+            
+            # Validate dates
+            if data['start_date'] > data['end_date']:
+                return Response({
+                    'success': False,
+                    'error': 'End date must be after start date'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create voucher
+            serializer = VoucherSerializer(data=data)
+            if serializer.is_valid():
+                voucher = serializer.save()
+                
+                return Response({
+                    'success': True,
+                    'message': 'Voucher created successfully',
+                    'voucher': {
+                        'id': str(voucher.id),
+                        'name': voucher.name,
+                        'code': voucher.code,
+                        'voucher_type': voucher.voucher_type,
+                        'discount_type': voucher.discount_type,
+                        'value': float(voucher.value),
+                        'minimum_spend': float(voucher.minimum_spend),
+                        'maximum_usage': voucher.maximum_usage,
+                        'start_date': voucher.start_date.isoformat(),
+                        'end_date': voucher.end_date.isoformat(),
+                        'is_active': voucher.is_active
+                    }
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response({
+                    'success': False,
+                    'error': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            import traceback
+            print(f"Error in create_voucher: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def get_voucher(self, request, pk=None):
+        """
+        Get single voucher details
+        """
+        try:
+            # Get shop_id from query parameters
+            shop_id = request.GET.get('shop_id')
+            if not shop_id:
+                return Response({
+                    'success': False,
+                    'error': 'shop_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get shop
+            shop = self._get_shop(shop_id)
+            if not shop:
+                return Response({
+                    'success': False,
+                    'error': 'Shop not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get voucher
+            try:
+                voucher = Voucher.objects.get(id=pk, shop=shop)
+            except Voucher.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Voucher not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Calculate usage stats
+            now = timezone.now().date()
+            usage_count = Checkout.objects.filter(
+                voucher=voucher
+            ).count()
+            
+            total_discount = 0
+            # Uncomment if you have discount_amount field
+            # total_discount = Checkout.objects.filter(
+            #     voucher=voucher
+            # ).aggregate(
+            #     total=Sum('discount_amount')
+            # )['total'] or 0
+            
+            # Determine status
+            if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
+                status_value = 'active'
+            elif voucher.end_date and voucher.end_date < now:
+                status_value = 'expired'
+            elif voucher.start_date > now:
+                status_value = 'scheduled'
+            else:
+                status_value = 'inactive'
+            
+            # Get created_by name - FIXED: Don't use get_full_name()
+            created_by_name = 'System'
+            if voucher.created_by:
+                # Try different ways to get the user's name
+                if hasattr(voucher.created_by, 'get_full_name') and callable(voucher.created_by.get_full_name):
+                    created_by_name = voucher.created_by.get_full_name() or voucher.created_by.username
+                else:
+                    # Manual construction of full name
+                    first_name = getattr(voucher.created_by, 'first_name', '')
+                    last_name = getattr(voucher.created_by, 'last_name', '')
+                    if first_name or last_name:
+                        created_by_name = f"{first_name} {last_name}".strip()
+                    else:
+                        created_by_name = voucher.created_by.username or 'Unknown'
+            
+            voucher_data = {
+                'id': str(voucher.id),
+                'name': voucher.name,
+                'code': voucher.code,
+                'voucher_type': voucher.voucher_type,
+                'discount_type': voucher.discount_type,
+                'value': float(voucher.value),
+                'minimum_spend': float(voucher.minimum_spend),
+                'maximum_usage': voucher.maximum_usage,
+                'current_usage': usage_count,
+                'total_discount_given': float(total_discount),
+                'start_date': voucher.start_date.isoformat(),
+                'end_date': voucher.end_date.isoformat(),
+                'added_at': voucher.added_at.isoformat(),
+                'created_by': {
+                    'id': str(voucher.created_by.id) if voucher.created_by else None,
+                    'name': created_by_name
+                } if voucher.created_by else None,
+                'is_active': voucher.is_active,
+                'status': status_value,
+                'shop': {
+                    'id': str(shop.id),
+                    'name': shop.name
+                }
+            }
+            
+            return Response({
+                'success': True,
+                'voucher': voucher_data
+            })
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in get_voucher: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['put', 'patch'])
+    def update_voucher(self, request, pk=None):
+        """
+        Update an existing voucher
+        """
+        try:
+            data = request.data.copy()
+            
+            # Get shop_id from request data
+            shop_id = data.get('shop_id')
+            if not shop_id:
+                return Response({
+                    'success': False,
+                    'error': 'shop_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get shop
+            shop = self._get_shop(shop_id)
+            if not shop:
+                return Response({
+                    'success': False,
+                    'error': 'Shop not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get voucher
+            try:
+                voucher = Voucher.objects.get(id=pk, shop=shop)
+            except Voucher.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Voucher not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Remove shop_id from data as it's not in the model
+            if 'shop_id' in data:
+                del data['shop_id']
+            
+            # Check if code is being changed and if it already exists
+            if 'code' in data and data['code'] != voucher.code:
+                if Voucher.objects.filter(shop=shop, code=data['code']).exists():
+                    return Response({
+                        'success': False,
+                        'error': 'Voucher code already exists for your shop'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle date fields
+            if 'start_date' in data and data['start_date']:
+                if isinstance(data['start_date'], str):
+                    data['start_date'] = parse_date(data['start_date'])
+            
+            if 'end_date' in data and data['end_date']:
+                if isinstance(data['end_date'], str):
+                    data['end_date'] = parse_date(data['end_date'])
+            
+            # Validate dates if both are provided
+            start_date = data.get('start_date', voucher.start_date)
+            end_date = data.get('end_date', voucher.end_date)
+            
+            if start_date and end_date and start_date > end_date:
+                return Response({
+                    'success': False,
+                    'error': 'End date must be after start date'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Update voucher
+            serializer = VoucherSerializer(voucher, data=data, partial=True)
+            if serializer.is_valid():
+                updated_voucher = serializer.save()
+                
+                return Response({
+                    'success': True,
+                    'message': 'Voucher updated successfully',
+                    'voucher': {
+                        'id': str(updated_voucher.id),
+                        'name': updated_voucher.name,
+                        'code': updated_voucher.code,
+                        'voucher_type': updated_voucher.voucher_type,
+                        'discount_type': updated_voucher.discount_type,
+                        'value': float(updated_voucher.value),
+                        'minimum_spend': float(updated_voucher.minimum_spend),
+                        'maximum_usage': updated_voucher.maximum_usage,
+                        'start_date': updated_voucher.start_date.isoformat(),
+                        'end_date': updated_voucher.end_date.isoformat(),
+                        'is_active': updated_voucher.is_active
+                    }
+                })
+            else:
+                return Response({
+                    'success': False,
+                    'error': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            import traceback
+            print(f"Error in update_voucher: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['delete'])
+    def delete_voucher(self, request, pk=None):
+        """
+        Delete a voucher
+        """
+        try:
+            # Get shop_id from query parameters
+            shop_id = request.GET.get('shop_id')
+            if not shop_id:
+                return Response({
+                    'success': False,
+                    'error': 'shop_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get shop
+            shop = self._get_shop(shop_id)
+            if not shop:
+                return Response({
+                    'success': False,
+                    'error': 'Shop not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Get voucher
+            try:
+                voucher = Voucher.objects.get(id=pk, shop=shop)
+            except Voucher.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Voucher not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if voucher has been used
+            usage_count = Checkout.objects.filter(voucher=voucher).count()
+            if usage_count > 0:
+                # Instead of deleting, just deactivate it
+                voucher.is_active = False
+                voucher.save()
+                return Response({
+                    'success': True,
+                    'message': 'Voucher has been used and cannot be deleted. It has been deactivated instead.',
+                    'deactivated': True
+                })
+            
+            # Delete if not used
+            voucher.delete()
+            return Response({
+                'success': True,
+                'message': 'Voucher deleted successfully'
+            })
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in delete_voucher: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'])
+    def get_metrics(self, request):
+        """
+        Get voucher metrics for seller dashboard
+        """
+        try:
+            # Get shop_id from query parameters
+            shop_id = request.GET.get('shop_id')
+            if not shop_id:
+                return Response({
+                    'success': False,
+                    'error': 'shop_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get shop
+            shop = self._get_shop(shop_id)
+            if not shop:
+                return Response({
+                    'success': False,
+                    'error': 'Shop not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            now = timezone.now().date()
+            
+            # Get all vouchers for this shop
+            vouchers_qs = Voucher.objects.filter(shop=shop)
+            
+            # Calculate metrics
+            total_vouchers = vouchers_qs.count()
+            
+            active_vouchers = vouchers_qs.filter(
+                is_active=True,
+                start_date__lte=now,
+                end_date__gte=now
+            ).count()
+            
+            expired_vouchers = vouchers_qs.filter(
+                end_date__lt=now
+            ).count()
+            
+            scheduled_vouchers = vouchers_qs.filter(
+                start_date__gt=now
+            ).count()
+            
+            # Calculate total usage
+            total_usage = Checkout.objects.filter(
+                voucher__shop=shop,
+                voucher__isnull=False
+            ).count()
+            
+            # Calculate total discount (if you have discount_amount field)
+            total_discount = 0
+            # Uncomment if you have discount_amount field
+            # total_discount = Checkout.objects.filter(
+            #     voucher__shop=shop,
+            #     voucher__isnull=False
+            # ).aggregate(
+            #     total=Sum('discount_amount')
+            # )['total'] or 0
+            
+            metrics = {
+                'total_vouchers': total_vouchers,
+                'active_vouchers': active_vouchers,
+                'expired_vouchers': expired_vouchers,
+                'scheduled_vouchers': scheduled_vouchers,
+                'total_usage': total_usage,
+                'total_discount': float(total_discount),
+            }
+            
+            return Response({
+                'success': True,
+                'metrics': metrics
+            })
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in get_metrics: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
