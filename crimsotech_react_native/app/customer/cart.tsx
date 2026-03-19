@@ -170,6 +170,7 @@ const resolveCartItemImage = (
   return FALLBACK_IMAGE;
 };
 
+// FIXED: Set selected to false by default
 const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
   return apiItems.map((item) => {
     const productDetails = item.product_details;
@@ -197,7 +198,7 @@ const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
       image,
       shop_name: productDetails?.shop_name || "Store",
       shop_id: productDetails?.shop_id || "",
-      selected: true,
+      selected: false, // Changed from true to false
       added_at: item.added_at,
       subtotal,
       variant_title: variantLabel,
@@ -786,7 +787,7 @@ export default function CartPage() {
                   shop_id: item.shop_id,
                   shop_name: item.shop_name,
                   items: [],
-                  selected: true,
+                  selected: false, // Changed from true to false
                 };
               }
               acc[item.shop_id].items.push(item);
@@ -955,19 +956,23 @@ export default function CartPage() {
   };
 
   const handleSelectItem = (id: string, checked: boolean) => {
-    setCartStores((prev) =>
-      prev.map((store) => ({
+    setCartStores((prev) => {
+      const newStores = prev.map((store) => ({
         ...store,
         items: store.items.map((item) =>
           item.id === id ? { ...item, selected: checked } : item,
         ),
-      })),
-    );
+      }));
+      
+      // Recalculate totals after selection change
+      updateTotalsFromStores(newStores);
+      return newStores;
+    });
   };
 
   const handleSelectShop = (shopId: string, checked: boolean) => {
-    setCartStores((prev) =>
-      prev.map((store) =>
+    setCartStores((prev) => {
+      const newStores = prev.map((store) =>
         store.shop_id === shopId
           ? {
               ...store,
@@ -977,17 +982,55 @@ export default function CartPage() {
               })),
             }
           : store,
-      ),
-    );
+      );
+      
+      // Recalculate totals after selection change
+      updateTotalsFromStores(newStores);
+      return newStores;
+    });
   };
 
   const handleSelectAll = (checked: boolean) => {
-    setCartStores((prev) =>
-      prev.map((store) => ({
+    setCartStores((prev) => {
+      const newStores = prev.map((store) => ({
         ...store,
         items: store.items.map((item) => ({ ...item, selected: checked })),
-      })),
+      }));
+      
+      // Recalculate totals after selection change
+      updateTotalsFromStores(newStores);
+      return newStores;
+    });
+  };
+
+  // Helper function to update totals based on selected items
+  const updateTotalsFromStores = (stores: CartStore[]) => {
+    const allItems = stores.flatMap(store => store.items);
+    const selected = allItems.filter(item => item.selected);
+    
+    const subtotal = selected.reduce(
+      (sum, item) => sum + item.price * item.quantity,
+      0,
     );
+    
+    // Recalculate discount based on applied voucher if any
+    let discount = 0;
+    if (cartTotals.applied_voucher) {
+      if (cartTotals.applied_voucher.discount_type === 'percentage') {
+        discount = (subtotal * cartTotals.applied_voucher.value) / 100;
+      } else if (cartTotals.applied_voucher.discount_type === 'fixed') {
+        discount = Math.min(cartTotals.applied_voucher.value, subtotal);
+      }
+    }
+    
+    const total = subtotal - discount;
+    
+    setCartTotals(prev => ({
+      ...prev,
+      subtotal,
+      discount,
+      total
+    }));
   };
 
   const handleApplyVoucher = async (code: string) => {
