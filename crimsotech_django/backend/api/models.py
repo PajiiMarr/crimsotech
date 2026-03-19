@@ -738,6 +738,13 @@ class Boost(models.Model):
         return f"Boost for {self.product.name if self.product else 'Unknown'}"
     
 class Voucher(models.Model):
+
+    VOUCHER_TYPES = [
+        ('shop', 'Shop Voucher'),
+        ('product', 'Product Voucher'),
+    ]
+
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
     shop = models.ForeignKey(
         Shop,
@@ -763,6 +770,7 @@ class Voucher(models.Model):
         related_name='created_vouchers'
     )
     is_active = models.BooleanField(default=True)
+    voucher_type = models.CharField(max_length=20, choices=VOUCHER_TYPES, null=True, blank=True)
 
     class Meta:
         indexes = [
