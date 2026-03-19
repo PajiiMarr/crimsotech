@@ -75,6 +75,15 @@ export default function AddDeliveryMedia() {
 
   const selectedCount = useMemo(() => selectedProofs.length, [selectedProofs]);
 
+  const normalizeProofUrl = (url?: string | null) => {
+    if (!url) return null;
+    if (/^https?:\/\//i.test(url)) return url;
+
+    const base = String(AxiosInstance.defaults.baseURL || '').replace(/\/$/, '');
+    const path = String(url).startsWith('/') ? String(url) : `/${String(url)}`;
+    return `${base}${path}`;
+  };
+
   const fetchProofs = async () => {
     if (!userId || !deliveryId) return;
     try {
@@ -177,6 +186,7 @@ export default function AddDeliveryMedia() {
       setUploading(true);
       for (const proof of selectedProofs) {
         const formData = new FormData();
+        formData.append('delivery_id', deliveryId);
         formData.append('proof_type', 'delivery');
         formData.append('file', proof as any);
 
@@ -251,10 +261,10 @@ export default function AddDeliveryMedia() {
                 <TouchableOpacity
                   key={proof.id}
                   style={styles.proofCard}
-                  onPress={() => openProof(proof.file_url)}
+                  onPress={() => openProof(normalizeProofUrl(proof.file_url))}
                 >
-                  {isImageProof(proof) && proof.file_url ? (
-                    <Image source={{ uri: proof.file_url }} style={styles.proofImage} />
+                  {isImageProof(proof) && normalizeProofUrl(proof.file_url) ? (
+                    <Image source={{ uri: normalizeProofUrl(proof.file_url) as string }} style={styles.proofImage} />
                   ) : (
                     <View style={styles.fileIcon}>
                       <MaterialIcons name="insert-drive-file" size={24} color={COLORS.info} />
