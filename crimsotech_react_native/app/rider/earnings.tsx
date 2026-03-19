@@ -10,6 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AxiosInstance from '../../contexts/axios';
 import { useAuth } from '../../contexts/AuthContext';
@@ -197,6 +198,32 @@ export default function Earnings() {
                 </Text>
               </TouchableOpacity>
             </View>
+            <TouchableOpacity
+              onPress={() => router.push('/rider/withdraw' as any)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#111827',
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                borderRadius: 10,
+                marginTop: 10,
+                alignSelf: 'flex-start',
+              }}
+            >
+              <Ionicons name="wallet-outline" size={16} color="white" />
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  color: 'white',
+                  marginLeft: 6,
+                }}
+              >
+                Wallet & Withdraw
+              </Text>
+            </TouchableOpacity>
             <Text style={{ fontSize: 14, color: '#6B7280', marginTop: 4 }}>
               Quick summary of your delivery performance
             </Text>

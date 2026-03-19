@@ -181,6 +181,13 @@ export default function RiderLayout() {
               href: null,
             }}
           />
+          <Tabs.Screen
+            name="withdraw"
+            options={{
+              headerShown: false,
+              href: null,
+            }}
+          />
         </Tabs>
       </SafeAreaView>
     </RoleGuard>
