@@ -751,7 +751,9 @@ class Voucher(models.Model):
     value = models.DecimalField(decimal_places=2, max_digits=9)
     minimum_spend = models.DecimalField(decimal_places=2, max_digits=9, default=0.00)
     maximum_usage = models.IntegerField(default=0)
-    valid_until = models.DateField()
+    # valid_until = models.DateField()
+    start_date = models.DateField(default=timezone.now)
+    end_date = models.DateField(null=True, blank=True)
     added_at = models.DateField(auto_now_add=True)
     created_by = models.ForeignKey(
         User,
@@ -765,8 +767,8 @@ class Voucher(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['code', 'is_active']),
-            models.Index(fields=['shop', 'is_active', 'valid_until']),
-            models.Index(fields=['valid_until', 'is_active']),
+            models.Index(fields=['shop', 'is_active']),
+            models.Index(fields=['start_date', 'end_date']),
         ]
 
     def __str__(self):
