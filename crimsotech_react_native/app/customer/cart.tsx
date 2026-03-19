@@ -1,7 +1,6 @@
 // app/(customer)/cart.tsx
 import React, { useState, useEffect } from "react";
 import {
-  SafeAreaView,
   View,
   Text,
   ActivityIndicator,
@@ -16,8 +15,6 @@ import {
   Platform,
 } from "react-native";
 import {
-  Ionicons,
-  MaterialCommunityIcons,
   MaterialIcons,
 } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -60,9 +57,39 @@ interface ApiCartItem {
   total_price: string;
 }
 
+interface CartTotals {
+  subtotal: number;
+  discount: number;
+  total: number;
+  applied_voucher: {
+    id: string;
+    name: string;
+    code: string;
+    discount_type: string;
+    value: number;
+    discount_amount: number;
+  } | null;
+}
+
+interface Voucher {
+  id: string;
+  name: string;
+  code: string;
+  discount_type: string;
+  value: number;
+  discount_amount: number;
+  minimum_spend: number;
+  shop_id: string | null;
+  shop_name: string;
+  voucher_type: string;
+}
+
 interface CartApiResponse {
   success: boolean;
   cart_items: ApiCartItem[];
+  totals: CartTotals;
+  available_vouchers: Voucher[];
+  voucher_error?: string;
   error?: string;
 }
 
@@ -186,24 +213,20 @@ const CouponModal = ({
   visible,
   onClose,
   onApply,
+  isApplying,
 }: {
   visible: boolean;
   onClose: () => void;
   onApply: (code: string) => Promise<void>;
+  isApplying: boolean;
 }) => {
   const [couponCode, setCouponCode] = useState("");
-  const [isApplying, setIsApplying] = useState(false);
 
   const handleApply = async () => {
     if (!couponCode.trim()) return;
-    setIsApplying(true);
-    try {
-      await onApply(couponCode.trim());
-      setCouponCode("");
-      onClose();
-    } finally {
-      setIsApplying(false);
-    }
+    await onApply(couponCode.trim());
+    setCouponCode("");
+    onClose();
   };
 
   return (
@@ -216,7 +239,7 @@ const CouponModal = ({
       <View style={styles.modalOverlay}>
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Apply Coupon</Text>
+            <Text style={styles.modalTitle}>Apply Voucher</Text>
             <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
               <MaterialIcons name="close" size={24} color="#374151" />
             </TouchableOpacity>
@@ -227,7 +250,7 @@ const CouponModal = ({
               <MaterialIcons name="local-offer" size={20} color="#F97316" />
               <TextInput
                 style={styles.couponInput}
-                placeholder="Enter coupon code"
+                placeholder="Enter voucher code"
                 placeholderTextColor="#9CA3AF"
                 value={couponCode}
                 onChangeText={setCouponCode}
@@ -249,7 +272,7 @@ const CouponModal = ({
                 onPress={handleApply}
                 disabled={!couponCode.trim()}
               >
-                <Text style={styles.applyButtonText}>Apply Coupon</Text>
+                <Text style={styles.applyButtonText}>Apply Voucher</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -366,13 +389,13 @@ const CartItemComponent = ({
     <View style={styles.cartItem}>
       <TouchableOpacity
         onPress={() => onSelect(item.id, !item.selected)}
-        style={{ padding: 4 }} // Add some hit slop/padding instead of the checkbox style
+        style={{ padding: 4 }}
         disabled={isUpdating}
       >
         <View
           style={[
             styles.checkbox,
-            { marginRight: 0 }, // Remove margin from the box itself since we might want spacing on container
+            { marginRight: 0 },
             item.selected && styles.checkboxChecked,
           ]}
         >
@@ -527,24 +550,31 @@ const ShopSection = ({
   );
 };
 
-// Order Summary Component
+// Order Summary Component with Voucher Support
 const OrderSummary = ({
   subtotal,
   discount,
   delivery,
   itemCount,
-  shopCount,
-  onApplyCoupon,
+  appliedVoucher,
+  availableVouchers = [],
+  onApplyVoucher,
+  onRemoveVoucher,
   onProceedToCheckout,
+  isApplyingVoucher,
 }: {
   subtotal: number;
   discount: number;
   delivery: number;
   itemCount: number;
-  shopCount: number;
-  onApplyCoupon: () => void;
+  appliedVoucher: CartTotals['applied_voucher'];
+  availableVouchers: Voucher[];
+  onApplyVoucher: (code: string) => Promise<void>;
+  onRemoveVoucher: () => void;
   onProceedToCheckout: () => void;
+  isApplyingVoucher: boolean;
 }) => {
+  const [showVouchers, setShowVouchers] = useState(false);
   const total = subtotal - discount + delivery;
 
   return (
@@ -573,39 +603,122 @@ const OrderSummary = ({
             </Text>
           </View>
         )}
+
+        {appliedVoucher && (
+          <View style={styles.appliedVoucherContainer}>
+            <View style={styles.appliedVoucherBadge}>
+              <MaterialIcons name="local-offer" size={14} color="#059669" />
+              <Text style={styles.appliedVoucherText} numberOfLines={1}>
+                {appliedVoucher.code} • -₱{appliedVoucher.discount_amount.toFixed(2)}
+              </Text>
+              <TouchableOpacity
+                onPress={onRemoveVoucher}
+                style={styles.removeVoucherButton}
+              >
+                <MaterialIcons name="close" size={14} color="#059669" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
+
+      {/* Available Vouchers Section */}
+      {availableVouchers.length > 0 && !appliedVoucher && (
+        <View style={styles.availableVouchersSection}>
+          <TouchableOpacity
+            style={styles.availableVouchersToggle}
+            onPress={() => setShowVouchers(!showVouchers)}
+          >
+            <View style={styles.availableVouchersHeader}>
+              <MaterialIcons name="local-offer" size={16} color="#F97316" />
+              <Text style={styles.availableVouchersTitle}>
+                {availableVouchers.length} voucher(s) available
+              </Text>
+              <MaterialIcons
+                name={showVouchers ? "keyboard-arrow-up" : "keyboard-arrow-down"}
+                size={20}
+                color="#6B7280"
+              />
+            </View>
+          </TouchableOpacity>
+
+          {showVouchers && (
+            <ScrollView 
+              style={styles.vouchersList}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled={true}
+            >
+              {availableVouchers.map((voucher) => (
+                <TouchableOpacity
+                  key={voucher.id}
+                  style={styles.voucherItem}
+                  onPress={() => onApplyVoucher(voucher.code)}
+                  disabled={isApplyingVoucher}
+                >
+                  <View style={styles.voucherInfo}>
+                    <Text style={styles.voucherCode}>{voucher.code}</Text>
+                    <Text style={styles.voucherName}>{voucher.name}</Text>
+                    <Text style={styles.voucherDiscount}>
+                      {voucher.discount_type === 'percentage' 
+                        ? `${voucher.value}% off` 
+                        : `₱${voucher.value} off`}
+                      {voucher.minimum_spend > 0 && 
+                        ` • Min. spend ₱${voucher.minimum_spend}`}
+                    </Text>
+                    <Text style={styles.voucherShop}>{voucher.shop_name}</Text>
+                  </View>
+                  <View style={styles.voucherApplyButton}>
+                    {isApplyingVoucher ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.voucherApplyText}>Apply</Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      )}
 
       <View style={styles.summaryDivider} />
 
-      {/* Bottom Action Section */}
-      <View style={styles.compactContainer}>
-        <View style={styles.totalInfoContainer}>
-          <Text style={styles.totalLabelCompact}>Total Payment</Text>
+      {/* Bottom Action Section - Edge to Edge */}
+      <View style={styles.bottomActions}>
+        <View style={styles.totalSection}>
+          <Text style={styles.totalLabel}>Total</Text>
           <View style={styles.totalValueRow}>
             <Text style={styles.totalCurrency}>₱</Text>
-            <Text style={styles.totalValueCompact}>{total.toFixed(2)}</Text>
+            <Text style={styles.totalValue}>{total.toFixed(2)}</Text>
           </View>
+          {discount > 0 && (
+            <Text style={styles.savedText}>
+              You saved ₱{discount.toFixed(2)}
+            </Text>
+          )}
         </View>
 
-        <TouchableOpacity
-          style={styles.compactCouponBtn}
-          onPress={onApplyCoupon}
-        >
-          <MaterialIcons name="local-offer" size={16} color="#F97316" />
-        </TouchableOpacity>
+        <View style={styles.actionButtons}>
+          <TouchableOpacity
+            style={styles.couponButton}
+            onPress={() => onApplyVoucher('')}
+          >
+            <MaterialIcons name="local-offer" size={20} color="#F97316" />
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[
-            styles.checkoutBtnCompact,
-            itemCount === 0 && styles.checkoutBtnDisabled,
-          ]}
-          onPress={onProceedToCheckout}
-          disabled={itemCount === 0}
-        >
-          <Text style={styles.checkoutBtnTextCompact}>
-            Checkout ({itemCount})
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.checkoutButton,
+              itemCount === 0 && styles.checkoutButtonDisabled,
+            ]}
+            onPress={onProceedToCheckout}
+            disabled={itemCount === 0}
+          >
+            <Text style={styles.checkoutButtonText}>
+              Checkout ({itemCount})
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -619,26 +732,16 @@ export default function CartPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [couponModalVisible, setCouponModalVisible] = useState(false);
-  const [cartCount, setCartCount] = useState<number>(0);
+  const [cartTotals, setCartTotals] = useState<CartTotals>({
+    subtotal: 0,
+    discount: 0,
+    total: 0,
+    applied_voucher: null
+  });
+  const [availableVouchers, setAvailableVouchers] = useState<Voucher[]>([]);
+  const [isApplyingVoucher, setIsApplyingVoucher] = useState(false);
 
-  const fetchCartCount = async () => {
-    if (!userId) return;
-    try {
-      const response = await AxiosInstance.get<CartCountResponse>(
-        "/cart/count/",
-        {
-          params: { user_id: userId },
-        },
-      );
-      if (response.data.success) {
-        setCartCount(response.data.count);
-      }
-    } catch (err) {
-      console.error("Error fetching cart count:", err);
-    }
-  };
-
-  const fetchCartData = async () => {
+  const fetchCartData = async (voucherCode?: string) => {
     if (!userId) {
       Alert.alert("Login Required", "Please login to view your cart");
       setLoading(false);
@@ -647,35 +750,63 @@ export default function CartPage() {
 
     try {
       setLoading(true);
+      const params: any = { user_id: userId };
+      if (voucherCode) {
+        params.voucher_code = voucherCode;
+      }
+
       const response = await AxiosInstance.get<CartApiResponse>("/view-cart/", {
-        params: { user_id: userId },
+        params
       });
 
-      if (response.data.success && response.data.cart_items) {
-        const transformedItems = transformApiData(response.data.cart_items);
-        setCartCount(transformedItems.length);
+      if (response.data.success) {
+        if (response.data.cart_items) {
+          const transformedItems = transformApiData(response.data.cart_items);
+          
+          // Update cart totals
+          if (response.data.totals) {
+            setCartTotals(response.data.totals);
+          }
 
-        const groupedItems = transformedItems.reduce<Record<string, CartStore>>(
-          (acc, item) => {
-            if (!acc[item.shop_id]) {
-              acc[item.shop_id] = {
-                shop_id: item.shop_id,
-                shop_name: item.shop_name,
-                items: [],
-                selected: true,
-              };
-            }
-            acc[item.shop_id].items.push(item);
-            return acc;
-          },
-          {},
-        );
+          // Update available vouchers
+          if (response.data.available_vouchers) {
+            setAvailableVouchers(response.data.available_vouchers);
+          }
 
-        const storesArray: CartStore[] = Object.values(groupedItems);
-        setCartStores(storesArray);
-      } else {
-        setCartStores([]);
-        setCartCount(0);
+          // Show voucher error if any
+          if (response.data.voucher_error) {
+            Alert.alert("Voucher Error", response.data.voucher_error);
+          }
+
+          // Group items by shop
+          const groupedItems = transformedItems.reduce<Record<string, CartStore>>(
+            (acc, item) => {
+              if (!acc[item.shop_id]) {
+                acc[item.shop_id] = {
+                  shop_id: item.shop_id,
+                  shop_name: item.shop_name,
+                  items: [],
+                  selected: true,
+                };
+              }
+              acc[item.shop_id].items.push(item);
+              return acc;
+            },
+            {},
+          );
+
+          const storesArray: CartStore[] = Object.values(groupedItems);
+          setCartStores(storesArray);
+        } else {
+          setCartStores([]);
+          setCartTotals({
+            subtotal: 0,
+            discount: 0,
+            total: 0,
+            applied_voucher: null
+          });
+          setAvailableVouchers([]);
+        }
       }
     } catch (error: any) {
       console.error("Error fetching cart:", error);
@@ -687,9 +818,14 @@ export default function CartPage() {
         errorMessage = "Please login to view your cart";
       } else if (!error.response) {
         errorMessage = "Network error. Please check your connection.";
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
       }
 
-      Alert.alert("Error", errorMessage);
+      if (error.response?.status !== 404) {
+        Alert.alert("Error", errorMessage);
+      }
+      
       setCartStores([]);
     } finally {
       setLoading(false);
@@ -734,7 +870,10 @@ export default function CartPage() {
           })),
         );
 
-        fetchCartCount();
+        // Update totals from response
+        if (response.data.totals) {
+          setCartTotals(response.data.totals);
+        }
       } else {
         Alert.alert(
           "Error",
@@ -765,10 +904,7 @@ export default function CartPage() {
     setUpdatingId(itemId);
     try {
       const response = await AxiosInstance.delete(
-        `/view-cart/delete/${itemId}/`,
-        {
-          data: { user_id: userId },
-        },
+        `/view-cart/delete/${itemId}/?user_id=${userId}`,
       );
 
       if (response.data.success) {
@@ -780,11 +916,13 @@ export default function CartPage() {
             }))
             .filter((store) => store.items.length > 0);
 
-          setCartCount(
-            newStores.reduce((acc, store) => acc + store.items.length, 0),
-          );
           return newStores;
         });
+
+        // Update totals from response
+        if (response.data.totals) {
+          setCartTotals(response.data.totals);
+        }
       } else {
         Alert.alert("Error", response.data.error || "Failed to remove item");
       }
@@ -852,21 +990,29 @@ export default function CartPage() {
     );
   };
 
-  const handleApplyCoupon = async (code: string) => {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    Alert.alert("Success", `Coupon "${code}" applied successfully!`);
+  const handleApplyVoucher = async (code: string) => {
+    if (!code) {
+      setCouponModalVisible(true);
+      return;
+    }
+
+    setIsApplyingVoucher(true);
+    try {
+      await fetchCartData(code);
+      setCouponModalVisible(false);
+    } catch (error) {
+      console.error("Error applying voucher:", error);
+    } finally {
+      setIsApplyingVoucher(false);
+    }
+  };
+
+  const handleRemoveVoucher = () => {
+    fetchCartData(); // Fetch without voucher code to remove it
   };
 
   const allItems = cartStores.flatMap((store) => store.items);
   const selectedItems = allItems.filter((item) => item.selected);
-  const selectedShops = new Set(selectedItems.map((item) => item.shop_id)).size;
-
-  const subtotal = selectedItems.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0,
-  );
-  const discount = 0;
-  const delivery = selectedItems.length > 0 ? DELIVERY_FEE : 0;
   const allSelected =
     allItems.length > 0 && allItems.every((item) => item.selected);
 
@@ -877,7 +1023,10 @@ export default function CartPage() {
     }
 
     const selectedIds = selectedItems.map((item) => item.id).join(",");
-    router.push(`/customer/checkout?selected=${selectedIds}`);
+    const voucherParam = cartTotals.applied_voucher 
+      ? `&voucher=${cartTotals.applied_voucher.id}` 
+      : '';
+    router.push(`/customer/checkout?selected=${selectedIds}${voucherParam}`);
   };
 
   if (authLoading || loading) {
@@ -915,7 +1064,7 @@ export default function CartPage() {
 
   return (
     <CustomerLayout disableScroll={true}>
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
         {/* Cart Header */}
         <View style={styles.cartHeader}>
           <View>
@@ -957,7 +1106,7 @@ export default function CartPage() {
               tintColor="#F97316"
             />
           }
-          contentContainerStyle={{ paddingBottom: 100 }}
+          contentContainerStyle={styles.scrollViewContent}
         >
           {/* Shop Sections */}
           {cartStores.map((store) => (
@@ -971,17 +1120,23 @@ export default function CartPage() {
               updatingId={updatingId}
             />
           ))}
+          
+          {/* Extra padding at bottom for the fixed summary */}
+          <View style={{ height: 180 }} />
         </ScrollView>
 
-        {/* Order Summary - Floating/Fixed at bottom */}
+        {/* Order Summary - Fixed at bottom */}
         <OrderSummary
-          subtotal={subtotal}
-          discount={discount}
-          delivery={delivery}
+          subtotal={cartTotals.subtotal}
+          discount={cartTotals.discount}
+          delivery={DELIVERY_FEE}
           itemCount={selectedItems.length}
-          shopCount={selectedShops}
-          onApplyCoupon={() => setCouponModalVisible(true)}
+          appliedVoucher={cartTotals.applied_voucher}
+          availableVouchers={availableVouchers}
+          onApplyVoucher={handleApplyVoucher}
+          onRemoveVoucher={handleRemoveVoucher}
           onProceedToCheckout={handleCheckout}
+          isApplyingVoucher={isApplyingVoucher}
         />
       </View>
 
@@ -989,7 +1144,8 @@ export default function CartPage() {
       <CouponModal
         visible={couponModalVisible}
         onClose={() => setCouponModalVisible(false)}
-        onApply={handleApplyCoupon}
+        onApply={handleApplyVoucher}
+        isApplying={isApplyingVoucher}
       />
     </CustomerLayout>
   );
@@ -1086,6 +1242,9 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+  },
+  scrollViewContent: {
+    paddingBottom: 20,
   },
   shopSection: {
     backgroundColor: "#FFFFFF",
@@ -1266,13 +1425,11 @@ const styles = StyleSheet.create({
   },
   orderSummary: {
     backgroundColor: "#FFFFFF",
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    borderWidth: 1,
-    borderColor: "#F3F4F6",
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    paddingBottom: Platform.OS === "ios" ? 24 : 12, // Reduced padding
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
     position: "absolute",
     bottom: 0,
     left: 0,
@@ -1280,12 +1437,12 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: {
         shadowColor: "#000",
-        shadowOffset: { width: 0, height: -2 }, // Subtler shadow
-        shadowOpacity: 0.08,
-        shadowRadius: 4,
+        shadowOffset: { width: 0, height: -3 },
+        shadowOpacity: 0.1,
+        shadowRadius: 3,
       },
       android: {
-        elevation: 12,
+        elevation: 8,
       },
     }),
   },
@@ -1298,80 +1455,171 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   summaryLabelCompact: {
-    fontSize: 11,
+    fontSize: 12,
     color: "#6B7280",
   },
   summaryValueCompact: {
-    fontSize: 11,
+    fontSize: 12,
     color: "#374151",
     fontWeight: "500",
+  },
+  appliedVoucherContainer: {
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  appliedVoucherBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#D1FAE5",
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 4,
+    alignSelf: "flex-start",
+  },
+  appliedVoucherText: {
+    fontSize: 11,
+    color: "#059669",
+    marginLeft: 4,
+    marginRight: 4,
+    fontWeight: "500",
+    flex: 1,
+  },
+  removeVoucherButton: {
+    padding: 2,
+  },
+  availableVouchersSection: {
+    marginVertical: 8,
+  },
+  availableVouchersToggle: {
+    paddingVertical: 6,
+  },
+  availableVouchersHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  availableVouchersTitle: {
+    fontSize: 12,
+    color: "#374151",
+    fontWeight: "500",
+    marginLeft: 6,
+    flex: 1,
+  },
+  vouchersList: {
+    maxHeight: 160,
+    marginTop: 8,
+  },
+  voucherItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#F9FAFB",
+    padding: 10,
+    borderRadius: 6,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  voucherInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  voucherCode: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#F97316",
+    marginBottom: 2,
+  },
+  voucherName: {
+    fontSize: 11,
+    color: "#374151",
+    marginBottom: 2,
+  },
+  voucherDiscount: {
+    fontSize: 10,
+    color: "#059669",
+    fontWeight: "500",
+    marginBottom: 2,
+  },
+  voucherShop: {
+    fontSize: 9,
+    color: "#6B7280",
+  },
+  voucherApplyButton: {
+    backgroundColor: "#F97316",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 4,
+    minWidth: 50,
+    alignItems: "center",
+  },
+  voucherApplyText: {
+    fontSize: 11,
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
   summaryDivider: {
     height: 1,
     backgroundColor: "#E5E7EB",
-    marginBottom: 8,
+    marginVertical: 8,
   },
-  compactContainer: {
+  bottomActions: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  totalInfoContainer: {
+  totalSection: {
     flex: 1,
-    marginRight: 8,
   },
-  totalLabelCompact: {
-    fontSize: 10,
+  totalLabel: {
+    fontSize: 11,
     color: "#6B7280",
-    marginBottom: 0,
+    marginBottom: 2,
   },
   totalValueRow: {
     flexDirection: "row",
     alignItems: "baseline",
   },
   totalCurrency: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "600",
     color: "#F97316",
     marginRight: 2,
   },
-  totalValueCompact: {
-    fontSize: 16,
+  totalValue: {
+    fontSize: 20,
     fontWeight: "700",
     color: "#F97316",
   },
   savedText: {
-    fontSize: 9,
-    color: "#059669",
-  },
-  compactCouponBtn: {
-    marginRight: 10,
-    padding: 6,
-    backgroundColor: "#FFF7ED",
-    borderRadius: 6,
-  },
-  compactCouponText: {
     fontSize: 10,
-    color: "#F97316",
-    fontWeight: "600",
-    marginLeft: 4,
+    color: "#059669",
+    marginTop: 2,
   },
-  checkoutBtnCompact: {
+  actionButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  couponButton: {
+    padding: 10,
+    backgroundColor: "#FFF7ED",
+    borderRadius: 8,
+  },
+  checkoutButton: {
     backgroundColor: "#F97316",
     paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
     minWidth: 120,
+    alignItems: "center",
   },
-  checkoutBtnTextCompact: {
+  checkoutButtonDisabled: {
+    opacity: 0.5,
+  },
+  checkoutButtonText: {
     fontSize: 14,
     fontWeight: "600",
     color: "#FFFFFF",
-  },
-  checkoutBtnDisabled: {
-    opacity: 0.5,
   },
   modalOverlay: {
     flex: 1,

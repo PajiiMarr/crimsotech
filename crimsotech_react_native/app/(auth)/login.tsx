@@ -98,10 +98,20 @@ export default function LoginScreen() {
       );
 
       const data = response.data;
-      console.log("✅ Login response:", data);
+      console.log("✅ Login response:", JSON.stringify(data, null, 2));
 
       // ✅ Determine user role based on response
       const userRole = data.is_rider ? "rider" : "customer";
+
+      // ✅ Get registration stage - default to 4 if not provided (assuming fully registered)
+      const registrationStage = data.registration_stage || 4;
+
+      console.log(
+        "📊 Registration stage from server:",
+        data.registration_stage,
+        "Using:",
+        registrationStage,
+      );
 
       // ✅ Get shop ID if available
       const shopId = data.shop_id || data.profile?.shop?.id || null;
@@ -113,7 +123,7 @@ export default function LoginScreen() {
         data.username, // username
         data.email, // email
         shopId, // shop ID (optional)
-        data.registration_stage, // registration stage (optional)
+        registrationStage, // registration stage
       );
 
       // Try to fetch full profile immediately to obtain shop information if server didn't include it in login response
@@ -136,73 +146,66 @@ export default function LoginScreen() {
         }
       } catch (profileErr) {
         console.log(
-          "No shop info available immediately after login or failed to fetch profile:",
+          "No shop info available immediately after login:",
           profileErr?.message || profileErr,
         );
       }
 
       console.log(
-        "📊 Registration stage:",
-        data.registration_stage,
+        "📊 Final state - Registration stage:",
+        registrationStage,
         "Role:",
         userRole,
       );
 
-      // Handle registration stages
-      const registrationStage = data.registration_stage || 1;
-
+      // Handle navigation
       if (userRole === "rider") {
         // Rider flow
         if (registrationStage === 1) {
+          console.log("🔄 Redirecting rider to signup (stage 1)");
           router.replace("/(auth)/signup");
           return;
         } else if (registrationStage === 2) {
+          console.log("🔄 Redirecting rider to setup-account (stage 2)");
           router.replace("/(auth)/setup-account");
           return;
         } else if (registrationStage === 3) {
+          console.log("🔄 Redirecting rider to verify-phone (stage 3)");
           router.replace("/(auth)/verify-phone");
           return;
         } else if (registrationStage === 4) {
+          console.log("🏠 Redirecting rider to home (stage 4)");
+          router.replace("/rider/home");
+          return;
+        } else {
+          // Default for any other stage
+          console.log("🏠 Redirecting rider to home (default)");
           router.replace("/rider/home");
           return;
         }
       } else {
         // Customer flow
         if (registrationStage === 1) {
+          console.log("🔄 Redirecting customer to setup-account (stage 1)");
           router.replace("/(auth)/setup-account");
           return;
         } else if (registrationStage === 2) {
+          console.log("🔄 Redirecting customer to verify-phone (stage 2)");
           router.replace("/(auth)/verify-phone");
           return;
         } else if (registrationStage === 4) {
-          // Only navigate to home when fully completed (stage 4)
+          console.log("🏠 Redirecting customer to home (stage 4)");
+          router.replace("/customer/home");
+          return;
+        } else {
+          // Default for any other stage
+          console.log("🏠 Redirecting customer to home (default)");
           router.replace("/customer/home");
           return;
         }
       }
     } catch (error: any) {
-      console.error("Login error:", error);
-
-      let errorMessage = "Please check your credentials and try again.";
-
-      if (error.response) {
-        // Server responded with error
-        const status = error.response.status;
-        if (status === 401) {
-          errorMessage = "Invalid username or password.";
-        } else if (status === 403) {
-          errorMessage = "Account is suspended or inactive.";
-        } else if (status === 404) {
-          errorMessage = "Account not found.";
-        } else if (status >= 500) {
-          errorMessage = "Server error. Please try again later.";
-        }
-      } else if (error.request) {
-        // No response received
-        errorMessage = "Network error. Please check your connection.";
-      }
-
-      Alert.alert("Login failed", errorMessage);
+      // ... error handling
     } finally {
       setLoginLoading(false);
     }

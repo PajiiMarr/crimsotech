@@ -42,6 +42,7 @@ router.register(r'seller-boosts', SellerBoosts, basename='seller-boosts')
 router.register(r'shop-add-product', CustomerShopsAddSeller, basename='shop-add-product')
 router.register(r'customer-products', CustomerProducts, basename='customer-products')
 router.register(r'public-products', PublicProducts, basename='public-products')
+router.register(r'seller-vouchers', SellerVouchers, basename='seller-vouchers')
 
 router.register(r'checkout', CheckoutView, basename='checkout')
 router.register(r'customer-boost-plans', CustomerBoostPlan, basename='customer-boost-plans')

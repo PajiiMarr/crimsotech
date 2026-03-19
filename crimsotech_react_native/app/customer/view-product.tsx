@@ -35,13 +35,9 @@ import {
   Ionicons,
   MaterialIcons,
   MaterialCommunityIcons,
-  FontAwesome,
-  AntDesign,
-  Feather,
 } from '@expo/vector-icons';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const IMAGE_SIZE = SCREEN_WIDTH - 32;
 
 // Types
 interface Variant {
@@ -77,6 +73,9 @@ interface Variant {
   critical_stock: number | null;
   created_at: string;
   updated_at: string;
+  in_stock?: boolean;
+  available_quantity?: number;
+  stock_status?: string;
 }
 
 interface MediaFile {
@@ -142,19 +141,6 @@ interface SellerInfo {
   total_sales?: string;
 }
 
-interface Customer {
-  id: string;
-  username: string;
-  email: string;
-  first_name?: string;
-  last_name?: string;
-  profile_picture?: string | null;
-  contact_number?: string;
-  avg_rating?: number | null;
-  total_sales?: number;
-  created_at?: string;
-}
-
 interface Category {
   id: string;
   name: string;
@@ -174,7 +160,6 @@ interface Product {
   created_at: string;
   updated_at: string;
   shop: Shop | null;
-  customer?: Customer | null;
   category: Category | null;
   category_admin: Category | null;
   variants: Variant[];
@@ -185,6 +170,10 @@ interface Product {
   price_range?: PriceRange | null;
   variant_count: number;
   default_variant: Variant | null;
+  in_stock_variant_count?: number;
+  has_stock?: boolean;
+  total_available_stock?: number;
+  total_ordered_stock?: number;
 }
 
 // Helper function to safely convert to number
@@ -198,42 +187,18 @@ const safeToNumber = (value: any, defaultValue: number = 0): number => {
 const isProductGift = (product: Product | null): boolean => {
   if (!product) return false;
   
-  // Check by name
   if (product.name.toLowerCase().includes('gift')) {
     return true;
   }
   
-  // Check price_display
   if (product.price_display === "FREE GIFT" || 
       product.price_display === "₱0" || 
-      product.price_display === "₱0.00" ||
-      product.price_display === "Price unavailable" ||
-      product.price_display === "Price not available") {
-    
-    if (product.name.toLowerCase().includes('gift')) {
-      return true;
-    }
-    
-    // Check if all variants have zero price
-    if (product.variants && product.variants.length > 0) {
-      const allZeroPrices = product.variants.every(v => safeToNumber(v.price) === 0);
-      if (allZeroPrices) {
-        return true;
-      }
-    }
+      product.price_display === "₱0.00") {
+    return true;
   }
   
-  // Check if price_range has min and max both 0
   if (product.price_range) {
     if (product.price_range.min === 0 && product.price_range.max === 0) {
-      return true;
-    }
-  }
-  
-  // Check if any variant has price 0
-  if (product.variants && product.variants.length > 0) {
-    const hasZeroPriceVariant = product.variants.some(v => safeToNumber(v.price) === 0);
-    if (hasZeroPriceVariant) {
       return true;
     }
   }
@@ -252,7 +217,7 @@ const getProductDisplayPrice = (product: Product | null): string => {
   return product.price_display || "Price unavailable";
 };
 
-// Define thumbnail item type to match web version
+// Define thumbnail item type
 interface ThumbnailItem {
   url: string;
   type: 'product' | 'variant';
@@ -281,17 +246,11 @@ export default function ViewProductPage() {
   const [thumbnailUrls, setThumbnailUrls] = useState<ThumbnailItem[]>([]);
   const flatListRef = useRef<FlatList>(null);
 
-  // Determine if this is a gift product
   const isGift = isProductGift(product);
   const displayPrice = getProductDisplayPrice(product);
-
-  // Determine if this is a personal listing (no shop)
   const isPersonalListing = !product?.shop;
-
-  // Safely determine if product has variants
   const hasVariants = !!(product?.variants && Array.isArray(product.variants) && product.variants.length > 0);
 
-  // Refund policy
   const isRefundable = !!(currentVariant?.is_refundable || product?.is_refundable);
   const refundDays = currentVariant?.is_refundable 
     ? (currentVariant.refund_days ?? product?.refund_days ?? 0) 
@@ -299,10 +258,7 @@ export default function ViewProductPage() {
   const refundText = `refundable (${refundDays} day${refundDays === 1 ? '' : 's'})`;
 
   const isExplicitlyNonRefundable = (currentVariant?.is_refundable === false) || (product?.is_refundable === false);
-
-  const isAvailableForSwap = hasVariants
-    ? (currentVariant && currentVariant.allow_swap)
-    : false;
+  const isAvailableForSwap = hasVariants ? (currentVariant && currentVariant.allow_swap) : false;
 
   // Fetch product data
   useEffect(() => {
@@ -317,7 +273,6 @@ export default function ViewProductPage() {
         try {
           const response = await AxiosInstance.get(`/public-products/${product.id}/seller/`);
           setSellerInfo(response.data);
-          console.log("Seller info loaded:", response.data);
         } catch (err) {
           console.error("Error fetching seller info:", err);
         } finally {
@@ -325,16 +280,8 @@ export default function ViewProductPage() {
         }
       }
     };
-
     fetchSellerInfo();
   }, [product?.id, isPersonalListing]);
-
-  // Use default variant if available
-  useEffect(() => {
-    if (product?.default_variant && !currentVariant) {
-      setCurrentVariant(product.default_variant);
-    }
-  }, [product?.default_variant]);
 
   const fetchProduct = async () => {
     try {
@@ -342,83 +289,56 @@ export default function ViewProductPage() {
       const response = await AxiosInstance.get(`/public-products/${productId}/`);
       setProduct(response.data);
       
-      // Initialize variant selections
-      if (response.data.variants?.length) {
-        const initial: Record<string, string> = {};
-        // You'll need to implement proper variant group extraction
-        setSelectedOptions(initial);
+      if (response.data.default_variant) {
+        setCurrentVariant(response.data.default_variant);
+      } else if (response.data.variants && response.data.variants.length > 0) {
+        const inStockVariant = response.data.variants.find((v: Variant) => v.in_stock === true);
+        setCurrentVariant(inStockVariant || response.data.variants[0]);
       }
     } catch (error) {
-      console.error('Error fetching product:', error);
       Alert.alert('Error', 'Failed to load product');
     } finally {
       setLoading(false);
     }
   };
 
-  const getAvailableOptionIdsForGroup = (
-    variants: Variant[],
-    selectedOptions: Record<string, string>,
-    groupId: string
-  ): Set<string> => {
-    if (!variants || variants.length === 0) return new Set<string>();
+  const handleSelectVariant = (variant: Variant) => {
+    setCurrentVariant(variant);
     
-    const otherSelected = Object.entries(selectedOptions)
-      .filter(([g, optId]) => g !== groupId && !!optId)
-      .map(([, optId]) => String(optId));
-
-    if (otherSelected.length === 0) {
-      return new Set<string>(variants.flatMap((v) => (v.option_ids || []).map(String)));
+    // Find the index of this variant's image in thumbnailUrls
+    const variantImageUrl = variant.image_url || variant.image;
+    if (variantImageUrl) {
+      const fullUrl = ensureAbsoluteUrl(variantImageUrl);
+      const variantImageIndex = thumbnailUrls.findIndex(
+        thumb => thumb.url === fullUrl
+      );
+      if (variantImageIndex !== -1) {
+        setActiveImage(variantImageIndex);
+      }
     }
-
-    const matchingVariants = variants.filter((variant) => {
-      const variantOptionIds = (variant.option_ids || []).map(String);
-      return otherSelected.every((id) => variantOptionIds.includes(id));
-    });
-
-    return new Set<string>(matchingVariants.flatMap((v) => (v.option_ids || []).map(String)));
+    setQuantity(1);
   };
 
-  const handleSelectOption = (groupId: string, optionId: string) => {
-    setSelectedOptions({ ...selectedOptions, [groupId]: optionId });
-  };
-
-  // Get display values from current variant or product defaults
-  const displayVariantPrice = currentVariant
-    ? safeToNumber(currentVariant.price, 0)
-    : (product?.price_range?.min || 0);
-  
-  const displayComparePrice = currentVariant?.compare_price 
-    ? safeToNumber(currentVariant.compare_price) 
-    : undefined;
-
-  const displayStock = currentVariant
-    ? safeToNumber(currentVariant.quantity, 0)
-    : safeToNumber(product?.total_stock || 0, 0);
-
-  const increaseQuantity = () => {
-    if (quantity < displayStock) {
-      setQuantity(prev => prev + 1);
-    }
-  };
-
-  const decreaseQuantity = () => {
-    if (quantity > 1) {
-      setQuantity(prev => prev - 1);
-    }
-  };
-
-  // Build thumbnail URLs (matching web version)
+  // Build thumbnail URLs
   useEffect(() => {
     if (!product) return;
     
     const urls: ThumbnailItem[] = [];
     const seen = new Set<string>();
 
-    // Add product media files first
+    // Add primary image first
+    if (product.primary_image?.url) {
+      const url = ensureAbsoluteUrl(product.primary_image.url);
+      if (url && !seen.has(url)) {
+        urls.push({ url, type: 'product' });
+        seen.add(url);
+      }
+    }
+
+    // Add media files
     if (product.media_files && Array.isArray(product.media_files)) {
-      product.media_files.forEach((img) => {
-        const url = ensureAbsoluteUrl(img.file_data || img.file_url);
+      product.media_files.forEach((media) => {
+        const url = ensureAbsoluteUrl(media.file_data || media.file_url);
         if (url && !seen.has(url)) {
           urls.push({ url, type: 'product' });
           seen.add(url);
@@ -426,11 +346,12 @@ export default function ViewProductPage() {
       });
     }
 
-    // Add variant images
+    // Add variant images - IMPORTANT: Use image_url first, then image
     if (product.variants && Array.isArray(product.variants)) {
       product.variants.forEach((variant) => {
-        if (variant.image || variant.image_url) {
-          const url = ensureAbsoluteUrl(variant.image || variant.image_url);
+        const variantImageUrl = variant.image_url || variant.image;
+        if (variantImageUrl) {
+          const url = ensureAbsoluteUrl(variantImageUrl);
           if (url && !seen.has(url)) {
             urls.push({ url, type: 'variant', id: variant.id });
             seen.add(url);
@@ -439,39 +360,15 @@ export default function ViewProductPage() {
       });
     }
 
-    // Add primary image if not already added
-    if (product.primary_image?.url) {
-      const url = ensureAbsoluteUrl(product.primary_image.url);
-      if (url && !seen.has(url)) {
-        urls.unshift({ url, type: 'product' });
-        seen.add(url);
-      }
-    }
-
     setThumbnailUrls(urls);
-    
-    // Reset active image when product changes
     setActiveImage(0);
   }, [product]);
 
-  // Ensure activeImage is within bounds
   useEffect(() => {
     if (activeImage >= thumbnailUrls.length) {
       setActiveImage(0);
     }
   }, [thumbnailUrls.length, activeImage]);
-
-  // When variant changes, try to find and select its image
-  useEffect(() => {
-    if (currentVariant?.id && thumbnailUrls.length > 0) {
-      const variantImageIndex = thumbnailUrls.findIndex(
-        thumb => thumb.type === 'variant' && thumb.id === currentVariant.id
-      );
-      if (variantImageIndex !== -1) {
-        setActiveImage(variantImageIndex);
-      }
-    }
-  }, [currentVariant, thumbnailUrls]);
 
   const handleAddToCart = async () => {
     if (!product || !user?.id) {
@@ -485,7 +382,6 @@ export default function ViewProductPage() {
     }
 
     setAddingToCart(true);
-    setCartError(null);
 
     try {
       const payload = {
@@ -498,77 +394,21 @@ export default function ViewProductPage() {
       const response = await AxiosInstance.post("/cart/add/", payload);
 
       if (response.data.success) {
-        let message = "Product added to cart!";
-        switch (response.data.action) {
-          case 'updated':
-            message = `Cart updated! Quantity is now ${response.data.new_quantity}`;
-            break;
-          case 'recycled':
-            message = "Item added to cart from previous order";
-            break;
-        }
-        Alert.alert('Success', message);
-      } else {
-        Alert.alert('Error', response.data.error || "Failed to add to cart");
+        Alert.alert('Success', 'Product added to cart!');
       }
     } catch (err: any) {
-      console.error(err);
-      let errorMsg = "An error occurred while adding to cart";
-      if (err.response?.data?.error) {
-        errorMsg = err.response.data.error;
-      }
-      Alert.alert('Error', errorMsg);
+      Alert.alert('Error', err.response?.data?.error || 'Failed to add to cart');
     } finally {
       setAddingToCart(false);
     }
   };
 
-  const handleStartSwap = async () => {
-    if (!product || !user?.id) {
-      Alert.alert('Login Required', 'Please login to start a swap');
-      return;
-    }
-
-    if (!currentVariant || !currentVariant.allow_swap) {
-      Alert.alert('Not Available', 'This variant is not available for swap');
-      return;
-    }
-
-    setStartingSwap(true);
-    setSwapError(null);
-
-    try {
-      Alert.alert(
-        'Coming Soon',
-        'Swap functionality will be available soon!',
-        [{ text: 'OK' }]
-      );
-    } catch (err: any) {
-      console.error(err);
-      Alert.alert('Error', 'An error occurred while initiating swap');
-    } finally {
-      setStartingSwap(false);
-    }
+  const handleStartSwap = () => {
+    Alert.alert('Coming Soon', 'Swap functionality will be available soon!');
   };
 
-  const handleShare = async () => {
-    try {
-      const message = `Check out ${product?.name} on our app!\nPrice: ${displayPrice}`;
-      
-      Alert.alert(
-        'Share Product',
-        message,
-        [
-          { text: 'Copy to Clipboard', onPress: () => {
-            Alert.alert('Copied!', 'Product info copied to clipboard');
-          }},
-          { text: 'Cancel', style: 'cancel' }
-        ]
-      );
-    } catch (error) {
-      console.error('Error sharing:', error);
-      Alert.alert('Error', 'Failed to share product');
-    }
+  const handleShare = () => {
+    Alert.alert('Share', `Check out ${product?.name}`);
   };
 
   const toggleFavorite = () => {
@@ -581,26 +421,29 @@ export default function ViewProductPage() {
     }
   };
 
-  // Get seller display name
+  const decreaseQuantity = () => {
+    if (quantity > 1) setQuantity(quantity - 1);
+  };
+
+  const increaseQuantity = () => {
+    const maxQuantity = currentVariant?.available_quantity || currentVariant?.quantity || 0;
+    if (quantity < maxQuantity) setQuantity(quantity + 1);
+  };
+
   const getSellerDisplayName = () => {
     if (!sellerInfo) return 'Unknown Seller';
-    
     if (sellerInfo.full_name) return sellerInfo.full_name;
     if (sellerInfo.first_name || sellerInfo.last_name) {
       return `${sellerInfo.first_name || ''} ${sellerInfo.last_name || ''}`.trim();
     }
-    if (sellerInfo.username) return sellerInfo.username;
-    if (sellerInfo.name) return sellerInfo.name;
-    return 'Unknown Seller';
+    return sellerInfo.name || 'Unknown Seller';
   };
 
-  // Get seller profile picture
   const getSellerPicture = () => {
     if (sellerInfo?.type === 'shop') {
       return ensureAbsoluteUrl(sellerInfo.shop_picture) || 'https://via.placeholder.com/60';
-    } else {
-      return ensureAbsoluteUrl(sellerInfo?.profile_picture) || 'https://via.placeholder.com/60';
     }
+    return ensureAbsoluteUrl(sellerInfo?.profile_picture) || 'https://via.placeholder.com/60';
   };
 
   const renderStars = (rating: number = 0) => {
@@ -620,7 +463,6 @@ export default function ViewProductPage() {
         <CustomerLayout disableScroll hideBottomTab={true}>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#F97316" />
-            <Text style={styles.loadingText}>Loading product...</Text>
           </View>
         </CustomerLayout>
       </SafeAreaView>
@@ -634,12 +476,6 @@ export default function ViewProductPage() {
           <View style={styles.errorContainer}>
             <MaterialIcons name="error-outline" size={64} color="#EF4444" />
             <Text style={styles.errorText}>Product not found</Text>
-            <TouchableOpacity
-              style={styles.retryButton}
-              onPress={fetchProduct}
-            >
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
           </View>
         </CustomerLayout>
       </SafeAreaView>
@@ -647,20 +483,24 @@ export default function ViewProductPage() {
   }
 
   const displayImageUrl = thumbnailUrls.length > 0 ? thumbnailUrls[activeImage]?.url : 'https://via.placeholder.com/400';
+  const currentVariantPrice = currentVariant ? safeToNumber(currentVariant.price, 0) : 0;
+  const currentVariantComparePrice = currentVariant?.compare_price ? safeToNumber(currentVariant.compare_price) : undefined;
 
   const handleImageSelect = (index: number) => {
     setActiveImage(index);
+    
+    // If the selected image is from a variant, select that variant
+    if (thumbnailUrls[index].type === 'variant' && thumbnailUrls[index].id && product?.variants) {
+      const variantId = thumbnailUrls[index].id;
+      const variant = product.variants.find(v => v.id === variantId);
+      if (variant) {
+        setCurrentVariant(variant);
+      }
+    }
   };
 
-  const handleImagePress = () => {
-    setImageModalVisible(true);
-  };
-
-  const handleLightboxThumbnailPress = (index: number) => {
-    setActiveImage(index);
-    flatListRef.current?.scrollToIndex({ index, animated: true });
-  };
-
+  const handleImagePress = () => setImageModalVisible(true);
+  
   const onMomentumScrollEnd = (event: any) => {
     const index = Math.round(event.nativeEvent.contentOffset.x / SCREEN_WIDTH);
     setActiveImage(index);
@@ -674,37 +514,65 @@ export default function ViewProductPage() {
         activeImage === index && styles.thumbnailActive
       ]}
     >
-      <Image
-        source={{ uri: item.url }}
-        style={styles.thumbnail}
-        resizeMode="cover"
-      />
+      <Image source={{ uri: item.url }} style={styles.thumbnail} resizeMode="cover" />
     </TouchableOpacity>
   );
 
-  const renderLightboxThumbnail = ({ item, index }: { item: ThumbnailItem; index: number }) => (
-    <TouchableOpacity
-      onPress={() => handleLightboxThumbnailPress(index)}
-      style={[
-        styles.lightboxThumbnail,
-        activeImage === index && styles.lightboxThumbnailActive
-      ]}
-    >
-      <Image
-        source={{ uri: item.url }}
-        style={styles.lightboxThumbnailImage}
-        resizeMode="cover"
-      />
-    </TouchableOpacity>
-  );
+  const renderVariantItem = ({ item }: { item: Variant }) => {
+    const isSelected = currentVariant?.id === item.id;
+    const variantPrice = safeToNumber(item.price, 0);
+    const variantComparePrice = item.compare_price ? safeToNumber(item.compare_price) : undefined;
+    const inStock = item.in_stock === true;
+    
+    // Get variant image URL - prioritize image_url over image
+    const variantImageUrl = item.image_url || item.image;
+    const imageSource = variantImageUrl ? ensureAbsoluteUrl(variantImageUrl) : null;
+    
+    return (
+      <TouchableOpacity
+        style={[
+          styles.variantItem,
+          isSelected && styles.variantItemSelected,
+          !inStock && styles.variantItemOutOfStock
+        ]}
+        onPress={() => handleSelectVariant(item)}
+        disabled={!inStock}
+      >
+        {imageSource ? (
+          <Image
+            source={{ uri: imageSource }}
+            style={styles.variantImage}
+            resizeMode="cover"
+            onError={(e) => console.log('Variant image failed to load:', item.id, e.nativeEvent.error)}
+          />
+        ) : (
+          <View style={styles.variantImagePlaceholder}>
+            <MaterialIcons name="inventory" size={16} color="#9CA3AF" />
+          </View>
+        )}
+        <View style={styles.variantInfo}>
+          <Text style={styles.variantTitle} numberOfLines={1}>
+            {item.title || 'Variant'}
+          </Text>
+          <View style={styles.variantPriceRow}>
+            <Text style={styles.variantPrice}>₱{variantPrice.toFixed(2)}</Text>
+            {variantComparePrice && variantComparePrice > variantPrice && (
+              <Text style={styles.variantComparePrice}>₱{variantComparePrice.toFixed(2)}</Text>
+            )}
+          </View>
+        </View>
+        {!inStock && (
+          <View style={styles.variantOutOfStockBadge}>
+            <Text style={styles.variantOutOfStockText}>Out of Stock</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
 
   const renderLightboxItem = ({ item }: { item: ThumbnailItem }) => (
     <View style={styles.modalImageContainer}>
-      <Image
-        source={{ uri: item.url }}
-        style={styles.modalImage}
-        resizeMode="contain"
-      />
+      <Image source={{ uri: item.url }} style={styles.modalImage} resizeMode="contain" />
     </View>
   );
 
@@ -726,7 +594,6 @@ export default function ViewProductPage() {
                 resizeMode="cover"
               />
               
-              {/* Image counter */}
               {thumbnailUrls.length > 1 && (
                 <View style={styles.imageCounter}>
                   <Text style={styles.imageCounterText}>
@@ -735,7 +602,6 @@ export default function ViewProductPage() {
                 </View>
               )}
               
-              {/* Navigation arrows */}
               {thumbnailUrls.length > 1 && (
                 <>
                   <TouchableOpacity
@@ -758,7 +624,6 @@ export default function ViewProductPage() {
               )}
             </TouchableOpacity>
 
-            {/* Thumbnail strip */}
             {thumbnailUrls.length > 1 && (
               <FlatList
                 horizontal
@@ -774,7 +639,6 @@ export default function ViewProductPage() {
 
           {/* Product Info */}
           <View style={styles.productInfo}>
-            {/* Title and Actions */}
             <View style={styles.titleRow}>
               <View style={styles.titleContainer}>
                 <Text style={styles.productName}>{product.name}</Text>
@@ -799,7 +663,6 @@ export default function ViewProductPage() {
               </View>
             </View>
 
-            {/* Rating, Condition and Refund */}
             <View style={styles.ratingRow}>
               <View style={styles.ratingContainer}>
                 {renderStars(product.shop?.avg_rating || 0)}
@@ -807,7 +670,6 @@ export default function ViewProductPage() {
               </View>
               <Text style={styles.conditionText}>{product.condition}</Text>
 
-              {/* Refund info - only show if not a gift */}
               {!isGift && (
                 isRefundable ? (
                   <View style={styles.refundableBadge}>
@@ -823,55 +685,51 @@ export default function ViewProductPage() {
               )}
             </View>
 
-            {/* Price */}
-            <View style={styles.priceContainer}>
-              <Text style={[styles.price, isGift && styles.giftPrice]}>
-                {displayPrice}
-              </Text>
-              {!isGift && displayComparePrice && displayComparePrice > displayVariantPrice && (
-                <Text style={styles.comparePrice}>₱{displayComparePrice.toFixed(2)}</Text>
-              )}
-            </View>
-
-            {/* Stock and Price Range */}
-            <View style={styles.stockContainer}>
-              <Text style={[
-                styles.stockText,
-                displayStock <= 0 && styles.outOfStock
-              ]}>
-                Stock: {displayStock} {displayStock <= 0 ? "(Out of Stock)" : ""}
-              </Text>
-              {!isGift && product.price_range && product.price_range.is_range && (
-                <Text style={styles.priceRangeText}>
-                  Price range: ₱{product.price_range.min.toFixed(2)} - ₱{product.price_range.max.toFixed(2)}
+            {currentVariant && (
+              <View style={styles.priceContainer}>
+                <Text style={[styles.price, isGift && styles.giftPrice]}>
+                  ₱{currentVariantPrice.toFixed(2)}
                 </Text>
-              )}
-            </View>
+                {currentVariantComparePrice && currentVariantComparePrice > currentVariantPrice && (
+                  <Text style={styles.comparePrice}>₱{currentVariantComparePrice.toFixed(2)}</Text>
+                )}
+              </View>
+            )}
 
-            {/* Description */}
+            {currentVariant && (
+              <View style={styles.stockContainer}>
+                <Text style={[
+                  styles.stockText,
+                  (currentVariant.available_quantity || currentVariant.quantity || 0) <= 0 && styles.outOfStock
+                ]}>
+                  Stock: {currentVariant.available_quantity || currentVariant.quantity || 0} 
+                  {(currentVariant.available_quantity || currentVariant.quantity || 0) <= 0 ? " (Out of Stock)" : ""}
+                </Text>
+              </View>
+            )}
+
+            {/* Variants Section */}
+            {hasVariants && product.variants && !isGift && (
+              <View style={styles.variantsSection}>
+                <Text style={styles.variantsTitle}>
+                  Variants ({product.variants.length})
+                </Text>
+                <FlatList
+                  data={product.variants}
+                  renderItem={renderVariantItem}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                  contentContainerStyle={styles.variantsList}
+                />
+              </View>
+            )}
+
             <Text style={styles.description}>{product.description}</Text>
           </View>
 
-          {/* Variant count info */}
-          {!isGift && product.variant_count > 1 && (
-            <View style={styles.variantInfo}>
-              <Text style={styles.variantInfoText}>
-                This product has {product.variant_count} variants available. Please select your preferred variant.
-              </Text>
-            </View>
-          )}
-
-          {/* Variants */}
-          {hasVariants && product.variants && !isGift && (
-            <View style={styles.variantsSection}>
-              <Text style={styles.sectionTitle}>Variants</Text>
-              {/* You'll need to implement variant group rendering here */}
-            </View>
-          )}
-
-          {/* Quantity - Always show */}
+          {/* Quantity */}
           <View style={styles.quantitySection}>
-            <Text style={styles.sectionTitle}>Quantity</Text>
+            <Text style={styles.quantityTitle}>Quantity</Text>
             <View style={styles.quantitySelector}>
               <TouchableOpacity
                 style={[styles.quantityButton, quantity <= 1 && styles.quantityButtonDisabled]}
@@ -882,53 +740,35 @@ export default function ViewProductPage() {
               </TouchableOpacity>
               <Text style={styles.quantityText}>{quantity}</Text>
               <TouchableOpacity
-                style={[styles.quantityButton, quantity >= displayStock && styles.quantityButtonDisabled]}
+                style={[styles.quantityButton, quantity >= (currentVariant?.available_quantity || currentVariant?.quantity || 0) && styles.quantityButtonDisabled]}
                 onPress={increaseQuantity}
-                disabled={quantity >= displayStock}
+                disabled={quantity >= (currentVariant?.available_quantity || currentVariant?.quantity || 0)}
               >
-                <Ionicons name="add" size={20} color={quantity >= displayStock ? "#9CA3AF" : "#111827"} />
+                <Ionicons name="add" size={20} color={quantity >= (currentVariant?.available_quantity || currentVariant?.quantity || 0) ? "#9CA3AF" : "#111827"} />
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* Conditional Seller/Shop Information */}
+          {/* Seller/Shop Information */}
           {isPersonalListing ? (
-            /* Personal Listing - Show Seller Information */
             <View style={styles.sellerSection}>
               <Text style={styles.sectionTitle}>Seller Information</Text>
               {loadingSeller ? (
-                <View style={styles.loadingSeller}>
-                  <ActivityIndicator size="small" color="#8B5CF6" />
-                  <Text style={styles.loadingSellerText}>Loading seller information...</Text>
-                </View>
+                <ActivityIndicator size="small" color="#8B5CF6" />
               ) : sellerInfo ? (
                 <TouchableOpacity style={styles.sellerInfo}>
                   <View style={styles.sellerAvatar}>
                     {sellerInfo.profile_picture ? (
-                      <Image
-                        source={{ uri: getSellerPicture() }}
-                        style={styles.sellerImage}
-                      />
+                      <Image source={{ uri: getSellerPicture() }} style={styles.sellerImage} />
                     ) : (
                       <Ionicons name="person" size={24} color="#8B5CF6" />
                     )}
                   </View>
                   <View style={styles.sellerDetails}>
                     <Text style={styles.sellerName}>{getSellerDisplayName()}</Text>
-                    {sellerInfo.email && (
-                      <Text style={styles.sellerEmail}>{sellerInfo.email}</Text>
-                    )}
-                    {sellerInfo.contact_number && (
-                      <Text style={styles.sellerContact}>Contact: {sellerInfo.contact_number}</Text>
-                    )}
                     <View style={styles.personalListingBadge}>
                       <Text style={styles.personalListingText}>Personal Listing</Text>
                     </View>
-                    {sellerInfo.created_at && (
-                      <Text style={styles.memberSince}>
-                        Member since {new Date(sellerInfo.created_at).toLocaleDateString()}
-                      </Text>
-                    )}
                   </View>
                 </TouchableOpacity>
               ) : (
@@ -936,33 +776,20 @@ export default function ViewProductPage() {
               )}
             </View>
           ) : (
-            /* Shop Product - Show Shop Information */
             product.shop && (
               <TouchableOpacity onPress={handleVisitShop} style={styles.shopSection}>
                 <Text style={styles.sectionTitle}>Shop Information</Text>
                 <View style={styles.shopInfo}>
                   <Image
-                    source={{ 
-                      uri: ensureAbsoluteUrl(product.shop.shop_picture) || 'https://via.placeholder.com/60'
-                    }}
+                    source={{ uri: ensureAbsoluteUrl(product.shop.shop_picture) || 'https://via.placeholder.com/60' }}
                     style={styles.shopImage}
                   />
                   <View style={styles.shopDetails}>
-                    <Text style={styles.shopName}>{product.shop.name || "Unknown Shop"}</Text>
-                    {product.shop.address && (
-                      <View style={styles.shopAddress}>
-                        <Ionicons name="location-outline" size={14} color="#6B7280" />
-                        <Text style={styles.shopAddressText} numberOfLines={1}>
-                          {product.shop.address}
-                        </Text>
-                      </View>
-                    )}
-                    {product.shop.avg_rating !== undefined && product.shop.avg_rating !== null && (
+                    <Text style={styles.shopName}>{product.shop.name}</Text>
+                    {product.shop.avg_rating !== null && (
                       <View style={styles.shopRating}>
                         {renderStars(product.shop.avg_rating)}
-                        <Text style={styles.shopRatingText}>
-                          {product.shop.avg_rating?.toFixed(1) || "N/A"}
-                        </Text>
+                        <Text style={styles.shopRatingText}>{product.shop.avg_rating?.toFixed(1)}</Text>
                       </View>
                     )}
                   </View>
@@ -973,80 +800,53 @@ export default function ViewProductPage() {
           )}
         </ScrollView>
 
-        {/* Fixed Action Bar - Professional Minimalist Design */}
+        {/* Action Bar */}
         <View style={styles.actionBar}>
-          {/* Left side - Price Summary */}
           <View style={styles.priceSummary}>
             <Text style={styles.totalLabel}>Total</Text>
-            <View style={styles.priceRow}>
-              <Text style={styles.totalPrice}>
-                {isGift ? 'FREE' : `₱${(displayVariantPrice * quantity).toFixed(2)}`}
-              </Text>
-              {!isGift && displayComparePrice && displayComparePrice > displayVariantPrice && (
-                <Text style={styles.originalPrice}>
-                  ₱{(displayComparePrice * quantity).toFixed(2)}
-                </Text>
-              )}
-            </View>
-            {!isGift && displayComparePrice && displayComparePrice > displayVariantPrice && (
-              <Text style={styles.savings}>
-                Save ₱{((displayComparePrice - displayVariantPrice) * quantity).toFixed(2)}
-              </Text>
-            )}
+            <Text style={styles.totalPrice}>
+              {isGift ? 'FREE' : `₱${((currentVariant?.price ? safeToNumber(currentVariant.price) : 0) * quantity).toFixed(2)}`}
+            </Text>
           </View>
 
-          {/* Right side - Action Buttons */}
           <View style={styles.actionButtonsContainer}>
-            {/* Swap Button */}
-            {!isGift && isAvailableForSwap && displayStock > 0 && (
+            {!isGift && isAvailableForSwap && (currentVariant?.available_quantity || currentVariant?.quantity || 0) > 0 && (
               <TouchableOpacity
                 style={[styles.actionButton, styles.swapButton]}
                 onPress={handleStartSwap}
                 disabled={startingSwap}
               >
-                {startingSwap ? (
-                  <ActivityIndicator color="#FFF" size="small" />
-                ) : (
-                  <MaterialCommunityIcons name="swap-horizontal" size={18} color="#FFF" />
-                )}
+                <MaterialCommunityIcons name="swap-horizontal" size={18} color="#FFF" />
               </TouchableOpacity>
             )}
             
-            {/* Add to Cart Button */}
             <TouchableOpacity
               style={[
                 styles.actionButton, 
                 styles.cartButton,
-                (!isGift && isAvailableForSwap) ? styles.cartButtonCompact : styles.cartButtonFull
               ]}
               onPress={handleAddToCart}
-              disabled={addingToCart || displayStock <= 0}
+              disabled={addingToCart || (currentVariant?.available_quantity || currentVariant?.quantity || 0) <= 0}
             >
               {addingToCart ? (
                 <ActivityIndicator color="#FFF" size="small" />
               ) : (
                 <>
                   <Ionicons name="cart-outline" size={18} color="#FFF" />
-                  <Text style={styles.buttonText}>
-                    {displayStock <= 0 ? "Out of Stock" : "Cart"}
-                  </Text>
+                  <Text style={styles.buttonText}>Cart</Text>
                 </>
               )}
             </TouchableOpacity>
             
-            {/* Buy Now Button */}
             <TouchableOpacity
               style={[
                 styles.actionButton, 
                 styles.buyButton,
-                (!isGift && isAvailableForSwap) ? styles.buyButtonCompact : styles.buyButtonFull
               ]}
               onPress={handleAddToCart}
-              disabled={displayStock <= 0}
+              disabled={(currentVariant?.available_quantity || currentVariant?.quantity || 0) <= 0}
             >
-              <Text style={styles.buttonText}>
-                {displayStock <= 0 ? "Out of Stock" : isGift ? "Claim" : "Buy"}
-              </Text>
+              <Text style={styles.buttonText}>Buy</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1059,15 +859,10 @@ export default function ViewProductPage() {
           onRequestClose={() => setImageModalVisible(false)}
         >
           <View style={styles.modalContainer}>
-            {/* Close Button */}
-            <TouchableOpacity
-              onPress={() => setImageModalVisible(false)}
-              style={styles.modalCloseButton}
-            >
+            <TouchableOpacity onPress={() => setImageModalVisible(false)} style={styles.modalCloseButton}>
               <Ionicons name="close" size={28} color="#FFF" />
             </TouchableOpacity>
 
-            {/* Image Carousel */}
             {thumbnailUrls.length > 0 && (
               <FlatList
                 ref={flatListRef}
@@ -1087,22 +882,6 @@ export default function ViewProductPage() {
               />
             )}
 
-            {/* Thumbnail Strip in Lightbox */}
-            {thumbnailUrls.length > 1 && (
-              <View style={styles.modalThumbnailStrip}>
-                <FlatList
-                  horizontal
-                  data={thumbnailUrls}
-                  keyExtractor={(item, index) => `lightbox-thumb-${index}`}
-                  renderItem={renderLightboxThumbnail}
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.modalThumbnailList}
-                  extraData={activeImage}
-                />
-              </View>
-            )}
-
-            {/* Image Counter */}
             {thumbnailUrls.length > 1 && (
               <View style={styles.modalCounter}>
                 <Text style={styles.modalCounterText}>
@@ -1118,593 +897,124 @@ export default function ViewProductPage() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#6B7280',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  errorText: {
-    fontSize: 18,
-    color: '#374151',
-    marginTop: 16,
-    marginBottom: 24,
-  },
-  retryButton: {
-    backgroundColor: '#F97316',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  imageSection: {
-    backgroundColor: '#F9FAFB',
-  },
-  mainImageContainer: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_WIDTH,
-    backgroundColor: '#F3F4F6',
-    position: 'relative',
-  },
-  mainImage: {
-    width: '100%',
-    height: '100%',
-  },
-  imageCounter: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  imageCounterText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  navArrow: {
-    position: 'absolute',
-    top: '50%',
-    marginTop: -20,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  leftArrow: {
-    left: 16,
-  },
-  rightArrow: {
-    right: 16,
-  },
-  thumbnailList: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  thumbnailContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    marginRight: 8,
-    borderWidth: 2,
-    borderColor: 'transparent',
-    overflow: 'hidden',
-  },
-  thumbnail: {
-    width: '100%',
-    height: '100%',
-  },
-  thumbnailActive: {
-    borderColor: '#F97316',
-  },
-  productInfo: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  titleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-  titleContainer: {
-    flex: 1,
-    marginRight: 12,
-  },
-  productName: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  giftBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFEDD5',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 16,
-    alignSelf: 'flex-start',
-    gap: 4,
-  },
-  giftBadgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#9A3412',
-  },
-  actionButtons: {
-    flexDirection: 'row',
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 8,
-  },
-  ratingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 12,
-  },
-  ratingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  ratingText: {
-    marginLeft: 4,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  conditionText: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  refundableBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#D1FAE5',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 16,
-    gap: 4,
-  },
-  refundableText: {
-    fontSize: 11,
-    color: '#065F46',
-    fontWeight: '600',
-  },
-  nonRefundableBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 16,
-    gap: 4,
-  },
-  nonRefundableText: {
-    fontSize: 11,
-    color: '#991B1B',
-    fontWeight: '600',
-  },
-  priceContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  price: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#F97316',
-  },
-  giftPrice: {
-    color: '#9A3412',
-  },
-  comparePrice: {
-    fontSize: 18,
-    color: '#9CA3AF',
-    textDecorationLine: 'line-through',
-    marginLeft: 12,
-  },
-  stockContainer: {
-    marginBottom: 16,
-  },
-  stockText: {
-    fontSize: 14,
-    color: '#374151',
-    marginBottom: 4,
-  },
-  outOfStock: {
-    color: '#EF4444',
-  },
-  priceRangeText: {
-    fontSize: 13,
-    color: '#6B7280',
-  },
-  description: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#4B5563',
-  },
-  variantInfo: {
-    marginHorizontal: 16,
-    marginTop: 8,
-    padding: 12,
-    backgroundColor: '#EFF6FF',
-    borderRadius: 8,
-  },
-  variantInfoText: {
-    fontSize: 13,
-    color: '#1E40AF',
-    textAlign: 'center',
-  },
-  variantsSection: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 16,
-  },
-  quantitySection: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  quantitySelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    padding: 8,
-    alignSelf: 'flex-start',
-  },
-  quantityButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  quantityButtonDisabled: {
-    backgroundColor: '#F3F4F6',
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  errorText: { fontSize: 18, color: '#374151', marginTop: 16 },
+  
+  // Image Section
+  imageSection: { backgroundColor: '#F9FAFB' },
+  mainImageContainer: { width: SCREEN_WIDTH, height: SCREEN_WIDTH, backgroundColor: '#F3F4F6', position: 'relative' },
+  mainImage: { width: '100%', height: '100%' },
+  imageCounter: { position: 'absolute', top: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  imageCounterText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  navArrow: { position: 'absolute', top: '50%', marginTop: -20, backgroundColor: 'rgba(0,0,0,0.5)', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+  leftArrow: { left: 16 },
+  rightArrow: { right: 16 },
+  thumbnailList: { paddingHorizontal: 16, paddingVertical: 12 },
+  thumbnailContainer: { width: 60, height: 60, borderRadius: 8, marginRight: 8, borderWidth: 2, borderColor: 'transparent', overflow: 'hidden' },
+  thumbnail: { width: '100%', height: '100%' },
+  thumbnailActive: { borderColor: '#F97316' },
+  
+  // Product Info
+  productInfo: { padding: 16 },
+  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+  titleContainer: { flex: 1, marginRight: 12 },
+  productName: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  giftBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFEDD5', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 16, alignSelf: 'flex-start', gap: 4 },
+  giftBadgeText: { fontSize: 12, fontWeight: '600', color: '#9A3412' },
+  actionButtons: { flexDirection: 'row' },
+  iconButton: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
+  
+  // Rating Row
+  ratingRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  ratingContainer: { flexDirection: 'row', alignItems: 'center' },
+  ratingText: { marginLeft: 4, fontSize: 14, fontWeight: '600', color: '#374151' },
+  conditionText: { fontSize: 14, color: '#6B7280' },
+  refundableBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#D1FAE5', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 16, gap: 4 },
+  refundableText: { fontSize: 11, color: '#065F46', fontWeight: '600' },
+  nonRefundableBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEE2E2', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 16, gap: 4 },
+  nonRefundableText: { fontSize: 11, color: '#991B1B', fontWeight: '600' },
+  
+  // Price and Stock
+  priceContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  price: { fontSize: 24, fontWeight: '700', color: '#F97316' },
+  giftPrice: { color: '#9A3412' },
+  comparePrice: { fontSize: 18, color: '#9CA3AF', textDecorationLine: 'line-through', marginLeft: 12 },
+  stockContainer: { marginBottom: 16 },
+  stockText: { fontSize: 14, color: '#374151' },
+  outOfStock: { color: '#EF4444' },
+  description: { fontSize: 14, lineHeight: 20, color: '#4B5563', marginBottom: 16 },
+  
+  // Variants Section - Smaller Cards
+  variantsSection: { marginBottom: 16 },
+  variantsTitle: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: 8 },
+  variantsList: { gap: 8 },
+  variantItem: { 
+    flexDirection: 'row', 
+    backgroundColor: '#F9FAFB', 
+    borderRadius: 8, 
+    padding: 8, 
+    borderWidth: 1, 
     borderColor: '#F3F4F6',
-  },
-  quantityText: {
-    width: 60,
-    textAlign: 'center',
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  sellerSection: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  loadingSeller: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-    gap: 8,
-  },
-  loadingSellerText: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  sellerInfo: {
-    flexDirection: 'row',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
-    padding: 16,
-  },
-  sellerAvatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#EDE9FE',
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'hidden',
-  },
-  sellerImage: {
-    width: '100%',
-    height: '100%',
-  },
-  sellerDetails: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  sellerName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  sellerEmail: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginBottom: 2,
-  },
-  sellerContact: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginBottom: 4,
-  },
-  personalListingBadge: {
-    backgroundColor: '#EDE9FE',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-    alignSelf: 'flex-start',
-    marginBottom: 4,
-  },
-  personalListingText: {
-    fontSize: 11,
-    color: '#6D28D9',
-    fontWeight: '600',
-  },
-  memberSince: {
-    fontSize: 11,
-    color: '#9CA3AF',
-  },
-  noInfoText: {
-    fontSize: 14,
-    color: '#9CA3AF',
-    textAlign: 'center',
-    padding: 16,
-  },
-  shopSection: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  shopInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
-    padding: 16,
-  },
-  shopImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#E5E7EB',
-  },
-  shopDetails: {
-    flex: 1,
-    marginLeft: 12,
-    marginRight: 8,
-  },
-  shopName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  shopAddress: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  shopAddressText: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginLeft: 4,
-    flex: 1,
-  },
-  shopRating: {
-    flexDirection: 'row',
     alignItems: 'center',
   },
-  shopRatingText: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginLeft: 4,
-  },
+  variantItemSelected: { borderColor: '#F97316', backgroundColor: '#FFF4E5' },
+  variantItemOutOfStock: { opacity: 0.5 },
+  variantImage: { width: 40, height: 40, borderRadius: 6, marginRight: 10 },
+  variantImagePlaceholder: { width: 40, height: 40, borderRadius: 6, marginRight: 10, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center' },
+  variantInfo: { flex: 1 },
+  variantTitle: { fontSize: 13, fontWeight: '600', color: '#111827', marginBottom: 2 },
+  variantPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  variantPrice: { fontSize: 13, fontWeight: '700', color: '#F97316' },
+  variantComparePrice: { fontSize: 11, color: '#9CA3AF', textDecorationLine: 'line-through' },
+  variantOutOfStockBadge: { position: 'absolute', top: 4, right: 4, backgroundColor: '#EF4444', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  variantOutOfStockText: { fontSize: 8, color: '#FFFFFF', fontWeight: '600' },
   
-  // PROFESSIONAL MINIMALIST ACTION BAR
-  actionBar: {
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.03,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
-  },
-  priceSummary: {
-    flex: 1,
-    marginRight: 16,
-  },
-  totalLabel: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#9CA3AF',
-    letterSpacing: 0.5,
-    marginBottom: 2,
-    textTransform: 'uppercase',
-  },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  totalPrice: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1F2937',
-    letterSpacing: -0.5,
-  },
-  originalPrice: {
-    fontSize: 14,
-    color: '#9CA3AF',
-    textDecorationLine: 'line-through',
-    fontWeight: '400',
-  },
-  savings: {
-    fontSize: 11,
-    color: '#10B981',
-    fontWeight: '500',
-    marginTop: 2,
-    letterSpacing: 0.3,
-  },
-  actionButtonsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-    height: 46,
-    paddingHorizontal: 16,
-    gap: 6,
-  },
-  swapButton: {
-    backgroundColor: '#059669',
-    width: 46,
-    paddingHorizontal: 0,
-  },
-  cartButton: {
-    backgroundColor: '#F97316',
-  },
-  cartButtonCompact: {
-    width: 90,
-  },
-  cartButtonFull: {
-    width: 110,
-  },
-  buyButton: {
-    backgroundColor: '#DC2626',
-  },
-  buyButtonCompact: {
-    width: 70,
-  },
-  buyButtonFull: {
-    width: 90,
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
-    letterSpacing: 0.3,
-  },
+  // Quantity
+  quantitySection: { padding: 16, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  quantityTitle: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: 8 },
+  quantitySelector: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', borderRadius: 8, padding: 8, alignSelf: 'flex-start' },
+  quantityButton: { width: 36, height: 36, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB' },
+  quantityButtonDisabled: { backgroundColor: '#F3F4F6', borderColor: '#F3F4F6' },
+  quantityText: { width: 50, textAlign: 'center', fontSize: 16, fontWeight: '600', color: '#111827' },
   
-  // Modal styles
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  modalCloseButton: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 50 : 20,
-    right: 20,
-    zIndex: 10,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalImageContainer: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_WIDTH,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalImage: {
-    width: '100%',
-    height: '100%',
-  },
-  modalThumbnailStrip: {
-    position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 40 : 20,
-    left: 0,
-    right: 0,
-  },
-  modalThumbnailList: {
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-  },
-  modalCounter: {
-    position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 100 : 80,
-    alignSelf: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  modalCounterText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-  },
-  lightboxThumbnail: {
-    width: 50,
-    height: 50,
-    borderRadius: 6,
-    marginHorizontal: 4,
-    borderWidth: 2,
-    borderColor: 'transparent',
-    overflow: 'hidden',
-  },
-  lightboxThumbnailActive: {
-    borderColor: '#F97316',
-  },
-  lightboxThumbnailImage: {
-    width: '100%',
-    height: '100%',
-  },
+  // Seller/Shop Info
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: 12 },
+  sellerSection: { padding: 16, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  sellerInfo: { flexDirection: 'row', backgroundColor: '#F9FAFB', borderRadius: 12, padding: 12 },
+  sellerAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#EDE9FE', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  sellerImage: { width: '100%', height: '100%' },
+  sellerDetails: { flex: 1, marginLeft: 12, justifyContent: 'center' },
+  sellerName: { fontSize: 15, fontWeight: '600', color: '#111827', marginBottom: 4 },
+  personalListingBadge: { backgroundColor: '#EDE9FE', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, alignSelf: 'flex-start' },
+  personalListingText: { fontSize: 10, color: '#6D28D9', fontWeight: '600' },
+  noInfoText: { fontSize: 14, color: '#9CA3AF', textAlign: 'center', padding: 16 },
+  shopSection: { padding: 16, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  shopInfo: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', borderRadius: 12, padding: 12 },
+  shopImage: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#E5E7EB' },
+  shopDetails: { flex: 1, marginLeft: 12 },
+  shopName: { fontSize: 15, fontWeight: '600', color: '#111827', marginBottom: 4 },
+  shopRating: { flexDirection: 'row', alignItems: 'center' },
+  shopRatingText: { fontSize: 12, color: '#6B7280', marginLeft: 4 },
+  
+  // Action Bar
+  actionBar: { backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#F0F0F0', paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  priceSummary: { flex: 1 },
+  totalLabel: { fontSize: 11, color: '#9CA3AF', marginBottom: 2 },
+  totalPrice: { fontSize: 18, fontWeight: '700', color: '#1F2937' },
+  actionButtonsContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  actionButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 8, height: 42, paddingHorizontal: 12, gap: 4 },
+  swapButton: { backgroundColor: '#059669', width: 42, paddingHorizontal: 0 },
+  cartButton: { backgroundColor: '#F97316' },
+  buyButton: { backgroundColor: '#DC2626' },
+  buttonText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
+  
+  // Modal
+  modalContainer: { flex: 1, backgroundColor: '#000000' },
+  modalCloseButton: { position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, right: 20, zIndex: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalImageContainer: { width: SCREEN_WIDTH, height: SCREEN_WIDTH, justifyContent: 'center', alignItems: 'center' },
+  modalImage: { width: '100%', height: '100%' },
+  modalCounter: { position: 'absolute', bottom: Platform.OS === 'ios' ? 40 : 20, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  modalCounterText: { color: '#FFFFFF', fontSize: 14 },
 });
