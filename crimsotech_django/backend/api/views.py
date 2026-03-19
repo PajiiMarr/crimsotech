@@ -19154,8 +19154,9 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             item.pop('variants', None)
         
         return Response(data)
+    
     def retrieve(self, request, pk=None):
-        """Return a single product with all variant details"""
+        """Return a single product with all variant details including ownership info"""
         try:
             product = self.get_detail_queryset().get(pk=pk)
         except Product.DoesNotExist:
@@ -19217,10 +19218,19 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 ordered_qty = ordered_quantities.get(variant_id, 0)
                 available_qty = max(0, total_qty - ordered_qty)
                 
+                # Ownership fields - include original_price, purchase_date, proof_image
                 variant['total_quantity'] = total_qty
                 variant['ordered_quantity'] = ordered_qty
                 variant['available_quantity'] = available_qty
                 variant['in_stock'] = available_qty > 0
+                
+                # Ownership information
+                variant['original_price'] = variant.get('original_price')
+                variant['purchase_date'] = variant.get('purchase_date')
+                
+                # Convert proof_image URL if exists
+                if variant.get('proof_image'):
+                    variant['proof_image'] = self._convert_to_public_url(variant['proof_image'])
                 
                 if available_qty > 0:
                     in_stock_variants.append(variant)
@@ -19300,7 +19310,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def get_variant_for_options(self, request):
-        """Get variant details for specific selected options"""
+        """Get variant details for specific selected options including ownership info"""
         product_id = request.query_params.get('product_id')
         option_ids = request.query_params.getlist('option_ids[]') or []
         
@@ -19334,8 +19344,9 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             total_qty = matching_variant.quantity or 0
             available_qty = max(0, total_qty - ordered_qty)
             
-            # Build response with variant details
+            # Build response with variant details including ownership fields
             image_url = self._convert_to_public_url(matching_variant.image.url) if matching_variant.image else None
+            proof_image_url = self._convert_to_public_url(matching_variant.proof_image.url) if matching_variant.proof_image else None
             
             response_data = {
                 'id': str(matching_variant.id),
@@ -19350,6 +19361,12 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'in_stock': available_qty > 0,
                 'stock_status': 'in_stock' if available_qty > 0 else 'out_of_stock',
                 'image': image_url,
+                'proof_image': proof_image_url,  # Added proof image URL
+                'original_price': float(matching_variant.original_price) if matching_variant.original_price else None,  # Added original price
+                'purchase_date': matching_variant.purchase_date.isoformat() if matching_variant.purchase_date else None,  # Added purchase date
+                'usage_period': matching_variant.usage_period,
+                'usage_unit': matching_variant.usage_unit,
+                'depreciation_rate': matching_variant.depreciation_rate,
                 'weight': float(matching_variant.weight) if matching_variant.weight else None,
                 'weight_unit': matching_variant.weight_unit,
                 'swap_type': matching_variant.swap_type,
@@ -19359,6 +19376,10 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'is_refundable': matching_variant.is_refundable,
                 'refund_days': matching_variant.refund_days,
                 'allow_swap': matching_variant.allow_swap,
+                'length': float(matching_variant.length) if matching_variant.length else None,
+                'width': float(matching_variant.width) if matching_variant.width else None,
+                'height': float(matching_variant.height) if matching_variant.height else None,
+                'dimension_unit': matching_variant.dimension_unit,
             }
             return Response(response_data)
         
@@ -19412,7 +19433,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['get'])
     def variants(self, request, pk=None):
-        """Get all active variants for a product"""
+        """Get all active variants for a product including ownership info"""
         try:
             product = Product.objects.get(id=pk, is_removed=False, upload_status='published')
         except Product.DoesNotExist:
@@ -19434,6 +19455,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             available_qty = max(0, total_qty - ordered_qty)
             
             image_url = self._convert_to_public_url(variant.image.url) if variant.image else None
+            proof_image_url = self._convert_to_public_url(variant.proof_image.url) if variant.proof_image else None
             
             variant_data.append({
                 'id': variant_id,
@@ -19448,6 +19470,12 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'in_stock': available_qty > 0,
                 'stock_status': 'in_stock' if available_qty > 0 else 'out_of_stock',
                 'image': image_url,
+                'proof_image': proof_image_url,  # Added proof image URL
+                'original_price': float(variant.original_price) if variant.original_price else None,  # Added original price
+                'purchase_date': variant.purchase_date.isoformat() if variant.purchase_date else None,  # Added purchase date
+                'usage_period': variant.usage_period,
+                'usage_unit': variant.usage_unit,
+                'depreciation_rate': variant.depreciation_rate,
                 'option_ids': variant.option_ids,
                 'option_map': variant.option_map,
                 'weight': float(variant.weight) if variant.weight else None,
@@ -19455,6 +19483,10 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'swap_type': variant.swap_type,
                 'minimum_additional_payment': float(variant.minimum_additional_payment) if variant.minimum_additional_payment else None,
                 'maximum_additional_payment': float(variant.maximum_additional_payment) if variant.maximum_additional_payment else None,
+                'length': float(variant.length) if variant.length else None,
+                'width': float(variant.width) if variant.width else None,
+                'height': float(variant.height) if variant.height else None,
+                'dimension_unit': variant.dimension_unit,
             })
         
         return Response(variant_data)
@@ -19503,7 +19535,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'total_quantity': variant.quantity,
                 'ordered_quantity': variant_ordered_qty,
                 'available_quantity': variant_available,
-                'in_stock': variant_available > 0
+                'in_stock': variant_available > 0,
+                'original_price': float(variant.original_price) if variant.original_price else None,
             })
         
         return Response({
@@ -19607,7 +19640,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             import traceback
             traceback.print_exc()
             return Response({"error": str(e)}, status=500)
-
 
         
 class AddToCartView(APIView):

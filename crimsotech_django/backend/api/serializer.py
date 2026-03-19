@@ -316,9 +316,11 @@ class ProductMediaSerializer(serializers.ModelSerializer):
     def get_file_url(self, obj):
         return get_media_url(obj.file_data)
 
-# NEW: Simplified Variants Serializer (contains all fields from the refactored Variants model)
 class VariantsSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
+    proof_image_url = serializers.SerializerMethodField()  # ADDED
+    purchase_date_formatted = serializers.SerializerMethodField()  # ADDED
+    original_price_formatted = serializers.SerializerMethodField()  # ADDED
     
     class Meta:
         model = Variants
@@ -330,12 +332,30 @@ class VariantsSerializer(serializers.ModelSerializer):
             'original_price', 'usage_period', 'usage_unit', 'depreciation_rate',
             'minimum_additional_payment', 'maximum_additional_payment', 
             'swap_description', 'image', 'image_url', 'critical_stock',
+            'proof_image', 'proof_image_url', 'purchase_date', 'purchase_date_formatted',  # ADDED proof_image and purchase_date
+            'original_price_formatted',  # ADDED
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'option_created_at']
     
     def get_image_url(self, obj):
         return get_media_url(obj.image)
+    
+    def get_proof_image_url(self, obj):  # ADDED
+        """Get public URL for proof image"""
+        return get_media_url(obj.proof_image)
+    
+    def get_purchase_date_formatted(self, obj):  # ADDED
+        """Return formatted purchase date"""
+        if obj.purchase_date:
+            return obj.purchase_date.isoformat()
+        return None
+    
+    def get_original_price_formatted(self, obj):  # ADDED
+        """Return formatted original price"""
+        if obj.original_price:
+            return f"₱{float(obj.original_price):.2f}"
+        return None
 
 class ProductSerializer(serializers.ModelSerializer):
     shop = ShopSerializer(read_only=True)
@@ -383,11 +403,11 @@ class ProductSerializer(serializers.ModelSerializer):
         return media_files
 
     def get_variants(self, obj):
-        """Return all variants for detail view, empty list for list view"""
+        """Return all variants with full details including ownership info"""
         request = self.context.get('request')
         # Check if this is a detail view by looking at the URL or action
         if request and request.parser_context.get('kwargs', {}).get('pk'):
-            # This is a detail view - return all variants
+            # This is a detail view - return all variants with full details
             variants = obj.variants.filter(is_active=True)
             context = self.context.copy()
             return VariantsSerializer(variants, many=True, context=context).data
@@ -560,7 +580,6 @@ class ShopDetailSerializer(serializers.ModelSerializer):
     def get_shop_picture_url(self, obj):
         return get_media_url(obj.shop_picture)
 
-# Note: There are duplicate ProductSerializer definitions - keeping the enhanced one
 class ProductDetailSerializer(serializers.ModelSerializer):
     shop = ShopSerializer()
     category = CategorySerializer()
@@ -568,7 +587,6 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     variants = serializers.SerializerMethodField()
     media_files = serializers.SerializerMethodField()
     primary_image = serializers.SerializerMethodField()
-    # Add computed fields from variants
     total_stock = serializers.IntegerField(source='total_variant_stock', read_only=True)
     price_display = serializers.SerializerMethodField()
     price_range = serializers.SerializerMethodField()
@@ -617,15 +635,14 @@ class ProductDetailSerializer(serializers.ModelSerializer):
         return media_files
 
     def get_variants(self, obj):
-        """Return all variants for this product using the simplified VariantsSerializer"""
-        variants = obj.variants.all()
+        """Return all variants with full details including ownership info"""
+        variants = obj.variants.filter(is_active=True)
         # Pass request context to serializer for building absolute URLs
         context = self.context.copy()
         return VariantsSerializer(variants, many=True, context=context).data
     
     def get_price_display(self, obj):
         """Get formatted price display for the product"""
-        # Check if we have annotated values
         if hasattr(obj, 'min_variant_price') and obj.min_variant_price:
             if obj.min_variant_price == obj.max_variant_price:
                 return f"₱{float(obj.min_variant_price):.2f}"
@@ -669,6 +686,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
                 }
         
         return None
+
         
 class ReviewDetailSerializer(serializers.ModelSerializer):
     customer_id = CustomerSerializer(read_only=True)

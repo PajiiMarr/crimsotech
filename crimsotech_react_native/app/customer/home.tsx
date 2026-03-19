@@ -416,7 +416,7 @@ export default function CustomerHome() {
                   product={item}
                   onPress={() => router.push({ 
                     pathname: '/customer/view-product', 
-                    params: { productId: item.id } 
+                    params: { id: item.id } 
                   })}
                 />
               )}
