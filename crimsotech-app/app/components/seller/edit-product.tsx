@@ -34,6 +34,20 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "~/components/ui/collapsible";
+import { Slider } from "~/components/ui/slider";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "~/components/ui/popover";
+import { Calendar } from "~/components/ui/calendar";
+import {
+  format,
+  differenceInMonths,
+  differenceInWeeks,
+  differenceInYears,
+} from "date-fns";
+import { cn } from "~/lib/utils";
 import {
   Loader2,
   Save,
@@ -47,6 +61,9 @@ import {
   Calculator,
   ImagePlus,
   ImageIcon,
+  Percent,
+  CalendarIcon,
+  Info,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -59,6 +76,14 @@ interface MediaItem {
   file_data: string | null;
   file_type: string;
 }
+interface Depreciation {
+  originalPrice: number | "";
+  usagePeriod: number | "";
+  usageUnit: "weeks" | "months" | "years";
+  depreciationRate: number | "";
+  calculatedPrice: number | "";
+  purchaseDate?: Date | null;
+}
 interface Variant {
   id: string;
   title: string;
@@ -69,10 +94,10 @@ interface Variant {
   price?: number | null;
   compare_price?: number | null;
   quantity: number;
-  length?: number | null;        // Added
-  width?: number | null;         // Added
-  height?: number | null;        // Added
-  dimension_unit?: string | null; // Added
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
+  dimension_unit?: string | null;
   weight?: number | null;
   weight_unit: string;
   critical_trigger?: number | null;
@@ -139,7 +164,7 @@ const WEIGHT_UNIT_OPTIONS = [
   { value: "oz", label: "Ounces (oz)" },
 ] as const;
 
-const DIMENSION_UNIT_OPTIONS = [  // Added
+const DIMENSION_UNIT_OPTIONS = [
   { value: "cm", label: "Centimeters (cm)" },
   { value: "m", label: "Meters (m)" },
   { value: "in", label: "Inches (in)" },
@@ -162,10 +187,10 @@ interface VariantFormState {
   sku_code: string;
   price: string;
   quantity: string;
-  length: string;           // Added
-  width: string;            // Added
-  height: string;           // Added
-  dimension_unit: string;   // Added
+  length: string;
+  width: string;
+  height: string;
+  dimension_unit: string;
   weight: string;
   weight_unit: string;
   critical_trigger: string;
@@ -174,15 +199,11 @@ interface VariantFormState {
   refund_days: string;
   allow_swap: boolean;
   swap_type: string;
-  original_price: string;
-  usage_period: string;
-  usage_unit: string;
-  depreciation_rate: string;
+  depreciation: Depreciation;
   minimum_additional_payment: string;
   maximum_additional_payment: string;
   swap_description: string;
   critical_stock: string;
-  calculated_price?: string;
   isNew?: boolean;
   image?: string | null;
   imagePending?: File | null;
@@ -213,10 +234,10 @@ function createEmptyVariant(): VariantFormState {
     sku_code: "",
     price: "",
     quantity: "0",
-    length: "",               // Added
-    width: "",                // Added
-    height: "",               // Added
-    dimension_unit: "cm",     // Added
+    length: "",
+    width: "",
+    height: "",
+    dimension_unit: "cm",
     weight: "",
     weight_unit: "g",
     critical_trigger: "",
@@ -225,10 +246,14 @@ function createEmptyVariant(): VariantFormState {
     refund_days: "0",
     allow_swap: false,
     swap_type: "direct_swap",
-    original_price: "",
-    usage_period: "",
-    usage_unit: "months",
-    depreciation_rate: "10",
+    depreciation: {
+      originalPrice: "",
+      usagePeriod: "",
+      usageUnit: "months",
+      depreciationRate: 10,
+      calculatedPrice: "",
+      purchaseDate: null,
+    },
     minimum_additional_payment: "0",
     maximum_additional_payment: "0",
     swap_description: "",
@@ -242,7 +267,8 @@ function createEmptyVariant(): VariantFormState {
 }
 
 function variantToFormState(variant: Variant): VariantFormState {
-  let calculated_price = "";
+  // Calculate depreciated price if all data exists
+  let calculatedPrice: number | "" = "";
   if (variant.original_price && variant.usage_period && variant.depreciation_rate) {
     const originalPrice = Number(variant.original_price);
     const usagePeriod = Number(variant.usage_period);
@@ -253,7 +279,7 @@ function variantToFormState(variant: Variant): VariantFormState {
     else if (usageUnit === "weeks") years = usagePeriod / 52;
     const rate = depreciationRate / 100;
     const depreciatedValue = originalPrice * Math.pow(1 - rate, years);
-    calculated_price = Math.max(0, Math.round(depreciatedValue * 100) / 100).toString();
+    calculatedPrice = Math.max(0, Math.round(depreciatedValue * 100) / 100);
   }
 
   return {
@@ -262,10 +288,10 @@ function variantToFormState(variant: Variant): VariantFormState {
     sku_code: variant.sku_code || "",
     price: variant.price?.toString() || "",
     quantity: variant.quantity?.toString() || "0",
-    length: variant.length?.toString() || "",               // Added
-    width: variant.width?.toString() || "",                 // Added
-    height: variant.height?.toString() || "",               // Added
-    dimension_unit: variant.dimension_unit || "cm",         // Added
+    length: variant.length?.toString() || "",
+    width: variant.width?.toString() || "",
+    height: variant.height?.toString() || "",
+    dimension_unit: variant.dimension_unit || "cm",
     weight: variant.weight?.toString() || "",
     weight_unit: variant.weight_unit || "g",
     critical_trigger: variant.critical_trigger?.toString() || "",
@@ -274,15 +300,19 @@ function variantToFormState(variant: Variant): VariantFormState {
     refund_days: variant.refund_days?.toString() || "0",
     allow_swap: variant.allow_swap,
     swap_type: variant.swap_type || "direct_swap",
-    original_price: variant.original_price?.toString() || "",
-    usage_period: variant.usage_period?.toString() || "",
-    usage_unit: variant.usage_unit || "months",
-    depreciation_rate: variant.depreciation_rate?.toString() || "10",
+    depreciation: {
+      // FIXED: Convert string values to number | "" to match the Depreciation interface
+      originalPrice: variant.original_price ? Number(variant.original_price) : "",
+      usagePeriod: variant.usage_period ? Number(variant.usage_period) : "",
+      usageUnit: (variant.usage_unit as "weeks" | "months" | "years") || "months",
+      depreciationRate: variant.depreciation_rate ? Number(variant.depreciation_rate) : 10,
+      calculatedPrice: calculatedPrice,
+      purchaseDate: variant.usage_period ? new Date() : null, // Approximate, would need actual purchase date
+    },
     minimum_additional_payment: variant.minimum_additional_payment?.toString() || "0",
     maximum_additional_payment: variant.maximum_additional_payment?.toString() || "0",
     swap_description: variant.swap_description || "",
     critical_stock: variant.critical_stock?.toString() || "",
-    calculated_price,
     isNew: false,
     image: variant.image ?? null,
     imagePending: null,
@@ -466,40 +496,191 @@ function EditProductForm({
     );
   };
 
-  // ─── Depreciation ─────────────────────────────────────────────────────────
+  // ─── Depreciation Calculator Functions ───────────────────────────────────────
   const calculateDepreciatedPrice = (
     originalPrice: number,
     usagePeriod: number,
     usageUnit: string,
-    depreciationRate: number
+    depreciationRate: number,
   ): number => {
     if (!originalPrice || !usagePeriod || !depreciationRate) return originalPrice;
     let years = usagePeriod;
-    if (usageUnit === "months") years = usagePeriod / 12;
-    else if (usageUnit === "weeks") years = usagePeriod / 52;
+    if (usageUnit === "months") {
+      years = usagePeriod / 12;
+    } else if (usageUnit === "weeks") {
+      years = usagePeriod / 52;
+    }
     const rate = depreciationRate / 100;
-    return Math.max(
-      0,
-      Math.round(originalPrice * Math.pow(1 - rate, years) * 100) / 100
-    );
+    const depreciatedValue = originalPrice * Math.pow(1 - rate, years);
+    return Math.max(0, Math.round(depreciatedValue * 100) / 100);
   };
 
-  const updateVariantCalculatedPrice = (
-    _index: number,
-    v: VariantFormState
-  ): VariantFormState => {
-    if (v.original_price && v.usage_period && v.depreciation_rate) {
-      return {
-        ...v,
-        calculated_price: calculateDepreciatedPrice(
-          Number(v.original_price),
-          Number(v.usage_period),
-          v.usage_unit,
-          Number(v.depreciation_rate)
-        ).toString(),
-      };
+  const calculateUsagePeriod = (
+    purchaseDate: Date,
+    unit: "weeks" | "months" | "years",
+  ): number => {
+    const today = new Date();
+    switch (unit) {
+      case "weeks":
+        return differenceInWeeks(today, purchaseDate);
+      case "months":
+        return differenceInMonths(today, purchaseDate);
+      case "years":
+        return differenceInYears(today, purchaseDate);
+      default:
+        return 0;
     }
-    return { ...v, calculated_price: "" };
+  };
+
+  const handlePurchaseDateChange = (
+    variantIndex: number,
+    date: Date | undefined,
+  ) => {
+    setVariants((prev) => {
+      const updated = [...prev];
+      const variant = updated[variantIndex];
+      const updatedDepreciation = { ...variant.depreciation, purchaseDate: date };
+      
+      if (date) {
+        const usagePeriod = calculateUsagePeriod(
+          date,
+          variant.depreciation.usageUnit || "months",
+        );
+        updatedDepreciation.usagePeriod = usagePeriod;
+
+        if (
+          updatedDepreciation.originalPrice &&
+          updatedDepreciation.depreciationRate
+        ) {
+          const calculatedPrice = calculateDepreciatedPrice(
+            Number(updatedDepreciation.originalPrice),
+            usagePeriod,
+            variant.depreciation.usageUnit || "months",
+            Number(updatedDepreciation.depreciationRate),
+          );
+          updatedDepreciation.calculatedPrice = calculatedPrice;
+          updated[variantIndex] = {
+            ...variant,
+            depreciation: updatedDepreciation,
+            price: calculatedPrice.toString(),
+          };
+          return updated;
+        }
+      }
+      
+      updated[variantIndex] = { ...variant, depreciation: updatedDepreciation };
+      return updated;
+    });
+  };
+
+  const handleUsageUnitChange = (
+    variantIndex: number,
+    value: "weeks" | "months" | "years",
+  ) => {
+    setVariants((prev) => {
+      const updated = [...prev];
+      const variant = updated[variantIndex];
+      const updatedDepreciation = { ...variant.depreciation, usageUnit: value };
+      
+      if (variant.depreciation.purchaseDate) {
+        const usagePeriod = calculateUsagePeriod(
+          variant.depreciation.purchaseDate,
+          value,
+        );
+        updatedDepreciation.usagePeriod = usagePeriod;
+
+        if (
+          updatedDepreciation.originalPrice &&
+          updatedDepreciation.depreciationRate
+        ) {
+          const calculatedPrice = calculateDepreciatedPrice(
+            Number(updatedDepreciation.originalPrice),
+            usagePeriod,
+            value,
+            Number(updatedDepreciation.depreciationRate),
+          );
+          updatedDepreciation.calculatedPrice = calculatedPrice;
+          updated[variantIndex] = {
+            ...variant,
+            depreciation: updatedDepreciation,
+            price: calculatedPrice.toString(),
+          };
+          return updated;
+        }
+      }
+      
+      updated[variantIndex] = { ...variant, depreciation: updatedDepreciation };
+      return updated;
+    });
+  };
+
+  const handleDepreciationChange = (
+    variantIndex: number,
+    field: keyof Depreciation,
+    value: any,
+  ) => {
+    setVariants((prev) => {
+      const updated = [...prev];
+      const variant = updated[variantIndex];
+      const updatedDepreciation = { ...variant.depreciation, [field]: value };
+
+      if (
+        updatedDepreciation.originalPrice &&
+        updatedDepreciation.usagePeriod &&
+        updatedDepreciation.depreciationRate
+      ) {
+        const calculatedPrice = calculateDepreciatedPrice(
+          Number(updatedDepreciation.originalPrice),
+          Number(updatedDepreciation.usagePeriod),
+          updatedDepreciation.usageUnit || "months",
+          Number(updatedDepreciation.depreciationRate),
+        );
+        updatedDepreciation.calculatedPrice = calculatedPrice;
+        updated[variantIndex] = {
+          ...variant,
+          depreciation: updatedDepreciation,
+          price: calculatedPrice.toString(),
+        };
+        return updated;
+      }
+      
+      updated[variantIndex] = { ...variant, depreciation: updatedDepreciation };
+      return updated;
+    });
+  };
+
+  const handleDepreciationRateChange = (variantIndex: number, value: number[]) => {
+    setVariants((prev) => {
+      const updated = [...prev];
+      const variant = updated[variantIndex];
+      const rate = value[0];
+      const updatedDepreciation = {
+        ...variant.depreciation,
+        depreciationRate: rate,
+      };
+
+      if (
+        updatedDepreciation.originalPrice &&
+        updatedDepreciation.usagePeriod
+      ) {
+        const calculatedPrice = calculateDepreciatedPrice(
+          Number(updatedDepreciation.originalPrice),
+          Number(updatedDepreciation.usagePeriod),
+          updatedDepreciation.usageUnit || "months",
+          rate,
+        );
+        updatedDepreciation.calculatedPrice = calculatedPrice;
+        updated[variantIndex] = {
+          ...variant,
+          depreciation: updatedDepreciation,
+          price: calculatedPrice.toString(),
+        };
+        return updated;
+      }
+      
+      updated[variantIndex] = { ...variant, depreciation: updatedDepreciation };
+      return updated;
+    });
   };
 
   // ─── Validation ───────────────────────────────────────────────────────────
@@ -542,24 +723,12 @@ function EditProductForm({
       if (!v.quantity || Number(v.quantity) < 0)
         variantIssues.push(`${label}: quantity must be 0 or more.`);
 
-      const hasCalculatedPrice = v.calculated_price && Number(v.calculated_price) > 0;
+      // Check if we have a price (either from depreciation or manual)
+      const hasPriceFromDepreciation = v.depreciation.calculatedPrice && Number(v.depreciation.calculatedPrice) > 0;
       const hasManualPrice = v.price && Number(v.price) > 0;
-      if (!hasCalculatedPrice && !hasManualPrice) {
-        variantIssues.push(
-          `${label}: a selling price is required. Fill the depreciation calculator or enter a price manually.`
-        );
-      }
-
-      const hasDepreciationInput = v.original_price || v.usage_period;
-      if (hasDepreciationInput) {
-        if (!v.original_price || Number(v.original_price) <= 0)
-          variantIssues.push(`${label}: original price is required when using the depreciation calculator.`);
-        if (!v.usage_period || Number(v.usage_period) <= 0)
-          variantIssues.push(`${label}: usage period is required when using the depreciation calculator.`);
-        if (!v.depreciation_rate || Number(v.depreciation_rate) < 0 || Number(v.depreciation_rate) > 100)
-          variantIssues.push(`${label}: depreciation rate must be between 0–100.`);
-        if (!v.calculated_price || Number(v.calculated_price) <= 0)
-          variantIssues.push(`${label}: calculated price could not be determined. Check your depreciation inputs.`);
+      
+      if (!hasPriceFromDepreciation && !hasManualPrice) {
+        variantIssues.push(`${label}: a selling price is required. Fill the depreciation calculator or enter a price manually.`);
       }
 
       if (v.is_refundable && (!v.refund_days || Number(v.refund_days) < 1))
@@ -610,21 +779,21 @@ function EditProductForm({
         payload
       );
 
-      // Variants bulk update - with dimension fields added
+      // Variants bulk update
       const variantsPayload = variants.map((v) => ({
         id: v.id,
         title: v.title,
         sku_code: v.sku_code,
-        price: v.calculated_price && Number(v.calculated_price) > 0
-          ? parseFloat(v.calculated_price)
-          : v.price && Number(v.price) > 0
+        price: v.depreciation.calculatedPrice && Number(v.depreciation.calculatedPrice) > 0
+          ? parseFloat(v.depreciation.calculatedPrice.toString())
+          : v.price
           ? parseFloat(v.price)
           : null,
         quantity: parseInt(v.quantity) || 0,
-        length: v.length ? parseFloat(v.length) : null,           // Added
-        width: v.width ? parseFloat(v.width) : null,             // Added
-        height: v.height ? parseFloat(v.height) : null,          // Added
-        dimension_unit: v.dimension_unit || "cm",                // Added
+        length: v.length ? parseFloat(v.length) : null,
+        width: v.width ? parseFloat(v.width) : null,
+        height: v.height ? parseFloat(v.height) : null,
+        dimension_unit: v.dimension_unit || "cm",
         weight: v.weight ? parseFloat(v.weight) : null,
         weight_unit: v.weight_unit,
         critical_trigger: v.critical_trigger ? parseInt(v.critical_trigger) : null,
@@ -633,10 +802,10 @@ function EditProductForm({
         refund_days: parseInt(v.refund_days) || 0,
         allow_swap: v.allow_swap,
         swap_type: v.swap_type,
-        original_price: v.original_price ? parseFloat(v.original_price) : null,
-        usage_period: v.usage_period ? parseFloat(v.usage_period) : null,
-        usage_unit: v.usage_unit,
-        depreciation_rate: v.depreciation_rate ? parseFloat(v.depreciation_rate) : null,
+        original_price: v.depreciation.originalPrice ? parseFloat(v.depreciation.originalPrice.toString()) : null,
+        usage_period: v.depreciation.usagePeriod ? parseFloat(v.depreciation.usagePeriod.toString()) : null,
+        usage_unit: v.depreciation.usageUnit,
+        depreciation_rate: v.depreciation.depreciationRate ? parseFloat(v.depreciation.depreciationRate.toString()) : null,
         minimum_additional_payment: parseFloat(v.minimum_additional_payment) || 0,
         maximum_additional_payment: parseFloat(v.maximum_additional_payment) || 0,
         swap_description: v.swap_description,
@@ -729,28 +898,23 @@ function EditProductForm({
     setVariants(variants.filter((_, i) => i !== index));
   };
 
-  const updateVariant = (
+  const updateVariantField = (
     index: number,
     field: keyof VariantFormState,
     value: any
   ) => {
     const updated = [...variants];
     updated[index] = { ...updated[index], [field]: value };
-    if (
-      ["original_price", "usage_period", "usage_unit", "depreciation_rate"].includes(
-        field as string
-      )
-    ) {
-      updated[index] = updateVariantCalculatedPrice(index, updated[index]);
-    }
     setVariants(updated);
   };
 
   const toggleVariantExpanded = (index: number) =>
     setExpandedVariants((prev) => ({ ...prev, [index]: !prev[index] }));
 
-  const formatPrice = (price: string) =>
-    price ? parseFloat(price).toFixed(2) : "0.00";
+  const formatPrice = (price: string | number) => {
+    if (typeof price === "number") return price.toFixed(2);
+    return price ? parseFloat(price).toFixed(2) : "0.00";
+  };
 
   const totalImageCount = media.existing.length + media.pending.length;
 
@@ -1029,7 +1193,7 @@ function EditProductForm({
                 const currentImage =
                   variant.imagePreview ?? variant.image ?? null;
                 const hasCalculatedPrice =
-                  variant.calculated_price && Number(variant.calculated_price) > 0;
+                  variant.depreciation.calculatedPrice && Number(variant.depreciation.calculatedPrice) > 0;
 
                 return (
                   <div
@@ -1060,7 +1224,7 @@ function EditProductForm({
                         </h4>
                         {hasCalculatedPrice ? (
                           <Badge className="bg-orange-100 text-orange-700 border-orange-300 text-xs">
-                            ₱{formatPrice(variant.calculated_price!)}
+                            ₱{formatPrice(variant.depreciation.calculatedPrice!)}
                           </Badge>
                         ) : variant.price && Number(variant.price) > 0 ? (
                           <Badge className="bg-blue-100 text-blue-700 border-blue-300 text-xs">
@@ -1179,7 +1343,7 @@ function EditProductForm({
                         <Input
                           value={variant.title}
                           onChange={(e) =>
-                            updateVariant(index, "title", e.target.value)
+                            updateVariantField(index, "title", e.target.value)
                           }
                           placeholder="e.g., Small, Red, 1kg"
                         />
@@ -1193,7 +1357,7 @@ function EditProductForm({
                           min="0"
                           value={variant.quantity}
                           onChange={(e) =>
-                            updateVariant(index, "quantity", e.target.value)
+                            updateVariantField(index, "quantity", e.target.value)
                           }
                           placeholder="0"
                         />
@@ -1203,7 +1367,7 @@ function EditProductForm({
                           <Switch
                             checked={variant.is_active}
                             onCheckedChange={(v) =>
-                              updateVariant(index, "is_active", v)
+                              updateVariantField(index, "is_active", v)
                             }
                             className="data-[state=checked]:bg-orange-600"
                           />
@@ -1213,7 +1377,7 @@ function EditProductForm({
                           <Switch
                             checked={variant.is_refundable}
                             onCheckedChange={(v) =>
-                              updateVariant(index, "is_refundable", v)
+                              updateVariantField(index, "is_refundable", v)
                             }
                             className="data-[state=checked]:bg-orange-600"
                           />
@@ -1222,7 +1386,7 @@ function EditProductForm({
                       </div>
                     </div>
 
-                    {/* Manual price — shown when depreciation calculator is not used */}
+                    {/* Manual price - shown when depreciation calculator is not used */}
                     {!hasCalculatedPrice && (
                       <div className="space-y-1.5">
                         <Label>
@@ -1238,31 +1402,28 @@ function EditProductForm({
                             step="0.01"
                             value={variant.price}
                             onChange={(e) =>
-                              updateVariant(index, "price", e.target.value)
+                              updateVariantField(index, "price", e.target.value)
                             }
                             placeholder="Enter selling price"
                             className="pl-8"
                           />
                         </div>
                         <p className="text-[10px] text-muted-foreground">
-                          Or fill the depreciation calculator below to auto-calculate
-                          the price.
+                          Or fill the depreciation calculator below to auto-calculate the price.
                         </p>
                       </div>
                     )}
 
-                    {/* Depreciation calculator */}
-                    <div className="p-4 bg-orange-50 rounded-lg border border-orange-200">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Calculator className="h-4 w-4 text-orange-600" />
-                        <span className="text-sm font-medium text-orange-800">
-                          Price Depreciation Calculator
-                        </span>
-                        <span className="text-xs text-orange-600 font-normal">
-                          (optional)
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* Depreciation Section - Copied from create form */}
+                    <div className="mb-4 p-4 bg-orange-50 rounded-lg border border-orange-200 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <div className="gap-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Calculator className="h-4 w-4 text-orange-600" />
+                          <span className="text-sm font-medium text-orange-800">
+                            Price Depreciation Calculator
+                          </span>
+                        </div>
+                        
                         <div className="space-y-1">
                           <Label className="text-xs font-medium text-orange-700">
                             Original Price
@@ -1275,104 +1436,189 @@ function EditProductForm({
                               type="number"
                               min="0"
                               step="0.01"
-                              value={variant.original_price}
+                              value={variant.depreciation.originalPrice || ""}
                               onChange={(e) =>
-                                updateVariant(index, "original_price", e.target.value)
-                              }
-                              placeholder="Original price"
-                              className="h-8 text-xs pl-8"
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs font-medium text-orange-700">
-                            Usage Period
-                          </Label>
-                          <div className="flex gap-2">
-                            <Input
-                              type="number"
-                              min="0"
-                              step="0.1"
-                              value={variant.usage_period}
-                              onChange={(e) =>
-                                updateVariant(index, "usage_period", e.target.value)
-                              }
-                              placeholder="Amount"
-                              className="h-8 text-xs flex-1"
-                            />
-                            <Select
-                              value={variant.usage_unit}
-                              onValueChange={(v) =>
-                                updateVariant(index, "usage_unit", v)
-                              }
-                            >
-                              <SelectTrigger className="w-20 h-8 text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {USAGE_UNIT_OPTIONS.map((opt) => (
-                                  <SelectItem key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs font-medium text-orange-700">
-                            Rate (%)
-                          </Label>
-                          <div className="relative">
-                            <Input
-                              type="number"
-                              min="0"
-                              max="100"
-                              step="0.1"
-                              value={variant.depreciation_rate}
-                              onChange={(e) =>
-                                updateVariant(
+                                handleDepreciationChange(
                                   index,
-                                  "depreciation_rate",
-                                  e.target.value
+                                  "originalPrice",
+                                  parseFloat(e.target.value) || "",
                                 )
                               }
-                              placeholder="e.g., 10"
-                              className="h-8 text-xs pr-6"
+                              placeholder="Original price"
+                              className="h-8 text-xs pl-8 border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                             />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">
-                              %
+                          </div>
+                        </div>
+
+                        {/* Purchase Date Calendar Picker */}
+                        <div className="space-y-1 my-2">
+                          <Label className="text-xs font-medium text-orange-700">
+                            Purchase Date
+                          </Label>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant={"outline"}
+                                className={cn(
+                                  "w-full h-8 text-xs justify-start text-left font-normal border-gray-300",
+                                  !variant.depreciation.purchaseDate &&
+                                    "text-muted-foreground",
+                                )}
+                              >
+                                <CalendarIcon className="mr-2 h-3 w-3" />
+                                {variant.depreciation.purchaseDate ? (
+                                  format(variant.depreciation.purchaseDate, "PPP")
+                                ) : (
+                                  <span>Pick a date</span>
+                                )}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0">
+                              <Calendar
+                                mode="single"
+                                selected={
+                                  variant.depreciation.purchaseDate || undefined
+                                }
+                                onSelect={(date) =>
+                                  handlePurchaseDateChange(index, date)
+                                }
+                                initialFocus
+                                disabled={(date) => date > new Date()}
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+
+                        {/* Depreciation Rate with Slider */}
+                        <div className="space-y-4 bg-orange-50/50 p-4 rounded-lg border border-orange-200 h-fit">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Percent className="h-4 w-4 text-orange-600" />
+                              <Label className="text-sm font-medium text-orange-800">
+                                Annual Depreciation Rate
+                              </Label>
+                            </div>
+                            <Badge
+                              variant="outline"
+                              className="bg-white text-orange-700 border-orange-300 font-semibold text-base px-3 py-1"
+                            >
+                              {variant.depreciation.depreciationRate || 0}%
+                            </Badge>
+                          </div>
+
+                          <div className="pt-2 pb-1">
+                            <Slider
+                              value={[Number(variant.depreciation.depreciationRate) || 0]}
+                              onValueChange={(value) =>
+                                handleDepreciationRateChange(index, value)
+                              }
+                              max={100}
+                              step={0.5}
+                              className="w-full [&_[role=slider]]:bg-orange-600 [&_[role=slider]]:border-orange-600 [&_.relative]:bg-orange-200"
+                            />
+                          </div>
+
+                          <div className="flex justify-between text-xs font-medium text-gray-600 px-1">
+                            <span className="flex flex-col items-center">
+                              <span className="text-gray-400">|</span>
+                              <span>0%</span>
+                            </span>
+                            <span className="flex flex-col items-center">
+                              <span className="text-gray-400">|</span>
+                              <span>25%</span>
+                            </span>
+                            <span className="flex flex-col items-center">
+                              <span className="text-gray-400">|</span>
+                              <span>50%</span>
+                            </span>
+                            <span className="flex flex-col items-center">
+                              <span className="text-gray-400">|</span>
+                              <span>75%</span>
+                            </span>
+                            <span className="flex flex-col items-center">
+                              <span className="text-gray-400">|</span>
+                              <span>100%</span>
                             </span>
                           </div>
                         </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs font-medium text-orange-700">
-                            Calculated
+                      </div>
+
+                      <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg p-5 shadow-md flex flex-col h-full min-h-[180px] border">
+                        <div className="flex items-center gap-2">
+                          <Calculator className="h-5 w-5 text-white/90" />
+                          <Label className="text-xs font-medium text-white/80 uppercase tracking-wider">
+                            Calculated Price
                           </Label>
-                          <div className="h-8 px-3 bg-white border border-gray-300 rounded-md flex items-center">
-                            {variant.calculated_price ? (
-                              <span className="text-sm font-medium text-orange-600">
-                                ₱{formatPrice(variant.calculated_price)}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-gray-400">
-                                Fill fields above
-                              </span>
-                            )}
-                          </div>
-                          {hasCalculatedPrice && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                updateVariant(index, "original_price", "");
-                                updateVariant(index, "usage_period", "");
-                              }}
-                              className="text-[10px] text-orange-500 hover:text-orange-700 underline"
-                            >
-                              Clear & use manual price instead
-                            </button>
+                        </div>
+
+                        <div className="flex-1 flex flex-col justify-center">
+                          {variant.depreciation.calculatedPrice ? (
+                            <div className="space-y-2">
+                              <div className="text-4xl font-bold text-white tracking-tight">
+                                ₱
+                                {Number(
+                                  variant.depreciation.calculatedPrice,
+                                ).toLocaleString("en-PH", {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-white/70 bg-white/10 p-2 rounded-md">
+                                <CalendarIcon className="h-3 w-3" />
+                                <span>
+                                  Based on {variant.depreciation.usagePeriod}{" "}
+                                  {variant.depreciation.usageUnit} of use
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center justify-center space-y-3">
+                              <div className="text-3xl font-light text-white/50">
+                                —
+                              </div>
+                              <div className="flex items-center gap-2 text-xs bg-white/10 px-3 py-2 rounded-full text-white/80">
+                                <Info className="h-3 w-3" />
+                                <span>Fill in original price & purchase date</span>
+                              </div>
+                            </div>
                           )}
                         </div>
+                      </div>
+                    </div>
+
+                    {/* Status Toggles */}
+                    <div className="flex items-center gap-6 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                      <div className="flex items-center gap-3">
+                        <Switch
+                          id={`active-${index}`}
+                          checked={variant.is_active !== false}
+                          onCheckedChange={(checked) =>
+                            updateVariantField(index, "is_active", checked)
+                          }
+                          className="data-[state=checked]:bg-orange-500"
+                        />
+                        <Label
+                          htmlFor={`active-${index}`}
+                          className="text-sm text-gray-700 cursor-pointer"
+                        >
+                          Active
+                        </Label>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Switch
+                          id={`refundable-${index}`}
+                          checked={variant.is_refundable !== false}
+                          onCheckedChange={(checked) =>
+                            updateVariantField(index, "is_refundable", checked)
+                          }
+                          className="data-[state=checked]:bg-orange-500"
+                        />
+                        <Label
+                          htmlFor={`refundable-${index}`}
+                          className="text-sm text-gray-700 cursor-pointer"
+                        >
+                          Refundable
+                        </Label>
                       </div>
                     </div>
 
@@ -1398,7 +1644,7 @@ function EditProductForm({
                         </Button>
                       </CollapsibleTrigger>
                       <CollapsibleContent className="space-y-3 pt-3">
-                        {/* Dimensions - NEW SECTION */}
+                        {/* Dimensions */}
                         <div className="space-y-2 border rounded-md p-3 bg-gray-50">
                           <Label className="text-sm font-medium">Physical Dimensions</Label>
                           <div className="grid grid-cols-3 gap-2">
@@ -1410,7 +1656,7 @@ function EditProductForm({
                                 step="0.1"
                                 value={variant.length}
                                 onChange={(e) =>
-                                  updateVariant(index, "length", e.target.value)
+                                  updateVariantField(index, "length", e.target.value)
                                 }
                                 placeholder="0.0"
                                 className="h-8 text-xs"
@@ -1424,7 +1670,7 @@ function EditProductForm({
                                 step="0.1"
                                 value={variant.width}
                                 onChange={(e) =>
-                                  updateVariant(index, "width", e.target.value)
+                                  updateVariantField(index, "width", e.target.value)
                                 }
                                 placeholder="0.0"
                                 className="h-8 text-xs"
@@ -1438,7 +1684,7 @@ function EditProductForm({
                                 step="0.1"
                                 value={variant.height}
                                 onChange={(e) =>
-                                  updateVariant(index, "height", e.target.value)
+                                  updateVariantField(index, "height", e.target.value)
                                 }
                                 placeholder="0.0"
                                 className="h-8 text-xs"
@@ -1450,7 +1696,7 @@ function EditProductForm({
                             <Select
                               value={variant.dimension_unit}
                               onValueChange={(v) =>
-                                updateVariant(index, "dimension_unit", v)
+                                updateVariantField(index, "dimension_unit", v)
                               }
                             >
                               <SelectTrigger className="w-full h-8 text-xs mt-1">
@@ -1476,7 +1722,7 @@ function EditProductForm({
                               step="0.01"
                               value={variant.weight}
                               onChange={(e) =>
-                                updateVariant(index, "weight", e.target.value)
+                                updateVariantField(index, "weight", e.target.value)
                               }
                               placeholder="0.00"
                             />
@@ -1486,7 +1732,7 @@ function EditProductForm({
                             <Select
                               value={variant.weight_unit}
                               onValueChange={(v) =>
-                                updateVariant(index, "weight_unit", v)
+                                updateVariantField(index, "weight_unit", v)
                               }
                             >
                               <SelectTrigger className="w-full">
@@ -1502,6 +1748,7 @@ function EditProductForm({
                             </Select>
                           </div>
                         </div>
+                        
                         <div className="grid grid-cols-2 gap-2">
                           <div className="space-y-1.5">
                             <Label>Critical Trigger</Label>
@@ -1510,7 +1757,7 @@ function EditProductForm({
                               min="0"
                               value={variant.critical_trigger}
                               onChange={(e) =>
-                                updateVariant(
+                                updateVariantField(
                                   index,
                                   "critical_trigger",
                                   e.target.value
@@ -1520,12 +1767,13 @@ function EditProductForm({
                             />
                           </div>
                         </div>
+                        
                         <div className="space-y-2 border-t pt-2">
                           <div className="flex items-center space-x-2">
                             <Switch
                               checked={variant.allow_swap}
                               onCheckedChange={(v) =>
-                                updateVariant(index, "allow_swap", v)
+                                updateVariantField(index, "allow_swap", v)
                               }
                               className="data-[state=checked]:bg-orange-600"
                             />
@@ -1538,7 +1786,7 @@ function EditProductForm({
                                 <Select
                                   value={variant.swap_type}
                                   onValueChange={(v) =>
-                                    updateVariant(index, "swap_type", v)
+                                    updateVariantField(index, "swap_type", v)
                                   }
                                 >
                                   <SelectTrigger>
@@ -1563,7 +1811,7 @@ function EditProductForm({
                                     step="0.01"
                                     value={variant.minimum_additional_payment}
                                     onChange={(e) =>
-                                      updateVariant(
+                                      updateVariantField(
                                         index,
                                         "minimum_additional_payment",
                                         e.target.value
@@ -1580,7 +1828,7 @@ function EditProductForm({
                                     step="0.01"
                                     value={variant.maximum_additional_payment}
                                     onChange={(e) =>
-                                      updateVariant(
+                                      updateVariantField(
                                         index,
                                         "maximum_additional_payment",
                                         e.target.value
@@ -1595,7 +1843,7 @@ function EditProductForm({
                                 <Textarea
                                   value={variant.swap_description}
                                   onChange={(e) =>
-                                    updateVariant(
+                                    updateVariantField(
                                       index,
                                       "swap_description",
                                       e.target.value

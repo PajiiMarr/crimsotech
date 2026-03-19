@@ -13,7 +13,9 @@ import {
   Modal,
   FlatList,
   Switch,
-  Platform
+  Platform,
+  PanResponder,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -22,26 +24,22 @@ import AxiosInstance from '../../../contexts/axios';
 import { useAuth } from '../../../contexts/AuthContext';
 
 // --- INTERFACE DEFINITIONS ---
-
 interface User {
   id: string;
   username: string;
 }
-
 interface Category {
   id: string;
   name: string;
   shop: string | null;
   user: User;
 }
-
 interface Shop {
   id: string;
   name: string;
   description: string;
   shop_picture?: string;
 }
-
 interface FormErrors {
   message?: string;
   name?: string;
@@ -50,21 +48,19 @@ interface FormErrors {
   category_admin_id?: string;
   [key: string]: string | undefined;
 }
-
 interface MediaPreview {
   file: any;
   preview: string;
   type: 'image' | 'video';
 }
-
 interface Depreciation {
   originalPrice: number | '';
   usagePeriod: number | '';
   usageUnit: 'weeks' | 'months' | 'years';
   depreciationRate: number | '';
   calculatedPrice: number | '';
+  purchaseDate?: Date | null;
 }
-
 interface Variant {
   id: string;
   title: string;
@@ -74,9 +70,12 @@ interface Variant {
   sku_code?: string;
   image?: any | null;
   imagePreview?: string;
+  proofImage?: any | null;
+  proofImagePreview?: string;
   length?: number | '';
   width?: number | '';
   height?: number | '';
+  dimension_unit?: string;
   weight?: number | '';
   weight_unit?: 'g' | 'kg' | 'lb' | 'oz';
   critical_trigger?: number | '';
@@ -85,7 +84,6 @@ interface Variant {
   depreciation: Depreciation;
   attributes?: Record<string, string>;
 }
-
 interface PredictionResult {
   success?: boolean;
   predicted_category?: {
@@ -98,7 +96,6 @@ interface PredictionResult {
   predicted_class?: string;
   error?: string;
 }
-
 interface CreateProductFormProps {
   selectedShop: Shop | null;
   globalCategories: Category[];
@@ -110,41 +107,370 @@ const generateId = () => {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
 };
 
-const conditionOptions = [
-  'Like New',
-  'New',
-  'Refurbished',
-  'Used - Excellent',
-  'Used - Good'
-];
+// --- CONDITION SCALE (matches web UI) ---
+const CONDITION_SCALE = {
+  1: {
+    label: 'Poor - Heavy signs of use, may not function perfectly',
+    shortLabel: 'Poor',
+    color: '#FEE2E2',
+    textColor: '#991B1B',
+    borderColor: '#FECACA',
+    stars: 1,
+  },
+  2: {
+    label: 'Fair - Visible wear, fully functional',
+    shortLabel: 'Fair',
+    color: '#FFEDD5',
+    textColor: '#9A3412',
+    borderColor: '#FED7AA',
+    stars: 2,
+  },
+  3: {
+    label: 'Good - Normal wear, well-maintained',
+    shortLabel: 'Good',
+    color: '#FEF9C3',
+    textColor: '#854D0E',
+    borderColor: '#FDE047',
+    stars: 3,
+  },
+  4: {
+    label: 'Very Good - Minimal wear, almost like new',
+    shortLabel: 'Very Good',
+    color: '#DBEAFE',
+    textColor: '#1E40AF',
+    borderColor: '#BFDBFE',
+    stars: 4,
+  },
+  5: {
+    label: 'Like New - No signs of use, original packaging',
+    shortLabel: 'Like New',
+    color: '#DCFCE7',
+    textColor: '#166534',
+    borderColor: '#BBF7D0',
+    stars: 5,
+  },
+} as const;
+
+type ConditionValue = keyof typeof CONDITION_SCALE;
 
 const weightUnitOptions = ['g', 'kg', 'lb', 'oz'];
-
+const dimensionUnitOptions = ['cm', 'm', 'in', 'ft'];
 const usageUnitOptions = [
   { label: 'Weeks', value: 'weeks' },
   { label: 'Months', value: 'months' },
-  { label: 'Years', value: 'years' }
+  { label: 'Years', value: 'years' },
 ];
 
-export default function CreateProductForm({ 
-  selectedShop, 
-  globalCategories, 
+const SCREEN_WIDTH = Dimensions.get('window').width;
+
+// Simple date picker helper
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatDate(date: Date): string {
+  return `${MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+}
+
+function diffInMonths(from: Date, to: Date): number {
+  return (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth());
+}
+function diffInWeeks(from: Date, to: Date): number {
+  return Math.floor((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24 * 7));
+}
+function diffInYears(from: Date, to: Date): number {
+  return to.getFullYear() - from.getFullYear() - (to < new Date(from.getFullYear() + (to.getFullYear() - from.getFullYear()), from.getMonth(), from.getDate()) ? 1 : 0);
+}
+
+// --- SLIDER COMPONENT ---
+interface SliderProps {
+  value: number;
+  onValueChange: (value: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+function OrangeSlider({ value, onValueChange, min = 0, max = 100, step = 0.5 }: SliderProps) {
+  const sliderWidth = SCREEN_WIDTH - 96; // padding adjustments
+  const thumbSize = 22;
+
+  const valueToX = (v: number) => ((v - min) / (max - min)) * (sliderWidth - thumbSize);
+  const xToValue = (x: number) => {
+    const raw = (x / (sliderWidth - thumbSize)) * (max - min) + min;
+    const stepped = Math.round(raw / step) * step;
+    return Math.max(min, Math.min(max, parseFloat(stepped.toFixed(1))));
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (evt) => {
+        const x = evt.nativeEvent.locationX - thumbSize / 2;
+        onValueChange(xToValue(x));
+      },
+      onPanResponderMove: (evt) => {
+        const x = evt.nativeEvent.locationX - thumbSize / 2;
+        onValueChange(xToValue(x));
+      },
+    })
+  ).current;
+
+  const thumbX = valueToX(value);
+  const fillWidth = thumbX + thumbSize / 2;
+
+  return (
+    <View style={{ height: 40, justifyContent: 'center' }} {...panResponder.panHandlers}>
+      <View style={sliderStyles.track}>
+        <View style={[sliderStyles.fill, { width: Math.max(0, fillWidth) }]} />
+        <View style={[sliderStyles.thumb, { left: Math.max(0, thumbX) }]} />
+      </View>
+      {/* Tick marks */}
+      <View style={sliderStyles.ticks}>
+        {[0, 25, 50, 75, 100].map((tick) => (
+          <Text key={tick} style={sliderStyles.tickLabel}>{tick}%</Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const sliderStyles = StyleSheet.create({
+  track: {
+    height: 6,
+    backgroundColor: '#FED7AA',
+    borderRadius: 3,
+    position: 'relative',
+  },
+  fill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    height: 6,
+    backgroundColor: '#F97316',
+    borderRadius: 3,
+  },
+  thumb: {
+    position: 'absolute',
+    top: -8,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#EA580C',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  ticks: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
+  tickLabel: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    fontWeight: '500',
+  },
+});
+
+// --- DATE PICKER MODAL ---
+interface DatePickerModalProps {
+  visible: boolean;
+  selectedDate?: Date | null;
+  onSelect: (date: Date) => void;
+  onClose: () => void;
+}
+
+function DatePickerModal({ visible, selectedDate, onSelect, onClose }: DatePickerModalProps) {
+  const today = new Date();
+  const [year, setYear] = useState(selectedDate?.getFullYear() ?? today.getFullYear());
+  const [month, setMonth] = useState(selectedDate?.getMonth() ?? today.getMonth());
+  const [day, setDay] = useState(selectedDate?.getDate() ?? today.getDate());
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const years = Array.from({ length: 30 }, (_, i) => today.getFullYear() - i);
+
+  const handleConfirm = () => {
+    const safeDay = Math.min(day, daysInMonth);
+    onSelect(new Date(year, month, safeDay));
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={dpStyles.overlay} activeOpacity={1} onPress={onClose}>
+        <View style={dpStyles.container}>
+          <View style={dpStyles.header}>
+            <Text style={dpStyles.title}>Purchase Date</Text>
+            <TouchableOpacity onPress={onClose}>
+              <Ionicons name="close" size={24} color="#374151" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={dpStyles.pickerRow}>
+            {/* Month */}
+            <View style={dpStyles.pickerCol}>
+              <Text style={dpStyles.pickerLabel}>Month</Text>
+              <ScrollView style={dpStyles.pickerScroll} showsVerticalScrollIndicator={false}>
+                {MONTHS.map((m, i) => (
+                  <TouchableOpacity
+                    key={m}
+                    style={[dpStyles.pickerItem, month === i && dpStyles.pickerItemActive]}
+                    onPress={() => setMonth(i)}
+                  >
+                    <Text style={[dpStyles.pickerItemText, month === i && dpStyles.pickerItemTextActive]}>
+                      {m}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+            {/* Day */}
+            <View style={dpStyles.pickerCol}>
+              <Text style={dpStyles.pickerLabel}>Day</Text>
+              <ScrollView style={dpStyles.pickerScroll} showsVerticalScrollIndicator={false}>
+                {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((d) => (
+                  <TouchableOpacity
+                    key={d}
+                    style={[dpStyles.pickerItem, day === d && dpStyles.pickerItemActive]}
+                    onPress={() => setDay(d)}
+                  >
+                    <Text style={[dpStyles.pickerItemText, day === d && dpStyles.pickerItemTextActive]}>
+                      {d}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+            {/* Year */}
+            <View style={dpStyles.pickerCol}>
+              <Text style={dpStyles.pickerLabel}>Year</Text>
+              <ScrollView style={dpStyles.pickerScroll} showsVerticalScrollIndicator={false}>
+                {years.map((y) => (
+                  <TouchableOpacity
+                    key={y}
+                    style={[dpStyles.pickerItem, year === y && dpStyles.pickerItemActive]}
+                    onPress={() => setYear(y)}
+                  >
+                    <Text style={[dpStyles.pickerItemText, year === y && dpStyles.pickerItemTextActive]}>
+                      {y}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+
+          <TouchableOpacity style={dpStyles.confirmButton} onPress={handleConfirm}>
+            <Text style={dpStyles.confirmButtonText}>Confirm Date</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
+const dpStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  container: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  pickerRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  pickerCol: {
+    flex: 1,
+  },
+  pickerLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  pickerScroll: {
+    maxHeight: 200,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+  },
+  pickerItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  pickerItemActive: {
+    backgroundColor: '#FFF7ED',
+  },
+  pickerItemText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  pickerItemTextActive: {
+    color: '#EA580C',
+    fontWeight: '700',
+  },
+  confirmButton: {
+    backgroundColor: '#F97316',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  confirmButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+});
+
+// ============================================================
+// MAIN COMPONENT
+// ============================================================
+export default function CreateProductForm({
+  selectedShop,
+  globalCategories,
   modelClasses,
-  errors: externalErrors 
+  errors: externalErrors,
 }: CreateProductFormProps) {
   const { userId } = useAuth();
-  const fetcher = { state: 'idle', data: null, submit: () => {} }; // Mock fetcher for now
 
   // Form state
   const [productName, setProductName] = useState('');
   const [productDescription, setProductDescription] = useState('');
-  const [productCondition, setProductCondition] = useState('');
+  const [productCondition, setProductCondition] = useState<ConditionValue | ''>('');
   const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
   const [productRefundable, setProductRefundable] = useState(true);
 
   // Media state
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
-  
+
   // Variants state
   const [variants, setVariants] = useState<Variant[]>([
     {
@@ -154,6 +480,7 @@ export default function CreateProductForm({
       quantity: '',
       sku_code: '',
       weight_unit: 'g',
+      dimension_unit: 'cm',
       is_active: true,
       refundable: true,
       depreciation: {
@@ -162,8 +489,9 @@ export default function CreateProductForm({
         usageUnit: 'months',
         depreciationRate: 10,
         calculatedPrice: '',
-      }
-    }
+        purchaseDate: null,
+      },
+    },
   ]);
 
   // UI state
@@ -171,95 +499,109 @@ export default function CreateProductForm({
   const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
   const [expandedAdvanced, setExpandedAdvanced] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [apiResponseError, setApiResponseError] = useState<string | null>(null);
+  const [apiResponseMessage, setApiResponseMessage] = useState<string | null>(null);
 
   // Modal state
   const [conditionModalVisible, setConditionModalVisible] = useState(false);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
-  const [weightUnitModalVisible, setWeightUnitModalVisible] = useState(false);
-  const [usageUnitModalVisible, setUsageUnitModalVisible] = useState<{ visible: boolean; variantId: string | null }>({
-    visible: false,
-    variantId: null
-  });
+  const [weightUnitModal, setWeightUnitModal] = useState<{ visible: boolean; variantId: string | null }>({ visible: false, variantId: null });
+  const [dimensionUnitModal, setDimensionUnitModal] = useState<{ visible: boolean; variantId: string | null }>({ visible: false, variantId: null });
+  const [usageUnitModalVisible, setUsageUnitModalVisible] = useState<{ visible: boolean; variantId: string | null }>({ visible: false, variantId: null });
+  const [datePickerModal, setDatePickerModal] = useState<{ visible: boolean; variantId: string | null }>({ visible: false, variantId: null });
 
   // Prediction state
   const [isPredicting, setIsPredicting] = useState(false);
   const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
   const [predictionError, setPredictionError] = useState<string | null>(null);
-  const [apiResponseError, setApiResponseError] = useState<string | null>(null);
-  const [apiResponseMessage, setApiResponseMessage] = useState<string | null>(null);
   const predictionAbortController = useRef<AbortController | null>(null);
-  const fileInputRef = useRef<any>(null);
 
   // Update first variant title when product name changes
   useEffect(() => {
-    setVariants(prev => prev.map((variant, index) => 
-      index === 0 ? { ...variant, title: productName || "Default" } : variant
-    ));
+    setVariants((prev) =>
+      prev.map((variant, index) =>
+        index === 0 ? { ...variant, title: productName || 'Default' } : variant
+      )
+    );
   }, [productName]);
 
-  // Calculate depreciated price
-  const calculateDepreciatedPrice = (originalPrice: number, usagePeriod: number, usageUnit: string, depreciationRate: number): number => {
+  // --- DEPRECIATION ---
+  const calculateDepreciatedPrice = (
+    originalPrice: number,
+    usagePeriod: number,
+    usageUnit: string,
+    depreciationRate: number
+  ): number => {
     if (!originalPrice || !usagePeriod || !depreciationRate) return originalPrice;
-    
     let years = usagePeriod;
-    if (usageUnit === 'months') {
-      years = usagePeriod / 12;
-    } else if (usageUnit === 'weeks') {
-      years = usagePeriod / 52;
-    }
-    
+    if (usageUnit === 'months') years = usagePeriod / 12;
+    else if (usageUnit === 'weeks') years = usagePeriod / 52;
     const rate = depreciationRate / 100;
-    const depreciatedValue = originalPrice * Math.pow((1 - rate), years);
-    return Math.max(0, Math.round(depreciatedValue * 100) / 100);
+    const val = originalPrice * Math.pow(1 - rate, years);
+    return Math.max(0, Math.round(val * 100) / 100);
+  };
+
+  const calcAndUpdate = (variantId: string, updatedDep: Depreciation): Variant => {
+    const v = variants.find((x) => x.id === variantId)!;
+    if (updatedDep.originalPrice && updatedDep.usagePeriod && updatedDep.depreciationRate) {
+      const cp = calculateDepreciatedPrice(
+        Number(updatedDep.originalPrice),
+        Number(updatedDep.usagePeriod),
+        updatedDep.usageUnit,
+        Number(updatedDep.depreciationRate)
+      );
+      updatedDep.calculatedPrice = cp;
+      return { ...v, depreciation: updatedDep, price: cp };
+    }
+    return { ...v, depreciation: updatedDep };
   };
 
   const handleDepreciationChange = (variantId: string, field: keyof Depreciation, value: any) => {
-    setVariants(prev => prev.map(v => {
-      if (v.id === variantId) {
-        const updatedDepreciation = {
-          ...v.depreciation,
-          [field]: value
-        };
-        
-        if (updatedDepreciation.originalPrice && 
-            updatedDepreciation.usagePeriod && 
-            updatedDepreciation.depreciationRate) {
-          
-          const calculatedPrice = calculateDepreciatedPrice(
-            Number(updatedDepreciation.originalPrice),
-            Number(updatedDepreciation.usagePeriod),
-            updatedDepreciation.usageUnit || 'months',
-            Number(updatedDepreciation.depreciationRate)
-          );
-          
-          updatedDepreciation.calculatedPrice = calculatedPrice;
-          
-          return {
-            ...v,
-            depreciation: updatedDepreciation,
-            price: calculatedPrice
-          };
-        }
-        
-        return {
-          ...v,
-          depreciation: updatedDepreciation
-        };
-      }
-      return v;
-    }));
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id !== variantId) return v;
+        const updatedDep = { ...v.depreciation, [field]: value };
+        return calcAndUpdate(variantId, updatedDep);
+      })
+    );
   };
 
-  const normalizeText = (s: string) => {
-    return s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).join(' ');
+  const handlePurchaseDateChange = (variantId: string, date: Date) => {
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id !== variantId) return v;
+        const unit = v.depreciation.usageUnit || 'months';
+        const today = new Date();
+        let usagePeriod: number;
+        if (unit === 'weeks') usagePeriod = diffInWeeks(date, today);
+        else if (unit === 'years') usagePeriod = diffInYears(date, today);
+        else usagePeriod = diffInMonths(date, today);
+
+        const updatedDep = { ...v.depreciation, purchaseDate: date, usagePeriod };
+        return calcAndUpdate(variantId, updatedDep);
+      })
+    );
   };
+
+  const handleDepreciationRateSlider = (variantId: string, rate: number) => {
+    setVariants((prev) =>
+      prev.map((v) => {
+        if (v.id !== variantId) return v;
+        const updatedDep = { ...v.depreciation, depreciationRate: rate };
+        return calcAndUpdate(variantId, updatedDep);
+      })
+    );
+  };
+
+  // --- CATEGORY ---
+  const normalizeText = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).join(' ');
 
   const tokenSimilarity = (a: string, b: string) => {
     const ta = new Set(normalizeText(a).split(' '));
     const tb = new Set(normalizeText(b).split(' '));
     if (ta.size === 0 || tb.size === 0) return 0;
-    const inter = [...ta].filter(x => tb.has(x)).length;
+    const inter = [...ta].filter((x) => tb.has(x)).length;
     const union = new Set([...ta, ...tb]).size;
     return union === 0 ? 0 : inter / union;
   };
@@ -273,166 +615,94 @@ export default function CreateProductForm({
     return scores[0] || null;
   };
 
-  const handleCategoryChange = (value: string) => {
-    const stringValue = String(value).trim();
-    
-    if (stringValue === "none" || stringValue === "") {
-      setSelectedCategoryName("");
+  // --- MEDIA ---
+  const pickMedia = async () => {
+    if (mainMedia.length >= 9) {
+      Alert.alert('Limit Reached', 'Maximum 9 media files allowed');
       return;
     }
-
-    if (stringValue === 'Others' || stringValue === 'others') {
-      setSelectedCategoryName('others');
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow access to your camera');
       return;
     }
-
-    setSelectedCategoryName(stringValue);
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      const fileName = asset.uri.split('/').pop() || `photo_${Date.now()}.jpg`;
+      const newMedia = {
+        file: { uri: asset.uri, name: fileName, type: 'image/jpeg' },
+        preview: asset.uri,
+        type: 'image' as const,
+      };
+      setMainMedia((prev) => [...prev, newMedia]);
+      analyzeImages([{ uri: asset.uri, name: fileName, type: 'image/jpeg' }]);
+    }
   };
 
-  // Media handlers
- // Camera-only media picker for main product media
-const pickMedia = async () => {
-  if (mainMedia.length >= 9) {
-    Alert.alert('Limit Reached', 'Maximum 9 media files allowed');
-    return;
-  }
-
-  const { status } = await ImagePicker.requestCameraPermissionsAsync();
-  if (status !== 'granted') {
-    Alert.alert('Permission Required', 'Please allow access to your camera');
-    return;
-  }
-
-  const result = await ImagePicker.launchCameraAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    allowsEditing: true,
-    quality: 0.8,
-  });
-
-  if (!result.canceled && result.assets[0]) {
-    const asset = result.assets[0];
-    const fileName = asset.uri.split('/').pop() || `photo_${Date.now()}.jpg`;
-    
-    const newMedia = {
-      file: {
-        uri: asset.uri,
-        name: fileName,
-        type: 'image/jpeg',
-      },
-      preview: asset.uri,
-      type: 'image' as const,
-    };
-
-    setMainMedia(prev => [...prev, newMedia]);
-
-    // Auto-analyze images for category prediction
-    analyzeImages([{
-      uri: asset.uri,
-      name: fileName,
-      type: 'image/jpeg',
-    }]);
-  }
-};
-
-// Camera-only for variant images
-
-
   const removeMainMedia = (index: number) => {
-    setMainMedia(prev => prev.filter((_, i) => i !== index));
+    setMainMedia((prev) => prev.filter((_, i) => i !== index));
   };
 
   const analyzeImages = async (files: any[]) => {
     if (files.length === 0) return;
-
-    if (predictionAbortController.current) {
-      predictionAbortController.current.abort();
-    }
+    if (predictionAbortController.current) predictionAbortController.current.abort();
     predictionAbortController.current = new AbortController();
-
     setIsPredicting(true);
     setPredictionError(null);
-
     try {
       const requests = files.map((file) => {
         const formData = new FormData();
-        formData.append('image', {
-          uri: file.uri,
-          name: file.name,
-          type: file.type,
-        } as any);
-        
+        formData.append('image', { uri: file.uri, name: file.name, type: file.type } as any);
         return AxiosInstance.post('/predict/', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
           signal: predictionAbortController.current!.signal,
         });
       });
-
       const settled = await Promise.allSettled(requests);
-      const successful = settled.filter(s => s.status === 'fulfilled') as PromiseFulfilledResult<any>[];
-
-      if (successful.length === 0) {
-        setPredictionError('All image predictions failed');
-        return;
-      }
+      const successful = settled.filter((s) => s.status === 'fulfilled') as PromiseFulfilledResult<any>[];
+      if (successful.length === 0) { setPredictionError('All image predictions failed'); return; }
 
       const aggregateScores: Record<string, number> = {};
       let count = 0;
-
-      successful.forEach(res => {
+      successful.forEach((res) => {
         const data = res.value?.data;
         if (!data || !data.success || !data.predictions) return;
         const p = data.predictions;
-
         if (p.all_predictions && typeof p.all_predictions === 'object') {
           Object.entries(p.all_predictions).forEach(([cls, score]) => {
             aggregateScores[cls] = (aggregateScores[cls] || 0) + Number(score || 0);
           });
         } else if (p.predicted_class) {
           const cls = String(p.predicted_class);
-          const conf = Number(p.confidence || 1);
-          aggregateScores[cls] = (aggregateScores[cls] || 0) + conf;
+          aggregateScores[cls] = (aggregateScores[cls] || 0) + Number(p.confidence || 1);
         }
-
         count += 1;
       });
-
-      if (count === 0) {
-        setPredictionError('No valid predictions received');
-        return;
-      }
-
-      Object.keys(aggregateScores).forEach(k => { aggregateScores[k] = aggregateScores[k] / count; });
-
+      if (count === 0) { setPredictionError('No valid predictions received'); return; }
+      Object.keys(aggregateScores).forEach((k) => { aggregateScores[k] /= count; });
       const sorted = Object.entries(aggregateScores).sort((a, b) => b[1] - a[1]);
       const topClass = sorted[0]?.[0] || 'Unknown';
       const topConfidence = Number(sorted[0]?.[1] || 0);
-
       const mapped: PredictionResult = {
         success: true,
-        predicted_category: {
-          category_name: topClass,
-          confidence: topConfidence,
-          category_uuid: null
-        },
-        alternative_categories: sorted.slice(1, 4).map(s => ({ category_name: s[0], confidence: s[1] })),
+        predicted_category: { category_name: topClass, confidence: topConfidence, category_uuid: null },
+        alternative_categories: sorted.slice(1, 4).map((s) => ({ category_name: s[0], confidence: s[1] })),
         all_predictions: Object.fromEntries(sorted),
         predicted_class: topClass,
       };
-
       setPredictionResult(mapped);
-
       if (mapped.predicted_category?.category_name && globalCategories) {
         const predictedName = mapped.predicted_category.category_name.toLowerCase();
         const found = globalCategories.find((gc: any) => gc.name.toLowerCase() === predictedName);
-        if (found) {
-          setSelectedCategoryName(found.name);
-        }
+        if (found) setSelectedCategoryName(found.name);
       }
-
     } catch (error: any) {
-      if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {
-        return;
-      }
+      if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') return;
       setPredictionError('Prediction request failed');
     } finally {
       setIsPredicting(false);
@@ -440,22 +710,15 @@ const pickMedia = async () => {
     }
   };
 
-  // Clean up on unmount
   useEffect(() => {
     return () => {
-      if (predictionAbortController.current) {
-        predictionAbortController.current.abort();
-      }
-      mainMedia.forEach(item => URL.revokeObjectURL(item.preview));
-      variants.forEach(variant => {
-        if (variant.imagePreview) URL.revokeObjectURL(variant.imagePreview);
-      });
+      if (predictionAbortController.current) predictionAbortController.current.abort();
     };
   }, []);
 
-  // Variant handlers
+  // --- VARIANTS ---
   const addVariant = () => {
-    setVariants(prev => [
+    setVariants((prev) => [
       ...prev,
       {
         id: generateId(),
@@ -464,6 +727,7 @@ const pickMedia = async () => {
         quantity: '',
         sku_code: '',
         weight_unit: 'g',
+        dimension_unit: 'cm',
         is_active: true,
         refundable: productRefundable,
         depreciation: {
@@ -472,8 +736,9 @@ const pickMedia = async () => {
           usageUnit: 'months',
           depreciationRate: 10,
           calculatedPrice: '',
-        }
-      }
+          purchaseDate: null,
+        },
+      },
     ]);
   };
 
@@ -482,234 +747,163 @@ const pickMedia = async () => {
       Alert.alert('Cannot Remove', 'Products must have at least one variant');
       return;
     }
-    
-    const variant = variants.find(v => v.id === variantId);
-    if (variant?.imagePreview) {
-      URL.revokeObjectURL(variant.imagePreview);
-    }
-    
-    setVariants(prev => prev.filter(v => v.id !== variantId));
+    setVariants((prev) => prev.filter((v) => v.id !== variantId));
   };
 
   const updateVariantField = (variantId: string, field: keyof Variant, value: any) => {
-    if (field === 'price') return;
-    setVariants(prev => prev.map(v => v.id === variantId ? { ...v, [field]: value } : v));
+    setVariants((prev) => prev.map((v) => (v.id === variantId ? { ...v, [field]: value } : v)));
   };
 
   const handleVariantImagePick = async (variantId: string) => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission Required', 'Please allow access to your photo library');
+      Alert.alert('Permission Required', 'Please allow camera access');
       return;
     }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
     });
-
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-      
-      setVariants(prev => prev.map(v => 
-        v.id === variantId ? { 
-          ...v, 
-          image: {
-            uri: asset.uri,
-            name: asset.uri.split('/').pop() || 'image.jpg',
-            type: 'image/jpeg',
-          },
-          imagePreview: asset.uri 
-        } : v
-      ));
+      setVariants((prev) =>
+        prev.map((v) =>
+          v.id === variantId
+            ? { ...v, image: { uri: asset.uri, name: asset.uri.split('/').pop() || 'image.jpg', type: 'image/jpeg' }, imagePreview: asset.uri }
+            : v
+        )
+      );
     }
   };
 
-  const removeVariantImage = (variantId: string) => {
-    const variant = variants.find(v => v.id === variantId);
-    if (variant?.imagePreview) {
-      URL.revokeObjectURL(variant.imagePreview);
+  const handleProofImagePick = async (variantId: string) => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow camera access');
+      return;
     }
-    setVariants(prev => prev.map(v => v.id === variantId ? { ...v, image: null, imagePreview: undefined } : v));
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      setVariants((prev) =>
+        prev.map((v) =>
+          v.id === variantId
+            ? { ...v, proofImage: { uri: asset.uri, name: asset.uri.split('/').pop() || 'proof.jpg', type: 'image/jpeg' }, proofImagePreview: asset.uri }
+            : v
+        )
+      );
+    }
   };
 
   const toggleVariantExpand = (variantId: string) => {
-    setExpandedVariants(prev => ({ ...prev, [variantId]: !prev[variantId] }));
+    setExpandedVariants((prev) => ({ ...prev, [variantId]: !prev[variantId] }));
   };
 
   const toggleAdvancedExpand = (variantId: string) => {
-    setExpandedAdvanced(prev => ({ ...prev, [variantId]: !prev[variantId] }));
+    setExpandedAdvanced((prev) => ({ ...prev, [variantId]: !prev[variantId] }));
   };
 
-  // Validation
+  // --- VALIDATION & SUBMIT ---
   const validateForm = () => {
-    if (!productName.trim()) {
-      Alert.alert('Validation Error', 'Product name is required');
-      return false;
-    }
-    if (productName.length < 2) {
-      Alert.alert('Validation Error', 'Product name must be at least 2 characters');
-      return false;
-    }
-    if (!productDescription.trim()) {
-      Alert.alert('Validation Error', 'Description is required');
-      return false;
-    }
-    if (productDescription.length < 10) {
-      Alert.alert('Validation Error', 'Description must be at least 10 characters');
-      return false;
-    }
-    if (!productCondition) {
-      Alert.alert('Validation Error', 'Condition is required');
-      return false;
-    }
-    if (variants.length === 0) {
-      Alert.alert('Validation Error', 'At least one variant is required');
-      return false;
-    }
-
+    if (!productName.trim()) { Alert.alert('Validation Error', 'Product name is required'); return false; }
+    if (!productDescription.trim()) { Alert.alert('Validation Error', 'Description is required'); return false; }
+    if (!productCondition) { Alert.alert('Validation Error', 'Condition rating is required'); return false; }
+    if (variants.length === 0) { Alert.alert('Validation Error', 'At least one variant is required'); return false; }
     for (let i = 0; i < variants.length; i++) {
       const v = variants[i];
-      if (!v.title) {
-        Alert.alert('Validation Error', `Variant ${i + 1} title is required`);
-        return false;
-      }
-      if (!v.depreciation.calculatedPrice) {
-        Alert.alert('Validation Error', `Variant ${i + 1} must have all depreciation fields filled to calculate price`);
-        return false;
-      }
-      if (!v.quantity || Number(v.quantity) <= 0) {
-        Alert.alert('Validation Error', `Variant ${i + 1} quantity must be greater than 0`);
-        return false;
-      }
+      if (!v.title) { Alert.alert('Validation Error', `Variant ${i + 1} title is required`); return false; }
+      if (!v.price) { Alert.alert('Validation Error', `Variant ${i + 1}: fill in depreciation fields to auto-calculate price`); return false; }
+      if (!v.quantity || Number(v.quantity) <= 0) { Alert.alert('Validation Error', `Variant ${i + 1} quantity must be greater than 0`); return false; }
     }
-
     return true;
   };
 
-  // Submit handler
   const handleSubmit = async () => {
     if (!validateForm()) return;
-    if (!userId) {
-      Alert.alert('Error', 'User not authenticated');
-      return;
-    }
-
+    if (!userId) { Alert.alert('Error', 'User not authenticated'); return; }
     setSubmitting(true);
-    setError(null);
     setApiResponseError(null);
-
     try {
       const formData = new FormData();
-
-      // Basic fields
       formData.append('name', productName.trim());
       formData.append('description', productDescription.trim());
-      formData.append('condition', productCondition);
-      formData.append('shop', selectedShop?.id ?? "");
-      formData.append('status', "active");
+      formData.append('condition', productCondition.toString());
+      formData.append('shop', selectedShop?.id ?? '');
+      formData.append('status', 'active');
       formData.append('customer_id', userId);
 
-      // Category handling - exactly like web version
       if (selectedCategoryName?.trim()) {
-        let match = globalCategories.find(gc => gc.name.toLowerCase() === selectedCategoryName.toLowerCase());
+        let match = globalCategories.find((gc) => gc.name.toLowerCase() === selectedCategoryName.toLowerCase());
         if (!match) {
           const best = findBestCategoryMatch(selectedCategoryName);
-          if (best && best.score >= 0.25) {
-            match = best.category;
-          }
+          if (best && best.score >= 0.25) match = best.category;
         }
-
-        if (match) {
-          formData.append('category_admin_id', match.id);
-        } else {
-          const nameToSend = (selectedCategoryName && selectedCategoryName.toLowerCase() === 'others') ? 'others' : selectedCategoryName;
-          formData.append('category_admin_name', nameToSend);
-        }
+        if (match) formData.append('category_admin_id', match.id);
+        else formData.append('category_admin_name', selectedCategoryName.toLowerCase() === 'others' ? 'others' : selectedCategoryName);
       }
 
-      // Add media files
-      mainMedia.forEach(file => {
-        if (file.file.size > 0) {
-          formData.append('media_files', {
-            uri: file.file.uri,
-            name: file.file.name,
-            type: file.file.type,
-          } as any);
-        }
+      mainMedia.forEach((file) => {
+        formData.append('media_files', { uri: file.file.uri, name: file.file.name, type: file.file.type } as any);
       });
 
-      // Add variants payload
-      const variantsPayload = variants.map(v => ({
+      const variantsPayload = variants.map((v) => ({
         id: v.id,
         title: v.title,
         price: v.price,
         compare_price: v.compare_price,
         quantity: v.quantity,
-        length: v.length,
-        width: v.width,
-        height: v.height,
-        weight: v.weight,
-        weight_unit: v.weight_unit,
+        length: v.length !== undefined && v.length !== '' ? Number(v.length) : null,
+        width: v.width !== undefined && v.width !== '' ? Number(v.width) : null,
+        height: v.height !== undefined && v.height !== '' ? Number(v.height) : null,
+        dimension_unit: v.dimension_unit || 'cm',
+        weight: v.weight !== undefined && v.weight !== '' ? Number(v.weight) : null,
+        weight_unit: v.weight_unit || 'g',
         sku_code: v.sku_code,
         critical_trigger: v.critical_trigger || null,
         refundable: v.refundable ?? productRefundable,
         is_refundable: v.refundable ?? productRefundable,
         is_active: v.is_active ?? true,
-        original_price: v.depreciation.originalPrice,
-        usage_period: v.depreciation.usagePeriod,
-        usage_unit: v.depreciation.usageUnit,
-        depreciation_rate: v.depreciation.depreciationRate,
+        original_price: v.depreciation.originalPrice !== '' ? Number(v.depreciation.originalPrice) : null,
+        usage_period: v.depreciation.usagePeriod !== '' ? Number(v.depreciation.usagePeriod) : null,
+        usage_unit: v.depreciation.usageUnit || 'months',
+        depreciation_rate: v.depreciation.depreciationRate !== '' ? Number(v.depreciation.depreciationRate) : null,
+        purchase_date: v.depreciation.purchaseDate ? v.depreciation.purchaseDate.toISOString() : null,
         attributes: v.attributes || {},
       }));
-
       formData.append('variants', JSON.stringify(variantsPayload));
 
-      // Add variant images
-      variants.forEach(v => {
-        if (v.image) {
-          formData.append(`variant_image_${v.id}`, {
-            uri: v.image.uri,
-            name: v.image.name,
-            type: v.image.type,
-          } as any);
-        }
+      variants.forEach((v) => {
+        if (v.image) formData.append(`variant_image_${v.id}`, { uri: v.image.uri, name: v.image.name, type: v.image.type } as any);
+        if (v.proofImage) formData.append(`proof_image_${v.id}`, { uri: v.proofImage.uri, name: v.proofImage.name, type: v.proofImage.type } as any);
       });
 
       const response = await AxiosInstance.post('/seller-products/', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
 
       if (response.data.success) {
-        Alert.alert(
-          'Success',
-          'Product created successfully!',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.replace(`/seller/product-list?shopId=${selectedShop?.id}`)
-            }
-          ]
-        );
+        Alert.alert('Success', 'Product created successfully!', [
+          { text: 'OK', onPress: () => router.replace(`/seller/product-list?shopId=${selectedShop?.id}`) },
+        ]);
       } else {
         throw new Error(response.data.message || 'Product creation failed');
       }
     } catch (err: any) {
-      console.error('Product creation failed:', err.response?.data || err.message);
-      
       if (err.response?.data) {
         const apiErrors = err.response.data;
         if (typeof apiErrors === 'object') {
-          const fieldErrors = Object.keys(apiErrors).map(field => 
-            `${field}: ${Array.isArray(apiErrors[field]) ? apiErrors[field][0] : apiErrors[field]}`
-          ).join('\n');
-          setApiResponseError(fieldErrors);
-        } else if (typeof apiErrors === 'string') {
-          setApiResponseError(apiErrors);
+          setApiResponseError(
+            Object.keys(apiErrors).map((f) => `${f}: ${Array.isArray(apiErrors[f]) ? apiErrors[f][0] : apiErrors[f]}`).join('\n')
+          );
+        } else {
+          setApiResponseError(String(apiErrors));
         }
       } else {
         setApiResponseError(err.message || 'Product creation failed');
@@ -719,46 +913,54 @@ const pickMedia = async () => {
     }
   };
 
-  const formatPrice = (price: number | ''): string => {
-    return typeof price === 'number' ? price.toFixed(2) : '0.00';
-  };
+  const formatPrice = (price: number | ''): string => (typeof price === 'number' ? price.toFixed(2) : '0.00');
 
-  // Progress step indicator
+  // --- STEP INDICATOR ---
   const StepIndicator = () => (
     <View style={styles.progressContainer}>
-      <View style={[styles.stepBadge, currentStep >= 1 && styles.stepActive]}>
-        <Text style={[styles.stepBadgeText, currentStep >= 1 && styles.stepTextActive]}>1. Basic</Text>
-      </View>
-      <View style={[styles.stepLine, currentStep >= 2 && styles.stepLineActive]} />
-      
-      <View style={[styles.stepBadge, currentStep >= 2 && mainMedia.length > 0 ? styles.stepActive : styles.stepInactive]}>
-        <Text style={[styles.stepBadgeText, currentStep >= 2 && mainMedia.length > 0 && styles.stepTextActive]}>2. Media</Text>
-      </View>
-      <View style={[styles.stepLine, currentStep >= 3 && styles.stepLineActive]} />
-      
-      <View style={[styles.stepBadge, currentStep >= 3 && styles.stepActive]}>
-        <Text style={[styles.stepBadgeText, currentStep >= 3 && styles.stepTextActive]}>3. Variants</Text>
-      </View>
-      <View style={[styles.stepLine, currentStep >= 4 && styles.stepLineActive]} />
-      
-      <View style={[styles.stepBadge, currentStep >= 4 && styles.stepActive]}>
-        <Text style={[styles.stepBadgeText, currentStep >= 4 && styles.stepTextActive]}>4. Details</Text>
-      </View>
+      {[
+        { n: 1, label: '1. Basic' },
+        { n: 2, label: '2. Media' },
+        { n: 3, label: '3. Variants' },
+        { n: 4, label: '4. Review' },
+      ].map(({ n, label }, i, arr) => (
+        <React.Fragment key={n}>
+          <View style={[styles.stepBadge, currentStep >= n && styles.stepActive]}>
+            <Text style={[styles.stepBadgeText, currentStep >= n && styles.stepTextActive]}>{label}</Text>
+          </View>
+          {i < arr.length - 1 && (
+            <View style={[styles.stepLine, currentStep > n && styles.stepLineActive]} />
+          )}
+        </React.Fragment>
+      ))}
     </View>
   );
+
+  // --- CONDITION STARS ---
+  const StarRow = ({ count }: { count: number }) => (
+    <View style={{ flexDirection: 'row', gap: 2 }}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <Text key={i} style={{ color: i <= count ? '#F59E0B' : '#D1D5DB', fontSize: 14 }}>★</Text>
+      ))}
+    </View>
+  );
+
+  // current date picker variant ref
+  const dpVariantId = datePickerModal.variantId;
+  const dpVariant = dpVariantId ? variants.find((v) => v.id === dpVariantId) : null;
 
   return (
     <View style={styles.container}>
       <StepIndicator />
 
-      {/* STEP 1: Basic Information */}
+      {/* ===== STEP 1: Basic Information ===== */}
       {currentStep === 1 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionIcon}>
-              <Ionicons name="sparkles" size={20} color="#3B82F6" />
+              <Ionicons name="sparkles" size={20} color="#EA580C" />
             </View>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Basic Information</Text>
               <Text style={styles.sectionSubtitle}>
                 Start with product details. AI will suggest a category when you upload images.
@@ -766,14 +968,14 @@ const pickMedia = async () => {
             </View>
           </View>
 
-          {/* Shop Info */}
           {selectedShop && (
             <View style={styles.shopInfoCard}>
-              <Ionicons name="storefront-outline" size={16} color="#3B82F6" />
+              <Ionicons name="storefront-outline" size={16} color="#EA580C" />
               <Text style={styles.shopInfoText}>Shop: {selectedShop.name}</Text>
             </View>
           )}
 
+          {/* Product Name */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>
               Product Name <Text style={styles.required}>*</Text>
@@ -789,22 +991,36 @@ const pickMedia = async () => {
             {externalErrors.name && <Text style={styles.errorText}>{externalErrors.name}</Text>}
           </View>
 
+          {/* Condition — star scale */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>
-              Condition <Text style={styles.required}>*</Text>
+              Condition Rating <Text style={styles.required}>*</Text>
             </Text>
-            <TouchableOpacity
-              style={styles.selectButton}
-              onPress={() => setConditionModalVisible(true)}
-            >
-              <Text style={productCondition ? styles.selectButtonText : styles.placeholderText}>
-                {productCondition || 'Select condition'}
-              </Text>
+            <TouchableOpacity style={styles.selectButton} onPress={() => setConditionModalVisible(true)}>
+              {productCondition ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <StarRow count={CONDITION_SCALE[productCondition].stars} />
+                  <Text style={styles.selectButtonText} numberOfLines={1}>
+                    {CONDITION_SCALE[productCondition].shortLabel}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.placeholderText}>Select condition rating</Text>
+              )}
               <Ionicons name="chevron-down" size={20} color="#9CA3AF" />
             </TouchableOpacity>
+            {productCondition ? (
+              <View style={[styles.conditionBadge, { backgroundColor: CONDITION_SCALE[productCondition].color, borderColor: CONDITION_SCALE[productCondition].borderColor }]}>
+                <StarRow count={CONDITION_SCALE[productCondition].stars} />
+                <Text style={[styles.conditionBadgeText, { color: CONDITION_SCALE[productCondition].textColor }]}>
+                  {CONDITION_SCALE[productCondition].label}
+                </Text>
+              </View>
+            ) : null}
             {externalErrors.condition && <Text style={styles.errorText}>{externalErrors.condition}</Text>}
           </View>
 
+          {/* Description */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>
               Description <Text style={styles.required}>*</Text>
@@ -823,82 +1039,69 @@ const pickMedia = async () => {
             {externalErrors.description && <Text style={styles.errorText}>{externalErrors.description}</Text>}
           </View>
 
-          <TouchableOpacity
-            style={[styles.nextButton, styles.singleStepButton]}
-            onPress={() => setCurrentStep(2)}
-          >
+          <TouchableOpacity style={[styles.nextButton, styles.singleStepButton]} onPress={() => setCurrentStep(2)}>
             <Text style={styles.nextButtonText}>Next: Media</Text>
             <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
       )}
 
-      {/* STEP 2: Media & Category */}
+      {/* ===== STEP 2: Media & Category ===== */}
       {currentStep === 2 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionIcon}>
-              <Ionicons name="images" size={20} color="#3B82F6" />
+              <Ionicons name="camera" size={20} color="#EA580C" />
             </View>
-            <View>
-              <Text style={styles.sectionTitle}>Product Media</Text>
-              <Text style={styles.sectionSubtitle}>
-                Upload images/videos (max 9). First image is the cover.
-              </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>Product Photos</Text>
+              <Text style={styles.sectionSubtitle}>Take photos with your camera (max 9). First photo is the cover.</Text>
+            </View>
+            <View style={styles.mediaCountBadge}>
+              <Text style={styles.mediaCountBadgeText}>{mainMedia.length}/9</Text>
             </View>
           </View>
 
-          <View style={styles.mediaContainer}>
-            <View style={styles.mediaHeader}>
-              <Text style={styles.mediaLabel}>Media Files</Text>
-              <View style={styles.mediaCount}>
-                <Text style={styles.mediaCountText}>{mainMedia.length}/9</Text>
-              </View>
+          {/* Camera area */}
+          <TouchableOpacity style={styles.cameraArea} onPress={pickMedia}>
+            <Ionicons name="camera" size={40} color="#9CA3AF" />
+            <Text style={styles.cameraAreaText}>Take photos of your product (max 9 photos)</Text>
+            <View style={styles.cameraButton}>
+              <Ionicons name="camera-outline" size={16} color="#EA580C" />
+              <Text style={styles.cameraButtonText}>Open Camera</Text>
             </View>
+          </TouchableOpacity>
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
-             {/* In the Media section, update the add media button text */}
-<TouchableOpacity style={styles.addMediaButton} onPress={pickMedia}>
-  <Ionicons name="camera" size={32} color="#9CA3AF" />
-  <Text style={styles.addMediaText}>Take Photo</Text>
-</TouchableOpacity>
-
-{/* Update the hint text */}
-<Text style={styles.mediaHint}>Take photos with your camera (max 9). First photo is the cover.</Text>
-
+          {/* Media grid */}
+          {mainMedia.length > 0 && (
+            <View style={styles.mediaGrid}>
               {mainMedia.map((item, index) => (
-                <View key={index} style={styles.mediaItem}>
-                  {item.type === 'image' ? (
-                    <Image source={{ uri: item.preview }} style={styles.mediaImage} />
-                  ) : (
-                    <View style={[styles.mediaImage, styles.videoPreview]}>
-                      <Ionicons name="videocam" size={24} color="#FFFFFF" />
-                    </View>
-                  )}
+                <View key={index} style={styles.mediaGridItem}>
+                  <Image source={{ uri: item.preview }} style={styles.mediaGridImage} />
                   {index === 0 && (
                     <View style={styles.coverBadge}>
                       <Text style={styles.coverBadgeText}>Cover</Text>
                     </View>
                   )}
-                  <TouchableOpacity
-                    style={styles.removeMediaButton}
-                    onPress={() => removeMainMedia(index)}
-                  >
-                    <Ionicons name="close-circle" size={22} color="#EF4444" />
+                  <TouchableOpacity style={styles.removeMediaBtn} onPress={() => removeMainMedia(index)}>
+                    <Ionicons name="close-circle" size={20} color="#EF4444" />
                   </TouchableOpacity>
                 </View>
               ))}
-            </ScrollView>
-          </View>
+              {mainMedia.length < 9 && (
+                <TouchableOpacity style={styles.addMoreMedia} onPress={pickMedia}>
+                  <Ionicons name="camera" size={24} color="#9CA3AF" />
+                  <Text style={styles.addMoreMediaText}>Take Another</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
-          {/* AI Analysis Section */}
+          {/* AI Category */}
           <View style={styles.aiSection}>
-            <TouchableOpacity 
-              style={styles.aiHeader}
-              onPress={() => {}}
-            >
+            <View style={styles.aiHeader}>
               <View style={styles.aiTitleContainer}>
-                <Ionicons name="sparkles" size={18} color="#3B82F6" />
+                <Ionicons name="sparkles" size={18} color="#EA580C" />
                 <Text style={styles.aiTitle}>AI Category Prediction</Text>
               </View>
               {predictionResult && (
@@ -906,58 +1109,47 @@ const pickMedia = async () => {
                   <Text style={styles.aiReadyText}>Ready</Text>
                 </View>
               )}
-            </TouchableOpacity>
-
+            </View>
             <View style={styles.aiContent}>
               <View style={styles.aiRow}>
-                <Text style={styles.aiDescription}>Analyze images to get AI category suggestions</Text>
+                <Text style={styles.aiDescription}>Analyze photos to get AI category suggestions</Text>
                 <TouchableOpacity
                   style={[styles.analyzeButton, (mainMedia.length === 0 || isPredicting) && styles.analyzeButtonDisabled]}
-                  onPress={() => analyzeImages(mainMedia.filter(m => m.type === 'image').map(m => m.file))}
+                  onPress={() => analyzeImages(mainMedia.filter((m) => m.type === 'image').map((m) => m.file))}
                   disabled={mainMedia.length === 0 || isPredicting}
                 >
                   {isPredicting ? (
-                    <ActivityIndicator size="small" color="#3B82F6" />
+                    <ActivityIndicator size="small" color="#EA580C" />
                   ) : (
-                    <Text style={styles.analyzeButtonText}>
-                      {isPredicting ? 'Analyzing...' : 'Analyze Images'}
-                    </Text>
+                    <Text style={styles.analyzeButtonText}>Analyze Photos</Text>
                   )}
                 </TouchableOpacity>
               </View>
-
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Category</Text>
-                <TouchableOpacity
-                  style={styles.selectButton}
-                  onPress={() => setCategoryModalVisible(true)}
-                >
+                <TouchableOpacity style={styles.selectButton} onPress={() => setCategoryModalVisible(true)}>
                   <Text style={selectedCategoryName ? styles.selectButtonText : styles.placeholderText}>
                     {selectedCategoryName || 'Select category'}
                   </Text>
                   <Ionicons name="chevron-down" size={20} color="#9CA3AF" />
                 </TouchableOpacity>
               </View>
-
               {predictionResult && predictionResult.predicted_category && (
                 <View style={styles.predictionCard}>
                   <Text style={styles.predictionTitle}>AI Suggestion</Text>
                   <View style={styles.predictionRow}>
-                    <Text style={styles.predictionCategory}>
-                      {predictionResult.predicted_category.category_name}
-                    </Text>
+                    <Text style={styles.predictionCategory}>{predictionResult.predicted_category.category_name}</Text>
                     <Text style={styles.predictionConfidence}>
                       {Math.round((predictionResult.predicted_category.confidence || 0) * 100)}% confidence
                     </Text>
                   </View>
                   {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
                     <Text style={styles.alternativeText}>
-                      Also considered: {predictionResult.alternative_categories.map(a => a.category_name).join(', ')}
+                      Also considered: {predictionResult.alternative_categories.map((a) => a.category_name).join(', ')}
                     </Text>
                   )}
                 </View>
               )}
-
               {predictionError && (
                 <View style={styles.errorCard}>
                   <Text style={styles.errorCardText}>{predictionError}</Text>
@@ -967,18 +1159,11 @@ const pickMedia = async () => {
           </View>
 
           <View style={styles.navigationButtons}>
-            <TouchableOpacity
-              style={[styles.backButton, styles.navButton]}
-              onPress={() => setCurrentStep(1)}
-            >
+            <TouchableOpacity style={[styles.backButton, styles.navButton]} onPress={() => setCurrentStep(1)}>
               <Ionicons name="arrow-back" size={20} color="#6B7280" />
               <Text style={styles.backButtonText}>Back</Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.nextButton, styles.navButton]}
-              onPress={() => setCurrentStep(3)}
-            >
+            <TouchableOpacity style={[styles.nextButton, styles.navButton]} onPress={() => setCurrentStep(3)}>
               <Text style={styles.nextButtonText}>Next: Variants</Text>
               <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
             </TouchableOpacity>
@@ -986,41 +1171,35 @@ const pickMedia = async () => {
         </View>
       )}
 
-      {/* STEP 3: Variants */}
+      {/* ===== STEP 3: Variants ===== */}
       {currentStep === 3 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionIcon}>
-              <Ionicons name="cube" size={20} color="#3B82F6" />
+              <Ionicons name="cube" size={20} color="#EA580C" />
             </View>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Product Variants</Text>
-              <Text style={styles.sectionSubtitle}>
-                Each product must have at least one variant with price and stock
-              </Text>
+              <Text style={styles.sectionSubtitle}>Each product must have at least one variant with price and stock</Text>
             </View>
-          </View>
-
-          <View style={styles.requiredBadge}>
-            <Text style={styles.requiredBadgeText}>Required</Text>
+            <View style={styles.requiredBadge}>
+              <Text style={styles.requiredBadgeText}>Required</Text>
+            </View>
           </View>
 
           {variants.map((variant, index) => (
             <View key={variant.id} style={styles.variantCard}>
               {/* Variant Header */}
-              <TouchableOpacity 
-                style={styles.variantHeader}
-                onPress={() => toggleVariantExpand(variant.id)}
-              >
+              <TouchableOpacity style={styles.variantHeader} onPress={() => toggleVariantExpand(variant.id)}>
                 <View style={styles.variantHeaderLeft}>
                   <View style={styles.variantNumber}>
                     <Text style={styles.variantNumberText}>{index + 1}</Text>
                   </View>
                   <View>
-                    <Text style={styles.variantTitle}>{variant.title}</Text>
-                    {variant.depreciation.calculatedPrice && (
-                      <Text style={styles.variantPrice}>₱{formatPrice(variant.depreciation.calculatedPrice)}</Text>
-                    )}
+                    <Text style={styles.variantTitle}>{variant.title || `Variant ${index + 1}`}</Text>
+                    {variant.price ? (
+                      <Text style={styles.variantPrice}>₱{formatPrice(variant.price)}</Text>
+                    ) : null}
                   </View>
                 </View>
                 <View style={styles.variantHeaderRight}>
@@ -1029,91 +1208,77 @@ const pickMedia = async () => {
                       <Text style={styles.defaultBadgeText}>Default</Text>
                     </View>
                   )}
-                  <TouchableOpacity
-                    onPress={() => removeVariant(variant.id)}
-                    disabled={variants.length === 1}
-                  >
-                    <Ionicons 
-                      name="close" 
-                      size={20} 
-                      color={variants.length === 1 ? '#D1D5DB' : '#EF4444'} 
-                    />
+                  <TouchableOpacity onPress={() => removeVariant(variant.id)} disabled={variants.length === 1}>
+                    <Ionicons name="close" size={20} color={variants.length === 1 ? '#D1D5DB' : '#EF4444'} />
                   </TouchableOpacity>
                 </View>
               </TouchableOpacity>
 
               {expandedVariants[variant.id] && (
                 <View style={styles.variantContent}>
-                  {/* Variant Image */}
-                  {/* In the variant image section */}
-<View style={styles.variantImageSection}>
-  <View style={styles.variantImageContainer}>
-    {variant.imagePreview ? (
-      <>
-        <Image source={{ uri: variant.imagePreview }} style={styles.variantImage} />
-        <TouchableOpacity
-          style={styles.removeVariantImage}
-          onPress={() => removeVariantImage(variant.id)}
-        >
-          <Ionicons name="close-circle" size={20} color="#EF4444" />
-        </TouchableOpacity>
-      </>
-    ) : (
-      <TouchableOpacity
-        style={styles.addVariantImage}
-        onPress={() => handleVariantImagePick(variant.id)}
-      >
-        <Ionicons name="camera" size={24} color="#9CA3AF" />
-        <Text style={styles.addVariantImageText}>Take Photo</Text>
-      </TouchableOpacity>
-    )}
-  </View>
-  <Text style={styles.variantImageHint}>Take a photo for this variant (optional)</Text>
-</View>
 
-                  {/* Basic Variant Fields */}
+                  {/* Variant Image */}
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>Variant Image</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      {variant.imagePreview ? (
+                        <View style={styles.variantImageContainer}>
+                          <Image source={{ uri: variant.imagePreview }} style={styles.variantImage} />
+                          <TouchableOpacity
+                            style={styles.removeVariantImage}
+                            onPress={() => { updateVariantField(variant.id, 'image', null); updateVariantField(variant.id, 'imagePreview', undefined); }}
+                          >
+                            <Ionicons name="close-circle" size={20} color="#EF4444" />
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        <TouchableOpacity style={styles.addVariantImageBtn} onPress={() => handleVariantImagePick(variant.id)}>
+                          <Ionicons name="camera" size={24} color="#9CA3AF" />
+                          <Text style={styles.addVariantImageText}>Add Photo</Text>
+                        </TouchableOpacity>
+                      )}
+                      <Text style={styles.variantImageHint}>Main product image for this variant</Text>
+                    </View>
+                  </View>
+
+                  {/* Title */}
                   <View style={styles.formGroup}>
                     <Text style={styles.label}>
                       Title <Text style={styles.required}>*</Text>
                     </Text>
                     <TextInput
-                      style={[styles.input, index === 0 && styles.inputDisabled]}
+                      style={styles.input}
                       value={variant.title}
-                      onChangeText={(text) => {
-                        if (index !== 0) {
-                          updateVariantField(variant.id, 'title', text);
-                        }
-                      }}
+                      onChangeText={(text) => updateVariantField(variant.id, 'title', text)}
                       placeholder="e.g., Small, Red, etc."
                       placeholderTextColor="#9CA3AF"
-                      editable={index !== 0}
                     />
                   </View>
 
+                  {/* Price + Stock */}
                   <View style={styles.row}>
                     <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
-                      <Text style={styles.label}>
-                        Final Price <Text style={styles.required}>*</Text>
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                        <Text style={styles.label}>Selling Price <Text style={styles.required}>*</Text></Text>
+                        {variant.depreciation.calculatedPrice ? (
+                          <View style={styles.autoBadgeInline}>
+                            <Text style={styles.autoBadgeInlineText}>Auto</Text>
+                          </View>
+                        ) : null}
+                      </View>
                       <View style={styles.priceInputContainer}>
                         <Text style={styles.currencySymbol}>₱</Text>
                         <TextInput
-                          style={[styles.priceInput, styles.inputDisabled]}
+                          style={[styles.priceInput, { backgroundColor: '#F9FAFB', color: variant.depreciation.calculatedPrice ? '#EA580C' : '#9CA3AF' }]}
                           value={variant.price ? variant.price.toString() : ''}
                           editable={false}
                           placeholder="Auto-calculated"
                           placeholderTextColor="#9CA3AF"
                         />
                       </View>
-                      {variant.depreciation.calculatedPrice && (
-                        <View style={styles.autoBadge}>
-                          <Text style={styles.autoBadgeText}>Auto</Text>
-                        </View>
-                      )}
                     </View>
-
                     <View style={[styles.formGroup, { flex: 1 }]}>
-                      <Text style={styles.label}>
+                      <Text style={[styles.label, { marginBottom: 6 }]}>
                         Stock <Text style={styles.required}>*</Text>
                       </Text>
                       <TextInput
@@ -1127,6 +1292,7 @@ const pickMedia = async () => {
                     </View>
                   </View>
 
+                  {/* SKU */}
                   <View style={styles.formGroup}>
                     <Text style={styles.label}>SKU Code</Text>
                     <TextInput
@@ -1138,18 +1304,16 @@ const pickMedia = async () => {
                     />
                   </View>
 
-                  {/* Depreciation Section */}
+                  {/* ===== DEPRECIATION SECTION ===== */}
                   <View style={styles.depreciationSection}>
                     <View style={styles.depreciationHeader}>
-                      <Ionicons name="calculator" size={16} color="#3B82F6" />
+                      <Ionicons name="calculator" size={16} color="#EA580C" />
                       <Text style={styles.depreciationTitle}>Price Depreciation Calculator</Text>
-                      <View style={styles.autoBadgeSmall}>
-                        <Text style={styles.autoBadgeSmallText}>Auto-calculates final price</Text>
-                      </View>
                     </View>
 
+                    {/* Original Price */}
                     <View style={styles.formGroup}>
-                      <Text style={styles.label}>Original Price</Text>
+                      <Text style={styles.depLabel}>Original Price</Text>
                       <View style={styles.priceInputContainer}>
                         <Text style={styles.currencySymbol}>₱</Text>
                         <TextInput
@@ -1163,53 +1327,68 @@ const pickMedia = async () => {
                       </View>
                     </View>
 
-                    <View style={styles.row}>
-                      <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
-                        <Text style={styles.label}>Usage Period</Text>
-                        <TextInput
-                          style={styles.input}
-                          value={variant.depreciation.usagePeriod?.toString() || ''}
-                          onChangeText={(text) => handleDepreciationChange(variant.id, 'usagePeriod', parseFloat(text) || '')}
-                          keyboardType="numeric"
-                          placeholder="0"
-                          placeholderTextColor="#9CA3AF"
-                        />
-                      </View>
-                      <View style={[styles.formGroup, { flex: 1 }]}>
-                        <Text style={styles.label}>Unit</Text>
-                        <TouchableOpacity
-                          style={styles.selectButton}
-                          onPress={() => setUsageUnitModalVisible({ visible: true, variantId: variant.id })}
-                        >
-                          <Text style={styles.selectButtonText}>
-                            {variant.depreciation.usageUnit}
-                          </Text>
-                          <Ionicons name="chevron-down" size={16} color="#9CA3AF" />
-                        </TouchableOpacity>
-                      </View>
+                    {/* Purchase Date */}
+                    <View style={styles.formGroup}>
+                      <Text style={styles.depLabel}>Purchase Date</Text>
+                      <TouchableOpacity
+                        style={styles.datePickerButton}
+                        onPress={() => setDatePickerModal({ visible: true, variantId: variant.id })}
+                      >
+                        <Ionicons name="calendar-outline" size={16} color="#EA580C" />
+                        <Text style={variant.depreciation.purchaseDate ? styles.datePickerTextSet : styles.datePickerTextPlaceholder}>
+                          {variant.depreciation.purchaseDate ? formatDate(variant.depreciation.purchaseDate) : 'Pick a date'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
 
-                    <View style={styles.formGroup}>
-                      <Text style={styles.label}>Rate (%)</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={variant.depreciation.depreciationRate?.toString() || ''}
-                        onChangeText={(text) => handleDepreciationChange(variant.id, 'depreciationRate', parseFloat(text) || '')}
-                        keyboardType="numeric"
-                        placeholder="10"
-                        placeholderTextColor="#9CA3AF"
+                    {/* Depreciation Rate Slider */}
+                    <View style={styles.sliderSection}>
+                      <View style={styles.sliderHeader}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Ionicons name="trending-down-outline" size={16} color="#EA580C" />
+                          <Text style={styles.sliderTitle}>Annual Depreciation Rate</Text>
+                        </View>
+                        <View style={styles.rateBadge}>
+                          <Text style={styles.rateBadgeText}>{variant.depreciation.depreciationRate || 0}%</Text>
+                        </View>
+                      </View>
+                      <OrangeSlider
+                        value={Number(variant.depreciation.depreciationRate) || 0}
+                        onValueChange={(val) => handleDepreciationRateSlider(variant.id, val)}
+                        min={0}
+                        max={100}
+                        step={0.5}
                       />
                     </View>
 
-                    {variant.depreciation.originalPrice && variant.depreciation.usagePeriod && variant.depreciation.depreciationRate && (
-                      <View style={styles.calculationInfo}>
-                        <Text style={styles.calculationText}>
-                          ₱{Number(variant.depreciation.originalPrice).toFixed(2)} × 
-                          (1 - {variant.depreciation.depreciationRate}% ÷ 100)^{variant.depreciation.usagePeriod} {variant.depreciation.usageUnit} = 
-                          <Text style={styles.calculationResult}> ₱{formatPrice(variant.depreciation.calculatedPrice || 0)}</Text>
-                        </Text>
+                    {/* Calculated Price Card (gradient effect with orange) */}
+                    <View style={styles.calculatedPriceCard}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                        <Ionicons name="calculator" size={18} color="rgba(255,255,255,0.85)" />
+                        <Text style={styles.calcCardLabel}>Calculated Price</Text>
                       </View>
-                    )}
+                      {variant.depreciation.calculatedPrice ? (
+                        <View>
+                          <Text style={styles.calcCardPrice}>
+                            ₱{Number(variant.depreciation.calculatedPrice).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </Text>
+                          <View style={styles.calcCardInfo}>
+                            <Ionicons name="calendar-outline" size={12} color="rgba(255,255,255,0.7)" />
+                            <Text style={styles.calcCardInfoText}>
+                              Based on {variant.depreciation.usagePeriod} {variant.depreciation.usageUnit} of use
+                            </Text>
+                          </View>
+                        </View>
+                      ) : (
+                        <View style={{ alignItems: 'center' }}>
+                          <Text style={styles.calcCardEmpty}>—</Text>
+                          <View style={styles.calcCardHint}>
+                            <Ionicons name="information-circle-outline" size={12} color="rgba(255,255,255,0.8)" />
+                            <Text style={styles.calcCardHintText}>Fill in original price &amp; purchase date</Text>
+                          </View>
+                        </View>
+                      )}
+                    </View>
                   </View>
 
                   {/* Status Toggles */}
@@ -1218,7 +1397,8 @@ const pickMedia = async () => {
                       <Switch
                         value={variant.is_active !== false}
                         onValueChange={(value) => updateVariantField(variant.id, 'is_active', value)}
-                        trackColor={{ false: '#E5E7EB', true: '#3B82F6' }}
+                        trackColor={{ false: '#E5E7EB', true: '#F97316' }}
+                        thumbColor={variant.is_active !== false ? '#EA580C' : '#9CA3AF'}
                       />
                       <Text style={styles.toggleLabel}>Active</Text>
                     </View>
@@ -1226,161 +1406,183 @@ const pickMedia = async () => {
                       <Switch
                         value={variant.refundable !== false}
                         onValueChange={(value) => updateVariantField(variant.id, 'refundable', value)}
-                        trackColor={{ false: '#E5E7EB', true: '#3B82F6' }}
+                        trackColor={{ false: '#E5E7EB', true: '#F97316' }}
+                        thumbColor={variant.refundable !== false ? '#EA580C' : '#9CA3AF'}
                       />
                       <Text style={styles.toggleLabel}>Refundable</Text>
                     </View>
                   </View>
 
-                  {/* Advanced Options */}
-                  <TouchableOpacity
-                    style={styles.advancedToggle}
-                    onPress={() => toggleAdvancedExpand(variant.id)}
-                  >
-                    <Ionicons 
-                      name={expandedAdvanced[variant.id] ? "chevron-up" : "chevron-down"} 
-                      size={16} 
-                      color="#6B7280" 
-                    />
-                    <Text style={styles.advancedToggleText}>Additional Details</Text>
-                    <View style={styles.optionalBadge}>
-                      <Text style={styles.optionalBadgeText}>Optional</Text>
+                  {/* Dimensions */}
+                  <View style={styles.sectionDivider}>
+                    <View style={styles.advancedSectionHeader}>
+                      <Ionicons name="resize-outline" size={15} color="#EA580C" />
+                      <Text style={styles.advancedSectionTitle}>Dimensions</Text>
                     </View>
-                  </TouchableOpacity>
-
-                  {expandedAdvanced[variant.id] && (
-                    <View style={styles.advancedContent}>
-                      <View style={styles.row}>
-                        <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
-                          <Text style={styles.label}>Weight</Text>
-                          <View style={styles.row}>
-                            <TextInput
-                              style={[styles.input, { flex: 1, marginRight: 4 }]}
-                              value={variant.weight?.toString() || ''}
-                              onChangeText={(text) => updateVariantField(variant.id, 'weight', parseFloat(text) || '')}
-                              keyboardType="numeric"
-                              placeholder="0.00"
-                              placeholderTextColor="#9CA3AF"
-                            />
-                            <TouchableOpacity
-                              style={[styles.selectButton, { width: 60 }]}
-                              onPress={() => setWeightUnitModalVisible(true)}
-                            >
-                              <Text style={styles.selectButtonText}>
-                                {variant.weight_unit || 'g'}
-                              </Text>
-                              <Ionicons name="chevron-down" size={14} color="#9CA3AF" />
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      </View>
-
-                      <View style={styles.formGroup}>
-                        <Text style={styles.label}>Low Stock Alert</Text>
+                    <View style={styles.formGroup}>
+                      <Text style={styles.label}>Size (L × W × H)</Text>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
                         <TextInput
-                          style={styles.input}
-                          value={variant.critical_trigger?.toString() || ''}
-                          onChangeText={(text) => updateVariantField(variant.id, 'critical_trigger', parseInt(text) || '')}
+                          style={[styles.input, { flex: 1 }]}
+                          value={variant.length?.toString() || ''}
+                          onChangeText={(t) => updateVariantField(variant.id, 'length', parseFloat(t) || '')}
                           keyboardType="numeric"
-                          placeholder="Alert when stock below"
+                          placeholder="L"
                           placeholderTextColor="#9CA3AF"
                         />
+                        <TextInput
+                          style={[styles.input, { flex: 1 }]}
+                          value={variant.width?.toString() || ''}
+                          onChangeText={(t) => updateVariantField(variant.id, 'width', parseFloat(t) || '')}
+                          keyboardType="numeric"
+                          placeholder="W"
+                          placeholderTextColor="#9CA3AF"
+                        />
+                        <TextInput
+                          style={[styles.input, { flex: 1 }]}
+                          value={variant.height?.toString() || ''}
+                          onChangeText={(t) => updateVariantField(variant.id, 'height', parseFloat(t) || '')}
+                          keyboardType="numeric"
+                          placeholder="H"
+                          placeholderTextColor="#9CA3AF"
+                        />
+                        <TouchableOpacity
+                          style={[styles.selectButton, { width: 56 }]}
+                          onPress={() => setDimensionUnitModal({ visible: true, variantId: variant.id })}
+                        >
+                          <Text style={[styles.selectButtonText, { fontSize: 12 }]}>{variant.dimension_unit || 'cm'}</Text>
+                          <Ionicons name="chevron-down" size={12} color="#9CA3AF" />
+                        </TouchableOpacity>
                       </View>
                     </View>
-                  )}
+                    <View style={styles.formGroup}>
+                      <Text style={styles.label}>Weight</Text>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TextInput
+                          style={[styles.input, { flex: 1 }]}
+                          value={variant.weight?.toString() || ''}
+                          onChangeText={(t) => updateVariantField(variant.id, 'weight', parseFloat(t) || '')}
+                          keyboardType="numeric"
+                          placeholder="0.00"
+                          placeholderTextColor="#9CA3AF"
+                        />
+                        <TouchableOpacity
+                          style={[styles.selectButton, { width: 70 }]}
+                          onPress={() => setWeightUnitModal({ visible: true, variantId: variant.id })}
+                        >
+                          <Text style={styles.selectButtonText}>{variant.weight_unit || 'g'}</Text>
+                          <Ionicons name="chevron-down" size={14} color="#9CA3AF" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    <View style={styles.formGroup}>
+                      <Text style={styles.label}>Low Stock Alert</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={variant.critical_trigger?.toString() || ''}
+                        onChangeText={(t) => updateVariantField(variant.id, 'critical_trigger', parseInt(t) || '')}
+                        keyboardType="numeric"
+                        placeholder="Alert when stock below this number"
+                        placeholderTextColor="#9CA3AF"
+                      />
+                    </View>
+                  </View>
+
+                  {/* Proof of Ownership */}
+                  <View style={styles.sectionDivider}>
+                    <View style={styles.advancedSectionHeader}>
+                      <Ionicons name="shield-checkmark-outline" size={15} color="#EA580C" />
+                      <Text style={styles.advancedSectionTitle}>Proof of Ownership</Text>
+                    </View>
+                    <View style={styles.formGroup}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        {variant.proofImagePreview ? (
+                          <View style={styles.variantImageContainer}>
+                            <Image source={{ uri: variant.proofImagePreview }} style={[styles.variantImage, { borderColor: '#34D399', borderWidth: 2 }]} />
+                            <TouchableOpacity
+                              style={styles.removeVariantImage}
+                              onPress={() => {
+                                updateVariantField(variant.id, 'proofImage', null);
+                                updateVariantField(variant.id, 'proofImagePreview', undefined);
+                              }}
+                            >
+                              <Ionicons name="close-circle" size={20} color="#EF4444" />
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <TouchableOpacity style={styles.addVariantImageBtn} onPress={() => handleProofImagePick(variant.id)}>
+                            <Ionicons name="camera" size={24} color="#9CA3AF" />
+                            <Text style={styles.addVariantImageText}>Add Proof</Text>
+                          </TouchableOpacity>
+                        )}
+                        <Text style={styles.variantImageHint}>
+                          Upload proof of authenticity or condition (receipt, certificate, etc.)
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
                 </View>
               )}
             </View>
           ))}
 
           <TouchableOpacity style={styles.addVariantButton} onPress={addVariant}>
-            <Ionicons name="add" size={20} color="#3B82F6" />
+            <Ionicons name="add" size={20} color="#EA580C" />
             <Text style={styles.addVariantButtonText}>Add Another Variant</Text>
           </TouchableOpacity>
 
           <View style={styles.variantSummary}>
-            <Text style={styles.variantSummaryText}>
-              Total Variants: {variants.length}
-            </Text>
+            <Text style={styles.variantSummaryText}>Total Variants: {variants.length}</Text>
             <Text style={styles.variantSummaryText}>
               Total Stock: {variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units
             </Text>
           </View>
 
           <View style={styles.navigationButtons}>
-            <TouchableOpacity
-              style={[styles.backButton, styles.navButton]}
-              onPress={() => setCurrentStep(2)}
-            >
+            <TouchableOpacity style={[styles.backButton, styles.navButton]} onPress={() => setCurrentStep(2)}>
               <Ionicons name="arrow-back" size={20} color="#6B7280" />
               <Text style={styles.backButtonText}>Back</Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.nextButton, styles.navButton]}
-              onPress={() => setCurrentStep(4)}
-            >
-              <Text style={styles.nextButtonText}>Next: Details</Text>
+            <TouchableOpacity style={[styles.nextButton, styles.navButton]} onPress={() => setCurrentStep(4)}>
+              <Text style={styles.nextButtonText}>Next: Review</Text>
               <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
         </View>
       )}
 
-      {/* STEP 4: Details & Submit */}
+      {/* ===== STEP 4: Review & Submit ===== */}
       {currentStep === 4 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionIcon}>
-              <Ionicons name="checkmark-circle" size={20} color="#3B82F6" />
+              <Ionicons name="checkmark-circle" size={20} color="#EA580C" />
             </View>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Review & Submit</Text>
-              <Text style={styles.sectionSubtitle}>
-                Review your product details before creating
-              </Text>
+              <Text style={styles.sectionSubtitle}>Review your product details before creating</Text>
             </View>
           </View>
 
           <View style={styles.reviewCard}>
             <Text style={styles.reviewCardTitle}>Product Summary</Text>
-            
-            <View style={styles.reviewRow}>
-              <Text style={styles.reviewLabel}>Shop:</Text>
-              <Text style={styles.reviewValue}>{selectedShop?.name || 'No shop'}</Text>
-            </View>
-            
-            <View style={styles.reviewRow}>
-              <Text style={styles.reviewLabel}>Name:</Text>
-              <Text style={styles.reviewValue}>{productName}</Text>
-            </View>
-            
-            <View style={styles.reviewRow}>
-              <Text style={styles.reviewLabel}>Condition:</Text>
-              <Text style={styles.reviewValue}>{productCondition}</Text>
-            </View>
-            
-            <View style={styles.reviewRow}>
-              <Text style={styles.reviewLabel}>Category:</Text>
-              <Text style={styles.reviewValue}>{selectedCategoryName || 'Not selected'}</Text>
-            </View>
-            
-            <View style={styles.reviewRow}>
-              <Text style={styles.reviewLabel}>Media:</Text>
-              <Text style={styles.reviewValue}>{mainMedia.length} files</Text>
-            </View>
-            
-            <View style={styles.reviewRow}>
-              <Text style={styles.reviewLabel}>Variants:</Text>
-              <Text style={styles.reviewValue}>{variants.length}</Text>
-            </View>
-            
-            <View style={styles.reviewRow}>
-              <Text style={styles.reviewLabel}>Total Stock:</Text>
-              <Text style={styles.reviewValue}>
-                {variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units
-              </Text>
-            </View>
+            {[
+              { label: 'Shop', value: selectedShop?.name || 'No shop' },
+              { label: 'Name', value: productName },
+              {
+                label: 'Condition',
+                value: productCondition ? `${CONDITION_SCALE[productCondition].shortLabel} (${CONDITION_SCALE[productCondition].stars}★)` : 'Not set',
+              },
+              { label: 'Category', value: selectedCategoryName || 'Not selected' },
+              { label: 'Media', value: `${mainMedia.length} files` },
+              { label: 'Variants', value: String(variants.length) },
+              { label: 'Total Stock', value: `${variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units` },
+            ].map(({ label, value }) => (
+              <View key={label} style={styles.reviewRow}>
+                <Text style={styles.reviewLabel}>{label}:</Text>
+                <Text style={styles.reviewValue}>{value}</Text>
+              </View>
+            ))}
           </View>
 
           {apiResponseError && (
@@ -1389,7 +1591,6 @@ const pickMedia = async () => {
               <Text style={styles.apiErrorText}>{apiResponseError}</Text>
             </View>
           )}
-
           {apiResponseMessage && (
             <View style={styles.apiSuccessContainer}>
               <Ionicons name="checkmark-circle" size={20} color="#10B981" />
@@ -1398,13 +1599,9 @@ const pickMedia = async () => {
           )}
 
           <View style={styles.submitContainer}>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => setCurrentStep(3)}
-            >
+            <TouchableOpacity style={styles.cancelButton} onPress={() => setCurrentStep(3)}>
               <Text style={styles.cancelButtonText}>Back</Text>
             </TouchableOpacity>
-            
             <TouchableOpacity
               style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
               onPress={handleSubmit}
@@ -1423,59 +1620,51 @@ const pickMedia = async () => {
         </View>
       )}
 
-      {/* Condition Modal */}
-      <Modal
-        visible={conditionModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setConditionModalVisible(false)}
-      >
-        <TouchableOpacity 
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setConditionModalVisible(false)}
-        >
+      {/* ===== MODALS ===== */}
+
+      {/* Condition Modal — star scale */}
+      <Modal visible={conditionModalVisible} transparent animationType="slide" onRequestClose={() => setConditionModalVisible(false)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setConditionModalVisible(false)}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Condition</Text>
+              <Text style={styles.modalTitle}>Select Condition Rating</Text>
               <TouchableOpacity onPress={() => setConditionModalVisible(false)}>
                 <Ionicons name="close" size={24} color="#374151" />
               </TouchableOpacity>
             </View>
             <FlatList
-              data={conditionOptions}
-              keyExtractor={(item) => item}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.modalItem}
-                  onPress={() => {
-                    setProductCondition(item);
-                    setConditionModalVisible(false);
-                  }}
-                >
-                  <Text style={styles.modalItemText}>{item}</Text>
-                  {productCondition === item && (
-                    <Ionicons name="checkmark" size={20} color="#3B82F6" />
-                  )}
-                </TouchableOpacity>
-              )}
+              data={Object.entries(CONDITION_SCALE) as [string, typeof CONDITION_SCALE[1]][] }
+              keyExtractor={([key]) => key}
+              renderItem={({ item: [key, cond] }) => {
+                const val = parseInt(key) as ConditionValue;
+                const isSelected = productCondition === val;
+                return (
+                  <TouchableOpacity
+                    style={[styles.modalItem, isSelected && { backgroundColor: '#FFF7ED' }]}
+                    onPress={() => {
+                      setProductCondition(val);
+                      setConditionModalVisible(false);
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                        <StarRow count={cond.stars} />
+                        <Text style={[styles.modalItemText, { fontWeight: '600' }]}>{cond.shortLabel}</Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#6B7280' }}>{cond.label}</Text>
+                    </View>
+                    {isSelected && <Ionicons name="checkmark" size={20} color="#EA580C" />}
+                  </TouchableOpacity>
+                );
+              }}
             />
           </View>
         </TouchableOpacity>
       </Modal>
 
       {/* Category Modal */}
-      <Modal
-        visible={categoryModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setCategoryModalVisible(false)}
-      >
-        <TouchableOpacity 
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setCategoryModalVisible(false)}
-        >
+      <Modal visible={categoryModalVisible} transparent animationType="slide" onRequestClose={() => setCategoryModalVisible(false)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setCategoryModalVisible(false)}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Category</Text>
@@ -1488,16 +1677,11 @@ const pickMedia = async () => {
               keyExtractor={(item) => item}
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={styles.modalItem}
-                  onPress={() => {
-                    setSelectedCategoryName(item);
-                    setCategoryModalVisible(false);
-                  }}
+                  style={[styles.modalItem, selectedCategoryName === item && { backgroundColor: '#FFF7ED' }]}
+                  onPress={() => { setSelectedCategoryName(item); setCategoryModalVisible(false); }}
                 >
                   <Text style={styles.modalItemText}>{item}</Text>
-                  {selectedCategoryName === item && (
-                    <Ionicons name="checkmark" size={20} color="#3B82F6" />
-                  )}
+                  {selectedCategoryName === item && <Ionicons name="checkmark" size={20} color="#EA580C" />}
                 </TouchableOpacity>
               )}
             />
@@ -1506,52 +1690,74 @@ const pickMedia = async () => {
       </Modal>
 
       {/* Weight Unit Modal */}
-      <Modal
-        visible={weightUnitModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setWeightUnitModalVisible(false)}
-      >
-        <TouchableOpacity 
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setWeightUnitModalVisible(false)}
-        >
+      <Modal visible={weightUnitModal.visible} transparent animationType="slide" onRequestClose={() => setWeightUnitModal({ visible: false, variantId: null })}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setWeightUnitModal({ visible: false, variantId: null })}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Weight Unit</Text>
-              <TouchableOpacity onPress={() => setWeightUnitModalVisible(false)}>
+              <TouchableOpacity onPress={() => setWeightUnitModal({ visible: false, variantId: null })}>
                 <Ionicons name="close" size={24} color="#374151" />
               </TouchableOpacity>
             </View>
             <FlatList
               data={weightUnitOptions}
               keyExtractor={(item) => item}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.modalItem}
-                  onPress={() => setWeightUnitModalVisible(false)}
-                >
-                  <Text style={styles.modalItemText}>{item}</Text>
-                </TouchableOpacity>
-              )}
+              renderItem={({ item }) => {
+                const current = weightUnitModal.variantId ? variants.find((v) => v.id === weightUnitModal.variantId)?.weight_unit : null;
+                return (
+                  <TouchableOpacity
+                    style={[styles.modalItem, current === item && { backgroundColor: '#FFF7ED' }]}
+                    onPress={() => {
+                      if (weightUnitModal.variantId) updateVariantField(weightUnitModal.variantId, 'weight_unit', item);
+                      setWeightUnitModal({ visible: false, variantId: null });
+                    }}
+                  >
+                    <Text style={styles.modalItemText}>{item}</Text>
+                    {current === item && <Ionicons name="checkmark" size={20} color="#EA580C" />}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Dimension Unit Modal */}
+      <Modal visible={dimensionUnitModal.visible} transparent animationType="slide" onRequestClose={() => setDimensionUnitModal({ visible: false, variantId: null })}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setDimensionUnitModal({ visible: false, variantId: null })}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Dimension Unit</Text>
+              <TouchableOpacity onPress={() => setDimensionUnitModal({ visible: false, variantId: null })}>
+                <Ionicons name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={dimensionUnitOptions}
+              keyExtractor={(item) => item}
+              renderItem={({ item }) => {
+                const current = dimensionUnitModal.variantId ? variants.find((v) => v.id === dimensionUnitModal.variantId)?.dimension_unit : null;
+                return (
+                  <TouchableOpacity
+                    style={[styles.modalItem, current === item && { backgroundColor: '#FFF7ED' }]}
+                    onPress={() => {
+                      if (dimensionUnitModal.variantId) updateVariantField(dimensionUnitModal.variantId, 'dimension_unit', item);
+                      setDimensionUnitModal({ visible: false, variantId: null });
+                    }}
+                  >
+                    <Text style={styles.modalItemText}>{item}</Text>
+                    {current === item && <Ionicons name="checkmark" size={20} color="#EA580C" />}
+                  </TouchableOpacity>
+                );
+              }}
             />
           </View>
         </TouchableOpacity>
       </Modal>
 
       {/* Usage Unit Modal */}
-      <Modal
-        visible={usageUnitModalVisible.visible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setUsageUnitModalVisible({ visible: false, variantId: null })}
-      >
-        <TouchableOpacity 
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setUsageUnitModalVisible({ visible: false, variantId: null })}
-        >
+      <Modal visible={usageUnitModalVisible.visible} transparent animationType="slide" onRequestClose={() => setUsageUnitModalVisible({ visible: false, variantId: null })}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setUsageUnitModalVisible({ visible: false, variantId: null })}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Time Unit</Text>
@@ -1562,37 +1768,54 @@ const pickMedia = async () => {
             <FlatList
               data={usageUnitOptions}
               keyExtractor={(item) => item.value}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.modalItem}
-                  onPress={() => {
-                    if (usageUnitModalVisible.variantId) {
-                      handleDepreciationChange(usageUnitModalVisible.variantId, 'usageUnit', item.value);
-                    }
-                    setUsageUnitModalVisible({ visible: false, variantId: null });
-                  }}
-                >
-                  <Text style={styles.modalItemText}>{item.label}</Text>
-                </TouchableOpacity>
-              )}
+              renderItem={({ item }) => {
+                const current = usageUnitModalVisible.variantId ? variants.find((v) => v.id === usageUnitModalVisible.variantId)?.depreciation.usageUnit : null;
+                return (
+                  <TouchableOpacity
+                    style={[styles.modalItem, current === item.value && { backgroundColor: '#FFF7ED' }]}
+                    onPress={() => {
+                      if (usageUnitModalVisible.variantId) {
+                        handleDepreciationChange(usageUnitModalVisible.variantId, 'usageUnit', item.value);
+                      }
+                      setUsageUnitModalVisible({ visible: false, variantId: null });
+                    }}
+                  >
+                    <Text style={styles.modalItemText}>{item.label}</Text>
+                    {current === item.value && <Ionicons name="checkmark" size={20} color="#EA580C" />}
+                  </TouchableOpacity>
+                );
+              }}
             />
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Date Picker Modal */}
+      <DatePickerModal
+        visible={datePickerModal.visible}
+        selectedDate={dpVariant?.depreciation.purchaseDate}
+        onSelect={(date) => {
+          if (datePickerModal.variantId) handlePurchaseDateChange(datePickerModal.variantId, date);
+        }}
+        onClose={() => setDatePickerModal({ visible: false, variantId: null })}
+      />
     </View>
   );
 }
 
+// ============================================================
+// STYLES
+// ============================================================
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+
+  // Progress
   progressContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingVertical: 14,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
@@ -1603,755 +1826,368 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#F3F4F6',
   },
-  stepActive: {
-    backgroundColor: '#3B82F6',
-  },
-  stepInactive: {
-    backgroundColor: '#F3F4F6',
-  },
-  stepBadgeText: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#6B7280',
-  },
-  stepTextActive: {
-    color: '#FFFFFF',
-  },
-  stepLine: {
-    flex: 1,
-    height: 2,
-    backgroundColor: '#E5E7EB',
-    marginHorizontal: 4,
-  },
-  stepLineActive: {
-    backgroundColor: '#3B82F6',
-  },
-  section: {
-    padding: 16,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
+  stepActive: { backgroundColor: '#F97316' },
+  stepInactive: { backgroundColor: '#F3F4F6' },
+  stepBadgeText: { fontSize: 10, fontWeight: '500', color: '#6B7280' },
+  stepTextActive: { color: '#FFFFFF' },
+  stepLine: { flex: 1, height: 2, backgroundColor: '#E5E7EB', marginHorizontal: 4 },
+  stepLineActive: { backgroundColor: '#F97316' },
+
+  // Section
+  section: { padding: 16 },
+  sectionHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, gap: 12 },
   sectionIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#EFF6FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#FFF7ED',
+    justifyContent: 'center', alignItems: 'center',
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  sectionSubtitle: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
-  },
+  sectionTitle: { fontSize: 18, fontWeight: '600', color: '#111827' },
+  sectionSubtitle: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+
+  // Shop info
   shopInfoCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-    gap: 8,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#FFF7ED', padding: 12,
+    borderRadius: 8, marginBottom: 16, gap: 8,
+    borderWidth: 1, borderColor: '#FED7AA',
   },
-  shopInfoText: {
-    fontSize: 14,
-    color: '#1E40AF',
-    fontWeight: '500',
-  },
-  formGroup: {
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    marginBottom: 6,
-  },
-  required: {
-    color: '#EF4444',
-  },
+  shopInfoText: { fontSize: 14, color: '#C2410C', fontWeight: '500' },
+
+  // Form
+  formGroup: { marginBottom: 16 },
+  label: { fontSize: 14, fontWeight: '500', color: '#374151', marginBottom: 6 },
+  required: { color: '#EF4444' },
   input: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    fontSize: 14,
-    color: '#111827',
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1, borderColor: '#D1D5DB',
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12,
+    fontSize: 14, color: '#111827', backgroundColor: '#FFFFFF',
   },
-  inputDisabled: {
-    backgroundColor: '#F3F4F6',
-    color: '#9CA3AF',
+  inputDisabled: { backgroundColor: '#F3F4F6', color: '#9CA3AF' },
+  textArea: { minHeight: 100, textAlignVertical: 'top' },
+  errorText: { fontSize: 12, color: '#EF4444', marginTop: 4 },
+
+  // Condition badge
+  conditionBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginTop: 8, paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 8, borderWidth: 1,
   },
-  textArea: {
-    minHeight: 100,
-    textAlignVertical: 'top',
-  },
+  conditionBadgeText: { fontSize: 12, fontWeight: '500', flex: 1 },
+
+  // Select
   selectButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1, borderColor: '#D1D5DB',
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12,
     backgroundColor: '#FFFFFF',
   },
-  selectButtonText: {
-    fontSize: 14,
-    color: '#111827',
-  },
-  placeholderText: {
-    fontSize: 14,
-    color: '#9CA3AF',
-  },
-  errorText: {
-    fontSize: 12,
-    color: '#EF4444',
-    marginTop: 4,
-  },
+  selectButtonText: { fontSize: 14, color: '#111827' },
+  placeholderText: { fontSize: 14, color: '#9CA3AF' },
+
+  // Buttons
   nextButton: {
-    backgroundColor: '#3B82F6',
-    borderRadius: 10,
-    minHeight: 50,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+    backgroundColor: '#F97316', borderRadius: 10,
+    minHeight: 50, paddingHorizontal: 14,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
   },
-  singleStepButton: {
-    marginTop: 20,
-  },
-  nextButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  navigationButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 20,
-    gap: 12,
-  },
-  navButton: {
-    flex: 1,
-  },
+  singleStepButton: { marginTop: 20 },
+  nextButtonText: { fontSize: 15, fontWeight: '600', color: '#FFFFFF' },
+  navigationButtons: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 20, gap: 12 },
+  navButton: { flex: 1 },
   backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 10,
-    minHeight: 50,
-    paddingHorizontal: 14,
-    gap: 8,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: '#D1D5DB',
+    borderRadius: 10, minHeight: 50, paddingHorizontal: 14,
+    gap: 8, backgroundColor: '#FFFFFF',
+  },
+  backButtonText: { fontSize: 14, fontWeight: '500', color: '#6B7280' },
+
+  // Media
+  mediaCountBadge: {
+    backgroundColor: '#F3F4F6', paddingHorizontal: 8,
+    paddingVertical: 3, borderRadius: 12,
+  },
+  mediaCountBadgeText: { fontSize: 12, color: '#6B7280' },
+  cameraArea: {
+    borderWidth: 2, borderColor: '#D1D5DB', borderStyle: 'dashed',
+    borderRadius: 12, padding: 24,
+    alignItems: 'center', marginBottom: 16,
+    backgroundColor: '#F9FAFB',
+  },
+  cameraAreaText: { fontSize: 13, color: '#6B7280', marginTop: 8, marginBottom: 12, textAlign: 'center' },
+  cameraButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderWidth: 1, borderColor: '#FED7AA',
+    borderRadius: 8, paddingHorizontal: 16, paddingVertical: 8,
     backgroundColor: '#FFFFFF',
   },
-  backButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6B7280',
+  cameraButtonText: { fontSize: 14, color: '#EA580C', fontWeight: '500' },
+  mediaGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16,
   },
-  mediaContainer: {
-    marginBottom: 20,
-  },
-  mediaHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  mediaLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-  },
-  mediaCount: {
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  mediaCountText: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  mediaScroll: {
-    flexDirection: 'row',
-  },
-  // Add these to your StyleSheet
-addMediaButton: {
-  width: 100,
-  height: 100,
-  borderWidth: 2,
-  borderColor: '#D1D5DB',
-  borderStyle: 'dashed',
-  borderRadius: 8,
-  alignItems: 'center',
-  justifyContent: 'center',
-  marginRight: 12,
-  backgroundColor: '#F9FAFB',
-},
-addMediaText: {
-  fontSize: 11,
-  color: '#9CA3AF',
-  marginTop: 4,
-},
-mediaHint: {
-  fontSize: 12,
-  color: '#6B7280',
-  marginTop: 8,
-  fontStyle: 'italic',
-},
-addVariantImage: {
-  width: 80,
-  height: 80,
-  borderWidth: 2,
-  borderColor: '#D1D5DB',
-  borderStyle: 'dashed',
-  borderRadius: 8,
-  alignItems: 'center',
-  justifyContent: 'center',
-  backgroundColor: '#F9FAFB',
-},
-addVariantImageText: {
-  fontSize: 10,
-  color: '#9CA3AF',
-  marginTop: 2,
-},
-variantImageHint: {
-  fontSize: 11,
-  color: '#9CA3AF',
-  marginTop: 4,
-},
-  mediaItem: {
-    position: 'relative',
-    marginRight: 12,
-  },
-  mediaImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 8,
-  },
-  videoPreview: {
-    backgroundColor: '#374151',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  mediaGridItem: { position: 'relative', width: 80, height: 80 },
+  mediaGridImage: { width: 80, height: 80, borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB' },
   coverBadge: {
-    position: 'absolute',
-    top: 4,
-    left: 4,
-    backgroundColor: '#3B82F6',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    position: 'absolute', top: 4, left: 4,
+    backgroundColor: '#F97316',
+    paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4,
   },
-  coverBadgeText: {
-    fontSize: 9,
-    fontWeight: '600',
-    color: '#FFFFFF',
+  coverBadgeText: { fontSize: 9, fontWeight: '600', color: '#FFFFFF' },
+  removeMediaBtn: { position: 'absolute', top: -6, right: -6 },
+  addMoreMedia: {
+    width: 80, height: 80,
+    borderWidth: 2, borderColor: '#D1D5DB', borderStyle: 'dashed',
+    borderRadius: 8, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#F9FAFB',
   },
-  removeMediaButton: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-  },
+  addMoreMediaText: { fontSize: 10, color: '#9CA3AF', marginTop: 4 },
+
+  // AI Section
   aiSection: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    marginBottom: 20,
-    overflow: 'hidden',
+    backgroundColor: '#FFFFFF', borderRadius: 12,
+    borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 20, overflow: 'hidden',
   },
   aiHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#F9FAFB',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    padding: 16, backgroundColor: '#FFF7ED',
   },
-  aiTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  aiTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
+  aiTitleContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  aiTitle: { fontSize: 15, fontWeight: '600', color: '#111827' },
   aiReadyBadge: {
-    backgroundColor: '#D1FAE5',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+    backgroundColor: '#DCFCE7', paddingHorizontal: 8,
+    paddingVertical: 4, borderRadius: 12,
   },
-  aiReadyText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#059669',
-  },
-  aiContent: {
-    padding: 16,
-  },
-  aiRow: {
-    marginBottom: 16,
-  },
-  aiDescription: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 8,
-  },
+  aiReadyText: { fontSize: 11, fontWeight: '600', color: '#059669' },
+  aiContent: { padding: 16 },
+  aiRow: { marginBottom: 16 },
+  aiDescription: { fontSize: 13, color: '#6B7280', marginBottom: 8 },
   analyzeButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#3B82F6',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    alignSelf: 'flex-start',
+    borderWidth: 1, borderColor: '#FED7AA',
+    borderRadius: 6, paddingVertical: 8, paddingHorizontal: 14,
+    alignSelf: 'flex-start', backgroundColor: '#FFF7ED',
   },
-  analyzeButtonDisabled: {
-    borderColor: '#9CA3AF',
-    opacity: 0.5,
-  },
-  analyzeButtonText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#3B82F6',
-  },
+  analyzeButtonDisabled: { opacity: 0.5 },
+  analyzeButtonText: { fontSize: 13, fontWeight: '500', color: '#EA580C' },
   predictionCard: {
-    backgroundColor: '#EFF6FF',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 12,
+    backgroundColor: '#FFF7ED', borderRadius: 8, padding: 12,
+    marginTop: 8, borderWidth: 1, borderColor: '#FED7AA',
   },
-  predictionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1E40AF',
-    marginBottom: 4,
-  },
-  predictionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  predictionCategory: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#1E3A8A',
-  },
-  predictionConfidence: {
-    fontSize: 12,
-    color: '#2563EB',
-  },
-  alternativeText: {
-    fontSize: 11,
-    color: '#2563EB',
-    marginTop: 4,
-  },
-  errorCard: {
-    backgroundColor: '#FEF2F2',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 12,
-  },
-  errorCardText: {
-    fontSize: 12,
-    color: '#991B1B',
-  },
+  predictionTitle: { fontSize: 13, fontWeight: '600', color: '#C2410C', marginBottom: 4 },
+  predictionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  predictionCategory: { fontSize: 14, fontWeight: '500', color: '#7C2D12' },
+  predictionConfidence: { fontSize: 12, color: '#EA580C' },
+  alternativeText: { fontSize: 11, color: '#EA580C', marginTop: 4 },
+  errorCard: { backgroundColor: '#FEF2F2', borderRadius: 8, padding: 12, marginTop: 8 },
+  errorCardText: { fontSize: 12, color: '#991B1B' },
+
+  // Required badge
   requiredBadge: {
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 16,
-    alignSelf: 'flex-start',
-    marginBottom: 16,
+    backgroundColor: '#FFF7ED', paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 12, borderWidth: 1, borderColor: '#FED7AA',
   },
-  requiredBadgeText: {
-    fontSize: 12,
-    color: '#1E40AF',
-    fontWeight: '500',
-  },
+  requiredBadgeText: { fontSize: 12, color: '#EA580C', fontWeight: '500' },
+
+  // Variant card
   variantCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    overflow: 'hidden',
+    backgroundColor: '#FFFFFF', borderRadius: 12,
+    marginBottom: 12, borderWidth: 1, borderColor: '#E5E7EB', overflow: 'hidden',
   },
   variantHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    backgroundColor: '#F9FAFB',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    padding: 16, backgroundColor: '#F9FAFB',
   },
-  variantHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
+  variantHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   variantNumber: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#3B82F6',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: '#F97316', alignItems: 'center', justifyContent: 'center',
   },
-  variantNumberText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  variantTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  variantPrice: {
-    fontSize: 12,
-    color: '#3B82F6',
-  },
-  variantHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
+  variantNumberText: { fontSize: 12, fontWeight: '700', color: '#FFFFFF' },
+  variantTitle: { fontSize: 14, fontWeight: '600', color: '#111827' },
+  variantPrice: { fontSize: 12, color: '#EA580C', fontWeight: '500' },
+  variantHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   defaultBadge: {
-    backgroundColor: '#DBEAFE',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
+    backgroundColor: '#FFF7ED', paddingHorizontal: 6,
+    paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: '#FED7AA',
   },
-  defaultBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#1E40AF',
+  defaultBadgeText: { fontSize: 10, fontWeight: '600', color: '#EA580C' },
+  variantContent: { padding: 16 },
+
+  // Variant image
+  variantImageContainer: { position: 'relative' },
+  variantImage: { width: 80, height: 80, borderRadius: 8 },
+  addVariantImageBtn: {
+    width: 80, height: 80, borderWidth: 2, borderColor: '#D1D5DB',
+    borderStyle: 'dashed', borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: '#F9FAFB',
   },
-  variantContent: {
-    padding: 16,
-  },
-  variantImageSection: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  variantImageContainer: {
-    position: 'relative',
-    marginBottom: 4,
-  },
-  variantImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-  },
- 
-  removeVariantImage: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-  },
-  row: {
-    flexDirection: 'row',
-  },
+  addVariantImageText: { fontSize: 10, color: '#9CA3AF', marginTop: 4 },
+  variantImageHint: { fontSize: 11, color: '#9CA3AF', flex: 1 },
+  removeVariantImage: { position: 'absolute', top: -6, right: -6 },
+
+  // Price
+  row: { flexDirection: 'row' },
   priceInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1, borderColor: '#D1D5DB',
+    borderRadius: 8, backgroundColor: '#FFFFFF',
   },
-  currencySymbol: {
-    fontSize: 14,
-    color: '#374151',
-    paddingLeft: 12,
+  currencySymbol: { fontSize: 14, color: '#6B7280', paddingLeft: 12 },
+  priceInput: { flex: 1, paddingVertical: 12, paddingRight: 12, fontSize: 14, color: '#111827' },
+  autoBadgeInline: {
+    backgroundColor: '#FFF7ED', paddingHorizontal: 6,
+    paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: '#FED7AA',
   },
-  priceInput: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingRight: 12,
-    fontSize: 14,
-    color: '#111827',
-  },
-  autoBadge: {
-    position: 'absolute',
-    top: -8,
-    right: 8,
-    backgroundColor: '#DBEAFE',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  autoBadgeText: {
-    fontSize: 9,
-    fontWeight: '600',
-    color: '#1E40AF',
-  },
+  autoBadgeInlineText: { fontSize: 9, fontWeight: '600', color: '#EA580C' },
+
+  // Depreciation
   depreciationSection: {
-    backgroundColor: '#EFF6FF',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
+    backgroundColor: '#FFF7ED', borderRadius: 10,
+    padding: 14, marginBottom: 16, borderWidth: 1, borderColor: '#FED7AA',
   },
   depreciationHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 14,
   },
-  depreciationTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1E40AF',
-  },
-  autoBadgeSmall: {
-    backgroundColor: '#DBEAFE',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  autoBadgeSmallText: {
-    fontSize: 9,
-    color: '#1E40AF',
-  },
-  calculationInfo: {
-    marginTop: 8,
-    padding: 8,
+  depreciationTitle: { fontSize: 13, fontWeight: '600', color: '#C2410C' },
+  depLabel: { fontSize: 13, fontWeight: '500', color: '#92400E', marginBottom: 6 },
+
+  // Date picker button
+  datePickerButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderWidth: 1, borderColor: '#FED7AA',
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10,
     backgroundColor: '#FFFFFF',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
   },
-  calculationText: {
-    fontSize: 11,
-    color: '#374151',
+  datePickerTextSet: { fontSize: 14, color: '#111827' },
+  datePickerTextPlaceholder: { fontSize: 14, color: '#9CA3AF' },
+
+  // Slider section
+  sliderSection: {
+    backgroundColor: '#FFFBEB', borderRadius: 8,
+    padding: 12, marginBottom: 14, borderWidth: 1, borderColor: '#FDE68A',
   },
-  calculationResult: {
-    fontWeight: '600',
-    color: '#3B82F6',
+  sliderHeader: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', marginBottom: 10,
   },
+  sliderTitle: { fontSize: 13, fontWeight: '500', color: '#92400E' },
+  rateBadge: {
+    backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#FED7AA',
+    paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8,
+  },
+  rateBadgeText: { fontSize: 15, fontWeight: '700', color: '#EA580C' },
+
+  // Calculated price card
+  calculatedPriceCard: {
+    backgroundColor: '#EA580C',
+    borderRadius: 12, padding: 16,
+    shadowColor: '#EA580C', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 8, elevation: 6,
+  },
+  calcCardLabel: { fontSize: 11, fontWeight: '600', color: 'rgba(255,255,255,0.8)', textTransform: 'uppercase', letterSpacing: 0.5 },
+  calcCardPrice: { fontSize: 34, fontWeight: '700', color: '#FFFFFF', marginBottom: 6 },
+  calcCardInfo: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: 'flex-start',
+  },
+  calcCardInfoText: { fontSize: 11, color: 'rgba(255,255,255,0.8)' },
+  calcCardEmpty: { fontSize: 32, color: 'rgba(255,255,255,0.4)', marginBottom: 8 },
+  calcCardHint: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
+  },
+  calcCardHintText: { fontSize: 11, color: 'rgba(255,255,255,0.85)' },
+
+  // Toggles
   toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 16,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    flexDirection: 'row', justifyContent: 'space-around',
+    paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#E5E7EB',
+    borderBottomWidth: 1, borderBottomColor: '#E5E7EB', marginBottom: 16,
   },
-  toggleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  toggleContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  toggleLabel: { fontSize: 14, color: '#374151' },
+
+  // Advanced
+  sectionDivider: {
+    marginTop: 12, paddingTop: 14,
+    borderTopWidth: 1, borderTopColor: '#F3F4F6',
   },
-  toggleLabel: {
-    fontSize: 14,
-    color: '#374151',
+  advancedSectionHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12,
   },
-  advancedToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
+  advancedSectionTitle: {
+    fontSize: 14, fontWeight: '600', color: '#374151',
   },
-  advancedToggleText: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  optionalBadge: {
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  optionalBadgeText: {
-    fontSize: 9,
-    color: '#6B7280',
-  },
-  advancedContent: {
-    marginTop: 12,
-  },
+
+  // Add variant
   addVariantButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#3B82F6',
-    borderStyle: 'dashed',
-    borderRadius: 8,
-    padding: 16,
-    marginTop: 8,
-    marginBottom: 16,
-    gap: 8,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#FED7AA', borderStyle: 'dashed',
+    borderRadius: 8, padding: 16, marginTop: 8, marginBottom: 16, gap: 8,
   },
-  addVariantButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#3B82F6',
-  },
+  addVariantButtonText: { fontSize: 14, fontWeight: '500', color: '#EA580C' },
   variantSummary: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
+    flexDirection: 'row', justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB', borderRadius: 8, padding: 12, marginBottom: 8,
+    borderWidth: 1, borderColor: '#E5E7EB',
   },
-  variantSummaryText: {
-    fontSize: 13,
-    color: '#4B5563',
-  },
+  variantSummaryText: { fontSize: 13, color: '#4B5563' },
+
+  // Review
   reviewCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF', borderRadius: 12,
+    padding: 16, marginBottom: 20, borderWidth: 1, borderColor: '#E5E7EB',
   },
-  reviewCardTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 16,
-  },
-  reviewRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  reviewLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  reviewValue: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#111827',
-  },
+  reviewCardTitle: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: 16 },
+  reviewRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
+  reviewLabel: { fontSize: 14, color: '#6B7280' },
+  reviewValue: { fontSize: 14, fontWeight: '500', color: '#111827' },
+
+  // API messages
   apiErrorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    gap: 8,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA',
+    borderRadius: 8, padding: 12, marginBottom: 16, gap: 8,
   },
-  apiErrorText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#991B1B',
-  },
+  apiErrorText: { flex: 1, fontSize: 13, color: '#991B1B' },
   apiSuccessContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    gap: 8,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#BBF7D0',
+    borderRadius: 8, padding: 12, marginBottom: 16, gap: 8,
   },
-  apiSuccessText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#166534',
-  },
-  submitContainer: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
-  },
+  apiSuccessText: { flex: 1, fontSize: 13, color: '#166534' },
+
+  // Submit
+  submitContainer: { flexDirection: 'row', gap: 12, marginTop: 20 },
   cancelButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 14,
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    flex: 1, borderWidth: 1, borderColor: '#D1D5DB',
+    borderRadius: 8, padding: 14, alignItems: 'center', backgroundColor: '#FFFFFF',
   },
-  cancelButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6B7280',
-  },
+  cancelButtonText: { fontSize: 14, fontWeight: '500', color: '#6B7280' },
   submitButton: {
-    flex: 2,
-    backgroundColor: '#3B82F6',
-    borderRadius: 8,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+    flex: 2, backgroundColor: '#F97316', borderRadius: 8, padding: 14,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
   },
-  submitButtonDisabled: {
-    backgroundColor: '#9CA3AF',
-  },
-  submitButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
+  submitButtonDisabled: { backgroundColor: '#9CA3AF' },
+  submitButtonText: { fontSize: 14, fontWeight: '600', color: '#FFFFFF' },
+
+  // Modals
   modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    maxHeight: '80%',
+    backgroundColor: '#FFFFFF', borderTopLeftRadius: 20,
+    borderTopRightRadius: 20, maxHeight: '80%',
   },
   modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    padding: 16, borderBottomWidth: 1, borderBottomColor: '#E5E7EB',
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-  },
+  modalTitle: { fontSize: 18, fontWeight: '600', color: '#111827' },
   modalItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    padding: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6',
   },
-  modalItemText: {
-    fontSize: 15,
-    color: '#374151',
-  },
+  modalItemText: { fontSize: 15, color: '#374151' },
 });
