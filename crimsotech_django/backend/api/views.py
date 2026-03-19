@@ -19765,6 +19765,24 @@ class AddToCartView(APIView):
             }, status=500)
 
 class CartListView(APIView):
+    def get_item_total(self, cart_item):
+        """Calculate total price for a cart item - ONLY from variant"""
+        if not cart_item.variant:
+            print(f"Error: Cart item {cart_item.id} has no variant")
+            return 0
+        
+        if cart_item.variant.price is None:
+            print(f"Error: Variant {cart_item.variant.id} has no price")
+            return 0
+        
+        try:
+            price = cart_item.variant.price
+            quantity = cart_item.quantity
+            return float(price) * quantity
+        except (TypeError, ValueError) as e:
+            print(f"Error calculating total for cart item {cart_item.id}: {e}")
+            return 0
+
     def get_available_vouchers(self, cart_items, user, applied_voucher_code=None):
         """
         Get all available vouchers that can be applied to the cart
@@ -19772,7 +19790,6 @@ class CartListView(APIView):
         now = timezone.now().date()
         cart_total = sum(self.get_item_total(item) for item in cart_items)
         
-        # Get all active vouchers
         vouchers_qs = Voucher.objects.filter(
             is_active=True,
             start_date__lte=now,
@@ -19782,26 +19799,22 @@ class CartListView(APIView):
         available_vouchers = []
         
         for voucher in vouchers_qs:
-            # Skip if this is the currently applied voucher
             if applied_voucher_code and voucher.code == applied_voucher_code:
                 continue
                 
-            # Check minimum spend
             if voucher.minimum_spend and cart_total < voucher.minimum_spend:
                 continue
             
-            # Check maximum usage
             if voucher.maximum_usage > 0:
                 usage_count = Checkout.objects.filter(voucher=voucher).count()
                 if usage_count >= voucher.maximum_usage:
                     continue
             
-            # Calculate discount amount for display
             discount_amount = 0
             if voucher.discount_type == 'percentage':
-                discount_amount = (cart_total * voucher.value) / 100
+                discount_amount = (cart_total * float(voucher.value)) / 100
             elif voucher.discount_type == 'fixed':
-                discount_amount = min(voucher.value, cart_total)
+                discount_amount = min(float(voucher.value), cart_total)
             
             available_vouchers.append({
                 'id': str(voucher.id),
@@ -19810,24 +19823,14 @@ class CartListView(APIView):
                 'discount_type': voucher.discount_type,
                 'value': float(voucher.value),
                 'discount_amount': float(discount_amount),
-                'minimum_spend': float(voucher.minimum_spend),
+                'minimum_spend': float(voucher.minimum_spend) if voucher.minimum_spend else 0,
                 'shop_id': str(voucher.shop.id) if voucher.shop else None,
                 'shop_name': voucher.shop.name if voucher.shop else 'Global',
                 'voucher_type': voucher.voucher_type
             })
         
-        # Sort by discount amount (highest first)
         available_vouchers.sort(key=lambda x: x['discount_amount'], reverse=True)
-        
         return available_vouchers
-
-    def get_item_total(self, cart_item):
-        """Calculate total price for a cart item"""
-        if cart_item.variant and cart_item.variant.price:
-            return cart_item.variant.price * cart_item.quantity
-        elif cart_item.product and cart_item.product.price:
-            return cart_item.product.price * cart_item.quantity
-        return 0
 
     def calculate_cart_totals(self, cart_items, applied_voucher=None):
         """
@@ -19840,9 +19843,9 @@ class CartListView(APIView):
         
         if applied_voucher:
             if applied_voucher.discount_type == 'percentage':
-                discount = (subtotal * applied_voucher.value) / 100
+                discount = (subtotal * float(applied_voucher.value)) / 100
             elif applied_voucher.discount_type == 'fixed':
-                discount = min(applied_voucher.value, subtotal)
+                discount = min(float(applied_voucher.value), subtotal)
             
             applied_voucher_data = {
                 'id': str(applied_voucher.id),
@@ -19864,7 +19867,7 @@ class CartListView(APIView):
 
     def get(self, request):
         user_id = request.GET.get("user_id")
-        voucher_code = request.GET.get("voucher_code")  # Optional voucher code to apply
+        voucher_code = request.GET.get("voucher_code")
         
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
@@ -19882,11 +19885,9 @@ class CartListView(APIView):
 
             serializer = CartItemSerializer(cart_items, many=True, context={"request": request})
             
-            # Calculate totals
             applied_voucher = None
             voucher_error = None
             
-            # If voucher code is provided, try to apply it
             if voucher_code:
                 try:
                     now = timezone.now().date()
@@ -19897,10 +19898,9 @@ class CartListView(APIView):
                         end_date__gte=now
                     )
                     
-                    # Validate voucher
                     cart_total = sum(self.get_item_total(item) for item in cart_items)
                     
-                    if voucher.minimum_spend and cart_total < voucher.minimum_spend:
+                    if voucher.minimum_spend and cart_total < float(voucher.minimum_spend):
                         voucher_error = f"Minimum spend of ₱{voucher.minimum_spend} required"
                     elif voucher.maximum_usage > 0:
                         usage_count = Checkout.objects.filter(voucher=voucher).count()
@@ -19912,10 +19912,8 @@ class CartListView(APIView):
                 except Voucher.DoesNotExist:
                     voucher_error = "Invalid or expired voucher code"
             
-            # Calculate totals with applied voucher
             totals = self.calculate_cart_totals(cart_items, applied_voucher)
             
-            # Get available vouchers (excluding the currently applied one)
             available_vouchers = self.get_available_vouchers(
                 cart_items, 
                 user, 
@@ -19936,6 +19934,9 @@ class CartListView(APIView):
             return Response(response_data)
             
         except Exception as e:
+            import traceback
+            print("Error in CartListView:", str(e))
+            print(traceback.format_exc())
             return Response({
                 "success": False, 
                 "error": "Failed to fetch cart items", 
@@ -19943,14 +19944,22 @@ class CartListView(APIView):
             }, status=500)
 
     def put(self, request, item_id):
+        """
+        Update cart item quantity
+        URL: /api/view-cart/update/<item_id>/
+        Expected data: {
+            "user_id": "uuid",
+            "quantity": 2
+        }
+        """
         user_id = request.data.get("user_id")
-        quantity_raw = request.data.get("quantity")
+        quantity = request.data.get("quantity")
 
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
 
         try:
-            quantity = int(quantity_raw)
+            quantity = int(quantity)
         except (TypeError, ValueError):
             return Response({"error": "Quantity must be an integer"}, status=400)
 
@@ -19958,6 +19967,7 @@ class CartListView(APIView):
             return Response({"error": "Quantity must be at least 1"}, status=400)
 
         try:
+            # Get the cart item with related product and variant
             cart_item = CartItem.objects.select_related("product", "variant").get(
                 id=item_id,
                 user_id=user_id,
@@ -19966,34 +19976,46 @@ class CartListView(APIView):
         except CartItem.DoesNotExist:
             return Response({"error": "Cart item not found"}, status=404)
 
+        # Check stock availability
         try:
             if cart_item.variant:
+                # Check variant stock
                 if not cart_item.variant.is_active:
                     return Response({
                         "error": "This variant is no longer available",
                         "can_remove": True
                     }, status=400)
-                available_quantity = cart_item.variant.quantity
+                
+                if quantity > cart_item.variant.quantity:
+                    return Response({
+                        "error": f"Only {cart_item.variant.quantity} items available in stock",
+                        "available_quantity": cart_item.variant.quantity,
+                        "current_quantity": cart_item.quantity
+                    }, status=400)
+                    
             elif cart_item.product:
+                # Check product stock (for products without variants)
                 available_quantity = cart_item.product.total_stock
+                if quantity > available_quantity:
+                    return Response({
+                        "error": f"Only {available_quantity} items available in stock",
+                        "available_quantity": available_quantity,
+                        "current_quantity": cart_item.quantity
+                    }, status=400)
             else:
                 return Response({"error": "Cart item has no product or variant"}, status=400)
 
-            if quantity > available_quantity:
-                return Response({
-                    "error": f"Only {available_quantity} items available in stock",
-                    "available_quantity": available_quantity,
-                    "current_quantity": cart_item.quantity
-                }, status=400)
-
+            # Update quantity
             cart_item.quantity = quantity
             cart_item.save()
 
-            # Recalculate totals with updated cart
+            # Recalculate totals for all cart items
             cart_items = CartItem.objects.filter(user_id=user_id, is_ordered=False)
             totals = self.calculate_cart_totals(cart_items)
 
+            # Get updated serializer for this item
             serializer = CartItemSerializer(cart_item, context={"request": request})
+            
             return Response({
                 "success": True,
                 "message": "Quantity updated successfully",
@@ -20002,9 +20024,18 @@ class CartListView(APIView):
             })
 
         except Exception as e:
-            return Response({"success": False, "error": "Failed to update quantity", "details": str(e)}, status=500)
+            print(f"Error updating cart item {item_id}: {str(e)}")
+            return Response({
+                "success": False, 
+                "error": "Failed to update quantity", 
+                "details": str(e)
+            }, status=500)
 
     def delete(self, request, item_id):
+        """
+        Remove item from cart
+        URL: /api/view-cart/delete/<item_id>/?user_id=uuid
+        """
         user_id = request.GET.get("user_id")
 
         if not user_id:
@@ -20040,9 +20071,13 @@ class CartListView(APIView):
         except CartItem.DoesNotExist:
             return Response({"error": "Cart item not found"}, status=404)
         except Exception as e:
-            return Response({"success": False, "error": "Failed to remove item", "details": str(e)}, status=500)
-        
-# Add this separate view for bulk operations if needed
+            print(f"Error removing cart item {item_id}: {str(e)}")
+            return Response({
+                "success": False, 
+                "error": "Failed to remove item", 
+                "details": str(e)
+            }, status=500)
+            
 class CartBulkUpdateView(APIView):
     """
     Handle bulk updates to cart (update multiple quantities at once)
@@ -22407,16 +22442,19 @@ class CheckoutOrder(viewsets.ViewSet):
             vouchers = Voucher.objects.filter(
                 shop_id__in=shop_ids,
                 is_active=True,
-                valid_until__gte=current_date,
+                start_date__lte=current_date,
+                end_date__gte=current_date,
                 minimum_spend__lte=current_subtotal
             ).select_related('shop').only(
                 'id', 'name', 'code', 'discount_type', 'value', 
-                'minimum_spend', 'shop__name'
+                'minimum_spend', 'shop__name', 'shop__id', 'voucher_type'
             ).order_by('-value')[:10]
             
             voucher_list = []
             for voucher in vouchers:
                 potential_savings = self._calculate_discount(voucher, current_subtotal)
+                
+                customer_tier = "all"
                 
                 voucher_data = {
                     "id": str(voucher.id),
@@ -22426,8 +22464,12 @@ class CheckoutOrder(viewsets.ViewSet):
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
                     "shop_name": voucher.shop.name if voucher.shop else "Unknown Shop",
+                    "shop_id": str(voucher.shop.id) if voucher.shop else None,  # Add shop_id
                     "description": self._get_voucher_description(voucher),
                     "potential_savings": float(potential_savings),
+                    "customer_tier": customer_tier,
+                    "voucher_type": voucher.voucher_type,
+                    "is_general": False
                 }
                 voucher_list.append(voucher_data)
             
@@ -22441,6 +22483,7 @@ class CheckoutOrder(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Error fetching vouchers: {str(e)}")
             return []
+    
     
     def _get_voucher_description(self, voucher):
         """Generate a user-friendly description for the voucher"""
@@ -22545,7 +22588,8 @@ class CheckoutOrder(viewsets.ViewSet):
         
         try:
             user_cart_shop_ids = CartItem.objects.filter(
-                user_id=user_id
+                user_id=user_id,
+                is_ordered=False
             ).values_list('product__shop_id', flat=True).distinct()
             
             user_purchase_history = self._get_user_purchase_history(user_id)
@@ -22558,10 +22602,13 @@ class CheckoutOrder(viewsets.ViewSet):
             )
             
             current_date = timezone.now().date()
+            
+            # Get general vouchers (no shop)
             general_vouchers = Voucher.objects.filter(
                 shop__isnull=True,
                 is_active=True,
-                valid_until__gte=current_date,
+                start_date__lte=current_date,
+                end_date__gte=current_date,
                 minimum_spend__lte=amount
             ).order_by('-value')[:5]
             
@@ -22576,9 +22623,11 @@ class CheckoutOrder(viewsets.ViewSet):
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
                     "shop_name": "All Shops",
+                    "shop_id": None,  # No shop for general vouchers
                     "description": self._get_voucher_description(voucher),
                     "potential_savings": float(potential_savings),
-                    "is_general": True
+                    "is_general": True,
+                    "customer_tier": "all"
                 })
             
             if general_list:
@@ -22615,7 +22664,7 @@ class CheckoutOrder(viewsets.ViewSet):
         voucher_code = request.data.get("voucher_code", "").strip().upper()
         user_id = request.data.get("user_id")
         subtotal = float(request.data.get("subtotal", 0))
-        shop_id = request.data.get("shop_id")
+        shop_id = request.data.get("shop_id")  # This can be None for general vouchers
         
         if not voucher_code:
             return Response({"valid": False, "error": "Voucher code is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -22626,23 +22675,43 @@ class CheckoutOrder(viewsets.ViewSet):
         try:
             current_date = timezone.now().date()
             
+            # Start with base query
             voucher_query = Voucher.objects.filter(
                 code=voucher_code,
                 is_active=True,
-                valid_until__gte=current_date,
+                start_date__lte=current_date,
+                end_date__gte=current_date,
                 minimum_spend__lte=subtotal
             )
             
+            # Filter by shop_id if provided
             if shop_id:
+                # For shop-specific voucher
                 voucher_query = voucher_query.filter(shop_id=shop_id)
+            else:
+                # For general vouchers (no shop) - only if no shop_id is provided
+                voucher_query = voucher_query.filter(shop__isnull=True)
             
             voucher = voucher_query.first()
             
             if not voucher:
-                return Response({
-                    "valid": False, 
-                    "error": "Invalid voucher code or voucher not applicable"
-                }, status=status.HTTP_404_NOT_FOUND)
+                # If not found with shop filter, try general vouchers
+                if not shop_id:
+                    voucher_query = Voucher.objects.filter(
+                        code=voucher_code,
+                        is_active=True,
+                        start_date__lte=current_date,
+                        end_date__gte=current_date,
+                        minimum_spend__lte=subtotal,
+                        shop__isnull=True
+                    )
+                    voucher = voucher_query.first()
+                
+                if not voucher:
+                    return Response({
+                        "valid": False, 
+                        "error": "Invalid voucher code or voucher not applicable"
+                    }, status=status.HTTP_404_NOT_FOUND)
             
             discount_amount = self._calculate_discount(voucher, subtotal)
             
@@ -22655,8 +22724,10 @@ class CheckoutOrder(viewsets.ViewSet):
                     "discount_type": voucher.discount_type,
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
-                    "shop_name": voucher.shop.name if voucher.shop else None,
-                    "discount_amount": discount_amount
+                    "shop_name": voucher.shop.name if voucher.shop else "All Shops",
+                    "discount_amount": float(discount_amount),
+                    "customer_tier": "all",
+                    "is_general": voucher.shop is None
                 }
             })
             
@@ -22669,20 +22740,27 @@ class CheckoutOrder(viewsets.ViewSet):
     
     def _calculate_discount(self, voucher, subtotal):
         """Calculate discount amount based on voucher type"""
+        from decimal import Decimal, ROUND_HALF_UP
+        
+        # Convert to Decimal if it's a float
         if isinstance(subtotal, float):
             subtotal = Decimal(str(subtotal))
         
+        voucher_value = Decimal(str(voucher.value))
+        
         if voucher.discount_type == 'percentage':
-            return subtotal * (Decimal(str(voucher.value)) / Decimal('100'))
+            discount = subtotal * (voucher_value / Decimal('100'))
+            # Round to 2 decimal places
+            return discount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         elif voucher.discount_type == 'fixed':
-            voucher_value = Decimal(str(voucher.value))
-            return min(voucher_value, subtotal)
+            return min(voucher_value, subtotal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         return Decimal('0')
     
     @action(detail=False, methods=['POST'], url_path='create_order')
     def create_order(self, request):
         """
         Create an order from selected cart items.
+        Items are NOT marked as ordered and stock is NOT decreased until seller confirms.
         Expected data: {
             "user_id": "user_uuid",
             "selected_ids": ["cart_item_id1", "cart_item_id2"],
@@ -22745,8 +22823,18 @@ class CheckoutOrder(viewsets.ViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
+            # Check if any items are already ordered
+            already_ordered = cart_items.filter(is_ordered=True).exists()
+            if already_ordered:
+                return Response({
+                    "error": "Some items have already been ordered",
+                    "details": "Please refresh your cart"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
             # Validate variants and calculate subtotal
             subtotal = Decimal('0')
+            stock_validation_errors = []
+            
             for cart_item in cart_items:
                 # Check if product has variants and variant is selected
                 has_variants = Variants.objects.filter(
@@ -22770,30 +22858,37 @@ class CheckoutOrder(viewsets.ViewSet):
                 line_total = price * cart_item.quantity
                 subtotal += line_total
                 
-                # Check stock
+                # Check stock availability (but don't decrement yet)
                 if cart_item.variant:
                     if cart_item.quantity > cart_item.variant.quantity:
-                        return Response({
-                            "error": f"Insufficient stock for {cart_item.variant.title}",
-                            "cart_item_id": str(cart_item.id)
-                        }, status=status.HTTP_400_BAD_REQUEST)
+                        stock_validation_errors.append(
+                            f"Insufficient stock for {cart_item.variant.title}. Available: {cart_item.variant.quantity}"
+                        )
                 elif cart_item.product:
                     if cart_item.quantity > cart_item.product.quantity:
-                        return Response({
-                            "error": f"Insufficient stock for {cart_item.product.name}",
-                            "cart_item_id": str(cart_item.id)
-                        }, status=status.HTTP_400_BAD_REQUEST)
+                        stock_validation_errors.append(
+                            f"Insufficient stock for {cart_item.product.name}. Available: {cart_item.product.quantity}"
+                        )
+            
+            # Return stock errors if any
+            if stock_validation_errors:
+                return Response({
+                    "error": "Some items are out of stock",
+                    "details": stock_validation_errors
+                }, status=status.HTTP_400_BAD_REQUEST)
             
             # Apply voucher discount if provided
             discount_amount = Decimal('0')
             voucher = None
+            current_date = timezone.now().date()
             
             if voucher_id:
                 try:
                     voucher = Voucher.objects.get(
                         id=voucher_id,
                         is_active=True,
-                        valid_until__gte=timezone.now().date(),
+                        start_date__lte=current_date,
+                        end_date__gte=current_date,
                         minimum_spend__lte=subtotal
                     )
                     discount_amount = self._calculate_discount(voucher, subtotal)
@@ -22804,14 +22899,14 @@ class CheckoutOrder(viewsets.ViewSet):
                     )
             
             # Calculate final amount
-            delivery_fee = Decimal('0') if shipping_method == "pickup" else Decimal('50.00')
+            delivery_fee = Decimal('0') if shipping_method.lower() == "pickup" else Decimal('50.00')
             total_amount = subtotal + delivery_fee - discount_amount
             
             # Create Order
             order = Order.objects.create(
                 user=user,
                 shipping_address=shipping_address,
-                status='pending',
+                status='pending',  # Order starts as pending - waiting for seller confirmation
                 total_amount=total_amount,
                 payment_method=payment_method,
                 delivery_method=shipping_method,
@@ -22819,8 +22914,9 @@ class CheckoutOrder(viewsets.ViewSet):
             )
             
             cart_item_ids = []
+            checkout_items = []
             
-            # Create Checkout entries and update stock
+            # Create Checkout entries - DON'T mark items as ordered or decrease stock
             for cart_item in cart_items:
                 # Get unit price
                 if cart_item.variant and cart_item.variant.price is not None:
@@ -22830,36 +22926,45 @@ class CheckoutOrder(viewsets.ViewSet):
                 
                 checkout_total = unit_price * cart_item.quantity
                 
-                Checkout.objects.create(
+                # Create checkout record
+                checkout_item = Checkout.objects.create(
                     order=order,
                     cart_item=cart_item,
                     voucher=voucher,
                     quantity=cart_item.quantity,
                     total_amount=checkout_total,
-                    status='pending',
+                    status='pending',  # Checkout status is pending - waiting for seller confirmation
                     remarks=remarks[:500] if remarks else None
                 )
                 
-                # Decrement stock
-                if cart_item.variant:
-                    cart_item.variant.quantity -= cart_item.quantity
-                    cart_item.variant.save()
-                elif cart_item.product:
-                    cart_item.product.quantity -= cart_item.quantity
-                    cart_item.product.save()
+                # IMPORTANT: Do NOT set is_ordered = True yet
+                # Do NOT decrease stock yet
+                # These will happen when seller confirms the order
                 
-                cart_item.is_ordered = True
                 cart_item_ids.append(str(cart_item.id))
-                cart_item.save()
+                checkout_items.append({
+                    "id": str(checkout_item.id),
+                    "cart_item_id": str(cart_item.id),
+                    "product_name": cart_item.product.name if cart_item.product else "Unknown",
+                    "quantity": cart_item.quantity,
+                    "total_amount": float(checkout_total),
+                    "status": "pending"
+                })
             
             return Response({
                 "success": True,
-                "message": "Order created successfully",
+                "message": "Order created successfully. Waiting for seller confirmation.",
                 "order_id": str(order.order),
                 "cart_item_ids": cart_item_ids,
+                "checkout_items": checkout_items,
                 "total_amount": float(total_amount),
+                "subtotal": float(subtotal),
+                "delivery_fee": float(delivery_fee),
                 "discount_applied": float(discount_amount),
-                "voucher_used": voucher.code if voucher else None
+                "voucher_used": voucher.code if voucher else None,
+                "status": "pending",  # Order is pending seller confirmation
+                "payment_method": payment_method,
+                "shipping_method": shipping_method
             })
             
         except Exception as e:

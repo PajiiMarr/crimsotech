@@ -50,12 +50,14 @@ interface Voucher {
   value: number;
   minimum_spend: number;
   shop_name: string;
+  shop_id?: string | null;
   description: string;
   potential_savings: number;
   customer_tier?: string;
   is_recommended?: boolean;
   is_general?: boolean;
   discount_amount?: number;
+  voucher_type?: 'shop' | 'product'; 
 }
 
 interface VoucherCategory {
@@ -203,9 +205,7 @@ export default function CheckoutPage() {
   const [error, setError] = useState<string | null>(null);
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [voucherError, setVoucherError] = useState<string | null>(null);
-  const [voucherCode, setVoucherCode] = useState('');
   const [appliedVoucher, setAppliedVoucher] = useState<Voucher | null>(null);
-  const [showVoucherInput, setShowVoucherInput] = useState(false);
   const [loadingVouchers, setLoadingVouchers] = useState(false);
   const [activeVoucherCategory, setActiveVoucherCategory] = useState('all');
   const [isAddressModalVisible, setIsAddressModalVisible] = useState(false);
@@ -338,7 +338,11 @@ export default function CheckoutPage() {
   // Fetch vouchers when subtotal changes
   useEffect(() => {
     if (summary.subtotal > 0 && userId && checkoutData) {
-      fetchVouchersByAmount(summary.subtotal);
+      const timer = setTimeout(() => {
+        fetchVouchersByAmount(summary.subtotal);
+      }, 500);
+      
+      return () => clearTimeout(timer);
     }
   }, [summary.subtotal, userId]);
 
@@ -359,14 +363,19 @@ export default function CheckoutPage() {
         }
       });
 
-      if (response.data.success && checkoutData) {
-        setCheckoutData(prev => ({
-          ...prev!,
-          available_vouchers: response.data.available_vouchers || []
-        }));
+      if (response.data.success) {
+        setCheckoutData(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            available_vouchers: response.data.available_vouchers || []
+          };
+        });
+        
+        console.log('Fetched vouchers:', response.data.available_vouchers);
       }
     } catch (err: any) {
-      console.error('Error fetching vouchers by amount:', err);
+      console.error('Error fetching vouchers by amount:', err.response?.data || err);
     } finally {
       setLoadingVouchers(false);
     }
@@ -421,15 +430,56 @@ export default function CheckoutPage() {
     setIsAddressModalVisible(false);
   };
 
+  // Check if voucher is applicable to current cart
+  const isVoucherApplicable = (voucher: Voucher) => {
+    // Check minimum spend
+    if (voucher.minimum_spend > summary.subtotal) {
+      return false;
+    }
+    
+    // Check if voucher is from a shop in the cart (for shop-specific vouchers)
+    if (!voucher.is_general && voucher.shop_name !== 'All Shops') {
+      return checkoutData?.checkout_items.some(
+        item => item.shop_name === voucher.shop_name
+      ) || false;
+    }
+    
+    return true;
+  };
+
+  // Get reason why voucher is not applicable
+  const getVoucherInapplicableReason = (voucher: Voucher) => {
+    if (voucher.minimum_spend > summary.subtotal) {
+      return `Minimum spend: ₱${voucher.minimum_spend.toFixed(2)}`;
+    }
+    
+    if (!voucher.is_general && voucher.shop_name !== 'All Shops') {
+      const hasShop = checkoutData?.checkout_items.some(
+        item => item.shop_name === voucher.shop_name
+      );
+      if (!hasShop) {
+        return `Only applicable to ${voucher.shop_name}`;
+      }
+    }
+    
+    return null;
+  };
+
   // Apply voucher
-  const handleApplyVoucher = async () => {
-    if (!voucherCode.trim()) {
-      setVoucherError('Please enter a voucher code');
+  const handleApplyVoucher = async (voucher: Voucher) => {
+    if (!checkoutData || !userId) {
+      setVoucherError('Unable to apply voucher');
       return;
     }
 
-    if (!checkoutData || !userId) {
-      setVoucherError('Unable to apply voucher');
+    // Check if voucher is applicable
+    if (!isVoucherApplicable(voucher)) {
+      const reason = getVoucherInapplicableReason(voucher);
+      Alert.alert(
+        'Voucher Not Applicable',
+        reason || 'This voucher cannot be applied to your current order',
+        [{ text: 'OK' }]
+      );
       return;
     }
 
@@ -437,35 +487,80 @@ export default function CheckoutPage() {
     setVoucherError(null);
 
     try {
+      // Determine which shop this voucher belongs to
+      let shopId = null;
+      if (!voucher.is_general && voucher.shop_name !== 'All Shops') {
+        const shopItem = checkoutData.checkout_items.find(
+          item => item.shop_name === voucher.shop_name
+        );
+        shopId = shopItem?.shop_id || null;
+      }
+
       const response = await AxiosInstance.post('/checkout-order/validate_voucher/', {
-        voucher_code: voucherCode.toUpperCase(),
+        voucher_code: voucher.code,
         user_id: userId,
         subtotal: summary.subtotal,
+        shop_id: shopId,
       });
 
       if (response.data.valid) {
-        const voucher = response.data.voucher;
-        setAppliedVoucher(voucher);
+        const validatedVoucher = response.data.voucher;
+        
+        // Calculate discount amount
+        let discountAmount = 0;
+        if (validatedVoucher.discount_type === 'percentage') {
+          discountAmount = summary.subtotal * validatedVoucher.value / 100;
+        } else {
+          discountAmount = Math.min(validatedVoucher.value, summary.subtotal);
+        }
+        
+        const voucherWithDiscount = {
+          ...validatedVoucher,
+          discount_amount: discountAmount,
+          is_general: validatedVoucher.is_general || false
+        };
+        
+        setAppliedVoucher(voucherWithDiscount);
         setVoucherError(null);
-        setVoucherCode('');
-        setShowVoucherInput(false);
         setIsVoucherModalVisible(false);
         
-        const newDiscount = voucher.discount_amount || voucher.potential_savings || 0;
         const deliveryCost = formData.shippingMethod === 'Pickup from Store' ? 0 : 50.00;
-        const newTotal = summary.subtotal + deliveryCost - newDiscount;
+        const newTotal = summary.subtotal + deliveryCost - discountAmount;
         
         setSummary(prev => ({
           ...prev,
-          discount: newDiscount,
+          discount: discountAmount,
           total: newTotal
         }));
+
+        Alert.alert('Success', `Voucher ${voucher.code} applied successfully!`);
       } else {
-        setVoucherError(response.data.error || 'Invalid voucher code');
+        const errorMessage = response.data.error || 'This voucher is not applicable to your order';
+        setVoucherError(errorMessage);
+        
+        Alert.alert(
+          'Voucher Not Applicable',
+          errorMessage,
+          [{ text: 'OK' }]
+        );
       }
     } catch (err: any) {
-      setVoucherError(err.response?.data?.error || 'Failed to validate voucher');
-      console.error('Voucher validation error:', err);
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.details || 
+                          'This voucher cannot be applied to your order';
+      
+      setVoucherError(errorMessage);
+      
+      Alert.alert(
+        'Voucher Not Applicable',
+        errorMessage,
+        [{ text: 'OK' }]
+      );
+      
+      // Only log in development
+      if (__DEV__) {
+        console.log('Voucher validation details:', err.response?.data);
+      }
     } finally {
       setVoucherLoading(false);
     }
@@ -474,7 +569,6 @@ export default function CheckoutPage() {
   // Remove voucher
   const handleRemoveVoucher = () => {
     setAppliedVoucher(null);
-    setVoucherCode('');
     setVoucherError(null);
     
     const deliveryCost = formData.shippingMethod === 'Pickup from Store' ? 0 : 50.00;
@@ -488,10 +582,22 @@ export default function CheckoutPage() {
   };
 
   // Place order
-  // Place order
+ // Place order
+// Place order
 const handlePlaceOrder = async () => {
   if (!userId || !checkoutData) {
     Alert.alert('Error', 'Please complete all required information');
+    return;
+  }
+
+  // Validate voucher still applicable
+  if (appliedVoucher && !isVoucherApplicable(appliedVoucher)) {
+    const reason = getVoucherInapplicableReason(appliedVoucher);
+    Alert.alert(
+      'Voucher No Longer Applicable',
+      reason || 'This voucher is no longer applicable to your order. Please remove it or update your cart.',
+      [{ text: 'OK' }]
+    );
     return;
   }
 
@@ -526,18 +632,29 @@ const handlePlaceOrder = async () => {
 
     if (response.data.success) {
       const orderId = response.data.order_id;
-      // Detect e-wallet payments
       const isEWalletPayment = ['Maya'].includes(formData.paymentMethod);
 
+      console.log('Order created, redirecting. orderId=', orderId, 'isEWallet=', isEWalletPayment);
+
       if (isEWalletPayment) {
-        // FIXED: Use proper navigation with params
+        // For e-wallet payments, go to payment page
         router.push({
           pathname: '/customer/pay-order',
           params: { order_id: orderId }
         });
       } else {
-        // For Cash on Pickup/Delivery, go directly to order success
-        router.push(`/customer/order-successful/${orderId}` as any);
+        // For COD/Cash payments, go to purchases page
+        // Navigate to purchases and show success message
+        router.replace('/customer/purchases');
+        
+        // Show success message after a short delay to ensure navigation happens
+        setTimeout(() => {
+          Alert.alert(
+            'Order Placed Successfully',
+            'Your order has been placed and is pending seller confirmation.',
+            [{ text: 'OK' }]
+          );
+        }, 100);
       }
     } else {
       throw new Error(response.data.error || 'Failed to create order');
@@ -1109,8 +1226,8 @@ const handlePlaceOrder = async () => {
             <View style={{ flex: 1 }}>
               <View style={styles.voucherHeaderRow}>
                 <View>
-                  <Text style={styles.sectionTitle}>Voucher & Discounts</Text>
-                  <Text style={styles.sectionSubtitle}>Apply a voucher code to save on your order</Text>
+                  <Text style={styles.sectionTitle}>Available Vouchers</Text>
+                  <Text style={styles.sectionSubtitle}>Select a voucher to save on your order</Text>
                 </View>
                 {allVouchers.length > 0 && (
                   <TouchableOpacity 
@@ -1150,88 +1267,86 @@ const handlePlaceOrder = async () => {
                 </TouchableOpacity>
               </View>
             </View>
-          ) : !showVoucherInput ? (
-            <TouchableOpacity 
-              style={styles.enterVoucherButton}
-              onPress={() => setShowVoucherInput(true)}
-            >
-              <MaterialIcons name="local-offer" size={20} color="#EA580C" />
-              <Text style={styles.enterVoucherText}>Enter Voucher Code</Text>
-            </TouchableOpacity>
           ) : (
-            <View style={styles.voucherInputContainer}>
-              <View style={styles.voucherInputRow}>
-                <TextInput
-                  style={styles.voucherInput}
-                  placeholder="Enter voucher code (e.g., SUMMER2024)"
-                  placeholderTextColor="#9CA3AF"
-                  value={voucherCode}
-                  onChangeText={(text) => setVoucherCode(text.toUpperCase())}
-                  editable={!voucherLoading}
-                  autoCapitalize="characters"
-                />
-                <TouchableOpacity 
-                  style={[
-                    styles.applyVoucherButton,
-                    (!voucherCode.trim() || voucherLoading) && styles.applyVoucherButtonDisabled
-                  ]}
-                  onPress={handleApplyVoucher}
-                  disabled={!voucherCode.trim() || voucherLoading}
-                >
-                  {voucherLoading ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.applyVoucherText}>Apply</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-              
-              {voucherError && (
-                <View style={styles.voucherErrorCard}>
-                  <MaterialIcons name="error-outline" size={20} color="#DC2626" />
-                  <Text style={styles.voucherErrorText}>{voucherError}</Text>
+            <>
+              {loadingVouchers ? (
+                <View style={styles.loadingVouchersPreview}>
+                  <ActivityIndicator size="small" color="#EA580C" />
+                  <Text style={styles.loadingVouchersPreviewText}>Loading vouchers...</Text>
+                </View>
+              ) : allVouchers.length > 0 ? (
+                <View style={styles.availableVouchersPreview}>
+                  <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.vouchersPreviewScroll}
+                  >
+                    {allVouchers.slice(0, 5).map((voucher, index) => {
+                      const savings = voucher.discount_type === 'percentage'
+                        ? (summary.subtotal * voucher.value / 100)
+                        : Math.min(voucher.value, summary.subtotal);
+                      const applicable = isVoucherApplicable(voucher);
+                      const reason = getVoucherInapplicableReason(voucher);
+                      
+                      return (
+                        <TouchableOpacity
+                          key={voucher.id || index}
+                          style={[
+                            styles.voucherPreviewCard,
+                            !applicable && styles.voucherPreviewCardDisabled
+                          ]}
+                          onPress={() => handleApplyVoucher(voucher)}
+                          disabled={!applicable}
+                        >
+                          <View style={styles.voucherPreviewHeader}>
+                            <MaterialIcons 
+                              name={voucher.discount_type === 'percentage' ? 'percent' : 'attach-money'} 
+                              size={20} 
+                              color="#EA580C" 
+                            />
+                            <Text style={styles.voucherPreviewCode}>{voucher.code}</Text>
+                          </View>
+                          <Text style={styles.voucherPreviewDescription} numberOfLines={2}>
+                            {voucher.description}
+                          </Text>
+                          {applicable ? (
+                            <Text style={styles.voucherPreviewSavings}>
+                              Save ₱{savings.toFixed(2)}
+                            </Text>
+                          ) : (
+                            <View style={styles.previewNotApplicable}>
+                              <MaterialIcons name="info-outline" size={12} color="#DC2626" />
+                              <Text style={styles.previewNotApplicableText}>
+                                {reason || 'Not applicable'}
+                              </Text>
+                            </View>
+                          )}
+                          {voucher.is_recommended && (
+                            <View style={styles.recommendedBadge}>
+                              <MaterialIcons name="bolt" size={12} color="#FFFFFF" />
+                              <Text style={styles.recommendedBadgeText}>Recommended</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              ) : (
+                <View style={styles.noVouchersPreview}>
+                  <MaterialIcons name="local-offer" size={24} color="#9CA3AF" />
+                  <Text style={styles.noVouchersPreviewText}>
+                    No vouchers available for this order
+                  </Text>
                 </View>
               )}
-            </View>
+            </>
           )}
 
-          {/* Show available vouchers preview */}
-          {allVouchers.length > 0 && !appliedVoucher && (
-            <View style={styles.availableVouchersPreview}>
-              <Text style={styles.availableVouchersTitle}>
-                Available Vouchers ({allVouchers.length})
-              </Text>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                style={styles.vouchersPreviewScroll}
-              >
-                {allVouchers.slice(0, 3).map((voucher, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={styles.voucherPreviewCard}
-                    onPress={() => {
-                      setVoucherCode(voucher.code);
-                      handleApplyVoucher();
-                    }}
-                  >
-                    <View style={styles.voucherPreviewHeader}>
-                      <MaterialIcons 
-                        name={voucher.discount_type === 'percentage' ? 'percent' : 'attach-money'} 
-                        size={20} 
-                        color="#EA580C" 
-                      />
-                      <Text style={styles.voucherPreviewCode}>{voucher.code}</Text>
-                    </View>
-                    <Text style={styles.voucherPreviewDescription} numberOfLines={2}>
-                      {voucher.description}
-                    </Text>
-                    <Text style={styles.voucherPreviewSavings}>
-                      Save ₱{voucher.potential_savings.toFixed(2)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+          {voucherError && (
+            <View style={styles.voucherErrorCard}>
+              <MaterialIcons name="error-outline" size={20} color="#DC2626" />
+              <Text style={styles.voucherErrorText}>{voucherError}</Text>
             </View>
           )}
         </View>
@@ -1294,7 +1409,12 @@ const handlePlaceOrder = async () => {
                 )}
                 {!appliedVoucher && allVouchers.length > 0 && (
                   <Text style={styles.savingsText}>
-                    💡 Apply a voucher to save up to ₱{Math.max(...allVouchers.map((v: any) => v.potential_savings || 0)).toFixed(2)}
+                    💡 Apply a voucher to save up to ₱{Math.max(...allVouchers.map((v: any) => {
+                      if (v.discount_type === 'percentage') {
+                        return summary.subtotal * v.value / 100;
+                      }
+                      return Math.min(v.value, summary.subtotal);
+                    })).toFixed(2)}
                   </Text>
                 )}
               </View>
@@ -1473,7 +1593,7 @@ const handlePlaceOrder = async () => {
             
             <ScrollView style={styles.modalContent}>
               {/* Voucher Categories */}
-              {checkoutData.available_vouchers.length > 0 && (
+              {checkoutData.available_vouchers.length > 1 && (
                 <ScrollView 
                   horizontal 
                   showsHorizontalScrollIndicator={false}
@@ -1521,83 +1641,100 @@ const handlePlaceOrder = async () => {
                   <Text style={styles.loadingVouchersText}>Loading vouchers...</Text>
                 </View>
               ) : filteredVouchers.length > 0 ? (
-                filteredVouchers.map((voucher, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={styles.modalVoucherCard}
-                    onPress={() => {
-                      setVoucherCode(voucher.code);
-                      handleApplyVoucher();
-                    }}
-                  >
-                    <View style={styles.modalVoucherHeader}>
-                      <View style={styles.modalVoucherLeft}>
-                        <View style={styles.modalVoucherIcon}>
-                          {voucher.discount_type === 'percentage' ? (
-                            <MaterialIcons name="percent" size={24} color="#EA580C" />
-                          ) : (
-                            <MaterialIcons name="attach-money" size={24} color="#EA580C" />
-                          )}
-                        </View>
-                        <View style={styles.modalVoucherInfo}>
-                          <View style={styles.modalVoucherCodeRow}>
-                            <Text style={styles.modalVoucherCode}>{voucher.code}</Text>
-                            {voucher.is_recommended && (
-                              <View style={styles.recommendedBadge}>
-                                <MaterialIcons name="bolt" size={12} color="#FFFFFF" />
-                                <Text style={styles.recommendedBadgeText}>Recommended</Text>
+                filteredVouchers.map((voucher, index) => {
+                  const savings = voucher.discount_type === 'percentage'
+                    ? (summary.subtotal * voucher.value / 100)
+                    : Math.min(voucher.value, summary.subtotal);
+                  const applicable = isVoucherApplicable(voucher);
+                  const reason = getVoucherInapplicableReason(voucher);
+                  
+                  return (
+                    <TouchableOpacity
+                      key={index}
+                      style={[
+                        styles.modalVoucherCard,
+                        !applicable && styles.modalVoucherCardDisabled
+                      ]}
+                      onPress={() => handleApplyVoucher(voucher)}
+                      disabled={!applicable}
+                    >
+                      <View style={styles.modalVoucherHeader}>
+                        <View style={styles.modalVoucherLeft}>
+                          <View style={styles.modalVoucherIcon}>
+                            {voucher.discount_type === 'percentage' ? (
+                              <MaterialIcons name="percent" size={24} color="#EA580C" />
+                            ) : (
+                              <MaterialIcons name="attach-money" size={24} color="#EA580C" />
+                            )}
+                          </View>
+                          <View style={styles.modalVoucherInfo}>
+                            <View style={styles.modalVoucherCodeRow}>
+                              <Text style={styles.modalVoucherCode}>{voucher.code}</Text>
+                              {voucher.is_recommended && (
+                                <View style={styles.recommendedBadge}>
+                                  <MaterialIcons name="bolt" size={12} color="#FFFFFF" />
+                                  <Text style={styles.recommendedBadgeText}>Recommended</Text>
+                                </View>
+                              )}
+                              {voucher.customer_tier && voucher.customer_tier !== 'all' && (
+                                renderTierBadge(voucher.customer_tier)
+                              )}
+                            </View>
+                            <Text style={styles.modalVoucherName}>{voucher.name}</Text>
+                            <Text style={styles.modalVoucherDescription}>{voucher.description}</Text>
+                            
+                            <View style={styles.modalVoucherDetails}>
+                              <View style={styles.modalVoucherDetail}>
+                                <MaterialIcons name="store" size={14} color="#6B7280" />
+                                <Text style={styles.modalVoucherDetailText}>{voucher.shop_name}</Text>
+                              </View>
+                              <View style={styles.modalVoucherDetail}>
+                                <Text style={styles.modalVoucherDetailText}>
+                                  Min: ₱{voucher.minimum_spend.toFixed(2)}
+                                </Text>
+                              </View>
+                            </View>
+                            
+                            {!applicable && reason && (
+                              <View style={styles.notApplicableContainer}>
+                                <MaterialIcons name="info-outline" size={14} color="#DC2626" />
+                                <Text style={styles.notApplicableText}>
+                                  {reason}
+                                </Text>
                               </View>
                             )}
-                            {voucher.customer_tier && voucher.customer_tier !== 'all' && (
-                              renderTierBadge(voucher.customer_tier)
-                            )}
                           </View>
-                          <Text style={styles.modalVoucherName}>{voucher.name}</Text>
-                          <Text style={styles.modalVoucherDescription}>{voucher.description}</Text>
+                        </View>
+                        
+                        <View style={styles.modalVoucherRight}>
+                          <View style={styles.modalVoucherDiscount}>
+                            <Text style={styles.modalVoucherDiscountValue}>
+                              {voucher.discount_type === 'percentage' 
+                                ? `${voucher.value}%` 
+                                : `₱${voucher.value}`}
+                            </Text>
+                            <Text style={styles.modalVoucherDiscountLabel}>OFF</Text>
+                          </View>
                           
-                          <View style={styles.modalVoucherDetails}>
-                            <View style={styles.modalVoucherDetail}>
-                              <MaterialIcons name="store" size={14} color="#6B7280" />
-                              <Text style={styles.modalVoucherDetailText}>{voucher.shop_name}</Text>
-                            </View>
-                            <View style={styles.modalVoucherDetail}>
-                              <Text style={styles.modalVoucherDetailText}>
-                                Min: ₱{voucher.minimum_spend.toFixed(2)}
-                              </Text>
-                            </View>
+                          {applicable && (
+                            <Text style={styles.modalVoucherSavings}>
+                              Save ₱{savings.toFixed(2)}
+                            </Text>
+                          )}
+                          
+                          <View style={[
+                            styles.modalApplyButton,
+                            !applicable && styles.modalApplyButtonDisabled
+                          ]}>
+                            <Text style={styles.modalApplyButtonText}>
+                              {applicable ? 'Apply' : 'Not Eligible'}
+                            </Text>
                           </View>
                         </View>
                       </View>
-                      
-                      <View style={styles.modalVoucherRight}>
-                        <View style={styles.modalVoucherDiscount}>
-                          <Text style={styles.modalVoucherDiscountValue}>
-                            {voucher.discount_type === 'percentage' 
-                              ? `${voucher.value}%` 
-                              : `₱${voucher.value}`}
-                          </Text>
-                          <Text style={styles.modalVoucherDiscountLabel}>OFF</Text>
-                        </View>
-                        
-                        {voucher.potential_savings > 0 && (
-                          <Text style={styles.modalVoucherSavings}>
-                            Save ₱{voucher.potential_savings.toFixed(2)}
-                          </Text>
-                        )}
-                        
-                        <TouchableOpacity 
-                          style={styles.modalApplyButton}
-                          onPress={() => {
-                            setVoucherCode(voucher.code);
-                            handleApplyVoucher();
-                          }}
-                        >
-                          <Text style={styles.modalApplyButtonText}>Apply</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-                ))
+                    </TouchableOpacity>
+                  );
+                })
               ) : (
                 <View style={styles.noVouchersContainer}>
                   <MaterialIcons name="local-offer" size={48} color="#D1D5DB" />
@@ -1619,6 +1756,32 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8F9FA',
+  },
+  notApplicableContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 4,
+  },
+  notApplicableText: {
+    fontSize: 11,
+    color: '#DC2626',
+    flex: 1,
+  },
+  previewNotApplicable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    gap: 2,
+  },
+  previewNotApplicableText: {
+    fontSize: 10,
+    color: '#DC2626',
+    flex: 1,
+  },
+  modalApplyButtonDisabled: {
+    backgroundColor: '#9CA3AF',
+    opacity: 0.7,
   },
   center: {
     flex: 1,
@@ -2282,71 +2445,29 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'capitalize',
   },
-  enterVoucherButton: {
+  loadingVouchersPreview: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#E5E7EB',
-    borderStyle: 'dashed',
-    borderRadius: 8,
-    padding: 16,
-    gap: 8,
+    padding: 20,
+    gap: 12,
   },
-  enterVoucherText: {
+  loadingVouchersPreviewText: {
     fontSize: 14,
-    color: '#374151',
-    fontWeight: '500',
+    color: '#6B7280',
   },
-  voucherInputContainer: {
-    gap: 8,
-  },
-  voucherInputRow: {
+  noVouchersPreview: {
     flexDirection: 'row',
-    gap: 8,
-  },
-  voucherInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#111827',
-    fontWeight: '500',
-  },
-  applyVoucherButton: {
-    backgroundColor: '#EA580C',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    minWidth: 80,
-  },
-  applyVoucherButtonDisabled: {
-    backgroundColor: '#9CA3AF',
-  },
-  applyVoucherText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  voucherErrorCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    padding: 12,
+    padding: 20,
+    backgroundColor: '#F9FAFB',
     borderRadius: 8,
     gap: 8,
   },
-  voucherErrorText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#DC2626',
+  noVouchersPreviewText: {
+    fontSize: 14,
+    color: '#6B7280',
   },
   availableVouchersPreview: {
     marginTop: 16,
@@ -2368,6 +2489,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     marginRight: 12,
+    position: 'relative',
+  },
+  voucherPreviewCardDisabled: {
+    opacity: 0.5,
+    backgroundColor: '#F9FAFB',
   },
   voucherPreviewHeader: {
     flexDirection: 'row',
@@ -2389,6 +2515,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#059669',
     fontWeight: '600',
+  },
+  voucherPreviewMinimum: {
+    fontSize: 10,
+    color: '#DC2626',
+    marginTop: 4,
+  },
+  voucherErrorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+    gap: 8,
+  },
+  voucherErrorText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#DC2626',
   },
   remarksInput: {
     borderWidth: 1,
@@ -2713,6 +2860,10 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
   },
+  modalVoucherCardDisabled: {
+    opacity: 0.5,
+    backgroundColor: '#F9FAFB',
+  },
   modalVoucherHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -2777,6 +2928,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#6B7280',
   },
+  modalVoucherNotApplicable: {
+    fontSize: 11,
+    color: '#DC2626',
+    marginTop: 8,
+  },
   modalVoucherRight: {
     alignItems: 'flex-end',
     marginLeft: 12,
@@ -2806,6 +2962,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 6,
   },
+
   modalApplyButtonText: {
     color: '#FFFFFF',
     fontSize: 12,
