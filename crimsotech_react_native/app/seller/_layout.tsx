@@ -1,14 +1,24 @@
 // app/seller/_layout.tsx
 import React, { useEffect, useState } from 'react';
-import { Stack } from 'expo-router';
+import { Stack, usePathname } from 'expo-router';
 import RoleGuard from '../guards/RoleGuard';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import Header from './includes/header';
 import BottomTab from './includes/BottomTabs';
 import { useLocalSearchParams } from 'expo-router';
 
+// Screens that have their own navigation bar — hide the global Header and BottomTab
+const FULLSCREEN_ROUTES = [
+  'seller-edit-product',
+  'seller-create-product',
+  'seller-create-product-form',
+  'seller-create-gift',
+  'seller-create-gift-form',
+];
+
 export default function SellerLayout() {
   const params = useLocalSearchParams();
+  const pathname = usePathname();
   const [shopId, setShopId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -18,6 +28,8 @@ export default function SellerLayout() {
     }
     setLoading(false);
   }, [params]);
+
+  const isFullscreen = FULLSCREEN_ROUTES.some(route => pathname.includes(route));
 
   if (loading) {
     return (
@@ -30,7 +42,7 @@ export default function SellerLayout() {
   return (
     <RoleGuard allowedRoles={['customer']}>
       <View style={styles.container}>
-        <Header shopId={shopId} />
+        {!isFullscreen && <Header shopId={shopId} />}
         <View style={styles.content}>
           <Stack
             screenOptions={{
@@ -63,7 +75,6 @@ export default function SellerLayout() {
             <Stack.Screen name="file-dispute" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="myproducts" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="notification" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="order" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="pay-boosting" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="product-vouchers" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="return-address" options={{ animation: 'slide_from_right' }} />
@@ -76,7 +87,7 @@ export default function SellerLayout() {
             <Stack.Screen name="view-refund-details" options={{ animation: 'slide_from_right' }} />
           </Stack>
         </View>
-        <BottomTab shopId={shopId} />
+        {!isFullscreen && <BottomTab shopId={shopId} />}
       </View>
     </RoleGuard>
   );
