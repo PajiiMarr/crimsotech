@@ -347,6 +347,7 @@ export default function RiderSchedule() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showWeekPicker, setShowWeekPicker] = useState(false);
+  const [showWeeklyCards, setShowWeeklyCards] = useState(false);
   const [selectedWeekDate, setSelectedWeekDate] = useState(new Date());
   
   // UI States
@@ -667,6 +668,15 @@ export default function RiderSchedule() {
           </View>
 
           <View style={{ backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', padding: 12, marginBottom: 12 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 8 }}>
+              <TouchableOpacity
+                onPress={() => setShowWeeklyCards((prev) => !prev)}
+                style={{ backgroundColor: '#F3F4F6', width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Ionicons name="calendar-outline" size={18} color="#4B5563" />
+              </TouchableOpacity>
+            </View>
+
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <TouchableOpacity
                 onPress={() => setWeekOffset((prev) => prev - 1)}
@@ -674,9 +684,11 @@ export default function RiderSchedule() {
               >
                 <Text style={{ fontSize: 12, color: '#374151' }}>Prev Week</Text>
               </TouchableOpacity>
-              <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>
-                {formatWeekRangeLabel(weeklyView?.week_start, weeklyView?.week_end)}
-              </Text>
+              <TouchableOpacity onPress={() => setShowWeekPicker(true)}>
+                <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>
+                  {formatWeekRangeLabel(weeklyView?.week_start, weeklyView?.week_end)}
+                </Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setWeekOffset((prev) => prev + 1)}
                 style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#F3F4F6' }}
@@ -685,25 +697,20 @@ export default function RiderSchedule() {
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              onPress={() => setShowWeekPicker(true)}
-              style={{ alignSelf: 'flex-end', marginBottom: 8, backgroundColor: '#EFF6FF', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
-            >
-              <Text style={{ fontSize: 12, color: '#2563EB', fontWeight: '600' }}>Pick Week</Text>
-            </TouchableOpacity>
-
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-              {(weeklyView?.weekly_data || []).map((item, idx) => (
-                <View
-                  key={`${item.date || idx}`}
-                  style={{ width: '32%', marginRight: idx % 3 === 2 ? 0 : '2%', marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 8, backgroundColor: '#FAFAFA' }}
-                >
-                  <Text style={{ fontSize: 11, color: '#374151', fontWeight: '600' }}>{item.day_name || DAYS_OF_WEEK[idx] || 'Day'}</Text>
-                  <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>{item.date || ''}</Text>
-                  <Text style={{ fontSize: 13, color: '#111827', fontWeight: '700', marginTop: 4 }}>{item.deliveries_count || 0} deliveries</Text>
-                </View>
-              ))}
-            </View>
+            {showWeeklyCards && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                {(weeklyView?.weekly_data || []).map((item, idx) => (
+                  <View
+                    key={`${item.date || idx}`}
+                    style={{ width: '32%', marginRight: idx % 3 === 2 ? 0 : '2%', marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 8, backgroundColor: '#FAFAFA' }}
+                  >
+                    <Text style={{ fontSize: 11, color: '#374151', fontWeight: '600' }}>{item.day_name || DAYS_OF_WEEK[idx] || 'Day'}</Text>
+                    <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>{item.date || ''}</Text>
+                    <Text style={{ fontSize: 13, color: '#111827', fontWeight: '700', marginTop: 4 }}>{item.deliveries_count || 0} deliveries</Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
 
           {isLoading && !scheduleData ? (
