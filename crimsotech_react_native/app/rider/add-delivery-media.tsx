@@ -79,12 +79,11 @@ export default function AddDeliveryMedia() {
     if (!userId || !deliveryId) return;
     try {
       setLoading(true);
-      const response = await AxiosInstance.get("/proof-management/get_delivery_proofs/", {
-        headers: { "X-User-Id": userId },
-        params: { delivery_id: deliveryId },
+      const response = await AxiosInstance.get(`/rider-proof/delivery/${deliveryId}/proofs/`, {
+        headers: { 'X-User-Id': userId },
       });
       if (response.data?.success) {
-        const proofs = response.data.all_proofs || response.data.proofs || [];
+        const proofs = response.data.proofs || [];
         setExistingProofs(proofs);
       }
     } catch (error: any) {
@@ -176,31 +175,27 @@ export default function AddDeliveryMedia() {
 
     try {
       setUploading(true);
-      const formData = new FormData();
-      formData.append("delivery_id", deliveryId);
-      formData.append("proof_type", "delivery");
-      selectedProofs.forEach((proof) => {
-        formData.append("proofs", proof as any);
-      });
+      for (const proof of selectedProofs) {
+        const formData = new FormData();
+        formData.append('proof_type', 'delivery');
+        formData.append('file', proof as any);
 
-      const response = await AxiosInstance.post(
-        "/proof-management/upload_proofs/",
-        formData,
-        {
+        const response = await AxiosInstance.post(`/rider-proof/upload/${deliveryId}/`, formData, {
           headers: {
-            "X-User-Id": userId,
-            "Content-Type": "multipart/form-data",
+            'X-User-Id': userId,
+            'Content-Type': 'multipart/form-data',
           },
-        }
-      );
+        });
 
-      if (response.data?.success) {
-        Alert.alert("Success", response.data.message || "Proofs uploaded successfully.");
-        setSelectedProofs([]);
-        fetchProofs();
-      } else {
-        Alert.alert("Upload Failed", response.data?.error || "Failed to upload proofs");
+        if (!response.data?.success) {
+          Alert.alert('Upload Failed', response.data?.error || 'Failed to upload one or more proofs');
+          return;
+        }
       }
+
+      Alert.alert('Success', 'Proofs uploaded successfully.');
+      setSelectedProofs([]);
+      fetchProofs();
     } catch (error: any) {
       Alert.alert("Upload Failed", error?.message || "Failed to upload proofs");
     } finally {

@@ -202,12 +202,20 @@ export default function WalletWithdraw() {
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [showBalance, setShowBalance] = useState(true);
   const [filter, setFilter] = useState<'all' | 'credit' | 'debit'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'delivery_fee' | 'withdrawal'>('all');
 
   const fetchData = async () => {
     try {
       setLoading(true);
+
+      const params = new URLSearchParams();
+      params.append('limit', '30');
+      params.append('offset', '0');
+      if (filter !== 'all') params.append('type', filter);
+      if (sourceFilter !== 'all') params.append('source', sourceFilter);
+
       const [walletRes, profileRes] = await Promise.all([
-        AxiosInstance.get('/rider-wallet/?limit=30&offset=0', {
+        AxiosInstance.get(`/rider-wallet/?${params.toString()}`, {
           headers: { 'X-User-Id': userId },
         }),
         AxiosInstance.get('/profile/', {
@@ -241,17 +249,14 @@ export default function WalletWithdraw() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [filter, sourceFilter]);
 
   const onRefresh = () => {
     setRefreshing(true);
     fetchData();
   };
 
-  const filteredTransactions = useMemo(() => {
-    if (filter === 'all') return transactions;
-    return transactions.filter((t) => t.transaction_type === filter);
-  }, [transactions, filter]);
+  const filteredTransactions = useMemo(() => transactions, [transactions]);
 
   const formatAmount = (amount: number) =>
     `PHP ${Number(amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -320,6 +325,30 @@ export default function WalletWithdraw() {
             >
               <Text style={{ color: filter === tab ? 'white' : '#4B5563', fontSize: 12, fontWeight: '600' }}>
                 {tab === 'all' ? 'All' : tab === 'credit' ? 'Credits' : 'Debits'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+          {([
+            { id: 'all', label: 'All Sources' },
+            { id: 'delivery_fee', label: 'Delivery' },
+            { id: 'withdrawal', label: 'Withdrawal' },
+          ] as const).map((tab) => (
+            <TouchableOpacity
+              key={tab.id}
+              onPress={() => setSourceFilter(tab.id)}
+              style={{
+                marginRight: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: 16,
+                backgroundColor: sourceFilter === tab.id ? '#111827' : '#F3F4F6',
+              }}
+            >
+              <Text style={{ color: sourceFilter === tab.id ? 'white' : '#4B5563', fontSize: 12, fontWeight: '600' }}>
+                {tab.label}
               </Text>
             </TouchableOpacity>
           ))}
