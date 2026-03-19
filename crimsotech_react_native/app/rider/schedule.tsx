@@ -90,9 +90,14 @@ interface WeeklyViewResponse {
   success: boolean;
   week_start?: string;
   week_end?: string;
-  week_days?: Array<{
+  weekly_data?: Array<{
     date?: string;
+    day_of_week?: number;
     day_name?: string;
+    is_today?: boolean;
+    is_available?: boolean;
+    start_time?: string;
+    end_time?: string;
     deliveries_count?: number;
   }>;
 }
@@ -341,6 +346,8 @@ export default function RiderSchedule() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showWeekPicker, setShowWeekPicker] = useState(false);
+  const [selectedWeekDate, setSelectedWeekDate] = useState(new Date());
   
   // UI States
   const [online, setOnline] = useState(true);
@@ -385,45 +392,73 @@ export default function RiderSchedule() {
     }
   }, [scheduleData]);
 
-  // Fetch all data
-  const fetchAllData = useCallback(async () => {
-    try {
-      setIsLoading(true);
+  const getWeekStart = (date: Date) => {
+    const d = new Date(date);
+    const day = (d.getDay() + 6) % 7; // Monday=0
+    d.setDate(d.getDate() - day);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
 
-      const [scheduleResponse, weeklyResponse] = await Promise.all([
-        AxiosInstance.get('/rider-schedule/get_schedule_data/', {
-          headers: { 'X-User-Id': userId }
-        }),
-        AxiosInstance.get(`/rider-schedule/get_weekly_view/?week_offset=${weekOffset}`, {
-          headers: { 'X-User-Id': userId }
-        })
-      ]);
+  const fetchScheduleData = useCallback(async () => {
+    try {
+      const scheduleResponse = await AxiosInstance.get('/rider-schedule/get_schedule_data/', {
+        headers: { 'X-User-Id': userId }
+      });
 
       if (scheduleResponse.data.success) {
         setScheduleData(scheduleResponse.data);
       }
+    } catch (error: any) {
+      console.error('Error fetching schedule data:', error);
+      Alert.alert('Error', 'Failed to load schedule data');
+    }
+  }, [userId]);
+
+  const fetchWeeklyData = useCallback(async () => {
+    try {
+      const weeklyResponse = await AxiosInstance.get(`/rider-schedule/get_weekly_view/?week_offset=${weekOffset}`, {
+        headers: { 'X-User-Id': userId }
+      });
 
       if (weeklyResponse.data?.success) {
         setWeeklyView(weeklyResponse.data);
       }
     } catch (error: any) {
-      console.error('Error fetching schedule data:', error);
-      Alert.alert('Error', 'Failed to load schedule data');
+      console.error('Error fetching weekly view:', error);
+      Alert.alert('Error', 'Failed to load weekly view');
+    }
+  }, [userId, weekOffset]);
+
+  // Fetch initial data
+  const fetchInitialData = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      await Promise.all([fetchScheduleData(), fetchWeeklyData()]);
+    } catch (error: any) {
+      console.error('Error fetching initial schedule data:', error);
     } finally {
       setIsLoading(false);
       setRefreshing(false);
     }
-  }, [userId, weekOffset]);
+  }, [fetchScheduleData, fetchWeeklyData]);
 
   // Initial load
   useEffect(() => {
-    fetchAllData();
-  }, [fetchAllData]);
+    fetchInitialData();
+  }, [fetchInitialData]);
+
+  // When navigating weeks, refresh only weekly calendar data so schedule edits don't get reset
+  useEffect(() => {
+    if (!isLoading) {
+      fetchWeeklyData();
+    }
+  }, [weekOffset, fetchWeeklyData, isLoading]);
 
   // Refresh control
   const onRefresh = () => {
     setRefreshing(true);
-    fetchAllData();
+    fetchInitialData();
   };
 
   // Handle toggle day availability
@@ -456,9 +491,18 @@ export default function RiderSchedule() {
         { schedule: schedulePayload },
         { headers: { 'X-User-Id': userId } }
       );
-      
-      // Refresh data
-      await fetchAllData();
+
+      // Keep UI in sync without resetting user context
+      setScheduleData((prev) =>
+        prev
+          ? {
+              ...prev,
+              schedule: scheduleArray,
+            }
+          : prev,
+      );
+
+      await fetchWeeklyData();
     } catch (error: any) {
       console.error('Error saving schedule:', error);
       Alert.alert('Error', 'Failed to update schedule');
@@ -478,8 +522,8 @@ export default function RiderSchedule() {
         },
         { headers: { 'X-User-Id': userId } }
       );
-      
-      await fetchAllData();
+
+      await fetchScheduleData();
     } catch (error) {
       console.error('Error updating online status:', error);
       setOnline(!value); // Revert on error
@@ -498,7 +542,7 @@ export default function RiderSchedule() {
       );
 
       if (response.data.success) {
-        await fetchAllData();
+        await fetchScheduleData();
         setShowAvailabilityModal(false);
         Alert.alert('Success', 'Availability updated successfully');
       }
@@ -516,7 +560,8 @@ export default function RiderSchedule() {
       await AxiosInstance.delete(`/rider-schedule/delete_schedule/?day_of_week=${dayOfWeek}`, {
         headers: { 'X-User-Id': userId }
       });
-      await fetchAllData();
+      await fetchScheduleData();
+      await fetchWeeklyData();
       Alert.alert('Success', 'Day schedule reset.');
     } catch (error: any) {
       console.error('Error resetting day schedule:', error);
@@ -543,6 +588,33 @@ export default function RiderSchedule() {
       newExpanded.add(dayIndex);
     }
     setExpandedDays(newExpanded);
+  };
+
+  const formatWeekRangeLabel = (start?: string, end?: string) => {
+    if (!start || !end) return 'Weekly Overview';
+    try {
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      return `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    } catch {
+      return `${start} - ${end}`;
+    }
+  };
+
+  const onWeekDateChange = (_event: any, pickedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowWeekPicker(false);
+    }
+
+    if (!pickedDate) return;
+
+    setSelectedWeekDate(pickedDate);
+
+    const currentWeekStart = getWeekStart(new Date());
+    const pickedWeekStart = getWeekStart(pickedDate);
+    const diffMs = pickedWeekStart.getTime() - currentWeekStart.getTime();
+    const computedOffset = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000));
+    setWeekOffset(computedOffset);
   };
 
   // Loading skeleton
@@ -603,9 +675,7 @@ export default function RiderSchedule() {
                 <Text style={{ fontSize: 12, color: '#374151' }}>Prev Week</Text>
               </TouchableOpacity>
               <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>
-                {weeklyView?.week_start && weeklyView?.week_end
-                  ? `${weeklyView.week_start} - ${weeklyView.week_end}`
-                  : 'Weekly Overview'}
+                {formatWeekRangeLabel(weeklyView?.week_start, weeklyView?.week_end)}
               </Text>
               <TouchableOpacity
                 onPress={() => setWeekOffset((prev) => prev + 1)}
@@ -615,8 +685,15 @@ export default function RiderSchedule() {
               </TouchableOpacity>
             </View>
 
+            <TouchableOpacity
+              onPress={() => setShowWeekPicker(true)}
+              style={{ alignSelf: 'flex-end', marginBottom: 8, backgroundColor: '#EFF6FF', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+            >
+              <Text style={{ fontSize: 12, color: '#2563EB', fontWeight: '600' }}>Pick Week</Text>
+            </TouchableOpacity>
+
             <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-              {(weeklyView?.week_days || []).map((item, idx) => (
+              {(weeklyView?.weekly_data || []).map((item, idx) => (
                 <View
                   key={`${item.date || idx}`}
                   style={{ width: '32%', marginRight: idx % 3 === 2 ? 0 : '2%', marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 8, backgroundColor: '#FAFAFA' }}
@@ -808,6 +885,16 @@ export default function RiderSchedule() {
           }}
           initialTime={showTimePicker.initialTime}
           mode={showTimePicker.field === 'start_time' ? 'start' : 'end'}
+        />
+      )}
+
+      {/* Week Picker */}
+      {showWeekPicker && (
+        <DateTimePicker
+          value={selectedWeekDate}
+          mode="date"
+          display={Platform.OS === 'ios' ? 'inline' : 'default'}
+          onChange={onWeekDateChange}
         />
       )}
 
