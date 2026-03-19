@@ -10,9 +10,11 @@ import {
   Image,
   ActivityIndicator,
   Dimensions,
-  FlatList
+  FlatList,
+  Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
@@ -152,6 +154,8 @@ const STATUS_TABS: Array<{ id: 'active' | 'completed' | 'cancelled'; label: stri
   { id: 'cancelled', label: 'Cancelled', icon: 'alert-circle-outline' }
 ];
 
+type RangeType = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+
 export default function OrderHistory() {
   const { user } = useAuth();
   const { width } = Dimensions.get('window');
@@ -186,11 +190,18 @@ export default function OrderHistory() {
   const [currentDeliveryId, setCurrentDeliveryId] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
 
-  // Date range (simplified for mobile - last 30 days)
-  const [dateRange] = useState({
+  // Date range controls synced with web behavior presets
+  const [rangeType, setRangeType] = useState<RangeType>('monthly');
+  const [dateRange, setDateRange] = useState({
     start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-    end: new Date()
+    end: new Date(),
   });
+  const [showCustomRangeModal, setShowCustomRangeModal] = useState(false);
+  const [customRangeDraft, setCustomRangeDraft] = useState({
+    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    end: new Date(),
+  });
+  const [pickingDate, setPickingDate] = useState<'start' | 'end' | null>(null);
 
   // Fetch data function
   const fetchHistoryData = async () => {
@@ -200,6 +211,7 @@ export default function OrderHistory() {
       const params = new URLSearchParams({
         start_date: dateRange.start.toISOString().split('T')[0],
         end_date: dateRange.end.toISOString().split('T')[0],
+        range_type: rangeType,
       });
 
       const response = await AxiosInstance.get(`/rider-history/order_history/?${params}`, {
@@ -377,7 +389,81 @@ export default function OrderHistory() {
   // Initial data fetch
   useEffect(() => {
     fetchHistoryData();
-  }, []);
+  }, [dateRange, rangeType]);
+
+  const applyRangePreset = (preset: RangeType) => {
+    if (preset === 'custom') {
+      setCustomRangeDraft({
+        start: dateRange.start,
+        end: dateRange.end,
+      });
+      setShowCustomRangeModal(true);
+      return;
+    }
+
+    const now = new Date();
+    const start = new Date(now);
+
+    if (preset === 'daily') {
+      start.setHours(0, 0, 0, 0);
+    } else if (preset === 'weekly') {
+      start.setDate(now.getDate() - 7);
+    } else if (preset === 'monthly') {
+      start.setDate(now.getDate() - 30);
+    } else {
+      start.setFullYear(now.getFullYear() - 1);
+    }
+
+    setRangeType(preset);
+    setDateRange({ start, end: now });
+  };
+
+  const formatShortDate = (date: Date) => {
+    try {
+      return date.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+    } catch {
+      return '';
+    }
+  };
+
+  const onCustomDateChange = (_event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setPickingDate(null);
+    }
+
+    if (!selectedDate || !pickingDate) return;
+
+    setCustomRangeDraft((prev) => {
+      if (pickingDate === 'start') {
+        const nextStart = selectedDate;
+        const nextEnd = prev.end < nextStart ? nextStart : prev.end;
+        return { start: nextStart, end: nextEnd };
+      }
+
+      const nextEnd = selectedDate;
+      const nextStart = prev.start > nextEnd ? nextEnd : prev.start;
+      return { start: nextStart, end: nextEnd };
+    });
+  };
+
+  const applyCustomRange = () => {
+    if (customRangeDraft.end < customRangeDraft.start) {
+      Alert.alert('Invalid Range', 'End date must be on or after start date.');
+      return;
+    }
+
+    setRangeType('custom');
+    setDateRange({
+      start: customRangeDraft.start,
+      end: customRangeDraft.end,
+    });
+    setShowCustomRangeModal(false);
+    setPickingDate(null);
+  };
 
   // Refresh control
   const onRefresh = () => {
@@ -425,6 +511,39 @@ export default function OrderHistory() {
             <Text style={{ fontSize: 20, fontWeight: 'bold' }}>Order History</Text>
             <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>Track your past deliveries and performance</Text>
           </View>
+
+          {/* Date Range Presets */}
+          <View style={{ flexDirection: 'row', marginBottom: 14 }}>
+            {([
+              { id: 'daily', label: 'Today' },
+              { id: 'weekly', label: '7 Days' },
+              { id: 'monthly', label: '30 Days' },
+              { id: 'yearly', label: '1 Year' },
+              { id: 'custom', label: 'Custom' },
+            ] as const).map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                onPress={() => applyRangePreset(item.id)}
+                style={{
+                  marginRight: 8,
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  borderRadius: 14,
+                  backgroundColor: rangeType === item.id ? '#111827' : '#F3F4F6',
+                }}
+              >
+                <Text style={{ color: rangeType === item.id ? 'white' : '#4B5563', fontSize: 11, fontWeight: '600' }}>
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {rangeType === 'custom' && (
+            <Text style={{ fontSize: 11, color: '#6B7280', marginBottom: 12 }}>
+              {formatShortDate(dateRange.start)} - {formatShortDate(dateRange.end)}
+            </Text>
+          )}
 
           {/* Metrics Cards */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
@@ -698,6 +817,76 @@ export default function OrderHistory() {
           </View>
         </View>
       </ScrollView>
+
+      {/* Custom Date Range Modal */}
+      <Modal
+        visible={showCustomRangeModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setShowCustomRangeModal(false);
+          setPickingDate(null);
+        }}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: 'white', borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>Custom Date Range</Text>
+              <TouchableOpacity onPress={() => setShowCustomRangeModal(false)}>
+                <Ionicons name="close" size={22} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => setPickingDate('start')}
+              style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 12, marginBottom: 10 }}
+            >
+              <Text style={{ fontSize: 11, color: '#6B7280' }}>Start Date</Text>
+              <Text style={{ fontSize: 14, fontWeight: '600', color: '#111827', marginTop: 3 }}>
+                {formatShortDate(customRangeDraft.start)}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setPickingDate('end')}
+              style={{ borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 12, marginBottom: 12 }}
+            >
+              <Text style={{ fontSize: 11, color: '#6B7280' }}>End Date</Text>
+              <Text style={{ fontSize: 14, fontWeight: '600', color: '#111827', marginTop: 3 }}>
+                {formatShortDate(customRangeDraft.end)}
+              </Text>
+            </TouchableOpacity>
+
+            {pickingDate && (
+              <DateTimePicker
+                value={pickingDate === 'start' ? customRangeDraft.start : customRangeDraft.end}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                maximumDate={new Date()}
+                onChange={onCustomDateChange}
+              />
+            )}
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowCustomRangeModal(false);
+                  setPickingDate(null);
+                }}
+                style={{ paddingHorizontal: 14, paddingVertical: 9, marginRight: 8 }}
+              >
+                <Text style={{ fontSize: 13, color: '#6B7280' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={applyCustomRange}
+                style={{ backgroundColor: '#111827', paddingHorizontal: 16, paddingVertical: 9, borderRadius: 8 }}
+              >
+                <Text style={{ fontSize: 13, color: 'white', fontWeight: '700' }}>Apply</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Proof of Delivery Modal */}
       <Modal
