@@ -92,9 +92,24 @@ export default function CreateProduct() {
     }
   };
 
+  const handleBack = () => {
+    if (shopId) {
+      router.replace(`/seller/product-list?shopId=${shopId}`);
+    } else {
+      router.back();
+    }
+  };
+
   if (!shopId) {
     return (
       <SafeAreaView style={styles.container}>
+        <View style={styles.topBar}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={22} color="#111827" />
+          </TouchableOpacity>
+          <Text style={styles.topBarTitle}>Create Product</Text>
+          <View style={{ width: 38 }} />
+        </View>
         <View style={styles.centerContent}>
           <Ionicons name="storefront-outline" size={64} color="#E2E8F0" />
           <Text style={styles.noShopTitle}>No Shop Selected</Text>
@@ -113,8 +128,16 @@ export default function CreateProduct() {
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
+        <View style={styles.topBar}>
+          <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={22} color="#111827" />
+          </TouchableOpacity>
+          <Text style={styles.topBarTitle}>Create Product</Text>
+          <View style={{ width: 38 }} />
+        </View>
         <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color="#3B82F6" />
+          <ActivityIndicator size="large" color="#EA580C" />
+          <Text style={styles.loadingText}>Loading...</Text>
         </View>
       </SafeAreaView>
     );
@@ -122,24 +145,23 @@ export default function CreateProduct() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Back Button */}
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => {
-            if (shopId) {
-              router.replace(`/seller/product-list?shopId=${shopId}`);
-            } else {
-              router.back();
-            }
-          }}
-        >
-          <Ionicons name="arrow-back" size={24} color="#374151" />
-          <Text style={styles.backButtonText}>Back to Product List</Text>
+      {/* Top bar - matching the edit product screen */}
+      <View style={styles.topBar}>
+        <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+          <Ionicons name="arrow-back" size={22} color="#111827" />
         </TouchableOpacity>
+        <View style={styles.topBarCenter}>
+          <Text style={styles.topBarTitle}>Create Product</Text>
+          {selectedShop && (
+            <Text style={styles.topBarSubtitle} numberOfLines={1}>
+              {selectedShop.name}
+            </Text>
+          )}
+        </View>
+        <View style={{ width: 38 }} />
+      </View>
 
-        <Text style={styles.title}>Create New Product</Text>
-
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {/* Single Column Layout */}
         <View style={styles.formContainer}>
           <CreateProductForm 
@@ -159,6 +181,39 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F9FAFB',
   },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topBarCenter: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  topBarTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  topBarSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 1,
+  },
   scrollView: {
     flex: 1,
   },
@@ -167,25 +222,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
+    gap: 12,
   },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 8,
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 4,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-  },
-  backButtonText: {
+  loadingText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
+    color: '#6B7280',
+    marginTop: 8,
   },
   title: {
     fontSize: 28,
