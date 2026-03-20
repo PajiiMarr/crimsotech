@@ -1489,6 +1489,7 @@ class Refund(models.Model):
     buyer_notified_at = models.DateTimeField(null=True, blank=True)
     reject_reason_code = models.CharField(max_length=100, blank=True, null=True)
     reject_reason_details = models.CharField(max_length=100, blank=True, null=True)
+    payment_detail = models.ForeignKey('UserPaymentDetail', on_delete=models.SET_NULL, null=True, blank=True, related_name='refunds')
 
     class Meta:
         indexes = [
@@ -2371,3 +2372,11 @@ class RiderRemittanceItem(models.Model):
 
     def __str__(self):
         return f"RemittanceItem {self.id} for Remittance {self.remittance.reference_number}"
+
+class RefundItem(models.Model):
+    refund = models.ForeignKey('Refund', on_delete=models.CASCADE, related_name='items')
+    checkout = models.ForeignKey('Checkout', on_delete=models.CASCADE, related_name='refund_items')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['refund', 'checkout']
