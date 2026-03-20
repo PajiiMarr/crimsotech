@@ -28146,51 +28146,55 @@ class RefundViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'])
     def get_my_refunds(self, request):
-        """
-        BUYER VIEW: Get refunds for current user.
-        - Returns refunds requested by the user.
-        """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({"error": "User ID required"}, 
-                            status=status.HTTP_400_BAD_REQUEST)
-        
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             user = User.objects.get(id=user_id)
-            # Get refunds requested by this user
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
             refunds = Refund.objects.filter(requested_by=user).order_by('-requested_at')
-            
-            # Filter by status if provided
+
+            # Optional filters
             status_filter = request.query_params.get('status')
             if status_filter:
                 refunds = refunds.filter(status=status_filter)
-            
-            # Filter by refund type if provided
+
             refund_type = request.query_params.get('refund_type')
             if refund_type:
                 refunds = refunds.filter(refund_type=refund_type)
-            
+
+            # Prefetch related items to reduce queries
+            refunds = refunds.prefetch_related(
+                'items__checkout',
+                'medias',
+                'payment_detail',
+                'counter_requests',
+                'return_request',
+                'proofs'
+            )
+
             serializer = RefundSerializer(refunds, many=True, context={'request': request})
             refund_data = serializer.data
-            
-            # Add order items and shop information for each refund
+
+            # Add order items and shop information
             for i, refund in enumerate(refunds):
                 refund_data[i]['order_items'] = self._get_order_items_for_refund(refund, request)
-                
-                # Add shop information for each refund
-                # Get the shop from the order items
                 order_items = refund_data[i]['order_items']
-                if order_items and len(order_items) > 0:
-                    # All items in an order should be from the same shop, so take the first one
-                    shop_info = order_items[0].get('shop', {})
-                    refund_data[i]['shop'] = shop_info
-            
-            return Response(refund_data)
-            
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, 
-                            status=status.HTTP_404_NOT_FOUND)
+                if order_items:
+                    refund_data[i]['shop'] = order_items[0].get('shop', {})
 
+            return Response(refund_data)
+
+        except Exception as e:
+            logger.exception("Error in get_my_refunds")
+            return Response({
+                "error": "Internal server error",
+                "detail": str(e)  # Only in development; remove in production
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     @action(detail=False, methods=['post'])
     def create_refund_request(self, request):
         """
@@ -28338,69 +28342,83 @@ class RefundViewSet(viewsets.ViewSet):
         """
         Simple view-based refund creation endpoint
         """
+        def validate_media_file(file):
+            """Raise ValidationError if file is not allowed or exceeds 10MB."""
+            max_size = 10 * 1024 * 1024  # 10 MB
+            allowed_image_types = ['image/jpeg', 'image/png', 'image/gif']
+            allowed_video_types = ['video/mp4', 'video/quicktime']  # .mov = quicktime
+            content_type = file.content_type
+
+            if content_type in allowed_image_types or content_type in allowed_video_types:
+                if file.size > max_size:
+                    raise ValidationError(f"File {file.name} exceeds 10MB limit.")
+            else:
+                raise ValidationError(f"Unsupported file type: {content_type}. Only images (JPEG, PNG, GIF) and videos (MP4) are allowed.")
+
         try:
             # Get user ID from headers
             user_id = request.headers.get('X-User-Id')
             if not user_id:
-                return JsonResponse({
-                    'error': 'User ID required'
-                }, status=400)
+                return JsonResponse({'error': 'User ID required'}, status=400)
             
             try:
                 user = User.objects.get(id=user_id)
             except User.DoesNotExist:
-                return JsonResponse({
-                    'error': 'User not found'
-                }, status=404)
+                return JsonResponse({'error': 'User not found'}, status=404)
             
             # Parse refund data from form data
-            # DRF's MultiPartParser exposes fields in request.data; Django exposes in request.POST
             refund_data_str = request.data.get('refund_data') or request.POST.get('refund_data')
             if not refund_data_str:
-                return JsonResponse({
-                    'error': 'Refund data required'
-                }, status=400)
+                return JsonResponse({'error': 'Refund data required'}, status=400)
             
             try:
                 refund_data = json.loads(refund_data_str)
             except json.JSONDecodeError:
-                return JsonResponse({
-                    'error': 'Invalid refund data format'
-                }, status=400)
+                return JsonResponse({'error': 'Invalid refund data format'}, status=400)
             
             # Validate required fields
             required_fields = ['order_id', 'reason', 'preferred_refund_method', 'total_refund_amount']
             for field in required_fields:
                 if not refund_data.get(field):
-                    return JsonResponse({
-                        'error': f'{field.replace("_", " ").title()} is required'
-                    }, status=400)
+                    return JsonResponse({'error': f'{field.replace("_", " ").title()} is required'}, status=400)
             
             # Get order
             try:
                 order = Order.objects.get(order=refund_data['order_id'], user=user)
             except Order.DoesNotExist:
-                return JsonResponse({
-                    'error': 'Order not found or does not belong to user'
-                }, status=404)
+                return JsonResponse({'error': 'Order not found or does not belong to user'}, status=404)
             
-            # Check if refund already exists
-            existing_refund = Refund.objects.filter(
+            # Check if refund already exists (item‑based)
+            selected_checkout_ids = []
+            for key, value in request.POST.items():
+                if key.startswith('selected_item_'):
+                    selected_checkout_ids.append(value)
+
+            if not selected_checkout_ids:
+                return JsonResponse({'error': 'No items selected for refund'}, status=400)
+
+            active_statuses = ['pending', 'approved', 'negotiation', 'under_review', 'waiting', 'to_verify']
+            existing_refunds = Refund.objects.filter(
                 order_id=order,
                 requested_by=user,
-                status__in=['pending', 'approved', 'negotiation', 'under_review', 'waiting', 'to_verify']
-            ).first()
-            
-            if existing_refund:
+                status__in=active_statuses
+            )
+
+            already_refunded_checkouts = set()
+            for refund in existing_refunds:
+                refunded_ids = refund.items.values_list('checkout', flat=True)
+                already_refunded_checkouts.update(refunded_ids)
+
+            already_refunded_selected = [cid for cid in selected_checkout_ids if cid in already_refunded_checkouts]
+            if already_refunded_selected:
                 return JsonResponse({
-                    'error': 'A refund request for this order is already in progress',
-                    'refund_id': str(existing_refund.refund_id),
-                    'request_number': getattr(existing_refund, 'request_number', None)
+                    'error': 'Some selected items are already part of an active refund request',
+                    'already_refunded': already_refunded_selected
                 }, status=400)
-            
+
             # Start transaction
             with transaction.atomic():
-                # Map legacy category to current refund_type, and create Refund with current field names
+                # Map legacy category to current refund_type
                 refund_type = 'return' if str(refund_data.get('refund_category', 'return_item')).lower().startswith('return') else 'keep'
                 refund = Refund.objects.create(
                     order_id=order,
@@ -28412,83 +28430,56 @@ class RefundViewSet(viewsets.ViewSet):
                     status='pending',
                     total_refund_amount=Decimal(str(refund_data.get('total_refund_amount'))) if refund_data.get('total_refund_amount') is not None else None
                 )
-
-                # Save will auto-generate request_number
                 refund.save()
 
-                wallet_details = refund_data.get('wallet_details')
-                if wallet_details:
-                    RefundWallet.objects.create(
-                        refund_id=refund,
-                        provider=wallet_details.get('provider', ''),
-                        account_name=wallet_details.get('account_name', ''),
-                        account_number=wallet_details.get('account_number', ''),
-                        contact_number=wallet_details.get('contact_number', '')
-                    )
-                
-                bank_details = refund_data.get('bank_details')
-                if bank_details:
-                    RefundBank.objects.create(
-                        refund_id=refund,
-                        bank_name=bank_details.get('bank_name', ''),
-                        account_name=bank_details.get('account_name', ''),
-                        account_number=bank_details.get('account_number', ''),
-                        account_type=bank_details.get('account_type', ''),
-                        branch=bank_details.get('branch', '')
-                    )
-                
-                remittance_details = refund_data.get('remittance_details')
-                if remittance_details:
-                    RefundRemittance.objects.create(
-                        refund_id=refund,
-                        provider=remittance_details.get('provider', ''),
-                        first_name=remittance_details.get('first_name', ''),
-                        middle_name=remittance_details.get('middle_name', ''),
-                        last_name=remittance_details.get('last_name', ''),
-                        contact_number=remittance_details.get('contact_number', ''),
-                        country=remittance_details.get('country', ''),
-                        city=remittance_details.get('city', ''),
-                        province=remittance_details.get('province', ''),
-                        zip_code=remittance_details.get('zip_code', ''),
-                        barangay=remittance_details.get('barangay', ''),
-                        street=remittance_details.get('address', ''),
-                        valid_id_type=remittance_details.get('valid_id_type', ''),
-                        valid_id_number=remittance_details.get('valid_id_number', '')
-                    )
-                
-                # Handle uploaded files
+                # Link selected payment detail
+                selected_payment_id = refund_data.get('selected_payment_id') or refund_data.get('wallet_details', {}).get('saved_payment_id')
+                if selected_payment_id:
+                    try:
+                        payment_detail = UserPaymentDetail.objects.get(payment_id=selected_payment_id, user=user)
+                        refund.payment_detail = payment_detail
+                        refund.save(update_fields=['payment_detail'])
+                    except UserPaymentDetail.DoesNotExist:
+                        pass
+
+                # ========== Upload evidence files with validation ==========
                 for key, file in request.FILES.items():
                     if key.startswith('evidence_'):
-                        file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
-                        RefundMedia.objects.create(
-                            refund_id=refund,
-                            file_data=file,
-                            file_type=file_type,
-                            uploaded_by=user
-                        )
-                
-                # Handle selected items (store in customer_note for reference)
-                selected_items = []
-                for key, value in request.POST.items():
-                    if key.startswith('selected_item_'):
-                        selected_items.append(value)
-                
-                if selected_items:
-                    refund.customer_note += f"\n\nSelected Checkout IDs: {', '.join(selected_items)}"
-                    refund.save()
-                
+                        try:
+                            validate_media_file(file)  # raises ValidationError if invalid
+                            file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
+                            RefundMedia.objects.create(
+                                refund_id=refund,
+                                file_data=file,
+                                file_type=file_type,
+                                uploaded_by=user
+                            )
+                        except ValidationError as e:
+                            return JsonResponse({'error': str(e)}, status=400)
+                # ========== End file validation ==========
+
+                # Create RefundItem for each selected checkout
+                created_items = []
+                for cid in selected_checkout_ids:
+                    try:
+                        checkout = Checkout.objects.get(id=cid, order=order)
+                        RefundItem.objects.create(refund=refund, checkout=checkout)
+                        created_items.append(str(checkout.id))
+                    except Checkout.DoesNotExist:
+                        continue
+
+                if created_items:
+                    refund.customer_note = (refund.customer_note or '') + f"\n\nSelected Checkout IDs: {', '.join(created_items)}"
+                    refund.save(update_fields=['customer_note'])
+
                 return JsonResponse({
                     'message': 'Refund request created successfully',
                     'refund_id': str(refund.refund_id),
                     'request_number': getattr(refund, 'request_number', None)
                 }, status=201)
-                
-        except Exception as e:
-            return JsonResponse({
-                'error': f'Failed to create refund: {str(e)}'
-            }, status=500)
-    
 
+        except Exception as e:
+            return JsonResponse({'error': f'Failed to create refund: {str(e)}'}, status=500)
     @action(detail=True, methods=['get'])
     def get_my_refund(self, request, pk=None):
         """
@@ -30080,11 +30071,10 @@ class RefundViewSet(viewsets.ViewSet):
         """Get detailed refund data (common for buyer, seller, and admin views)"""
         data = RefundSerializer(refund, context={'request': request}).data
 
-
-        # Expose requester info for easier frontend display
+        # Expose requester info
         data['requested_by_username'] = refund.requested_by.username if refund.requested_by else None
         data['requested_by_email'] = refund.requested_by.email if refund.requested_by else None
-        
+
         # Add order information
         if refund.order_id:
             order = refund.order_id
@@ -30104,10 +30094,8 @@ class RefundViewSet(viewsets.ViewSet):
                     "full_address": order.shipping_address.get_full_address() if order.shipping_address else (order.delivery_address_text or None)
                 } if order.shipping_address or order.delivery_address_text else None,
             }
-            
-            # Get order items from this shop (for seller) or all items (for buyer/admin)
+
             data['order_items'] = self._get_order_items_for_refund(refund, request)
-            # Prefer stored total_refund_amount; otherwise compute total from order items as a fallback
             try:
                 if getattr(refund, 'total_refund_amount', None) is not None:
                     data['total_refund_amount'] = float(refund.total_refund_amount)
@@ -30120,60 +30108,25 @@ class RefundViewSet(viewsets.ViewSet):
                             qty = it.get('quantity') or 0
                             itm_total = float(price) * int(qty)
                         total_refund_amount += float(itm_total)
-                    data['total_refund_amount'] = round(float(total_refund_amount), 2) if total_refund_amount > 0 else None
+                    data['total_refund_amount'] = round(total_refund_amount, 2) if total_refund_amount > 0 else None
             except Exception:
                 data['total_refund_amount'] = None
-        
-        # Add payment method details
+
+        # ========== NEW: Payment details from payment_detail ==========
         payment_details = {}
-        
-        try:
-            wallet = refund.wallet
-            payment_details['wallet'] = {
-                "provider": wallet.provider,
-                "account_name": wallet.account_name,
-                "account_number": wallet.account_number,
-                "contact_number": wallet.contact_number
+        if refund.payment_detail:
+            pd = refund.payment_detail
+            payment_details['selected_payment'] = {
+                "payment_id": str(pd.payment_id),
+                "payment_method": pd.payment_method,
+                "account_name": pd.account_name,
+                "account_number": pd.account_number,
+                "bank_name": pd.bank_name,
+                "is_default": pd.is_default,
             }
-        except RefundWallet.DoesNotExist:
-            pass
-        
-        try:
-            bank = refund.bank
-            payment_details['bank'] = {
-                "bank_name": bank.bank_name,
-                "account_name": bank.account_name,
-                "account_number": bank.account_number,
-                "account_type": bank.account_type,
-                "branch": bank.branch
-            }
-        except RefundBank.DoesNotExist:
-            pass
-        
-        try:
-            remittance = refund.remittance
-            payment_details['remittance'] = {
-                "provider": remittance.provider,
-                "first_name": remittance.first_name,
-                "middle_name": remittance.middle_name,
-                "last_name": remittance.last_name,
-                "contact_number": remittance.contact_number,
-                "address": {
-                    "street": remittance.street,
-                    "barangay": remittance.barangay,
-                    "city": remittance.city,
-                    "province": remittance.province,
-                    "zip_code": remittance.zip_code,
-                    "country": remittance.country
-                },
-                "valid_id_type": remittance.valid_id_type,
-                "valid_id_number": remittance.valid_id_number
-            }
-        except RefundRemittance.DoesNotExist:
-            pass
-        
         data['payment_details'] = payment_details
-        
+        # ========== End payment details ==========
+
         # Add evidence/media files
         media_files = RefundMedia.objects.filter(refund_id=refund)
         data['evidence'] = [
@@ -30189,7 +30142,7 @@ class RefundViewSet(viewsets.ViewSet):
             for media in media_files
         ]
 
-        # Add seller-uploaded proofs (files uploaded as proof of refund) stored in RefundProof
+        # Add seller-uploaded proofs
         proofs_qs = RefundProof.objects.filter(refund=refund)
         data['proofs'] = [
             {
@@ -30203,8 +30156,10 @@ class RefundViewSet(viewsets.ViewSet):
             }
             for p in proofs_qs
         ]
-        # additionally include proofs saved under the delivery/Proof table with type 'seller'
+
+        # Seller delivery proofs
         try:
+            from .models import Delivery, Proof
             delivery = Delivery.objects.filter(order=refund.order_id).first()
             if delivery:
                 seller_proofs = Proof.objects.filter(delivery=delivery, proof_type='seller').order_by('-uploaded_at')
@@ -30221,8 +30176,8 @@ class RefundViewSet(viewsets.ViewSet):
                 data['seller_delivery_proofs'] = []
         except Exception:
             data['seller_delivery_proofs'] = []
-        
-        # Add return request information (if applicable)
+
+        # Return request information
         if refund.refund_type == 'return':
             try:
                 return_request = refund.return_request
@@ -30237,8 +30192,6 @@ class RefundViewSet(viewsets.ViewSet):
                     "return_deadline": return_request.return_deadline.isoformat() if return_request.return_deadline else None,
                     "notes": return_request.notes
                 }
-                
-                # Add return media
                 return_media = ReturnRequestMedia.objects.filter(return_id=return_request)
                 data['return_request']['media'] = [
                     {
@@ -30250,11 +30203,10 @@ class RefundViewSet(viewsets.ViewSet):
                     }
                     for rm in return_media
                 ]
-                
             except ReturnRequestItem.DoesNotExist:
                 data['return_request'] = None
 
-        # Add return address information (if any)
+        # Return address
         try:
             ra = refund.return_address
             data['return_address'] = {
@@ -30279,22 +30231,19 @@ class RefundViewSet(viewsets.ViewSet):
                     'username': ra.seller.username if ra.seller else None
                 } if ra.seller else None
             }
-            
         except ReturnAddress.DoesNotExist:
             data['return_address'] = None
-        
-        # Add timeline/activity log
+
+        # Timeline
         timeline = []
-        
-        # Refund requested
+
         timeline.append({
             "event": "refund_requested",
             "timestamp": refund.requested_at.isoformat(),
             "user": str(refund.requested_by.id),
             "details": f"Refund requested: {refund.reason}"
         })
-        
-        # Status changes
+
         if refund.processed_at:
             timeline.append({
                 "event": "status_changed",
@@ -30302,16 +30251,14 @@ class RefundViewSet(viewsets.ViewSet):
                 "user": str(refund.processed_by.id) if refund.processed_by else None,
                 "details": f"Status changed to {refund.status}"
             })
-        
-        # Buyer notified
+
         if refund.buyer_notified_at:
             timeline.append({
                 "event": "buyer_notified",
                 "timestamp": refund.buyer_notified_at.isoformat(),
                 "details": "Buyer notified about refund approval"
             })
-        
-        # Counter requests
+
         counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
         for cr in counter_requests:
             timeline.append({
@@ -30321,7 +30268,7 @@ class RefundViewSet(viewsets.ViewSet):
                 "details": f"Counter offer: {cr.counter_refund_method} - Status: {cr.status}"
             })
 
-        # Expose structured counter request list and latest suggestion for frontend
+        # Expose structured counter request list
         try:
             data['counter_requests'] = [
                 {
@@ -30352,7 +30299,8 @@ class RefundViewSet(viewsets.ViewSet):
             data['counter_requests'] = []
             data['seller_suggested_method'] = None
             data['seller_suggested_type'] = None
-        
+            data['seller_suggested_amount'] = None
+
         # Return request activities
         if refund.refund_type == 'return':
             try:
@@ -30364,14 +30312,14 @@ class RefundViewSet(viewsets.ViewSet):
                         "user": str(return_request.shipped_by.id) if return_request.shipped_by else None,
                         "details": f"Item shipped via {return_request.logistic_service}"
                     })
-                
+
                 if return_request.received_at:
                     timeline.append({
                         "event": "item_received",
                         "timestamp": return_request.received_at.isoformat(),
                         "details": "Item received by seller"
                     })
-                
+
                 if return_request.updated_at and return_request.updated_by:
                     timeline.append({
                         "event": "return_updated",
@@ -30379,10 +30327,9 @@ class RefundViewSet(viewsets.ViewSet):
                         "user": str(return_request.updated_by.id),
                         "details": f"Return status updated to {return_request.status}"
                     })
-                    
             except ReturnRequestItem.DoesNotExist:
                 pass
-        
+
         # Dispute activities
         try:
             dispute = refund.dispute
@@ -30395,21 +30342,17 @@ class RefundViewSet(viewsets.ViewSet):
                 })
         except DisputeRequest.DoesNotExist:
             pass
-        
-        # Sort timeline by timestamp
+
         timeline.sort(key=lambda x: x['timestamp'], reverse=True)
         data['timeline'] = timeline
-        
-        # Add available actions based on status and user role
+
         data['available_actions'] = self._get_available_actions(refund, user)
-        # Normalize status to lowercase for consistent frontend handling
         try:
             data['status'] = str(refund.status).lower()
         except Exception:
             pass
-        
-        return data
 
+        return data
     @action(detail=True, methods=['post'])
     def add_refund_payment_detail(self, request, pk=None):
         """Allow buyer to provide refund-specific account details for this refund (wallet/bank/remittance).
@@ -30511,122 +30454,54 @@ class RefundViewSet(viewsets.ViewSet):
         except Exception as e:
             return Response({"error": "Failed to save payment detail", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    def _get_product_image_url(self, product, request):
+        try:
+            if hasattr(product, 'productmedia_set') and product.productmedia_set.exists():
+                media = product.productmedia_set.first()
+                if media and media.file_data:
+                    return request.build_absolute_uri(media.file_data.url)
+        except Exception:
+            pass
+        return None
+
     def _get_order_items_for_refund(self, refund, request):
-        """Get order items for a refund (used in list views) with variant information"""
+        """Return order items (checkout details) linked to this refund."""
         if not refund.order_id:
             return []
-        
-        order = refund.order_id
-        checkouts = Checkout.objects.filter(order=order)
-        
+
+        # Get the checkout IDs from RefundItem
+        checkout_ids = refund.items.values_list('checkout', flat=True)
+        if not checkout_ids:
+            return []
+
+        # Fetch the checkouts with related product info
+        checkouts = Checkout.objects.filter(
+            id__in=checkout_ids,
+            order=refund.order_id
+        ).select_related('cart_item__product__shop')
+
         order_items = []
         for checkout in checkouts:
             cart_item = checkout.cart_item
             if cart_item and cart_item.product:
                 product = cart_item.product
-                # Get product image if available
-                product_image = None
-                if hasattr(product, 'productmedia_set') and product.productmedia_set.exists():
-                    first_media = product.productmedia_set.first()
-                    media_file = getattr(first_media, 'file_data', None)
-                    if first_media and media_file:
-                        try:
-                            product_image = request.build_absolute_uri(media_file.url)
-                        except Exception:
-                            product_image = None
-                elif hasattr(product, 'productimage_set') and product.productimage_set.exists():
-                    first_image = product.productimage_set.first()
-                    image_file = getattr(first_image, 'image', None)
-                    if first_image and image_file:
-                        try:
-                            product_image = request.build_absolute_uri(image_file.url)
-                        except Exception:
-                            product_image = None
-                
-                # Get variant information
                 variant = cart_item.variant
-                variant_data = None
-                if variant:
-                    variant_data = {
-                        'id': str(variant.id),
-                        'title': variant.title,
-                        'sku_code': variant.sku_code,
-                        'price': float(variant.price) if variant.price is not None else None,
-                        'image': request.build_absolute_uri(variant.image.url) if getattr(variant, 'image', None) else None,
-                        'option_ids': getattr(variant, 'option_ids', None) or None,
-                        'option_map': getattr(variant, 'option_map', None) or {},
-                    }
-
-                # Build variants payload (include option titles) for frontend label resolution
-                variants = []
-                try:
-                    variant_qs = Variants.objects.filter(product=product)
-                    for v in variant_qs:
-                        variants.append({
-                            'id': str(v.id),
-                            'title': v.title,
-                            'sku_code': v.sku_code,
-                            'price': float(v.price) if v.price else None,
-                            'option_map': v.option_map or {},
-                        })
-                except Exception:
-                    variants = []
-
-                # Provide a nested product object that includes a cover image (product_image) for frontend convenience
-                # Build media files list for product
-                media_files = []
-                if hasattr(product, 'productmedia_set') and product.productmedia_set.exists():
-                    for media in product.productmedia_set.all():
-                        media_file = getattr(media, 'file_data', None)
-                        if media_file:
-                            try:
-                                media_files.append({'file_url': request.build_absolute_uri(media_file.url)})
-                            except Exception:
-                                pass
-                elif hasattr(product, 'productimage_set') and product.productimage_set.exists():
-                    for img in product.productimage_set.all():
-                        image_file = getattr(img, 'image', None)
-                        if image_file:
-                            try:
-                                media_files.append({'file_url': request.build_absolute_uri(image_file.url)})
-                            except Exception:
-                                pass
-
-                product_price = getattr(product, 'price', None)
-
-                product_obj = {
-                    'id': str(product.id),
-                    'name': product.name,
-                    'description': product.description if hasattr(product, 'description') else None,
-                    'image': product_image,
-                    'price': float(product_price) if product_price is not None else None,
-                    'condition': getattr(product, 'condition', None),
-                    'category_name': product.category.name if getattr(product, 'category', None) else None,
-                    'shop_name': product.shop.name if getattr(product, 'shop', None) else None,
-                    'variants': variants,
-                    'media_files': media_files,
-                }
+                price = variant.price if variant else product.min_price or product.price if hasattr(product, 'price') else None
 
                 order_items.append({
-                    "product_id": str(product.id),
+                    "checkout_id": str(checkout.id),
                     "product_name": product.name,
+                    "shop_name": product.shop.name if product.shop else '',
                     "quantity": checkout.quantity,
-                    "price": float(variant.price) if variant and variant.price is not None else (float(product_price) if product_price is not None else None),
-                    "total": float(checkout.total_amount) if checkout.total_amount else None,
-                    "product_image": product_image,
-                    # selected variant exposed explicitly for frontend
-                    "variant": variant_data,
-                    "variants": variants,
-                    # Provide nested product object (image present) for easier frontend fallbacks
-                    "product": product_obj,
+                    "price": str(price) if price else '0',
+                    "subtotal": str(checkout.total_amount),
+                    "product_image": self._get_product_image_url(product, request),
                     "shop": {
                         "id": str(product.shop.id) if product.shop else None,
                         "name": product.shop.name if product.shop else None
-                    } if product.shop else None
+                    }
                 })
-        
         return order_items
-    
     def _get_available_actions(self, refund, user):
         """Get available actions based on refund status and user role"""
         actions = []

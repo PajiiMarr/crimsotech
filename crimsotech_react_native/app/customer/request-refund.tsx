@@ -1,4 +1,5 @@
 // app/customer/request-refund.tsx
+
 import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
@@ -112,19 +113,6 @@ interface BankDetails {
   branch: string;
 }
 
-interface RemittanceDetails {
-  provider: string;
-  firstName: string;
-  lastName: string;
-  address: string;
-  city: string;
-  province: string;
-  zipCode: string;
-  contactNumber: string;
-  validIdType: string;
-  validIdNumber: string;
-}
-
 // Refund types - Matching web
 const refundTypes: RefundType[] = [
   {
@@ -150,7 +138,7 @@ const refundTypes: RefundType[] = [
   }
 ];
 
-// Refund methods - Matching web
+// Refund methods - Moneyback options commented out
 const refundMethods: RefundMethod[] = [
   {
     id: 'wallet',
@@ -176,22 +164,22 @@ const refundMethods: RefundMethod[] = [
     type: 'voucher',
     allowedRefundTypes: ['return_item', 'keep_item']
   },
-  {
-    id: 'moneyback',
-    label: 'Money Back (Remittance)',
-    description: 'Get cash via remittance',
-    icon: 'cash-multiple',
-    type: 'moneyback',
-    allowedRefundTypes: ['return_item', 'keep_item']
-  },
-  {
-    id: 'cash_on_hand',
-    label: 'Cash on Hand',
-    description: 'Collect cash directly from the seller at pickup',
-    icon: 'hand-coin-outline',
-    type: 'moneyback',
-    allowedRefundTypes: ['return_item', 'keep_item']
-  },
+  // {
+  //   id: 'moneyback',
+  //   label: 'Money Back (Remittance)',
+  //   description: 'Get cash via remittance',
+  //   icon: 'cash-multiple',
+  //   type: 'moneyback',
+  //   allowedRefundTypes: ['return_item', 'keep_item']
+  // },
+  // {
+  //   id: 'cash_on_hand',
+  //   label: 'Cash on Hand',
+  //   description: 'Collect cash directly from the seller at pickup',
+  //   icon: 'hand-coin-outline',
+  //   type: 'moneyback',
+  //   allowedRefundTypes: ['return_item', 'keep_item']
+  // },
   {
     id: 'replace',
     label: 'Replacement',
@@ -283,32 +271,51 @@ export default function RequestRefundPage() {
     branch: '',
   });
 
-  const [remittanceDetails, setRemittanceDetails] = useState<RemittanceDetails>({
-    provider: '',
-    firstName: '',
-    lastName: '',
-    address: '',
-    city: '',
-    province: '',
-    zipCode: '',
-    contactNumber: '',
-    validIdType: '',
-    validIdNumber: '',
-  });
+  // Saved payment methods (e‑wallets only)
+  const [savedPaymentMethods, setSavedPaymentMethods] = useState<any[]>([]);
+  const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
+  const [loadingSaved, setLoadingSaved] = useState(false);
 
-  // Image handling
-  const [images, setImages] = useState<string[]>([]);
-  const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
+  // Media handling (images + videos)
+  const [mediaFiles, setMediaFiles] = useState<Array<{ uri: string; name: string; type: string; mimeType?: string }>>([]);
+  const [mediaUris, setMediaUris] = useState<string[]>([]);
 
   // Modals
   const [showReasonModal, setShowReasonModal] = useState(false);
   const [showRefundTypeModal, setShowRefundTypeModal] = useState(false);
   const [showMethodModal, setShowMethodModal] = useState(false);
+  const [showWalletSelectionModal, setShowWalletSelectionModal] = useState(false);
 
   // Fetch order data
   useEffect(() => {
     fetchOrderData();
   }, [decodedOrderId, userId]);
+
+  // Fetch saved payment methods when wallet method is selected
+  useEffect(() => {
+    if (selectedRefundMethod?.type === 'wallet') {
+      fetchSavedPaymentMethods();
+    } else {
+      setSelectedWalletId(null);
+      setEWalletDetails({ provider: '', accountName: '', accountNumber: '', contactNumber: '' });
+    }
+  }, [selectedRefundMethod]);
+
+  // When a saved wallet is selected, populate eWalletDetails
+  useEffect(() => {
+    if (selectedWalletId) {
+      const selected = savedPaymentMethods.find(m => m.payment_id === selectedWalletId);
+      if (selected) {
+        const fullNumber = selected.full_account_number || selected.account_number;
+        setEWalletDetails({
+          provider: selected.payment_method === 'gcash' ? 'GCash' : selected.payment_method === 'paymaya' ? 'PayMaya' : '',
+          accountName: selected.account_name,
+          accountNumber: fullNumber,
+          contactNumber: fullNumber, // Assuming the number is the contact
+        });
+      }
+    }
+  }, [selectedWalletId, savedPaymentMethods]);
 
   // When refund type is partial (keep_item), default the partial amount
   useEffect(() => {
@@ -380,6 +387,25 @@ export default function RequestRefundPage() {
       setOrder(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSavedPaymentMethods = async () => {
+    if (!userId) return;
+    setLoadingSaved(true);
+    try {
+      const response = await AxiosInstance.get('/user-payment-details/get_my_payment_methods/', {
+        headers: { 'X-User-Id': userId }
+      });
+      // Filter only e‑wallets (GCash, PayMaya)
+      const ewallets = (response.data || []).filter(
+        (m: any) => m.payment_method === 'gcash' || m.payment_method === 'paymaya'
+      );
+      setSavedPaymentMethods(ewallets);
+    } catch (error) {
+      console.error('Error fetching payment methods:', error);
+    } finally {
+      setLoadingSaved(false);
     }
   };
 
@@ -519,72 +545,63 @@ export default function RequestRefundPage() {
 
     return refundMethods.filter(method => 
       method.allowedRefundTypes.includes(selectedRefundType.id) &&
-      // Only allow Cash on Hand when the order is a pickup
-      (method.id !== 'cash_on_hand' || isPickup)
+      // Only allow Cash on Hand when the order is a pickup (commented out)
+      // (method.id !== 'cash_on_hand' || isPickup)
+      true // because cash_on_hand is removed, no need to filter
     );
   };
 
-  const pickImage = async () => {
-    if (images.length >= 4) {
-      Alert.alert('Limit Reached', 'Maximum 4 images allowed');
+  const pickMedia = async () => {
+    if (mediaFiles.length >= 4) {
+      Alert.alert('Limit Reached', 'Maximum 4 files (images/videos) allowed');
       return;
     }
 
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission Required', 'Please allow access to your photo library');
+      Alert.alert('Permission Required', 'Please allow access to your media library');
       return;
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
+      mediaTypes: ImagePicker.MediaTypeOptions.All, // Allow both images and videos
+      allowsEditing: false, // Disable editing for videos (can be enabled but may cause issues)
       quality: 0.8,
+      videoMaxDuration: 60, // Optional: limit video length to 60 seconds
     });
 
     if (!result.canceled) {
-      const uri = result.assets[0].uri;
-      setImages([...images, uri]);
+      const asset = result.assets[0];
+      const uri = asset.uri;
+      const fileName = uri.split('/').pop() || (asset.type === 'video' ? 'video.mp4' : 'image.jpg');
+      const mimeType = asset.mimeType || (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
       
-      const fileName = uri.split('/').pop() || 'image.jpg';
-      const fileType = 'image/jpeg';
-      
-      setUploadedFiles(prev => [...prev, {
+      setMediaUris([...mediaUris, uri]);
+      setMediaFiles(prev => [...prev, {
         uri,
         name: fileName,
-        type: fileType,
+        type: asset.type || 'image',
+        mimeType,
       }]);
     }
   };
 
-  const removeImage = (index: number) => {
-    setImages(images.filter((_, i) => i !== index));
-    setUploadedFiles(uploadedFiles.filter((_, i) => i !== index));
+  const removeMedia = (index: number) => {
+    setMediaUris(mediaUris.filter((_, i) => i !== index));
+    setMediaFiles(mediaFiles.filter((_, i) => i !== index));
   };
 
   const isPaymentDetailsValid = () => {
     if (!selectedRefundMethod) return false;
     
     if (selectedRefundMethod.type === 'wallet') {
-      return eWalletDetails.provider && eWalletDetails.accountNumber && 
-             eWalletDetails.accountName && eWalletDetails.contactNumber;
+      // Must have a selected saved wallet
+      return !!selectedWalletId;
     }
     
     if (selectedRefundMethod.type === 'bank') {
       return bankDetails.bankName && bankDetails.accountNumber && 
              bankDetails.accountName && bankDetails.accountType;
-    }
-    
-    // For Money Back: remittance requires details, except for Cash on Hand which doesn't
-    if (selectedRefundMethod.type === 'moneyback') {
-      if (selectedRefundMethod.id === 'cash_on_hand') {
-        return true; // no details needed
-      }
-
-      return remittanceDetails.provider && remittanceDetails.firstName && 
-             remittanceDetails.lastName && remittanceDetails.contactNumber &&
-             remittanceDetails.validIdType && remittanceDetails.validIdNumber;
     }
     
     // For voucher and replace methods, no additional details needed
@@ -602,6 +619,7 @@ export default function RequestRefundPage() {
       return 'Please select a refund method';
     }
     if (!isPaymentDetailsValid()) {
+      if (selectedRefundMethod.type === 'wallet') return 'Please select a saved e-wallet or add one first';
       return 'Please complete the payment details';
     }
     if (!returnReason) {
@@ -665,7 +683,8 @@ export default function RequestRefundPage() {
             provider: eWalletDetails.provider,
             account_name: eWalletDetails.accountName,
             account_number: eWalletDetails.accountNumber,
-            contact_number: eWalletDetails.contactNumber
+            contact_number: eWalletDetails.contactNumber,
+            saved_payment_id: selectedWalletId // optional, may be used on backend
           }
         } : {}),
         ...(selectedRefundMethod!.type === 'bank' ? {
@@ -677,20 +696,6 @@ export default function RequestRefundPage() {
             branch: bankDetails.branch || ''
           }
         } : {}),
-        ...(selectedRefundMethod!.type === 'moneyback' && selectedRefundMethod.id !== 'cash_on_hand' ? {
-          remittance_details: {
-            provider: remittanceDetails.provider,
-            first_name: remittanceDetails.firstName,
-            last_name: remittanceDetails.lastName,
-            contact_number: remittanceDetails.contactNumber,
-            address: remittanceDetails.address,
-            city: remittanceDetails.city,
-            province: remittanceDetails.province,
-            zip_code: remittanceDetails.zipCode || '',
-            valid_id_type: remittanceDetails.validIdType,
-            valid_id_number: remittanceDetails.validIdNumber
-          }
-        } : {})
       };
 
       // Add JSON data to formData
@@ -701,12 +706,24 @@ export default function RequestRefundPage() {
         formData.append(`selected_item_${index}`, itemId);
       });
 
-      // Add uploaded files
-      uploadedFiles.forEach((file, index) => {
+      // Add uploaded media files
+      mediaFiles.forEach((file, index) => {
+        // Determine the correct MIME type based on file extension or stored type
+        let mimeType = file.mimeType;
+        if (!mimeType) {
+          const ext = file.name.split('.').pop()?.toLowerCase();
+          if (ext === 'mp4') mimeType = 'video/mp4';
+          else if (ext === 'mov') mimeType = 'video/quicktime';
+          else if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
+          else if (ext === 'png') mimeType = 'image/png';
+          else if (ext === 'gif') mimeType = 'image/gif';
+          else mimeType = 'application/octet-stream';
+        }
+
         formData.append(`evidence_${index}`, {
           uri: file.uri,
           name: file.name,
-          type: file.type,
+          type: mimeType,
         } as any);
       });
 
@@ -904,67 +921,82 @@ export default function RequestRefundPage() {
 
     switch (selectedRefundMethod.type) {
       case 'wallet':
+        if (loadingSaved) {
+          return (
+            <View style={[styles.paymentDetailsCard, styles.walletCard]}>
+              <ActivityIndicator size="small" color="#4f46e5" />
+              <Text style={styles.loadingText}>Loading your e-wallets...</Text>
+            </View>
+          );
+        }
+
+        if (savedPaymentMethods.length === 0) {
+          return (
+            <View style={[styles.paymentDetailsCard, styles.walletCard]}>
+              <View style={styles.paymentDetailsHeader}>
+                <Icon name="wallet-outline" size={20} color="#1e40af" />
+                <Text style={styles.paymentDetailsTitle}>E-Wallet Details</Text>
+              </View>
+              <View style={styles.infoBox}>
+                <Icon name="information-outline" size={16} color="#1e40af" />
+                <Text style={styles.infoBoxText}>
+                  You don't have any saved e-wallet yet. Please add one first.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.addWalletButton}
+                onPress={() => {
+                  router.push('/customer/create/add-payment-method');
+                }}
+              >
+                <Icon name="plus-circle" size={20} color="#fff" />
+                <Text style={styles.addWalletButtonText}>Add E-Wallet</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        }
+
         return (
           <View style={[styles.paymentDetailsCard, styles.walletCard]}>
             <View style={styles.paymentDetailsHeader}>
               <Icon name="wallet-outline" size={20} color="#1e40af" />
-              <Text style={styles.paymentDetailsTitle}>E-Wallet Details</Text>
+              <Text style={styles.paymentDetailsTitle}>Select E-Wallet</Text>
             </View>
-            
-            <View style={styles.infoBox}>
-              <Icon name="bell-outline" size={16} color="#1e40af" />
-              <Text style={styles.infoBoxText}>
-                Refunds will be sent to this e-wallet. Ensure details are correct.
-              </Text>
-            </View>
-            
-            <View style={styles.formGrid}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>E-Wallet Provider *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Select provider (GCash, PayMaya, etc.)"
-                  value={eWalletDetails.provider}
-                  onChangeText={(text) => setEWalletDetails({...eWalletDetails, provider: text})}
-                  placeholderTextColor="#9ca3af"
-                />
+            {!selectedWalletId ? (
+              <TouchableOpacity
+                style={styles.selectWalletButton}
+                onPress={() => setShowWalletSelectionModal(true)}
+              >
+                <Text style={styles.selectWalletButtonText}>Choose a saved e-wallet</Text>
+                <Icon name="chevron-down" size={20} color="#4f46e5" />
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.selectedWalletContainer}>
+                <View style={styles.selectedWalletInfo}>
+                  <Icon name="check-circle" size={20} color="#10b981" />
+                  <View>
+                    <Text style={styles.selectedWalletProvider}>
+                      {savedPaymentMethods.find(m => m.payment_id === selectedWalletId)?.payment_method === 'gcash' ? 'GCash' : 'PayMaya'}
+                    </Text>
+                    <Text style={styles.selectedWalletDetails}>
+                      {savedPaymentMethods.find(m => m.payment_id === selectedWalletId)?.account_name}
+                    </Text>
+                    <Text style={styles.selectedWalletDetails}>
+                      {savedPaymentMethods.find(m => m.payment_id === selectedWalletId)?.display_number || 
+                       savedPaymentMethods.find(m => m.payment_id === selectedWalletId)?.account_number}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setSelectedWalletId(null);
+                    setEWalletDetails({ provider: '', accountName: '', accountNumber: '', contactNumber: '' });
+                  }}
+                >
+                  <Icon name="close-circle" size={24} color="#ef4444" />
+                </TouchableOpacity>
               </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Account Number *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="09XXXXXXXXX"
-                  value={eWalletDetails.accountNumber}
-                  onChangeText={(text) => setEWalletDetails({...eWalletDetails, accountNumber: text})}
-                  keyboardType="phone-pad"
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Account Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="As it appears in the app"
-                  value={eWalletDetails.accountName}
-                  onChangeText={(text) => setEWalletDetails({...eWalletDetails, accountName: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Contact Number *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="09XXXXXXXXX"
-                  value={eWalletDetails.contactNumber}
-                  onChangeText={(text) => setEWalletDetails({...eWalletDetails, contactNumber: text})}
-                  keyboardType="phone-pad"
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-            </View>
+            )}
           </View>
         );
 
@@ -1037,151 +1069,6 @@ export default function RequestRefundPage() {
                   placeholder="Bank branch location"
                   value={bankDetails.branch}
                   onChangeText={(text) => setBankDetails({...bankDetails, branch: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-            </View>
-          </View>
-        );
-
-      case 'moneyback':
-        if (selectedRefundMethod.id === 'cash_on_hand') {
-          return (
-            <View style={[styles.infoCard, styles.cashOnHandCard]}>
-              <View style={styles.infoCardHeader}>
-                <Icon name="hand-coin-outline" size={20} color="#854d0e" />
-                <Text style={styles.infoCardTitle}>Cash on Hand</Text>
-              </View>
-              <Text style={styles.infoCardText}>
-                No payment details required — you will collect cash from the seller at pickup.
-              </Text>
-            </View>
-          );
-        }
-
-        return (
-          <View style={[styles.paymentDetailsCard, styles.remittanceCard]}>
-            <View style={styles.paymentDetailsHeader}>
-              <Icon name="cash-multiple" size={20} color="#854d0e" />
-              <Text style={styles.paymentDetailsTitle}>Remittance Details</Text>
-            </View>
-            
-            <View style={styles.infoBox}>
-              <Icon name="bell-outline" size={16} color="#854d0e" />
-              <Text style={styles.infoBoxText}>
-                Money back will be sent via remittance. You'll receive a notification when ready for pickup.
-              </Text>
-            </View>
-            
-            <View style={styles.formGrid}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Remittance Provider *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Palawan, LBC, Cebuana, etc."
-                  value={remittanceDetails.provider}
-                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, provider: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>First Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Given name"
-                  value={remittanceDetails.firstName}
-                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, firstName: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Last Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Surname"
-                  value={remittanceDetails.lastName}
-                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, lastName: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Contact Number *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="09XXXXXXXXX"
-                  value={remittanceDetails.contactNumber}
-                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, contactNumber: text})}
-                  keyboardType="phone-pad"
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Valid ID Type *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Driver's License, Passport, etc."
-                  value={remittanceDetails.validIdType}
-                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, validIdType: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Valid ID Number *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="ID number"
-                  value={remittanceDetails.validIdNumber}
-                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, validIdNumber: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroupFull}>
-                <Text style={styles.inputLabel}>Complete Address *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Street, Barangay"
-                  value={remittanceDetails.address}
-                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, address: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>City/Municipality *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="City"
-                  value={remittanceDetails.city}
-                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, city: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Province *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Province"
-                  value={remittanceDetails.province}
-                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, province: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>ZIP Code</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0000"
-                  value={remittanceDetails.zipCode}
-                  onChangeText={(text) => setRemittanceDetails({...remittanceDetails, zipCode: text})}
-                  keyboardType="numeric"
                   placeholderTextColor="#9ca3af"
                 />
               </View>
@@ -1647,32 +1534,43 @@ export default function RequestRefundPage() {
           />
         </View>
 
-        {/* Upload Images */}
+        {/* Upload Media (Images & Videos) */}
         <View style={styles.card}>
           <Text style={styles.uploadTitle}>Upload Evidence (Optional)</Text>
-          <Text style={styles.uploadHint}>Max 4 images, 5MB each</Text>
+          <Text style={styles.uploadHint}>Max 4 files (images/videos), 100MB each</Text>
           
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageScrollView}>
-            <TouchableOpacity style={styles.uploadButton} onPress={pickImage}>
+            <TouchableOpacity style={styles.uploadButton} onPress={pickMedia}>
               <Icon name="camera-plus-outline" size={32} color="#9ca3af" />
-              <Text style={styles.uploadButtonText}>Add Photo</Text>
-              <Text style={styles.uploadCounter}>{images.length}/4</Text>
+              <Text style={styles.uploadButtonText}>Add Media</Text>
+              <Text style={styles.uploadCounter}>{mediaFiles.length}/4</Text>
             </TouchableOpacity>
             
-            {images.map((uri, index) => (
-              <View key={index} style={styles.imageContainer}>
-                <Image source={{ uri }} style={styles.uploadedImage} />
-                <TouchableOpacity
-                  style={styles.removeImageButton}
-                  onPress={() => removeImage(index)}
-                >
-                  <Icon name="close-circle" size={24} color="#ef4444" />
-                </TouchableOpacity>
-                <View style={styles.imageOverlay}>
-                  <Text style={styles.imageOverlayText}>Evidence {index + 1}</Text>
+            {mediaUris.map((uri, index) => {
+              const file = mediaFiles[index];
+              const isVideo = file?.type === 'video' || (file?.mimeType && file.mimeType.startsWith('video/'));
+              return (
+                <View key={index} style={styles.imageContainer}>
+                  <Image source={{ uri }} style={styles.uploadedImage} />
+                  {isVideo && (
+                    <View style={styles.videoOverlay}>
+                      <Icon name="play-circle" size={32} color="#fff" />
+                    </View>
+                  )}
+                  <TouchableOpacity
+                    style={styles.removeImageButton}
+                    onPress={() => removeMedia(index)}
+                  >
+                    <Icon name="close-circle" size={24} color="#ef4444" />
+                  </TouchableOpacity>
+                  <View style={styles.imageOverlay}>
+                    <Text style={styles.imageOverlayText}>
+                      {isVideo ? 'Video' : 'Image'} {index + 1}
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            ))}
+              );
+            })}
           </ScrollView>
         </View>
 
@@ -1776,6 +1674,63 @@ export default function RequestRefundPage() {
               renderItem={({ item }) => renderRefundMethod(item)}
               keyExtractor={(item) => item.id}
             />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showWalletSelectionModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowWalletSelectionModal(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select E-Wallet</Text>
+              <TouchableOpacity onPress={() => setShowWalletSelectionModal(false)}>
+                <Icon name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={savedPaymentMethods}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.walletItem, selectedWalletId === item.payment_id && styles.walletItemSelected]}
+                  onPress={() => {
+                    setSelectedWalletId(item.payment_id);
+                    setShowWalletSelectionModal(false);
+                  }}
+                >
+                  <View style={styles.walletItemIcon}>
+                    <Icon name={item.payment_method === 'gcash' ? 'cellphone' : 'credit-card'} size={24} color="#4f46e5" />
+                  </View>
+                  <View style={styles.walletItemContent}>
+                    <Text style={styles.walletItemProvider}>
+                      {item.payment_method === 'gcash' ? 'GCash' : 'PayMaya'}
+                    </Text>
+                    <Text style={styles.walletItemName}>{item.account_name}</Text>
+                    <Text style={styles.walletItemNumber}>{item.display_number || item.account_number}</Text>
+                  </View>
+                  {selectedWalletId === item.payment_id && (
+                    <Icon name="check-circle" size={24} color="#10b981" />
+                  )}
+                </TouchableOpacity>
+              )}
+              keyExtractor={(item) => item.payment_id}
+            />
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={styles.addNewButton}
+                onPress={() => {
+                  setShowWalletSelectionModal(false);
+                  router.push('/customer/create/add-payment-method');
+                }}
+              >
+                <Icon name="plus-circle" size={20} color="#4f46e5" />
+                <Text style={styles.addNewButtonText}>Add New E-Wallet</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -2634,6 +2589,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
+  videoOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+  },
   removeImageButton: {
     position: 'absolute',
     top: -8,
@@ -2905,5 +2871,116 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  // New styles for wallet selection
+  addWalletButton: {
+    backgroundColor: '#4f46e5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  addWalletButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  selectWalletButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: '#f9fafb',
+  },
+  selectWalletButtonText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  selectedWalletContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f3f4f6',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  selectedWalletInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  selectedWalletProvider: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  selectedWalletDetails: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  walletItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  walletItemSelected: {
+    backgroundColor: '#f5f3ff',
+  },
+  walletItemIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  walletItemContent: {
+    flex: 1,
+  },
+  walletItemProvider: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  walletItemName: {
+    fontSize: 14,
+    color: '#4b5563',
+  },
+  walletItemNumber: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  modalFooter: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  addNewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 12,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 8,
+  },
+  addNewButtonText: {
+    fontSize: 14,
+    color: '#4f46e5',
+    fontWeight: '500',
   },
 });
