@@ -30,6 +30,50 @@ interface ShopCategory {
   name: string;
 }
 
+interface Variant {
+  id: string;
+  title?: string;
+  price?: number | string;
+  compare_price?: number | string;
+  quantity?: number;
+  is_active?: boolean;
+  image?: string;
+  proof_image?: string;
+  condition?: number;
+  original_price?: number | string;
+  usage_period?: number;
+  usage_unit?: string;
+  swap_type?: string;
+  allow_swap?: boolean;
+}
+
+interface ProductItem {
+  id: string;
+  name?: string;
+  description?: string;
+  price?: number | string;
+  compare_price?: number | string;
+  condition?: number;
+  open_for_swap?: boolean;
+  image?: string;
+  media_files?: { file_data?: string; file_url?: string }[];
+  primary_image?: { url?: string };
+  category?: any;
+  category_admin?: any;
+  shop?: {
+    id?: string;
+    name?: string;
+    shop_picture?: string;
+  };
+  is_gift?: boolean;
+  listing_type?: string;
+  variants?: Variant[];
+  min_price?: number | string;
+  max_price?: number | string;
+  total_stock?: number;
+  total_variants?: number;
+}
+
 interface ShopInfo {
   id: string;
   name?: string;
@@ -51,33 +95,26 @@ interface ShopInfo {
   categories?: any[];
 }
 
-interface ProductItem {
-  id: string;
-  name?: string;
-  description?: string;
-  price?: number | string;
-  compare_price?: number | string;
-  condition?: string;
-  open_for_swap?: boolean;
-  image?: string;
-  media_files?: { file_data?: string; file_url?: string }[];
-  primary_image?: { url?: string };
-  category?: any;
-  category_admin?: any;
-  shop?: {
-    name?: string;
-    shop_picture?: string;
-  };
-  is_gift?: boolean;
-  listing_type?: string;
-}
-
 interface ShopReview {
   id: string;
+  customer_id?: {
+    id?: string;
+    user?: {
+      first_name?: string;
+      last_name?: string;
+      email?: string;
+    };
+  };
   customer_name?: string;
   customer?: string;
   rating?: number;
+  average_rating?: number;
+  condition_rating?: number;
+  accuracy_rating?: number;
+  value_rating?: number;
+  delivery_rating?: number;
   comment?: string;
+  created_at?: string;
 }
 
 const ensureAbsoluteUrl = (url?: string | null) => {
@@ -102,23 +139,14 @@ const formatNumber = (value: number | null | undefined) => {
   return String(n);
 };
 
-const getProductImage = (product: ProductItem) => {
-  if (product?.primary_image?.url)
-    return ensureAbsoluteUrl(product.primary_image.url);
-
-  if (Array.isArray(product?.media_files) && product.media_files.length > 0) {
-    return ensureAbsoluteUrl(
-      product.media_files[0].file_data ||
-        product.media_files[0].file_url ||
-        null,
-    );
-  }
-
-  if (product?.image) return ensureAbsoluteUrl(product.image);
-  if (product?.shop?.shop_picture)
-    return ensureAbsoluteUrl(product.shop.shop_picture);
-
-  return "https://via.placeholder.com/200";
+const formatDate = (dateString?: string) => {
+  if (!dateString) return "";
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
 };
 
 const getCategoryValue = (cat: any): { id: string; name: string } | null => {
@@ -133,18 +161,93 @@ const getCategoryValue = (cat: any): { id: string; name: string } | null => {
 };
 
 const ProductCard = ({ product }: { product: ProductItem }) => {
-  const price = Number(product.price || 0);
-  const comparePrice = Number(product.compare_price || 0);
+  // Get price from variants if available, otherwise use product.price
+  const getProductPrice = () => {
+    if (product.variants && product.variants.length > 0) {
+      const activeVariants = product.variants.filter(v => v.is_active !== false);
+      if (activeVariants.length > 0) {
+        const prices = activeVariants
+          .map(v => Number(v.price || 0))
+          .filter(p => p > 0);
+        if (prices.length > 0) {
+          const minPrice = Math.min(...prices);
+          const maxPrice = Math.max(...prices);
+          return { min: minPrice, max: maxPrice };
+        }
+      }
+    }
+    const price = Number(product.min_price || product.price || 0);
+    const maxPrice = Number(product.max_price || price);
+    return { min: price, max: maxPrice };
+  };
+
+  // Get compare price from variants if available
+  const getComparePrice = () => {
+    if (product.variants && product.variants.length > 0) {
+      const activeVariants = product.variants.filter(v => v.is_active !== false);
+      if (activeVariants.length > 0) {
+        const comparePrices = activeVariants
+          .map(v => Number(v.compare_price || 0))
+          .filter(p => p > 0);
+        if (comparePrices.length > 0) {
+          return Math.min(...comparePrices);
+        }
+      }
+    }
+    return Number(product.compare_price || 0);
+  };
+
+  // Get product image from variants if primary image not available
+  const getProductImageUrl = () => {
+    if (product?.primary_image?.url) {
+      return ensureAbsoluteUrl(product.primary_image.url);
+    }
+
+    if (Array.isArray(product?.media_files) && product.media_files.length > 0) {
+      return ensureAbsoluteUrl(
+        product.media_files[0].file_data ||
+        product.media_files[0].file_url ||
+        null,
+      );
+    }
+
+    // Try to get image from first variant
+    if (product.variants && product.variants.length > 0) {
+      const variantWithImage = product.variants.find(v => v.image);
+      if (variantWithImage?.image) {
+        return ensureAbsoluteUrl(variantWithImage.image);
+      }
+      const variantWithProofImage = product.variants.find(v => v.proof_image);
+      if (variantWithProofImage?.proof_image) {
+        return ensureAbsoluteUrl(variantWithProofImage.proof_image);
+      }
+    }
+
+    if (product?.image) return ensureAbsoluteUrl(product.image);
+    if (product?.shop?.shop_picture)
+      return ensureAbsoluteUrl(product.shop.shop_picture);
+
+    return "https://via.placeholder.com/200";
+  };
+
+  const prices = getProductPrice();
+  const price = prices.min;
+  const maxPrice = prices.max;
+  const comparePrice = getComparePrice();
+  const hasMultiplePrices = prices.max > prices.min;
 
   return (
     <TouchableOpacity
       style={styles.productCard}
       activeOpacity={0.85}
       onPress={() =>
-        router.push(`/customer/view-product?productId=${product.id}`)
+        router.push({
+          pathname: "/customer/view-product",
+          params: { productId: product.id }
+        })
       }
     >
-      {product.open_for_swap ? (
+      {product.open_for_swap || product.variants?.some(v => v.allow_swap) ? (
         <View style={styles.swapBadge}>
           <MaterialCommunityIcons
             name="swap-horizontal"
@@ -156,7 +259,7 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
       ) : null}
 
       <Image
-        source={{ uri: getProductImage(product) }}
+        source={{ uri: getProductImageUrl() }}
         style={styles.productImage}
         resizeMode="cover"
       />
@@ -172,14 +275,89 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
           </Text>
         )}
 
+        {/* Variant count indicator if multiple variants */}
+        {product.total_variants && product.total_variants > 1 && (
+          <Text style={styles.variantCount}>
+            {product.total_variants} variants
+          </Text>
+        )}
+
         <View style={styles.priceRow}>
           {comparePrice > price && comparePrice > 0 ? (
             <Text style={styles.oldPrice}>₱{comparePrice.toFixed(2)}</Text>
           ) : null}
-          <Text style={styles.price}>₱{price.toFixed(2)}</Text>
+          <Text style={styles.price}>
+            ₱{price.toFixed(2)}
+            {hasMultiplePrices && ` - ₱${maxPrice.toFixed(2)}`}
+          </Text>
         </View>
+
+        {/* Stock indicator if low */}
+        {product.total_stock !== undefined && product.total_stock < 10 && product.total_stock > 0 && (
+          <Text style={styles.lowStockText}>Only {product.total_stock} left</Text>
+        )}
       </View>
     </TouchableOpacity>
+  );
+};
+
+const ReviewCard = ({ review }: { review: ShopReview }) => {
+  const getCustomerName = () => {
+    if (review.customer_id?.user) {
+      const { first_name, last_name } = review.customer_id.user;
+      if (first_name && last_name) return `${first_name} ${last_name}`;
+      if (first_name) return first_name;
+    }
+    return review.customer_name || review.customer || "Anonymous";
+  };
+
+  const averageRating = review.average_rating || review.rating || 0;
+
+  return (
+    <View style={styles.reviewItem}>
+      <View style={styles.reviewHeader}>
+        <View style={styles.reviewerInfo}>
+          <Text style={styles.reviewerName}>{getCustomerName()}</Text>
+          <Text style={styles.reviewDate}>{formatDate(review.created_at)}</Text>
+        </View>
+        <View style={styles.ratingContainer}>
+          <Text style={styles.ratingText}>{averageRating.toFixed(1)}</Text>
+          <Ionicons name="star" size={14} color="#F59E0B" />
+        </View>
+      </View>
+
+      {/* Individual ratings */}
+      <View style={styles.detailedRatings}>
+        {review.condition_rating && (
+          <View style={styles.ratingTag}>
+            <Text style={styles.ratingTagLabel}>Condition</Text>
+            <Text style={styles.ratingTagValue}>{review.condition_rating}</Text>
+          </View>
+        )}
+        {review.accuracy_rating && (
+          <View style={styles.ratingTag}>
+            <Text style={styles.ratingTagLabel}>Accuracy</Text>
+            <Text style={styles.ratingTagValue}>{review.accuracy_rating}</Text>
+          </View>
+        )}
+        {review.value_rating && (
+          <View style={styles.ratingTag}>
+            <Text style={styles.ratingTagLabel}>Value</Text>
+            <Text style={styles.ratingTagValue}>{review.value_rating}</Text>
+          </View>
+        )}
+        {review.delivery_rating && (
+          <View style={styles.ratingTag}>
+            <Text style={styles.ratingTagLabel}>Delivery</Text>
+            <Text style={styles.ratingTagValue}>{review.delivery_rating}</Text>
+          </View>
+        )}
+      </View>
+
+      {review.comment && (
+        <Text style={styles.reviewComment}>{review.comment}</Text>
+      )}
+    </View>
   );
 };
 
@@ -203,6 +381,8 @@ export default function ViewShopPage() {
   const [reviews, setReviews] = useState<ShopReview[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
   const [reviewsError, setReviewsError] = useState<string | null>(null);
+  const [reviewsPage, setReviewsPage] = useState(1);
+  const [hasMoreReviews, setHasMoreReviews] = useState(true);
 
   const [categories, setCategories] = useState<ShopCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -212,7 +392,7 @@ export default function ViewShopPage() {
   const [filterType, setFilterType] = useState<"All" | "Gift">("All");
   const [showFilterModal, setShowFilterModal] = useState(false);
 
-  // Conditions list as requested
+  // Conditions list
   const conditionOptions = [
     "Used - Excellent",
     "Used - Good",
@@ -319,27 +499,62 @@ export default function ViewShopPage() {
 
   useEffect(() => {
     const fetchReviews = async () => {
-      if (!shopId) return;
+      if (!shopId || activeTab !== "reviews") return;
+      
       setReviewsLoading(true);
       setReviewsError(null);
 
       try {
-        const res = await AxiosInstance.get(`/shops/${shopId}/reviews/`);
-        const data = res.data.reviews || res.data || [];
-        setReviews(Array.isArray(data) ? data : []);
+        const res = await AxiosInstance.get(`/shops/${shopId}/reviews/`, {
+          params: {
+            page: reviewsPage,
+            page_size: 10,
+          }
+        });
+        
+        // Handle different response formats
+        let newReviews = [];
+        let total = 0;
+        
+        if (res.data.results) {
+          newReviews = res.data.results;
+          total = res.data.count || 0;
+        } else if (Array.isArray(res.data)) {
+          newReviews = res.data;
+          total = res.data.length;
+        } else if (res.data.reviews) {
+          newReviews = res.data.reviews;
+          total = res.data.total || newReviews.length;
+        }
+
+        if (reviewsPage === 1) {
+          setReviews(newReviews);
+        } else {
+          setReviews(prev => [...prev, ...newReviews]);
+        }
+
+        setHasMoreReviews(reviews.length + newReviews.length < total);
       } catch (e: any) {
         if (e.response?.status === 404) {
           setReviews([]);
+          setHasMoreReviews(false);
         } else {
           setReviewsError("Failed to load reviews");
+          console.error("Error fetching reviews:", e);
         }
       } finally {
         setReviewsLoading(false);
       }
     };
 
-    if (activeTab === "reviews") fetchReviews();
-  }, [activeTab, shopId]);
+    fetchReviews();
+  }, [activeTab, shopId, reviewsPage]);
+
+  const handleLoadMoreReviews = () => {
+    if (!reviewsLoading && hasMoreReviews) {
+      setReviewsPage(prev => prev + 1);
+    }
+  };
 
   const filteredProducts = useMemo(() => {
     return products.filter((product) => {
@@ -348,17 +563,17 @@ export default function ViewShopPage() {
         (product.name || "").toLowerCase().includes(q) ||
         (product.description || "").toLowerCase().includes(q);
 
-      const p = Number(product.price || 0);
+      const p = Number(product.min_price || product.price || 0);
       const min = minPrice === "" ? null : Number(minPrice);
       const max = maxPrice === "" ? null : Number(maxPrice);
 
       const matchesMin = min === null || (!Number.isNaN(min) && p >= min);
       const matchesMax = max === null || (!Number.isNaN(max) && p <= max);
 
+      const productCondition = product.condition ? String(product.condition) : "";
       const matchesCondition =
         selectedCondition === "" ||
-        (product.condition &&
-          product.condition.toLowerCase() === selectedCondition.toLowerCase());
+        productCondition.toLowerCase() === selectedCondition.toLowerCase();
 
       const catMatch = (cat: any) => {
         if (!cat) return false;
@@ -593,7 +808,13 @@ export default function ViewShopPage() {
               return (
                 <TouchableOpacity
                   key={tab}
-                  onPress={() => setActiveTab(tab)}
+                  onPress={() => {
+                    setActiveTab(tab);
+                    if (tab === "reviews") {
+                      setReviewsPage(1);
+                      setReviews([]);
+                    }
+                  }}
                   style={[styles.tabBtn, active && styles.tabBtnActive]}
                 >
                   <Text
@@ -670,7 +891,6 @@ export default function ViewShopPage() {
                       styles.categoryLabel,
                       selectedCategory === "" && styles.categoryLabelActive,
                     ]}
-                    // Removed numberOfLines={1} to show full name
                   >
                     All
                   </Text>
@@ -707,7 +927,6 @@ export default function ViewShopPage() {
                           styles.categoryLabel,
                           active && styles.categoryLabelActive,
                         ]}
-                        // Removed numberOfLines={1} here too
                       >
                         {cat.name}
                       </Text>
@@ -897,40 +1116,67 @@ export default function ViewShopPage() {
                   </Text>
                 </View>
               </View>
+
+              {shopInfo.product_sold ? (
+                <View style={styles.statsRow}>
+                  <Text style={styles.statsLabel}>Products Sold:</Text>
+                  <Text style={styles.statsValue}>{shopInfo.product_sold}</Text>
+                </View>
+              ) : null}
+
+              {shopInfo.total_customers ? (
+                <View style={styles.statsRow}>
+                  <Text style={styles.statsLabel}>Total Customers:</Text>
+                  <Text style={styles.statsValue}>{shopInfo.total_customers}</Text>
+                </View>
+              ) : null}
+
+              {shopInfo.repeated_customers ? (
+                <View style={styles.statsRow}>
+                  <Text style={styles.statsLabel}>Repeat Customers:</Text>
+                  <Text style={styles.statsValue}>{shopInfo.repeated_customers}</Text>
+                </View>
+              ) : null}
             </View>
           ) : null}
 
           {activeTab === "reviews" ? (
             <View style={styles.cardSection}>
-              <Text style={styles.sectionTitle}>Customer Reviews</Text>
-              <Text style={styles.sectionSubTitle}>
-                {shopInfo?.rating
-                  ? `${shopInfo.rating} average • ${shopInfo.rating_count || 0} reviews`
-                  : "No ratings yet"}
-              </Text>
+              <View style={styles.reviewsHeader}>
+                <Text style={styles.sectionTitle}>Customer Reviews</Text>
+                <Text style={styles.sectionSubTitle}>
+                  {shopInfo?.rating
+                    ? `${shopInfo.rating} average • ${shopInfo.rating_count || 0} reviews`
+                    : "No ratings yet"}
+                </Text>
+              </View>
 
-              {reviewsLoading ? (
-                <ActivityIndicator color="#EA580C" />
+              {reviewsLoading && reviewsPage === 1 ? (
+                <ActivityIndicator color="#EA580C" style={styles.reviewsLoader} />
               ) : reviewsError ? (
                 <Text style={styles.errorText}>{reviewsError}</Text>
               ) : reviews.length === 0 ? (
                 <Text style={styles.sectionText}>No reviews available.</Text>
               ) : (
-                reviews.map((r) => (
-                  <View key={r.id} style={styles.reviewItem}>
-                    <View style={styles.reviewTop}>
-                      <Text style={styles.reviewName}>
-                        {r.customer_name || r.customer || "Anonymous"}
-                      </Text>
-                      <Text style={styles.reviewRating}>
-                        {Number(r.rating || 0).toFixed(1)} / 5
-                      </Text>
-                    </View>
-                    <Text style={styles.reviewComment}>
-                      {r.comment || "No comment."}
-                    </Text>
-                  </View>
-                ))
+                <>
+                  {reviews.map((review) => (
+                    <ReviewCard key={review.id} review={review} />
+                  ))}
+                  
+                  {hasMoreReviews && (
+                    <TouchableOpacity
+                      style={styles.loadMoreButton}
+                      onPress={handleLoadMoreReviews}
+                      disabled={reviewsLoading}
+                    >
+                      {reviewsLoading ? (
+                        <ActivityIndicator size="small" color="#EA580C" />
+                      ) : (
+                        <Text style={styles.loadMoreText}>Load More Reviews</Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
+                </>
               )}
             </View>
           ) : null}
@@ -1070,7 +1316,6 @@ const styles = StyleSheet.create({
   metaIconGap: {
     marginLeft: 8,
   },
-
   tabBar: {
     marginTop: 12,
     marginBottom: 10,
@@ -1193,21 +1438,6 @@ const styles = StyleSheet.create({
     padding: 4,
     marginRight: 10,
   },
-  headerSearchBar: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F3F4F6",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    height: 38,
-  },
-  headerSearchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: "#111",
-    height: "100%",
-  },
   headerIcons: {
     flexDirection: "row",
     alignItems: "center",
@@ -1264,9 +1494,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  filterBtnText: {
-    display: "none",
-  },
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -1319,7 +1546,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-
   productsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1376,6 +1602,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginBottom: 8,
   },
+  variantCount: {
+    fontSize: 10,
+    color: "#6B7280",
+    marginTop: 2,
+    marginBottom: 4,
+  },
   priceRow: {
     marginTop: "auto",
   },
@@ -1388,6 +1620,12 @@ const styles = StyleSheet.create({
     color: "#111827",
     fontSize: 14,
     fontWeight: "700",
+  },
+  lowStockText: {
+    fontSize: 10,
+    color: "#DC2626",
+    marginTop: 4,
+    fontWeight: "500",
   },
   emptyBlock: {
     width: "100%",
@@ -1409,8 +1647,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderRadius: 12,
     marginHorizontal: 12,
-    padding: 12,
-    gap: 8,
+    padding: 16,
+    gap: 12,
     shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 3,
@@ -1424,53 +1662,136 @@ const styles = StyleSheet.create({
   },
   sectionSubTitle: {
     color: "#6B7280",
-    fontSize: 12,
+    fontSize: 14,
+    marginTop: 2,
   },
   sectionText: {
     color: "#4B5563",
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 14,
+    lineHeight: 20,
   },
   rowText: {
     color: "#4B5563",
-    fontSize: 13,
+    fontSize: 14,
+    marginTop: 4,
   },
   detailsStatsRow: {
-    marginTop: 4,
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "space-around",
+    marginTop: 8,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "#E5E7EB",
   },
   miniLabel: {
     color: "#6B7280",
     fontSize: 12,
+    textAlign: "center",
   },
   miniValue: {
     color: "#111827",
-    fontSize: 14,
+    fontSize: 18,
     fontWeight: "700",
+    textAlign: "center",
+  },
+  statsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 4,
+  },
+  statsLabel: {
+    color: "#6B7280",
+    fontSize: 14,
+  },
+  statsValue: {
+    color: "#111827",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  reviewsHeader: {
+    marginBottom: 8,
+  },
+  reviewsLoader: {
+    marginVertical: 20,
   },
   reviewItem: {
-    paddingVertical: 10,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
   },
-  reviewTop: {
+  reviewHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 8,
+    alignItems: "flex-start",
+    marginBottom: 8,
   },
-  reviewName: {
-    color: "#111827",
-    fontWeight: "600",
+  reviewerInfo: {
     flex: 1,
   },
-  reviewRating: {
-    color: "#6B7280",
+  reviewerName: {
+    color: "#111827",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  reviewDate: {
+    color: "#9CA3AF",
+    fontSize: 11,
+    marginTop: 2,
+  },
+  ratingContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  ratingText: {
+    color: "#92400E",
     fontSize: 12,
+    fontWeight: "600",
+  },
+  detailedRatings: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 8,
+  },
+  ratingTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F3F4F6",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  ratingTagLabel: {
+    color: "#6B7280",
+    fontSize: 10,
+  },
+  ratingTagValue: {
+    color: "#111827",
+    fontSize: 10,
+    fontWeight: "600",
   },
   reviewComment: {
-    marginTop: 4,
     color: "#4B5563",
     fontSize: 13,
+    lineHeight: 18,
+  },
+  loadMoreButton: {
+    marginTop: 16,
+    paddingVertical: 12,
+    alignItems: "center",
+    backgroundColor: "#F3F4F6",
+    borderRadius: 8,
+  },
+  loadMoreText: {
+    color: "#EA580C",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

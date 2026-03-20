@@ -106,6 +106,8 @@ interface OrderData {
     delivery_rider: string | null;
     delivery_notes: string | null;
     delivery_date: string | null;
+    shop_name?: string; // Added shop_name at order level
+    shop_id?: string;
   };
   shipping_info: ShippingInfo;
   delivery_address: DeliveryAddress;
@@ -177,7 +179,7 @@ export default function ViewTrackOrderPage() {
           primary_image: item.primary_image || { url: null, file_type: null },
           shop_info: item.shop_info || {
             id: '',
-            name: '',
+            name: item.shop_name || 'Unknown Shop', // Fallback to shop_name if available
             picture: null,
             description: '',
             items_count: 0,
@@ -214,6 +216,13 @@ export default function ViewTrackOrderPage() {
         data.actions = data.actions || { can_cancel: false, can_track: false, can_review: false, can_return: false, can_contact_seller: false, can_buy_again: false };
         data.shipping_info = data.shipping_info || { logistics_carrier: '', tracking_number: null, delivery_method: '', estimated_delivery: null };
         data.delivery_address = data.delivery_address || { recipient_name: '', phone_number: '', address: '', address_details: { street: '', barangay: '', city: '', province: '', postal_code: '' } };
+
+        // Ensure order object has shop_name if available from first item
+        // Ensure order object has shop_name and shop_id if available from first item
+          if (!data.order.shop_name && data.items.length > 0 && data.items[0].shop_info?.name) {
+            data.order.shop_name = data.items[0].shop_info.name;
+            data.order.shop_id = data.items[0].shop_info.id;
+          }
 
         setOrderData(data);
       }
@@ -438,7 +447,7 @@ export default function ViewTrackOrderPage() {
             );
           }
 
-// Processing status UI (includes ready_for_pickup variant)
+          // Processing status UI (includes ready_for_pickup variant)
           if (statusLower === 'processing' || statusLower === 'ready_for_pickup') {
             const isReadyForPickup = statusLower === 'ready_for_pickup';
             return (
@@ -466,9 +475,9 @@ export default function ViewTrackOrderPage() {
 
           // Picked up UI
           if (statusLower === 'picked_up') {
-            const deliveryMethodRawForPicked = String(order?.delivery_method || shipping_info?.delivery_method || '').toLowerCase();
+            const deliveryMethodRawForPicked = String(shipping_info?.delivery_method || '').toLowerCase();
             const isPickupForPicked = deliveryMethodRawForPicked.includes('pickup');
-            const pickupDateDisplay = order?.completed_at ? formatDateTime(order.completed_at) : null;
+            const pickupDateDisplay = order?.updated_at ? formatDateTime(order.updated_at) : null;
             return (
               <View style={baseStyle}>
                 <View>
@@ -502,7 +511,7 @@ export default function ViewTrackOrderPage() {
                     {getStatusText(order)}{deliveryDateDisplay ? `: ${deliveryDateDisplay}` : ''}
                   </Text>
                 </View>
-                {order.status === 'delivered' && (
+                {order.status === 'delivered' && items[0]?.return_deadline && (
                   <Text style={styles.subStatusText}>
                     Returnable time: before {formatDateTime(items[0]?.return_deadline || '')}
                   </Text>
@@ -514,7 +523,7 @@ export default function ViewTrackOrderPage() {
 
         {/* Shipping / Pickup Information */}
         {(() => {
-          const deliveryMethodRaw = String(order?.delivery_method || shipping_info?.delivery_method || '').toLowerCase();
+          const deliveryMethodRaw = String(shipping_info?.delivery_method || '').toLowerCase();
           const isPickup = deliveryMethodRaw.includes('pickup');
 
           if (isPickup) {
@@ -534,14 +543,12 @@ export default function ViewTrackOrderPage() {
                     {delivery_address.address || `${delivery_address.address_details?.street || ''}${delivery_address.address_details?.barangay ? ', ' + delivery_address.address_details.barangay : ''}${delivery_address.address_details?.city ? ', ' + delivery_address.address_details.city : ''}${delivery_address.address_details?.province ? ', ' + delivery_address.address_details.province : ''}`.replace(/^,\s*/, '') || 'Pickup address not provided'}
                   </Text>
 
-                  {order?.completed_at ? (
+                  {order?.updated_at ? (
                     <View style={{ marginTop: 8, paddingLeft: 4 }}>
                       <Text style={styles.pickupLabel}>Picked up</Text>
-                      <Text style={styles.pickupValue}>{formatDateTime(order.completed_at)}</Text>
+                      <Text style={styles.pickupValue}>{formatDateTime(order.updated_at)}</Text>
                     </View>
                   ) : null}
-
-
                 </View>
               </View>
             );
@@ -566,7 +573,7 @@ export default function ViewTrackOrderPage() {
                 <View style={styles.cardContent}>
                   <View style={styles.shippingRow}>
                     <Text style={styles.shippingLabel}>Logistics Carrier:</Text>
-                    <Text style={styles.shippingValue}>{shipping_info.logistics_carrier}</Text>
+                    <Text style={styles.shippingValue}>{shipping_info.logistics_carrier || 'N/A'}</Text>
                   </View>
                   {shipping_info.tracking_number && (
                     <View style={styles.shippingRow}>
@@ -631,41 +638,65 @@ export default function ViewTrackOrderPage() {
         {items.map((item, index) => (
           <View key={item.checkout_id} style={styles.productCard}>
             {/* Shop Header */}
-            {item.shop_info && item.shop_info.name ? (
-              <TouchableOpacity 
-                style={styles.storeHeader}
-                activeOpacity={0.7}
-                // onPress={() => router.push(`/shop/${item.shop_info.id}`)}
-              >
-                {item.shop_info.picture ? (
-                  <Image 
-                    source={{ uri: item.shop_info.picture }} 
-                    style={styles.storeLogo} 
-                  />
-                ) : (
-                  <View style={styles.storeLogo}>
-                    <Text style={styles.logoText}>
-                      {item.shop_info.name.substring(0, 2).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.storeInfo}>
-                  <View style={styles.storeTitleRow}>
-                    <Text style={styles.storeName}>{item.shop_info.name}</Text>
-                    {item.shop_info.is_choices && (
-                      <View style={styles.choicesBadge}>
-                        <Text style={styles.badgeText}>Choices</Text>
-                      </View>
-                    )}
-                    <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
-                  </View>
-                  <Text style={styles.followerText}>
-                    {item.shop_info.items_count} Items | {item.shop_info.followers_count.toLocaleString()} followers
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ) : null}
-
+            {/* Shop Header */}
+{/* Shop Header */}
+{item.shop_info && item.shop_info.name ? (
+  <TouchableOpacity 
+    style={styles.storeHeader}
+    activeOpacity={0.7}
+    onPress={() => router.push({
+      pathname: "/customer/view-shop",
+      params: { shopId: item.shop_info.id }
+    })}
+  >
+    {item.shop_info.picture ? (
+      <Image 
+        source={{ uri: item.shop_info.picture }} 
+        style={styles.storeLogo} 
+      />
+    ) : (
+      <View style={styles.storeLogo}>
+        <Text style={styles.logoText}>
+          {item.shop_info.name.substring(0, 2).toUpperCase()}
+        </Text>
+      </View>
+    )}
+    <View style={styles.storeInfo}>
+      <View style={styles.storeTitleRow}>
+        <Text style={styles.storeName}>{item.shop_info.name}</Text>
+        {item.shop_info.is_choices && (
+          <View style={styles.choicesBadge}>
+            <Text style={styles.badgeText}>Choices</Text>
+          </View>
+        )}
+        <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
+      </View>
+      <Text style={styles.followerText}>
+        {item.shop_info.items_count} Items | {item.shop_info.followers_count?.toLocaleString() || 0} followers
+      </Text>
+    </View>
+  </TouchableOpacity>
+) : (
+  // Fallback shop header if shop_info is missing
+  <TouchableOpacity 
+    style={styles.storeHeader}
+    activeOpacity={0.7}
+    onPress={order?.shop_id ? () => router.push({
+      pathname: "/customer/view-shop",
+      params: { shopId: order.shop_id }
+    }) : undefined}
+  >
+    <View style={styles.storeLogo}>
+      <Text style={styles.logoText}>SH</Text>
+    </View>
+    <View style={styles.storeInfo}>
+      <View style={styles.storeTitleRow}>
+        <Text style={styles.storeName}>{order?.shop_name || 'Shop'}</Text>
+        <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
+      </View>
+    </View>
+  </TouchableOpacity>
+)}
             {/* Product Body */}
             <View style={styles.productBody}>
               <Image 
@@ -691,26 +722,12 @@ export default function ViewTrackOrderPage() {
               </View>
             </View>
 
-            {/* Action Buttons */}
+            {/* Action Buttons - Rate & Review and Return buttons removed */}
             <View style={styles.productActions}>
-              {item.can_review && (
-                <TouchableOpacity
-                  style={styles.reviewButton}
-                  onPress={() => handleReviewProduct(item.product_id)}
-                >
-                  <Ionicons name="star-outline" size={16} color="#FFFFFF" />
-                  <Text style={styles.reviewButtonText}>Rate & Review</Text>
-                </TouchableOpacity>
-              )}
-              {item.can_return && (
-                <TouchableOpacity
-                  style={styles.returnButton}
-                  onPress={() => handleReturnProduct(item.checkout_id)}
-                >
-                  <MaterialIcons name="assignment-return" size={16} color="#FFFFFF" />
-                  <Text style={styles.returnButtonText}>Return</Text>
-                </TouchableOpacity>
-              )}
+              {/* Rate & Review button removed */}
+              {/* Return button removed */}
+              
+              {/* Contact Seller button (optional - uncomment if needed) */}
               {/* {actions.can_contact_seller && (
                 <TouchableOpacity
                   style={styles.chatButton}
@@ -720,6 +737,8 @@ export default function ViewTrackOrderPage() {
                   <Text style={styles.chatButtonText}>Contact Seller</Text>
                 </TouchableOpacity>
               )} */}
+              
+              {/* Buy Again button (optional - uncomment if needed) */}
               {/* <TouchableOpacity
                 style={styles.buyAgainButton}
                 onPress={() => handleBuyAgain(item.product_id)}
@@ -1133,11 +1152,12 @@ const styles = StyleSheet.create({
     marginTop: 8 
   },
   
-  // Product Actions
+  // Product Actions - Rate & Review and Return button styles removed
   productActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+    marginTop: 8,
   },
   reviewButton: {
     backgroundColor: '#F97316',
