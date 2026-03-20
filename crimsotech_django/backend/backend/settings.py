@@ -229,6 +229,8 @@ TWILIO_ACCOUNT_SID = env.str('TWILIO_ACCOUNT_SID', default='')
 TWILIO_AUTH_TOKEN = env.str('TWILIO_AUTH_TOKEN', default='')
 TWILIO_SERVICE_ID = env.str('TWILIO_SERVICE_ID', default='')
 
+SMS_PH_API_KEY = env.str('SMS_PH_API_KEY', default='')
+
 # Logging
 LOGGING = {
     "version": 1,
