@@ -71,23 +71,18 @@ export default function SettingsPage() {
           <Text style={styles.sectionTitle}>My Account</Text>
         </View>
         <View style={styles.group}>
-          <SettingItem title="Account & Security" onPress={() => router.push('/customer/settings/account-security')} />
+          <SettingItem title="Profile" onPress={() => router.push('/customer/profile')} />
           <View style={styles.separator} />
           <SettingItem title="My Addresses" onPress={() => router.push('/customer/components/shipping-address')} />
           <View style={styles.separator} />
-          <SettingItem title="Bank Accounts / Cards" onPress={() => router.push('/customer/settings/bank-accounts')} />
+          <SettingItem title="Wallet" onPress={() => router.push('/customer/wallet')} />
+          <View style={styles.separator} />
+          <SettingItem title="Vouchers" onPress={() => router.push('/customer/my-vouchers')} />
         </View>
 
         {/* Settings Section */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Settings</Text>
-        </View>
-        <View style={styles.group}>
-          <SettingItem title="Chat Settings" onPress={() => router.push('/customer/settings/chat-settings')} />
-          <View style={styles.separator} />
-          <SettingItem title="Notification Settings" onPress={() => router.push('/customer/settings/notification-settings')} />
-          <View style={styles.separator} />
-          <SettingItem title="Privacy Settings" onPress={() => router.push('/customer/settings/privacy-settings')} />
         </View>
 
         {/* Account */}

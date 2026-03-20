@@ -24892,6 +24892,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             "order_id": str(order.order), 
             "riders": riders_data
     })
+
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def get_return_products(self, request):
@@ -44376,3 +44377,163 @@ class SellerVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+class UserPaymentDetailsViewSet(viewsets.ViewSet):
+    """
+    User's saved payment details (e-wallets, bank accounts, etc.)
+    """
+
+    def get_user(self, request):
+        """
+        TEMPORARY: Get user from header
+        (Replace with request.user when authentication is implemented)
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return None, Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            return user, None
+        except User.DoesNotExist:
+            return None, Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # -----------------------------
+    # GET PAYMENT METHODS
+    # -----------------------------
+    @action(detail=False, methods=['get'])
+    def get_my_payment_methods(self, request):
+        user, error = self.get_user(request)
+        if error:
+            return error
+
+        methods = UserPaymentDetail.objects.filter(user=user).order_by('-is_default', '-created_at')
+        serializer = UserPaymentDetailSerializer(methods, many=True)
+
+        return Response(serializer.data)
+
+    # -----------------------------
+    # ADD PAYMENT METHOD
+    # -----------------------------
+    @action(detail=False, methods=['post'])
+    def add_payment_method(self, request):
+        user, error = self.get_user(request)
+        if error:
+            return error
+
+        data = request.data.copy()
+        data['user'] = user.id
+
+        # Remove read-only fields
+        for field in ['payment_id', 'created_at', 'updated_at', 'verified_by']:
+            data.pop(field, None)
+
+        serializer = UserPaymentDetailSerializer(data=data)
+
+        if serializer.is_valid():
+            try:
+                with transaction.atomic():
+                    # If new method is default → remove other defaults
+                    if serializer.validated_data.get('is_default'):
+                        UserPaymentDetail.objects.filter(user=user, is_default=True).update(is_default=False)
+
+                    method = serializer.save()
+
+                return Response({
+                    "message": "Payment method added successfully",
+                    "payment_id": str(method.payment_id)
+                }, status=status.HTTP_201_CREATED)
+
+            except Exception as e:
+                logger.error(f"Database error: {e}\n{traceback.format_exc()}")
+                return Response(
+                    {"error": "Database error, please try again"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        logger.error(f"Validation errors: {serializer.errors}")
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # -----------------------------
+    # UPDATE PAYMENT METHOD
+    # -----------------------------
+    @action(detail=True, methods=['put'])
+    def update_payment_method(self, request, pk=None):
+        user, error = self.get_user(request)
+        if error:
+            return error
+
+        method = get_object_or_404(UserPaymentDetail, payment_id=pk, user=user)
+
+        serializer = UserPaymentDetailSerializer(method, data=request.data, partial=True)
+
+        if serializer.is_valid():
+            try:
+                with transaction.atomic():
+                    # If setting as default → remove other defaults
+                    if serializer.validated_data.get('is_default'):
+                        UserPaymentDetail.objects.filter(user=user, is_default=True).update(is_default=False)
+
+                    serializer.save()
+
+                return Response({
+                    "message": "Payment method updated",
+                    "payment_id": str(method.payment_id)
+                })
+
+            except Exception as e:
+                logger.error(f"Update error: {e}\n{traceback.format_exc()}")
+                return Response(
+                    {"error": "Update failed"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # -----------------------------
+    # DELETE PAYMENT METHOD
+    # -----------------------------
+    @action(detail=True, methods=['delete'])
+    def delete_payment_method(self, request, pk=None):
+        user, error = self.get_user(request)
+        if error:
+            return error
+
+        method = get_object_or_404(UserPaymentDetail, payment_id=pk, user=user)
+        method.delete()
+
+        return Response({
+            "message": "Payment method deleted",
+            "payment_id": str(pk)
+        })
+
+    # -----------------------------
+    # SET DEFAULT PAYMENT METHOD
+    # -----------------------------
+    @action(detail=True, methods=['post'])
+    def set_default(self, request, pk=None):
+        user, error = self.get_user(request)
+        if error:
+            return error
+
+        method = get_object_or_404(UserPaymentDetail, payment_id=pk, user=user)
+
+        try:
+            with transaction.atomic():
+                # Remove existing default
+                UserPaymentDetail.objects.filter(user=user, is_default=True).update(is_default=False)
+
+                # Set new default
+                method.is_default = True
+                method.save()
+
+            return Response({
+                "message": "Payment method set as default",
+                "payment_id": str(method.payment_id)
+            })
+
+        except Exception as e:
+            logger.error(f"Set default error: {e}\n{traceback.format_exc()}")
+            return Response(
+                {"error": "Failed to set default"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

@@ -25,7 +25,7 @@ import AxiosInstance from '../../contexts/axios';
 
 const { width, height } = Dimensions.get('window');
 
-// Types - Matching web types
+// Types - Update OrderItem to include image fields
 interface OrderItem {
   checkout_id: string;
   product_id: string;
@@ -40,6 +40,22 @@ interface OrderItem {
   remarks: string;
   purchased_at: string;
   can_review: boolean;
+  product_images?: Array<{
+    id?: string;
+    url?: string;
+    file_data?: string;
+    file_type?: string;
+  }>;
+  primary_image?: {
+    id?: string;
+    url?: string;
+    file_type?: string;
+  } | null;
+  shop_info?: {
+    id?: string;
+    name?: string;
+    picture?: string | null;
+  };
   voucher_applied: {
     id: string;
     name: string;
@@ -223,7 +239,7 @@ const ProgressBar = ({ progress }: any) => (
       <View style={[styles.progressFill, { width: `${progress}%` }]} />
     </View>
     <View style={styles.progressLabels}>
-      <Text style={styles.progressLabelActive}>Select Items</Text>
+      <Text style={progress >= 33 ? styles.progressLabelActive : styles.progressLabel}>Select Items</Text>
       <Text style={progress >= 66 ? styles.progressLabelActive : styles.progressLabel}>Choose Method</Text>
       <Text style={progress >= 100 ? styles.progressLabelActive : styles.progressLabel}>Review & Submit</Text>
     </View>
@@ -319,7 +335,6 @@ export default function RequestRefundPage() {
     try {
       setLoading(true);
       
-      // FIXED: Use the view-order endpoint which has all the detailed data (like web)
       const response = await AxiosInstance.get(`/purchases-buyer/${decodedOrderId}/view-order/`, {
         headers: {
           'X-User-Id': userId,
@@ -332,7 +347,6 @@ export default function RequestRefundPage() {
         return;
       }
 
-      // Transform the data to match your component's expected format (like web)
       const orderData = response.data;
       
       const transformedOrder = {
@@ -367,6 +381,33 @@ export default function RequestRefundPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const getProductImageUrl = (item: OrderItem) => {
+    // First try primary_image (from ProductSerializer)
+    if (item.primary_image?.url) {
+      return item.primary_image.url;
+    }
+    
+    // Then try product_images array
+    if (item.product_images && item.product_images.length > 0) {
+      const firstImage = item.product_images[0];
+      // Check different possible image URL fields
+      if (firstImage.url) {
+        return firstImage.url;
+      }
+      if (firstImage.file_data) {
+        return firstImage.file_data;
+      }
+    }
+    
+    // Try shop picture as last resort
+    if (item.shop_info?.picture) {
+      return item.shop_info.picture;
+    }
+    
+    // Return empty string to use fallback
+    return '';
   };
 
   const formatCurrency = (amount: string | number) => {
@@ -753,6 +794,7 @@ export default function RequestRefundPage() {
 
   const renderOrderItem = (item: OrderItem) => {
     const isSelected = selectedItems.includes(item.checkout_id);
+    const imageUrl = getProductImageUrl(item);
     
     return (
       <TouchableOpacity
@@ -765,9 +807,16 @@ export default function RequestRefundPage() {
           {isSelected && <Icon name="check" size={16} color="#fff" />}
         </View>
         
-        <View style={styles.itemImagePlaceholder}>
-          <Icon name="package-variant" size={24} color="#6b7280" />
-        </View>
+        {imageUrl ? (
+          <Image 
+            source={{ uri: imageUrl }}
+            style={styles.itemImage}
+          />
+        ) : (
+          <View style={styles.itemImagePlaceholder}>
+            <Icon name="package-variant" size={24} color="#6b7280" />
+          </View>
+        )}
         
         <View style={styles.itemDetails}>
           <Text style={styles.itemName} numberOfLines={2}>
@@ -2066,6 +2115,13 @@ const styles = StyleSheet.create({
   checkboxChecked: {
     backgroundColor: '#4f46e5',
     borderColor: '#4f46e5',
+  },
+  itemImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 12,
+    backgroundColor: '#f3f4f6',
   },
   itemImagePlaceholder: {
     width: 60,

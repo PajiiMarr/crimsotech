@@ -957,6 +957,7 @@ class UserPaymentMethodSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+
 # Refund Serializers
 class RefundMediaSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
@@ -1243,25 +1244,42 @@ class LogsSerializer(serializers.ModelSerializer):
         elif user.is_customer:
             return 'customer'
         return 'unknown'
-
+    
+import re
+from rest_framework import serializers
 
 class UserPaymentDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserPaymentDetail
         fields = [
-            'payment_id', 'payment_method', 'bank_name', 
+            'payment_id', 'user', 'payment_method', 'bank_name',
             'account_name', 'account_number', 'is_default',
             'created_at', 'updated_at', 'verified_by'
         ]
         read_only_fields = ['payment_id', 'created_at', 'updated_at', 'verified_by']
-    
+
+    def validate_account_number(self, value):
+        """Validate PH mobile number format: 639XXXXXXXXX (12 digits)"""
+        clean_value = re.sub(r'[^0-9]', '', str(value))
+        # Must be exactly 12 digits and start with 639
+        if not re.match(r'^639\d{9}$', clean_value):
+            raise serializers.ValidationError(
+                "Enter a valid Philippine mobile number starting with 639 followed by 9 digits (e.g., 639171234567)"
+            )
+        return clean_value
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        # Mask account number for security
+        # Mask account number for security - show only last 4 digits
         if data.get('account_number'):
             acc_num = data['account_number']
             if len(acc_num) > 4:
                 data['account_number'] = '*' * (len(acc_num) - 4) + acc_num[-4:]
+            # Add formatted display with PH flag for wallet list
+            # acc_num is 12 digits: "639XXXXXXXXX"
+            data['display_number'] = f"🇵🇭 +63 {acc_num[3:6]} {acc_num[6:]}"
+            # Store full number for edit mode
+            data['full_account_number'] = acc_num
         return data
 # Import the get_media_url function from wherever it is
 # For example:

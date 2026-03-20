@@ -57,7 +57,8 @@ router.register(r'personal-refunds', PersonalRefundViewSet, basename='my-refund'
 router.register(r'withdrawal-requests', WithdrawalRequestViewSet, basename='withdrawal-requests')
 
 router.register(r'order-successful', OrderSuccessful, basename='order-successful')
-router.register(r'user-payment-methods', UserPaymentMethodViewSet, basename='userpaymentmethod')
+# router.register(r'user-payment-methods', UserPaymentMethodViewSet, basename='userpaymentmethod')
+router.register(r'user-payment-details', UserPaymentDetailsViewSet, basename='userpaymentdetails')
 router.register(r'arrange-shipment', ArrangeShipment, basename='arrange-shipment')
 router.register(r'rider-orders-active', RiderOrdersActive, basename='rider-orders-active')
 router.register(r'swap-products', SwapViewset, basename='swap-products')

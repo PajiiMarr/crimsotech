@@ -813,6 +813,19 @@ export default function ProfileScreen() {
 
               <TouchableOpacity
                 style={styles.accountGridItem}
+                onPress={() => pushRoute("/customer/wallet")}
+                activeOpacity={0.7}
+              >
+                <View
+                  style={[styles.accountIconBg, { backgroundColor: "#F5F5F4" }]}
+                >
+                  <MaterialIcons name="account-balance-wallet" size={22} color="#374151" />
+                </View>
+                <Text style={styles.accountGridLabel}>Wallet</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.accountGridItem}
                 onPress={() => pushRoute("/customer/my-vouchers")}
                 activeOpacity={0.7}
               >
@@ -1170,10 +1183,12 @@ const styles = StyleSheet.create({
   // Account Grid
   accountGrid: {
     flexDirection: "row",
+    flexWrap: "wrap",
   },
   accountGridItem: {
-    width: "33%",
+    width: "25%",
     alignItems: "center",
+    marginBottom: 16,
   },
   accountIconBg: {
     width: 44,
