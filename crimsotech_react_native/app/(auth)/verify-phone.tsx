@@ -156,7 +156,7 @@ export default function VerifyPhoneScreen() {
       };
 
       const response = await AxiosInstance.post(
-        "/verify-number/verify_number/",
+        "/verify/verify_number/",
         payload,
         {
           headers: { "X-User-Id": userId },
@@ -196,7 +196,7 @@ export default function VerifyPhoneScreen() {
       };
 
       const response = await AxiosInstance.post(
-        "/verify-number/verify_number/",
+        "/verify/verify_number/",
         payload,
         {
           headers: { "X-User-Id": userId },
@@ -287,7 +287,7 @@ export default function VerifyPhoneScreen() {
       };
 
       const response = await AxiosInstance.post(
-        "/verify-number/verify_number/",
+        "/verify/verify_number/",
         payload,
         {
           headers: { "X-User-Id": userId },
