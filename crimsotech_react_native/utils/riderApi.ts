@@ -47,6 +47,39 @@ export interface RiderData {
   is_accepting_deliveries: boolean;
 }
 
+export interface RiderProfileResponse {
+  user: {
+    id: string;
+    username?: string;
+    email?: string;
+    first_name?: string;
+    last_name?: string;
+    middle_name?: string;
+    contact_number?: string;
+    date_of_birth?: string | null;
+    sex?: string;
+    gender?: string;
+    bio?: string;
+    country?: string;
+    province?: string;
+    city?: string;
+    barangay?: string;
+    street?: string;
+    state?: string;
+    zip_code?: string;
+    profile_picture?: string | null;
+  };
+  rider?: {
+    id?: string;
+    vehicle_type?: string;
+    plate_number?: string;
+    vehicle_brand?: string;
+    vehicle_model?: string;
+    vehicle_image?: string | null;
+    verified?: boolean;
+  };
+}
+
 export interface OrderHistoryMetrics {
   total_deliveries: number;
   delivered_count: number;
@@ -82,7 +115,7 @@ const getUserHeaders = (userId: string) => ({
 });
 
 const handleAxiosError = (error: any, fallbackMessage: string) => {
-  if (axios.isAxiosError(error)) {
+if (axios.isAxiosError(error)) {
     const data: any = error.response?.data;
     throw new Error(data?.error || data?.message || fallbackMessage);
   }
@@ -306,5 +339,81 @@ export const exportOrderHistory = async (
   } catch (error: any) {
     console.error('Export order history error:', error);
     handleAxiosError(error, 'Failed to export history');
+  }
+};
+
+/**
+ * Get rider profile data for edit profile screen
+ */
+export const getRiderProfile = async (userId: string): Promise<RiderProfileResponse> => {
+  try {
+    const response = await AxiosInstance.get('/rider-profile/profile/', {
+      ...getUserHeaders(userId),
+    });
+
+    const data = response.data || {};
+
+    // Backend uses `sex`; mobile edit form expects `gender`.
+    if (data.user && !data.user.gender && data.user.sex) {
+      data.user.gender = data.user.sex;
+    }
+
+    return data as RiderProfileResponse;
+  } catch (error: any) {
+    console.error('Get rider profile error:', error);
+    handleAxiosError(error, 'Failed to get rider profile');
+    throw error;
+  }
+};
+
+/**
+ * Update rider profile data from edit profile screen
+ */
+export const updateRiderProfile = async (
+  userId: string,
+  payload: Record<string, any>
+): Promise<any> => {
+  try {
+    const formData = new FormData();
+
+    Object.entries(payload || {}).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') {
+        return;
+      }
+
+      if (
+        key === 'profile_picture' &&
+        typeof value === 'object' &&
+        value.uri
+      ) {
+        // Backend expects rider image fields, not profile_picture.
+        formData.append('vehicle_image', value as any);
+        return;
+      }
+
+      if (key === 'gender') {
+        formData.append('sex', String(value));
+        return;
+      }
+
+      formData.append(key, String(value));
+    });
+
+    const response = await AxiosInstance.patch(
+      '/rider-profile/update_profile/',
+      formData,
+      {
+        headers: {
+          'X-User-Id': userId,
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    );
+
+    return response.data;
+  } catch (error: any) {
+    console.error('Update rider profile error:', error);
+    handleAxiosError(error, 'Failed to update rider profile');
+    throw error;
   }
 };

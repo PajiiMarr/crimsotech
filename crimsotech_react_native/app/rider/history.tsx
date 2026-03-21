@@ -19,6 +19,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import RiderPageHeader from './includes/riderPageHeader';
 
 interface OrderHistoryData {
   id: string;
@@ -497,20 +498,20 @@ export default function OrderHistory() {
   );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <RiderPageHeader 
+        title="Order History" 
+        subtitle="Track your past deliveries and performance"
+      />
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 80 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        <View style={{ padding: 16 }}>
-          {/* Header */}
-          <View style={{ marginBottom: 16 }}>
-            <Text style={{ fontSize: 20, fontWeight: 'bold' }}>Order History</Text>
-            <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>Track your past deliveries and performance</Text>
-          </View>
+        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
 
           {/* Date Range Presets */}
           <View style={{ flexDirection: 'row', marginBottom: 14 }}>

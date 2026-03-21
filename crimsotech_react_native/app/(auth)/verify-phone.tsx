@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Alert,
   ActivityIndicator,
   Image,
+  TextInput as RNTextInput,
 } from "react-native";
 import { router } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -34,6 +35,9 @@ export default function VerifyPhoneScreen() {
     otp?: string;
     general?: string;
   }>({});
+
+  // Create refs for OTP inputs
+  const otpInputs = useRef<(RNTextInput | null)[]>([]);
 
   useEffect(() => {
     loadUserData();
@@ -89,17 +93,27 @@ export default function VerifyPhoneScreen() {
   };
 
   const handleOtpChange = (value: string, index: number) => {
+    // Only allow single digit
+    const digit = value.slice(-1);
+    
     const newOtp = [...otp];
-    newOtp[index] = value;
+    newOtp[index] = digit;
     setOtp(newOtp);
 
     // Auto-focus next input
-    if (value && index < 5) {
-      // You can implement refs for auto-focus if needed
+    if (digit && index < 5) {
+      otpInputs.current[index + 1]?.focus();
     }
 
     if (errors.otp) {
       setErrors((prev) => ({ ...prev, otp: undefined }));
+    }
+  };
+
+  const handleOtpKeyPress = (e: any, index: number) => {
+    // Handle backspace to go to previous input
+    if (e.nativeEvent.key === 'Backspace' && !otp[index] && index > 0) {
+      otpInputs.current[index - 1]?.focus();
     }
   };
 
@@ -168,6 +182,9 @@ export default function VerifyPhoneScreen() {
       Alert.alert("OTP Sent", `OTP has been sent to +63${phoneNumber}`);
       setStep("enter-otp");
       setCooldown(60); // 60 seconds cooldown
+      
+      // Reset OTP when moving to OTP step
+      setOtp(["", "", "", "", "", ""]);
     } catch (error: any) {
       console.error("❌ OTP error:", error.response?.data || error.message);
 
@@ -179,8 +196,6 @@ export default function VerifyPhoneScreen() {
       setLoading(false);
     }
   };
-
-  // In verify-phone.tsx, update the handleVerifyOTP function:
 
   const handleVerifyOTP = async () => {
     if (!validateOtp() || !userId) return;
@@ -205,7 +220,7 @@ export default function VerifyPhoneScreen() {
 
       console.log("✅ OTP verified:", response.data);
 
-      // ✅ UPDATED: Set registration_stage to 3 for customers (completed)
+      // UPDATED: Set registration_stage to 3 for customers (completed)
       // For riders: stage 3 → stage 4 (completed)
       // For customers: stage 2 → stage 3 (completed)
       const newRegistrationStage = isRider ? 4 : 3;
@@ -271,6 +286,11 @@ export default function VerifyPhoneScreen() {
         error.response?.data?.error || "Invalid OTP. Please try again.";
       setErrors((prev) => ({ ...prev, general: errorMessage }));
       Alert.alert("Error", errorMessage);
+      
+      // Clear OTP on error to allow re-entry
+      setOtp(["", "", "", "", "", ""]);
+      // Focus the first input
+      setTimeout(() => otpInputs.current[0]?.focus(), 100);
     } finally {
       setLoading(false);
     }
@@ -297,6 +317,10 @@ export default function VerifyPhoneScreen() {
       console.log("✅ OTP resent:", response.data);
       Alert.alert("OTP Resent", `New OTP has been sent to +63${phoneNumber}`);
       setCooldown(60);
+      
+      // Clear OTP and focus first input
+      setOtp(["", "", "", "", "", ""]);
+      setTimeout(() => otpInputs.current[0]?.focus(), 100);
     } catch (error: any) {
       console.error("❌ Resend error:", error.response?.data || error.message);
       Alert.alert("Error", "Failed to resend OTP. Please try again.");
@@ -311,9 +335,13 @@ export default function VerifyPhoneScreen() {
         {[0, 1, 2, 3, 4, 5].map((index) => (
           <TextInput
             key={index}
+            ref={(ref) => {
+              otpInputs.current[index] = ref;
+            }}
             style={[styles.otpInput, errors.otp && styles.inputError]}
             value={otp[index]}
             onChangeText={(value) => handleOtpChange(value, index)}
+            onKeyPress={(e) => handleOtpKeyPress(e, index)}
             keyboardType="number-pad"
             maxLength={1}
             editable={!loading}
@@ -323,6 +351,15 @@ export default function VerifyPhoneScreen() {
       </View>
     );
   };
+
+  // Focus first OTP input when OTP screen appears
+  useEffect(() => {
+    if (step === "enter-otp") {
+      setTimeout(() => {
+        otpInputs.current[0]?.focus();
+      }, 100);
+    }
+  }, [step]);
 
   return (
     <KeyboardAvoidingView

@@ -9,7 +9,6 @@ import {
   StyleSheet,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import axios from 'axios';
 
 interface AddressItem {
   code: string;
@@ -43,106 +42,100 @@ export default function AddressDropdowns({
   errors,
   disabled = false,
 }: AddressDropdownsProps) {
-  const [provinces, setProvinces] = useState<AddressItem[]>([]);
-  const [cities, setCities] = useState<AddressItem[]>([]);
-  const [barangays, setBarangays] = useState<AddressItem[]>([]);
+  // Hardcoded data
+  const HARDCODED_PROVINCE = "Zamboanga Del Sur";
+  const HARDCODED_CITY = "City of Zamboanga";
   
-  const [showProvinceModal, setShowProvinceModal] = useState(false);
-  const [showCityModal, setShowCityModal] = useState(false);
+  // Hardcoded barangays for City of Zamboanga
+  const BARANGAYS: AddressItem[] = [
+    { code: "1", name: "Abong-Abong" },
+    { code: "2", name: "Arena Blanco" },
+    { code: "3", name: "Ayala" },
+    { code: "4", name: "Baliwasan" },
+    { code: "5", name: "Baluno" },
+    { code: "6", name: "Boalan" },
+    { code: "7", name: "Bolong" },
+    { code: "8", name: "Buenavista" },
+    { code: "9", name: "Bunguiao" },
+    { code: "10", name: "Busay" },
+    { code: "11", name: "Cabaluay" },
+    { code: "12", name: "Cabatangan" },
+    { code: "13", name: "Cacao" },
+    { code: "14", name: "Calabasa" },
+    { code: "15", name: "Calarian" },
+    { code: "16", name: "Camino Nuevo" },
+    { code: "17", name: "Camino Viejo" },
+    { code: "18", name: "Canelar" },
+    { code: "19", name: "Capisan" },
+    { code: "20", name: "Cawit" },
+    { code: "21", name: "Dulian (Upper Bunguiao)" },
+    { code: "22", name: "Dumagoc" },
+    { code: "23", name: "Dumpsa" },
+    { code: "24", name: "Guiwan" },
+    { code: "25", name: "Labuan" },
+    { code: "26", name: "La Paz" },
+    { code: "27", name: "Lapakan" },
+    { code: "28", name: "Limpapa" },
+    { code: "29", name: "Lunzuran" },
+    { code: "30", name: "Mampang" },
+    { code: "31", name: "Manicahan" },
+    { code: "32", name: "Maasin" },
+    { code: "33", name: "Mercedes" },
+    { code: "34", name: "Pasonanca" },
+    { code: "35", name: "Patalon" },
+    { code: "36", name: "Putik" },
+    { code: "37", name: "Pueblo" },
+    { code: "38", name: "Recodo" },
+    { code: "39", name: "Rio Hondo" },
+    { code: "40", name: "San Jose Cawa-Cawa" },
+    { code: "41", name: "San Jose Gusu" },
+    { code: "42", name: "San Roque" },
+    { code: "43", name: "Santa Barbara" },
+    { code: "44", name: "Santa Catalina" },
+    { code: "45", name: "Santa Maria" },
+    { code: "46", name: "Santo Niño" },
+    { code: "47", name: "Sinunuc" },
+    { code: "48", name: "Talabaan" },
+    { code: "49", name: "Talisayan" },
+    { code: "50", name: "Tetuan" },
+    { code: "51", name: "Tictapul" },
+    { code: "52", name: "Tigbalabag" },
+    { code: "53", name: "Tolosa" },
+    { code: "54", name: "Tugbungan" },
+    { code: "55", name: "Tumaga" },
+    { code: "56", name: "Victoria" },
+    { code: "57", name: "Vitali" },
+    { code: "58", name: "Zambowood" },
+  ];
+  
+  const [barangays] = useState<AddressItem[]>(BARANGAYS.sort((a, b) => a.name.localeCompare(b.name)));
+  const [filteredBarangays, setFilteredBarangays] = useState<AddressItem[]>(barangays);
+  
   const [showBarangayModal, setShowBarangayModal] = useState(false);
-  
-  const [provinceSearch, setProvinceSearch] = useState('');
-  const [citySearch, setCitySearch] = useState('');
   const [barangaySearch, setBarangaySearch] = useState('');
 
+  // Initialize and ensure province and city are always set
   useEffect(() => {
-    fetchProvinces();
-  }, []);
+    // Always ensure province and city are set to hardcoded values
+    const needsUpdate = value.province !== HARDCODED_PROVINCE || value.city !== HARDCODED_CITY;
+    
+    if (needsUpdate) {
+      onChange({
+        province: HARDCODED_PROVINCE,
+        city: HARDCODED_CITY,
+        barangay: value.barangay || '',
+        street: value.street || '',
+      });
+    }
+  }, []); // Run once on mount
 
+  // Filter barangays based on search
   useEffect(() => {
-    if (value.province) {
-      const selectedProvince = provinces.find(p => p.name === value.province);
-      if (selectedProvince) {
-        fetchCities(selectedProvince.code);
-      }
-    }
-  }, [value.province]);
-
-  useEffect(() => {
-    if (value.city) {
-      const selectedCity = cities.find(c => c.name === value.city);
-      if (selectedCity) {
-        fetchBarangays(selectedCity.code);
-      }
-    }
-  }, [value.city]);
-
-  const fetchProvinces = async () => {
-    try {
-      const response = await axios.get('https://psgc.gitlab.io/api/provinces/');
-      const sorted = response.data.sort((a: AddressItem, b: AddressItem) =>
-        a.name.localeCompare(b.name)
-      );
-      setProvinces(sorted);
-    } catch (error) {
-      console.error('Error fetching provinces:', error);
-    }
-  };
-
-  const fetchCities = async (provinceCode: string) => {
-    try {
-      const response = await axios.get(
-        `https://psgc.gitlab.io/api/provinces/${provinceCode}/cities-municipalities/`
-      );
-      const uniqueCities = response.data.filter((city: AddressItem, index: number, self: AddressItem[]) =>
-        index === self.findIndex((c) => c.name === city.name)
-      );
-      const sorted = uniqueCities.sort((a: AddressItem, b: AddressItem) =>
-        a.name.localeCompare(b.name)
-      );
-      setCities(sorted);
-    } catch (error) {
-      console.error('Error fetching cities:', error);
-    }
-  };
-
-  const fetchBarangays = async (cityCode: string) => {
-    try {
-      const response = await axios.get(
-        `https://psgc.gitlab.io/api/cities-municipalities/${cityCode}/barangays/`
-      );
-      const uniqueBarangays = response.data.filter((barangay: AddressItem, index: number, self: AddressItem[]) =>
-        index === self.findIndex((b) => b.name === barangay.name)
-      );
-      const sorted = uniqueBarangays.sort((a: AddressItem, b: AddressItem) =>
-        a.name.localeCompare(b.name)
-      );
-      setBarangays(sorted);
-    } catch (error) {
-      console.error('Error fetching barangays:', error);
-    }
-  };
-
-  const handleProvinceSelect = (selectedProvince: AddressItem) => {
-    onChange({
-      province: selectedProvince.name,
-      city: '',
-      barangay: '',
-      street: value.street,
-    });
-    setShowProvinceModal(false);
-    setProvinceSearch('');
-  };
-
-  const handleCitySelect = (selectedCity: AddressItem) => {
-    onChange({
-      ...value,
-      city: selectedCity.name,
-      barangay: '',
-    });
-    setShowCityModal(false);
-    setCitySearch('');
-  };
+    const filtered = barangays.filter(barangay =>
+      barangay.name.toLowerCase().includes(barangaySearch.toLowerCase())
+    );
+    setFilteredBarangays(filtered);
+  }, [barangaySearch, barangays]);
 
   const handleBarangaySelect = (selectedBarangay: AddressItem) => {
     onChange({
@@ -159,18 +152,6 @@ export default function AddressDropdowns({
       street: text,
     });
   };
-
-  const filteredProvinces = provinces.filter(province =>
-    province.name.toLowerCase().includes(provinceSearch.toLowerCase())
-  );
-
-  const filteredCities = cities.filter(city =>
-    city.name.toLowerCase().includes(citySearch.toLowerCase())
-  );
-
-  const filteredBarangays = barangays.filter(barangay =>
-    barangay.name.toLowerCase().includes(barangaySearch.toLowerCase())
-  );
 
   const renderDropdownModal = (
     visible: boolean,
@@ -230,36 +211,30 @@ export default function AddressDropdowns({
 
   return (
     <>
-      {/* Province */}
+      {/* Province - Hardcoded to Zamboanga Del Sur */}
       <View style={styles.inputGroup}>
         <Text style={styles.label}>Province *</Text>
-        <TouchableOpacity
-          style={[styles.dropdownTrigger, errors?.province && styles.inputError]}
-          onPress={() => setShowProvinceModal(true)}
-          disabled={disabled}
-        >
-          <Text style={value.province ? styles.dropdownText : styles.dropdownPlaceholder}>
-            {value.province || 'Select province'}
+        <View style={[styles.dropdownTrigger, styles.disabledTrigger]}>
+          <Text style={styles.dropdownText}>
+            {HARDCODED_PROVINCE}
           </Text>
-          <MaterialIcons name="arrow-drop-down" size={24} color="#666" />
-        </TouchableOpacity>
-        {errors?.province && <Text style={styles.errorText}>{errors.province}</Text>}
+          <MaterialIcons name="check-circle" size={20} color="#4CAF50" />
+        </View>
+        {/* Only show error if province is actually empty (which it never is) */}
+        {!value.province && errors?.province && <Text style={styles.errorText}>{errors.province}</Text>}
       </View>
 
-      {/* City/Municipality */}
+      {/* City/Municipality - Hardcoded to City of Zamboanga */}
       <View style={styles.inputGroup}>
         <Text style={styles.label}>City/Municipality *</Text>
-        <TouchableOpacity
-          style={[styles.dropdownTrigger, errors?.city && styles.inputError]}
-          onPress={() => setShowCityModal(true)}
-          disabled={disabled || !value.province}
-        >
-          <Text style={value.city ? styles.dropdownText : styles.dropdownPlaceholder}>
-            {value.city || (value.province ? 'Select city' : 'Select province first')}
+        <View style={[styles.dropdownTrigger, styles.disabledTrigger]}>
+          <Text style={styles.dropdownText}>
+            {HARDCODED_CITY}
           </Text>
-          <MaterialIcons name="arrow-drop-down" size={24} color="#666" />
-        </TouchableOpacity>
-        {errors?.city && <Text style={styles.errorText}>{errors.city}</Text>}
+          <MaterialIcons name="check-circle" size={20} color="#4CAF50" />
+        </View>
+        {/* Only show error if city is actually empty (which it never is) */}
+        {!value.city && errors?.city && <Text style={styles.errorText}>{errors.city}</Text>}
       </View>
 
       {/* Barangay */}
@@ -268,10 +243,10 @@ export default function AddressDropdowns({
         <TouchableOpacity
           style={[styles.dropdownTrigger, errors?.barangay && styles.inputError]}
           onPress={() => setShowBarangayModal(true)}
-          disabled={disabled || !value.city}
+          disabled={disabled}
         >
           <Text style={value.barangay ? styles.dropdownText : styles.dropdownPlaceholder}>
-            {value.barangay || (value.city ? 'Select barangay' : 'Select city first')}
+            {value.barangay || 'Select barangay'}
           </Text>
           <MaterialIcons name="arrow-drop-down" size={24} color="#666" />
         </TouchableOpacity>
@@ -289,30 +264,6 @@ export default function AddressDropdowns({
           editable={!disabled}
         />
       </View>
-
-      {/* Province Modal */}
-      {renderDropdownModal(
-        showProvinceModal,
-        () => setShowProvinceModal(false),
-        'Select Province',
-        provinceSearch,
-        setProvinceSearch,
-        filteredProvinces,
-        handleProvinceSelect,
-        'Search provinces...'
-      )}
-
-      {/* City Modal */}
-      {renderDropdownModal(
-        showCityModal,
-        () => setShowCityModal(false),
-        'Select City/Municipality',
-        citySearch,
-        setCitySearch,
-        filteredCities,
-        handleCitySelect,
-        'Search cities...'
-      )}
 
       {/* Barangay Modal */}
       {renderDropdownModal(
@@ -350,6 +301,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  disabledTrigger: {
+    backgroundColor: '#f5f5f5',
+    borderColor: '#e0e0e0',
   },
   dropdownText: {
     fontSize: 16,

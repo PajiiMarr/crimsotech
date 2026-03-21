@@ -17,6 +17,7 @@ import { router } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import RiderPageHeader from './includes/riderPageHeader';
 
 interface Delivery {
   id: string;
@@ -547,21 +548,21 @@ export default function ActiveOrders() {
   );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <RiderPageHeader 
+        title="Active Orders" 
+        subtitle="Manage your deliveries"
+      />
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 80 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        <View style={{ padding: 16 }}>
-          {/* Header */}
-          <View style={{ marginBottom: 16 }}>
-            <Text style={{ fontSize: 20, fontWeight: 'bold' }}>Active Orders</Text>
-            <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>Manage your deliveries</Text>
-          </View>
-
+        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+          {/* Metrics */}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 }}>
             <View style={{ width: '48%', backgroundColor: 'white', borderRadius: 10, padding: 10, marginRight: '4%', marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB' }}>
               <Text style={{ fontSize: 10, color: '#6B7280' }}>Active</Text>
