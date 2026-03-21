@@ -17,6 +17,7 @@ import { Feather, Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "../../contexts/AuthContext";
 import { router } from "expo-router";
+import RiderPageHeader from "./includes/riderPageHeader";
 
 // --- Types & Colors ---
 const COLORS = {
@@ -588,15 +589,9 @@ export default function MessagePage() {
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
 
         {/* Header for Conversation List */}
-        <View style={styles.conversationListHeader}>
-          <Text style={styles.headerTitle}>Messages</Text>
-          <TouchableOpacity
-            style={styles.composeButton}
-            onPress={() => router.push("/rider/message-settings")}
-          >
-            <Feather name="menu" size={20} color={COLORS.primary} />
-          </TouchableOpacity>
-        </View>
+        <RiderPageHeader 
+          title="Messages" 
+        />
 
         {/* Conversations List */}
         <FlatList

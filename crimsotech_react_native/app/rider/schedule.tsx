@@ -18,6 +18,7 @@ import { router } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import RiderPageHeader from './includes/riderPageHeader';
 
 interface RiderAvailabilityData {
   id: string;
@@ -630,34 +631,35 @@ export default function RiderSchedule() {
   );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <RiderPageHeader 
+        title="Schedule" 
+        subtitle="Manage your working hours"
+      />
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 80 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        <View style={{ padding: 16 }}>
-          {/* Header */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <View>
-              <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#111827' }}>Schedule</Text>
-              <Text style={{ fontSize: 14, color: '#6B7280', marginTop: 2 }}>Manage your working hours</Text>
-            </View>
-            
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ 
-                backgroundColor: online ? '#D1FAE5' : '#F3F4F6', 
-                paddingHorizontal: 12, 
-                paddingVertical: 6, 
-                borderRadius: 20,
-                marginRight: 8
-              }}>
-                <Text style={{ fontSize: 13, fontWeight: '500', color: online ? '#059669' : '#6B7280' }}>
-                  {online ? 'Online' : 'Offline'}
-                </Text>
-              </View>
+        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+          {/* Online Status Toggle */}
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 12 }}>
+            <View style={{ 
+              backgroundColor: online ? '#D1FAE5' : '#F3F4F6', 
+              paddingHorizontal: 12, 
+              paddingVertical: 6, 
+              borderRadius: 20,
+              marginRight: 8,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8
+            }}>
+              <Text style={{ fontSize: 13, fontWeight: '500', color: online ? '#059669' : '#6B7280' }}>
+                {online ? 'Online' : 'Offline'}
+              </Text>
               <Switch
                 value={online}
                 onValueChange={handleOnlineToggle}

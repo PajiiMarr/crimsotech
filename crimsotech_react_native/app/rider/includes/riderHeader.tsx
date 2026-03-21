@@ -1,7 +1,7 @@
 // app/rider/riderHeader.tsx
 import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
-import { MaterialIcons } from "@expo/vector-icons";
+import { Feather, MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
 interface RiderHeaderProps {
@@ -79,7 +79,7 @@ export default function RiderHeader({
             style={styles.iconButton}
             onPress={() => router.push("/rider/message")}
           >
-            <MaterialIcons name="message" size={22} color="#374151" />
+            <Feather name="message-square" size={22} color="#111827" />
           </TouchableOpacity>
         )}
 
@@ -88,16 +88,7 @@ export default function RiderHeader({
             style={styles.iconButton}
             onPress={handleNotificationsPress}
           >
-            <MaterialIcons name="notifications" size={22} color="#374151" />
-          </TouchableOpacity>
-        )}
-
-        {!showBackButton && (
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => router.push("/rider/settings")}
-          >
-            <MaterialIcons name="settings" size={22} color="#374151" />
+            <Feather name="bell" size={22} color="#111827" />
           </TouchableOpacity>
         )}
       </View>
@@ -155,10 +146,17 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    justifyContent: "flex-end",
+    gap: 8,
   },
   iconButton: {
-    padding: 6,
-    position: "relative",
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F9FAFB",
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
   },
 });

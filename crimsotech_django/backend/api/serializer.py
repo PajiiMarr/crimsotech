@@ -981,10 +981,17 @@ class RefundProofSerializer(serializers.ModelSerializer):
     def get_file_url(self, obj):
         return get_media_url(obj.file_data)
 
+    def validate_file_data(self, value):
+        allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime']
+        if value.content_type not in allowed_types:
+            raise ValidationError("File type not allowed. Only images and MP4 videos are accepted.")
+        return value
+
     def get_uploaded_by(self, obj):
         if obj.uploaded_by:
             return {'id': str(obj.uploaded_by.id), 'username': obj.uploaded_by.username}
         return None
+    
 
 class RefundWalletSerializer(serializers.ModelSerializer):
     class Meta:
@@ -1129,20 +1136,7 @@ class DisputeRequestCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'filed_by': 'X-User-Id header is required'})
         validated_data['requested_by'] = filed_by
         return super().create(validated_data)
-
-class RefundSerializer(serializers.ModelSerializer):
-    medias = RefundMediaSerializer(many=True, read_only=True)
-    wallet = RefundWalletSerializer(read_only=True)
-    bank = RefundBankSerializer(read_only=True)
-    remittance = RefundRemittanceSerializer(read_only=True)
-    counter_requests = CounterRefundRequestSerializer(many=True, read_only=True)
-    dispute = DisputeRequestSerializer(read_only=True)
-    return_request = ReturnRequestItemSerializer(read_only=True)
-    proofs = RefundProofSerializer(many=True, read_only=True)
     
-    class Meta:
-        model = Refund
-        fields = '__all__'
 
 class AppliedGiftSerializer(serializers.ModelSerializer):
     class Meta:
@@ -1281,11 +1275,20 @@ class UserPaymentDetailSerializer(serializers.ModelSerializer):
             # Store full number for edit mode
             data['full_account_number'] = acc_num
         return data
-# Import the get_media_url function from wherever it is
-# For example:
-# from your_app.utils import get_media_url
-# or
-# from .serializers import get_media_url
+
+class RefundSerializer(serializers.ModelSerializer):
+    medias = RefundMediaSerializer(many=True, read_only=True)
+    counter_requests = CounterRefundRequestSerializer(many=True, read_only=True)
+    dispute = DisputeRequestSerializer(read_only=True)
+    return_request = ReturnRequestItemSerializer(read_only=True)
+    proofs = RefundProofSerializer(many=True, read_only=True)
+    payment_detail = UserPaymentDetailSerializer(read_only=True)  # Add this line
+
+    class Meta:
+        model = Refund
+        fields = '__all__'
+
+
 class ProofSerializer(serializers.ModelSerializer):
     """
     Complete serializer for Proof model with full image/media handling
