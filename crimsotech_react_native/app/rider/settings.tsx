@@ -13,8 +13,8 @@ import {
 } from "react-native";
 import { Ionicons, Feather, MaterialIcons } from "@expo/vector-icons";
 import { useAuth } from "../../contexts/AuthContext";
-import { router, useNavigation } from "expo-router";
-import RiderHeader from "./includes/riderHeader";
+import { router } from "expo-router";
+import RiderPageHeader from "./includes/riderPageHeader";
 import AxiosInstance from "../../contexts/axios";
 
 // --- Theme Colors ---
@@ -64,12 +64,10 @@ const MOCK_PROFILE_DATA = {
 
 export default function SettingsPage() {
   const { userId, userRole, clearAuthData } = useAuth();
-  const navigation = useNavigation();
   const [loading, setLoading] = useState(true);
   const [profileData, setProfileData] = useState<any>(null);
   const [apiError, setApiError] = useState(false);
 
-  // Fetch profile data using Axios
   useEffect(() => {
     fetchProfile();
   }, [userId]);
@@ -118,12 +116,6 @@ export default function SettingsPage() {
         phone: "No phone",
         verified: false,
       };
-
-  useEffect(() => {
-    if (navigation && (navigation as any).setOptions) {
-      (navigation as any).setOptions({ headerShown: false });
-    }
-  }, [navigation]);
 
   const handleLogout = () => {
     Alert.alert("Log Out", "Are you sure you want to sign out?", [
@@ -211,11 +203,7 @@ export default function SettingsPage() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.bg} />
 
-      <RiderHeader
-        title="Settings"
-        showBackButton={true}
-        showNotifications={false}
-      />
+      <RiderPageHeader title="Settings" subtitle="Manage your account and preferences" />
 
       <ScrollView
         style={styles.scrollView}

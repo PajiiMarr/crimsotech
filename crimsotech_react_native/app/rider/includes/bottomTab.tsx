@@ -15,6 +15,7 @@ export default function RiderBottomTab() {
     { name: 'History', icon: 'history', route: '/rider/history' },
     { name: 'Schedule', icon: 'calendar-today', route: '/rider/schedule' },
     { name: 'Earnings', icon: 'attach-money', route: '/rider/earnings' },
+    { name: 'More', icon: 'more-vert', route: '/rider/settings' },
   ] as const;
 
   return (

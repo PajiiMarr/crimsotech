@@ -14,6 +14,7 @@ import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AxiosInstance from '../../contexts/axios';
 import { useAuth } from '../../contexts/AuthContext';
+import RiderPageHeader from './includes/riderPageHeader';
 
 interface EarningsMetrics {
   total_deliveries?: number;
@@ -111,12 +112,14 @@ export default function Earnings() {
     icon,
     iconBgColor,
     iconColor,
+    formula,
   }: {
     title: string;
     value: string;
     icon: keyof typeof Ionicons.glyphMap;
     iconBgColor: string;
     iconColor: string;
+    formula?: string;
   }) => (
     <View
       style={{
@@ -147,6 +150,11 @@ export default function Earnings() {
           <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#111827' }}>
             {value}
           </Text>
+          {formula && (
+            <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 6 }}>
+              {formula}
+            </Text>
+          )}
         </View>
         <View style={{ backgroundColor: iconBgColor, padding: 10, borderRadius: 999 }}>
           <Ionicons name={icon} size={22} color={iconColor} />
@@ -156,85 +164,26 @@ export default function Earnings() {
   );
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <RiderPageHeader 
+        title="Earnings" 
+        subtitle="Quick summary of your delivery performance"
+      />
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 80 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <View style={{ padding: 16 }}>
+        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
           <View style={{ marginBottom: 16 }}>
-            <View
-              style={{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#111827' }}>
-                Earnings
-              </Text>
-              <TouchableOpacity
-                onPress={onExport}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#E5E7EB',
-                  paddingHorizontal: 12,
-                  paddingVertical: 9,
-                  borderRadius: 10,
-                }}
-              >
-                <Ionicons name="download-outline" size={16} color="#374151" />
-                <Text
-                  style={{
-                    fontSize: 12,
-                    fontWeight: '600',
-                    color: '#374151',
-                    marginLeft: 4,
-                  }}
-                >
-                  Export
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity
-              onPress={() => router.push('/rider/withdraw' as any)}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: '#111827',
-                paddingHorizontal: 12,
-                paddingVertical: 10,
-                borderRadius: 10,
-                marginTop: 10,
-                alignSelf: 'flex-start',
-              }}
-            >
-              <Ionicons name="wallet-outline" size={16} color="white" />
-              <Text
-                style={{
-                  fontSize: 12,
-                  fontWeight: '700',
-                  color: 'white',
-                  marginLeft: 6,
-                }}
-              >
-                Wallet & Withdraw
-              </Text>
-            </TouchableOpacity>
-            <Text style={{ fontSize: 14, color: '#6B7280', marginTop: 4 }}>
-              Quick summary of your delivery performance
-            </Text>
-
             <View
               style={{
                 flexDirection: 'row',
                 backgroundColor: '#F3F4F6',
                 borderRadius: 10,
                 padding: 3,
-                marginTop: 14,
+                marginBottom: 14,
               }}
             >
               {(['all', 'today'] as ViewMode[]).map((tab) => (
@@ -261,6 +210,56 @@ export default function Earnings() {
                 </TouchableOpacity>
               ))}
             </View>
+
+            <TouchableOpacity
+              onPress={() => router.push('/rider/withdraw' as any)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#111827',
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                borderRadius: 10,
+                marginBottom: 12,
+              }}
+            >
+              <Ionicons name="wallet-outline" size={16} color="white" />
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  color: 'white',
+                  marginLeft: 6,
+                }}
+              >
+                Wallet & Withdraw
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={onExport}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: '#E5E7EB',
+                paddingHorizontal: 12,
+                paddingVertical: 9,
+                borderRadius: 10,
+              }}
+            >
+              <Ionicons name="download-outline" size={16} color="#374151" />
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '600',
+                  color: '#374151',
+                  marginLeft: 4,
+                }}
+              >
+                Export
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <View
@@ -305,6 +304,7 @@ export default function Earnings() {
                 icon="cash-outline"
                 iconBgColor="#D1FAE5"
                 iconColor="#059669"
+                formula="Sum of customer payment amounts"
               />
               <MetricCard
                 title="Total Earnings (Delivery Fees)"
@@ -312,6 +312,7 @@ export default function Earnings() {
                 icon="wallet-outline"
                 iconBgColor="#FEF3C7"
                 iconColor="#D97706"
+                formula="Sum of delivery fees from completed deliveries"
               />
               <MetricCard
                 title="Deductions"

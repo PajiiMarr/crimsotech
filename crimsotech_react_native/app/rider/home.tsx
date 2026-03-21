@@ -15,6 +15,7 @@ import { MaterialIcons, Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
 import { getRiderDashboard, updateRiderAvailability } from "../../utils/riderApi";
+import RiderPageHeader from "./includes/riderPageHeader";
 
 // --- Theme Colors (Minimalist Softened) ---
 const COLORS = {
@@ -139,41 +140,11 @@ export default function Home() {
         </View>
       ) : (
         <>
-          {/* --- Header (Matches Schedule/Messages Style) --- */}
-          <View style={styles.header}>
-            <View>
-              <Text style={styles.headerTitle}>Hello, {fullName}</Text>
-              <Text style={styles.headerSubtitle}>
-                {acceptingDeliveries
-                  ? "Ready for deliveries"
-                  : "Currently offline"}
-              </Text>
-            </View>
-
-            <View style={styles.headerActions}>
-              <TouchableOpacity
-                style={styles.iconBtn}
-                onPress={() => router.push("/rider/message")}
-              >
-                <Feather name="message-square" size={22} color={COLORS.secondary} />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.iconBtn}
-                onPress={() => router.push("/rider/notification")}
-              >
-                <Feather name="bell" size={22} color={COLORS.secondary} />
-              </TouchableOpacity>
-
-              {/* FIXED ROUTE: Points to /rider/settings instead of /settings */}
-              <TouchableOpacity
-                style={styles.iconBtn}
-                onPress={() => router.push("/rider/settings")}
-              >
-                <Feather name="settings" size={22} color={COLORS.secondary} />
-              </TouchableOpacity>
-            </View>
-          </View>
+          {/* --- Header --- */}
+          <RiderPageHeader 
+            title={`Hello, ${fullName}`}
+            subtitle={acceptingDeliveries ? "Ready for deliveries" : "Currently offline"}
+          />
 
           <ScrollView
             style={styles.content}
@@ -486,49 +457,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 80,
-  },
-
-  // --- Header Styles ---
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: COLORS.cardBg,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: COLORS.secondary,
-  },
-  headerSubtitle: {
-    fontSize: 10,
-    color: COLORS.muted,
-    marginTop: 1,
-  },
-  headerActions: {
-    flexDirection: "row",
-    gap: 6,
-  },
-  iconBtn: {
-    padding: 6,
-    backgroundColor: "#F3F4F6",
-    borderRadius: 8,
-    position: "relative",
-  },
-  notifBadge: {
-    position: "absolute",
-    top: 6,
-    right: 6,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: COLORS.danger,
-    borderWidth: 1,
-    borderColor: "#FFFFFF",
   },
 
   // --- Availability Card ---
