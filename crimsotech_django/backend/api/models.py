@@ -2376,6 +2376,8 @@ class RiderRemittanceItem(models.Model):
 class RefundItem(models.Model):
     refund = models.ForeignKey('Refund', on_delete=models.CASCADE, related_name='items')
     checkout = models.ForeignKey('Checkout', on_delete=models.CASCADE, related_name='refund_items')
+    quantity = models.IntegerField(default=0) 
+    amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)  # amount attributed to this item for refund purposes
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
