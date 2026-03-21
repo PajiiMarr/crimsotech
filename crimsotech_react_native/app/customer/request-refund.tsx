@@ -1,5 +1,3 @@
-// app/customer/request-refund.tsx
-
 import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
@@ -30,6 +28,8 @@ interface OrderItem {
   checkout_id: string;
   product_id: string;
   product_name: string;
+  variant_title?: string | null;      // from user_purchases (list)
+  product_variant?: string | null;    // from view_order_detail (single)
   shop_id: string | null;
   shop_name: string | null;
   seller_username: string | null;
@@ -231,6 +231,7 @@ export default function RequestRefundPage() {
 
   // Selection states
   const [selectedItems, setSelectedItems] = useState<string[]>(decodedProductId ? [decodedProductId] : []);
+  const [refundQuantities, setRefundQuantities] = useState<Record<string, number>>({});
   const [selectedRefundType, setSelectedRefundType] = useState<RefundType | null>(null);
   const [selectedRefundMethod, setSelectedRefundMethod] = useState<RefundMethod | null>(null);
   const [partialAmount, setPartialAmount] = useState('');
@@ -287,6 +288,32 @@ export default function RequestRefundPage() {
       fetchExistingRefundsForOrder();
     }
   }, [order]);
+
+  // When selected items change, initialize quantities to max for new selections
+  useEffect(() => {
+    if (!order) return;
+    const newQuantities = { ...refundQuantities };
+    let changed = false;
+    selectedItems.forEach(checkoutId => {
+      if (newQuantities[checkoutId] === undefined) {
+        const item = order.items.find(i => i.checkout_id === checkoutId);
+        if (item) {
+          newQuantities[checkoutId] = item.quantity;
+          changed = true;
+        }
+      }
+    });
+    // Remove quantities for unselected items (optional)
+    Object.keys(newQuantities).forEach(cid => {
+      if (!selectedItems.includes(cid)) {
+        delete newQuantities[cid];
+        changed = true;
+      }
+    });
+    if (changed) {
+      setRefundQuantities(newQuantities);
+    }
+  }, [selectedItems, order]);
 
   // Fetch saved payment methods when wallet method is selected
   useEffect(() => {
@@ -518,13 +545,28 @@ export default function RequestRefundPage() {
     }
   };
 
+  const updateQuantity = (checkoutId: string, newQuantity: number) => {
+    const item = order?.items.find(i => i.checkout_id === checkoutId);
+    if (!item) return;
+    const maxQty = item.quantity;
+    if (newQuantity < 1) newQuantity = 1;
+    if (newQuantity > maxQty) newQuantity = maxQty;
+    setRefundQuantities(prev => ({ ...prev, [checkoutId]: newQuantity }));
+  };
+
+  // Compute selected items details with quantities
   const selectedItemsDetails = order?.items.filter(item => 
     selectedItems.includes(item.checkout_id)
-  ) || [];
+  ).map(item => ({
+    ...item,
+    refundQuantity: refundQuantities[item.checkout_id] ?? item.quantity,
+  })) || [];
 
   const calculateRefundAmounts = () => {
     if (!order || selectedItems.length === 0) return { fullAmount: 0, maxPartialAmount: 0 };
-    const fullAmount = selectedItemsDetails.reduce((sum, item) => sum + parseFloat(item.subtotal), 0);
+    const fullAmount = selectedItemsDetails.reduce((sum, item) => 
+      sum + (parseFloat(item.price) * item.refundQuantity), 0
+    );
     const maxPartialAmount = fullAmount * 0.7;
     return { fullAmount, maxPartialAmount };
   };
@@ -532,7 +574,9 @@ export default function RequestRefundPage() {
   const { fullAmount, maxPartialAmount } = calculateRefundAmounts();
 
   const computeRefundBreakdown = () => {
-    const selectedTotal = selectedItemsDetails.reduce((sum, item) => sum + parseFloat(item.subtotal), 0);
+    const selectedTotal = selectedItemsDetails.reduce((sum, item) => 
+      sum + (parseFloat(item.price) * item.refundQuantity), 0
+    );
     let baseAmount = selectedTotal;
     if (selectedRefundType && selectedRefundType.id === 'keep_item') {
       baseAmount = partialAmount ? parseFloat(partialAmount) : maxPartialAmount;
@@ -606,6 +650,13 @@ export default function RequestRefundPage() {
 
   const validateForm = () => {
     if (selectedItems.length === 0) return 'Please select at least one item';
+    // Check that all selected items have valid quantities
+    for (const item of selectedItemsDetails) {
+      const qty = item.refundQuantity;
+      if (!qty || qty < 1 || qty > item.quantity) {
+        return `Invalid quantity for ${item.product_name}. Must be between 1 and ${item.quantity}.`;
+      }
+    }
     if (!selectedRefundType) return 'Please select a refund type';
     if (!selectedRefundMethod) return 'Please select a refund method';
     if (!isPaymentDetailsValid()) {
@@ -634,6 +685,13 @@ export default function RequestRefundPage() {
     setError(null);
 
     try {
+      // Build items array
+      const items = selectedItemsDetails.map(item => ({
+        checkout_id: item.checkout_id,
+        quantity: item.refundQuantity,
+        amount: parseFloat(item.price) * item.refundQuantity,
+      }));
+
       const breakdown = computeRefundBreakdown();
       const requestedBaseAmount = Number((breakdown.baseAmount || 0).toFixed(2));
       const feeAmount = Number((breakdown.fee || 0).toFixed(2));
@@ -662,6 +720,7 @@ export default function RequestRefundPage() {
         refund_category: selectedRefundType!.id,
         final_refund_type: null,
         selected_payment_id: selectedRefundMethod!.type === 'wallet' ? selectedWalletId : (selectedRefundMethod!.type === 'bank' ? selectedBankId : undefined),
+        items: items,  // new items array
         ...(selectedRefundMethod!.type === 'wallet' ? {
           wallet_details: {
             provider: eWalletDetails.provider,
@@ -682,10 +741,6 @@ export default function RequestRefundPage() {
       };
 
       formData.append('refund_data', JSON.stringify(refundData));
-
-      selectedItems.forEach((itemId, index) => {
-        formData.append(`selected_item_${index}`, itemId);
-      });
 
       mediaFiles.forEach((file, index) => {
         let mimeType = file.mimeType;
@@ -776,8 +831,8 @@ export default function RequestRefundPage() {
     const isSelected = selectedItems.includes(item.checkout_id);
     const isAlreadyRefunded = refundedCheckoutIds.has(item.checkout_id);
     const imageUrl = getProductImageUrl(item);
+    const refundQty = refundQuantities[item.checkout_id] ?? item.quantity;
 
-    // Determine shop/seller display
     let sellerDisplay = '';
     if (item.shop_name) {
       sellerDisplay = `Shop: ${item.shop_name}`;
@@ -786,6 +841,9 @@ export default function RequestRefundPage() {
     } else {
       sellerDisplay = '';
     }
+
+    // Get variant name – backend may send as 'product_variant' (view-order) or 'variant_title' (list)
+    const variantName = item.product_variant || item.variant_title;
 
     return (
       <TouchableOpacity
@@ -811,6 +869,11 @@ export default function RequestRefundPage() {
           <Text style={[styles.itemName, isAlreadyRefunded && styles.textMuted]} numberOfLines={2}>
             {item.product_name}
           </Text>
+          {variantName ? (
+            <Text style={[styles.variantName, isAlreadyRefunded && styles.textMuted]} numberOfLines={1}>
+              {variantName}
+            </Text>
+          ) : null}
           <Text style={[styles.itemShop, isAlreadyRefunded && styles.textMuted]}>
             {sellerDisplay}
           </Text>
@@ -825,7 +888,25 @@ export default function RequestRefundPage() {
         
         <View style={styles.itemTotal}>
           <Text style={[styles.itemTotalText, isAlreadyRefunded && styles.textMuted]}>{formatCurrency(item.subtotal)}</Text>
-          {isSelected && !isAlreadyRefunded && <Badge variant="success">Selected</Badge>}
+          {isSelected && !isAlreadyRefunded && (
+            <View style={styles.quantityControl}>
+              <TouchableOpacity
+                onPress={() => updateQuantity(item.checkout_id, refundQty - 1)}
+                disabled={refundQty <= 1}
+                style={styles.qtyButton}
+              >
+                <Icon name="minus" size={16} color={refundQty <= 1 ? '#ccc' : '#4f46e5'} />
+              </TouchableOpacity>
+              <Text style={styles.qtyText}>{refundQty}</Text>
+              <TouchableOpacity
+                onPress={() => updateQuantity(item.checkout_id, refundQty + 1)}
+                disabled={refundQty >= item.quantity}
+                style={styles.qtyButton}
+              >
+                <Icon name="plus" size={16} color={refundQty >= item.quantity ? '#ccc' : '#4f46e5'} />
+              </TouchableOpacity>
+            </View>
+          )}
           {isAlreadyRefunded && <Badge variant="disabled">Refund requested</Badge>}
         </View>
       </TouchableOpacity>
@@ -1162,7 +1243,7 @@ export default function RequestRefundPage() {
             </View>
             <View style={styles.orderInfoItem}>
               <View style={styles.orderInfoLabel}>
-                <Icon name="package-outline" size={14} color="#6b7280" />
+                <Icon name="package-variant" size={14} color="#6b7280" />
                 <Text style={styles.orderInfoLabelText}>Total Items</Text>
               </View>
               <Text style={styles.orderInfoValue}>{order.items.length} items</Text>
@@ -1672,7 +1753,7 @@ export default function RequestRefundPage() {
 }
 
 const styles = StyleSheet.create({
-  // ... existing styles ...
+  // ... (keep all existing styles, but ensure the variantName style is present)
   container: { flex: 1, backgroundColor: '#f3f4f6' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
   loadingText: { marginTop: 12, fontSize: 16, color: '#6b7280' },
@@ -1737,6 +1818,7 @@ const styles = StyleSheet.create({
   itemImagePlaceholder: { width: 60, height: 60, backgroundColor: '#f3f4f6', borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   itemDetails: { flex: 1 },
   itemName: { fontSize: 14, fontWeight: '500', color: '#111827', marginBottom: 2 },
+  variantName: { fontSize: 12, color: '#6b7280', marginTop: 2, marginBottom: 2 },
   itemShop: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
   itemMeta: { flexDirection: 'row', justifyContent: 'space-between' },
   itemQuantity: { fontSize: 12, color: '#6b7280' },
@@ -1744,6 +1826,9 @@ const styles = StyleSheet.create({
   itemRemarks: { fontSize: 11, color: '#2563eb', fontStyle: 'italic', marginTop: 2 },
   itemTotal: { marginLeft: 8, alignItems: 'flex-end', gap: 4 },
   itemTotalText: { fontSize: 14, fontWeight: '600', color: '#111827' },
+  quantityControl: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+  qtyButton: { padding: 4, backgroundColor: '#f3f4f6', borderRadius: 4, width: 28, alignItems: 'center' },
+  qtyText: { fontSize: 14, fontWeight: '600', color: '#111827', minWidth: 20, textAlign: 'center' },
   textMuted: { color: '#9ca3af' },
   selectedSummary: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e5e7eb' },
   selectedCount: { fontSize: 14, color: '#6b7280' },
@@ -1896,3 +1981,4 @@ const styles = StyleSheet.create({
   addNewButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12, backgroundColor: '#f3f4f6', borderRadius: 8 },
   addNewButtonText: { fontSize: 14, color: '#4f46e5', fontWeight: '500' },
 });
+

@@ -28380,7 +28380,7 @@ class RefundViewSet(viewsets.ViewSet):
                 return JsonResponse({'error': 'Invalid refund data format'}, status=400)
             
             # Validate required fields
-            required_fields = ['order_id', 'reason', 'preferred_refund_method', 'total_refund_amount']
+            required_fields = ['order_id', 'reason', 'preferred_refund_method', 'items']
             for field in required_fields:
                 if not refund_data.get(field):
                     return JsonResponse({'error': f'{field.replace("_", " ").title()} is required'}, status=400)
@@ -28391,28 +28391,26 @@ class RefundViewSet(viewsets.ViewSet):
             except Order.DoesNotExist:
                 return JsonResponse({'error': 'Order not found or does not belong to user'}, status=404)
             
-            # Check if refund already exists (item‑based)
-            selected_checkout_ids = []
-            for key, value in request.POST.items():
-                if key.startswith('selected_item_'):
-                    selected_checkout_ids.append(value)
-
-            if not selected_checkout_ids:
-                return JsonResponse({'error': 'No items selected for refund'}, status=400)
-
+            # Validate items structure
+            items_data = refund_data.get('items', [])
+            if not items_data:
+                return JsonResponse({'error': 'Refund items must be provided'}, status=400)
+            
+            # Check for existing refunds (to avoid duplicates) using the checkout IDs from the items
+            checkout_ids_in_request = [item['checkout_id'] for item in items_data if item.get('checkout_id')]
             active_statuses = ['pending', 'approved', 'negotiation', 'under_review', 'waiting', 'to_verify']
             existing_refunds = Refund.objects.filter(
                 order_id=order,
                 requested_by=user,
                 status__in=active_statuses
             )
-
+            
             already_refunded_checkouts = set()
             for refund in existing_refunds:
                 refunded_ids = refund.items.values_list('checkout', flat=True)
                 already_refunded_checkouts.update(refunded_ids)
-
-            already_refunded_selected = [cid for cid in selected_checkout_ids if cid in already_refunded_checkouts]
+            
+            already_refunded_selected = [cid for cid in checkout_ids_in_request if cid in already_refunded_checkouts]
             if already_refunded_selected:
                 return JsonResponse({
                     'error': 'Some selected items are already part of an active refund request',
@@ -28431,7 +28429,8 @@ class RefundViewSet(viewsets.ViewSet):
                     refund_type=refund_type,
                     customer_note=refund_data.get('customer_note', ''),
                     status='pending',
-                    total_refund_amount=Decimal(str(refund_data.get('total_refund_amount'))) if refund_data.get('total_refund_amount') is not None else None,
+                    # total_refund_amount will be recomputed from items
+                    total_refund_amount=None,
                     refund_fee=Decimal(str(refund_data.get('refund_fee'))) if refund_data.get('refund_fee') is not None else None
                 )
                 refund.save()
@@ -28462,16 +28461,33 @@ class RefundViewSet(viewsets.ViewSet):
                             return JsonResponse({'error': str(e)}, status=400)
                 # ========== End file validation ==========
 
-                # Create RefundItem for each selected checkout
+                # ========== Create Refund Items with quantity and amount ==========
+                total_refund_amount = Decimal('0.00')
                 created_items = []
-                for cid in selected_checkout_ids:
+                for item_data in items_data:
+                    checkout_id = item_data.get('checkout_id')
+                    quantity = item_data.get('quantity')
+                    amount = item_data.get('amount')
+                    if not checkout_id or quantity is None or amount is None:
+                        return JsonResponse({'error': 'Each refund item must have checkout_id, quantity, and amount'}, status=400)
                     try:
-                        checkout = Checkout.objects.get(id=cid, order=order)
-                        RefundItem.objects.create(refund=refund, checkout=checkout)
-                        created_items.append(str(checkout.id))
+                        checkout = Checkout.objects.get(id=checkout_id, order=order)
                     except Checkout.DoesNotExist:
-                        continue
+                        return JsonResponse({'error': f'Checkout {checkout_id} not found in this order'}, status=400)
+                    total_refund_amount += Decimal(str(amount))
+                    RefundItem.objects.create(
+                        refund=refund,
+                        checkout=checkout,
+                        quantity=quantity,
+                        amount=Decimal(str(amount))
+                    )
+                    created_items.append(str(checkout.id))
 
+                # Update refund total amount (overwrites any frontend-sent total)
+                refund.total_refund_amount = total_refund_amount
+                refund.save(update_fields=['total_refund_amount'])
+
+                # Append a note with the selected checkout IDs (optional)
                 if created_items:
                     refund.customer_note = (refund.customer_note or '') + f"\n\nSelected Checkout IDs: {', '.join(created_items)}"
                     refund.save(update_fields=['customer_note'])

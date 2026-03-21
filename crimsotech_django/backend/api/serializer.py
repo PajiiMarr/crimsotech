@@ -1306,7 +1306,11 @@ class RefundSerializer(serializers.ModelSerializer):
     payment_detail = UserPaymentDetailSerializer(read_only=True)  # Add this line
 
     def get_items(self, obj):
-        return [{'checkout_id': str(item.checkout.id)} for item in obj.items.all()]
+        return [{
+            'checkout_id': str(item.checkout.id),
+            'quantity': item.quantity,
+            'amount': str(item.amount) if item.amount else None
+        } for item in obj.items.all()]
 
     class Meta:
         model = Refund

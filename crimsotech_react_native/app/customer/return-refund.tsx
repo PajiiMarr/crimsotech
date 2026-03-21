@@ -104,7 +104,6 @@ export default function ReturnRefund() {
   const { user } = useAuth();
   const params = useLocalSearchParams();
   const [activeTab, setActiveTab] = useState<string>((params.tab as string) || 'pending-request');
-  const [expandedRefunds, setExpandedRefunds] = useState<Set<string>>(new Set());
   const [filteredRefunds, setFilteredRefunds] = useState<RefundItem[]>([]);
   const [refundData, setRefundData] = useState<RefundResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -220,14 +219,6 @@ export default function ReturnRefund() {
     return getRefundsForTab(tabId).length;
   };
 
-  const toggleRefundExpansion = (refundId: string, e?: any) => {
-    if (e) e.stopPropagation();
-    const newExpanded = new Set(expandedRefunds);
-    if (newExpanded.has(refundId)) newExpanded.delete(refundId);
-    else newExpanded.add(refundId);
-    setExpandedRefunds(newExpanded);
-  };
-
   const handleViewDetails = (refundId: string) => {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (uuidRegex.test(refundId)) {
@@ -267,10 +258,8 @@ export default function ReturnRefund() {
     );
   };
 
-  // Helper to get image URL (falls back to placeholder)
   const getImageUrl = (url?: string): string => {
     if (!url) return 'https://via.placeholder.com/40';
-    // If URL is relative, you might need to prepend base URL, but backend returns absolute
     return url;
   };
 
@@ -352,7 +341,6 @@ export default function ReturnRefund() {
               </View>
             ) : (
               filteredRefunds.map((refund) => {
-                const isExpanded = expandedRefunds.has(refund.refund_id);
                 const isPending = activeTab === 'pending-request';
                 const firstItem = refund.order_items && refund.order_items.length > 0 ? refund.order_items[0] : null;
                 const productImage = firstItem ? getImageUrl(firstItem.product_image) : 'https://via.placeholder.com/40';
@@ -382,16 +370,6 @@ export default function ReturnRefund() {
                         </View>
                         <View style={styles.headerRight}>
                           {getStatusBadge(refund)}
-                          <TouchableOpacity
-                            onPress={(e) => toggleRefundExpansion(refund.refund_id, e)}
-                            style={styles.expandButton}
-                          >
-                            <MaterialIcons
-                              name={isExpanded ? 'expand-less' : 'expand-more'}
-                              size={20}
-                              color="#9CA3AF"
-                            />
-                          </TouchableOpacity>
                         </View>
                       </View>
 
@@ -437,56 +415,6 @@ export default function ReturnRefund() {
                         <MaterialIcons name="info-outline" size={14} color="#6B7280" />
                         <Text style={styles.reasonText} numberOfLines={1}>{refund.reason}</Text>
                       </View>
-
-                      {/* Expanded Details */}
-                      {isExpanded && (
-                        <View style={styles.expandedSection}>
-                          <Text style={styles.expandedTitle}>Refund Details</Text>
-                          <View style={styles.detailsGrid}>
-                            <Text style={styles.detailItem}>Type: {refund.refund_type === 'return' ? 'Return Item' : 'Keep Item'}</Text>
-                            <Text style={styles.detailItem}>Method: {refund.buyer_preferred_refund_method || 'N/A'}</Text>
-                            <Text style={styles.detailItem}>Payment Status: {refund.refund_payment_status}</Text>
-                            {refund.return_request && (
-                              <Text style={styles.detailItem}>Return Status: {refund.return_request.status}</Text>
-                            )}
-                            {refund.dispute_request && (
-                              <Text style={styles.detailItem}>Dispute Status: {refund.dispute_request.status}</Text>
-                            )}
-                            {refund.payment_detail && (
-                              <View style={styles.paymentDetailContainer}>
-                                <Text style={styles.detailItem}>Payment Method:</Text>
-                                <Text style={styles.detailItem}>
-                                  {refund.payment_detail.payment_method === 'gcash' ? 'GCash' :
-                                   refund.payment_detail.payment_method === 'paymaya' ? 'PayMaya' :
-                                   refund.payment_detail.payment_method === 'bank' ? 'Bank Account' :
-                                   refund.payment_detail.payment_method}
-                                </Text>
-                                <Text style={styles.detailItem}>Account: {refund.payment_detail.account_name}</Text>
-                                <Text style={styles.detailItem}>
-                                  Number: {refund.payment_detail.account_number.slice(-4).padStart(refund.payment_detail.account_number.length, '*')}
-                                </Text>
-                              </View>
-                            )}
-                            {/* Evidence images preview */}
-                            {refund.medias && refund.medias.length > 0 && (
-                              <View style={styles.evidenceContainer}>
-                                <Text style={styles.detailItem}>Evidence:</Text>
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.evidenceScroll}>
-                                  {refund.medias.map((media, idx) => (
-                                    media.file_url && (
-                                      <Image
-                                        key={idx}
-                                        source={{ uri: media.file_url }}
-                                        style={styles.evidenceImage}
-                                      />
-                                    )
-                                  ))}
-                                </ScrollView>
-                              </View>
-                            )}
-                          </View>
-                        </View>
-                      )}
 
                       {/* Footer - Cancel button only for pending tab */}
                       {isPending && (
@@ -706,9 +634,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
-  expandButton: {
-    padding: 4,
-  },
   productPreview: {
     marginBottom: 8,
   },
@@ -788,45 +713,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6B7280',
   },
-  expandedSection: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-  },
-  expandedTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 6,
-  },
-  detailsGrid: {
-    gap: 4,
-  },
-  detailItem: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  paymentDetailContainer: {
-    marginTop: 4,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    paddingTop: 4,
-  },
-  evidenceContainer: {
-    marginTop: 8,
-  },
-  evidenceScroll: {
-    flexDirection: 'row',
-    marginTop: 4,
-  },
-  evidenceImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 6,
-    marginRight: 6,
-    backgroundColor: '#F3F4F6',
-  },
   cardFooter: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -852,3 +738,4 @@ const styles = StyleSheet.create({
     color: '#EF4444',
   },
 });
+
