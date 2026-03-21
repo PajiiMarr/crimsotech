@@ -1,5 +1,4 @@
 from asyncio.log import logger
-import requests
 import csv
 from asgiref.sync import async_to_sync
 from email import parser
@@ -844,10 +843,8 @@ class Profiling(APIView):
             
             return Response(response_data)
         
+
 class VerifyNumber(viewsets.ViewSet):
-    # Add a simple rate limiting mechanism
-    last_send_time = {}
-    
     @action(detail=False, methods=['get'])
     def user(self, request):
         user_id = request.headers.get('X-User-Id')
@@ -865,167 +862,24 @@ class VerifyNumber(viewsets.ViewSet):
             "registration_stage": user.registration_stage,
         })
 
-    def check_account_balance(self):
-        """Check SMS PH account balance"""
-        try:
-            url = "https://smsapiph.onrender.com/api/v1/balance"
-            headers = {
-                "x-api-key": settings.SMS_PH_API_KEY,
-                "Content-Type": "application/json"
-            }
-            
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                return response.json()
-            return None
-        except Exception as e:
-            print(f"Error checking balance: {e}")
-            return None
-
-    def send_otp(self, contact_number, user_id=None):
-        import time as time_module
+    def send_otp(self, contact_number):
         """
-        Sends OTP using SMS PH API with proper formatting and rate limiting
+        Sends OTP using Twilio Verify API
         """
         try:
-            # Rate limiting check
-            current_time = time_module.time()
-            if user_id and user_id in self.last_send_time:
-                time_diff = current_time - self.last_send_time[user_id]
-                if time_diff < 12:
-                    wait_time = 12 - time_diff
-                    return {
-                        "success": False,
-                        "error": "rate_limited",
-                        "wait_time": wait_time,
-                        "message": f"Please wait {wait_time:.0f} seconds before requesting another OTP"
-                    }
-            
-            # Generate a 6-digit OTP
-            otp_code = str(random.randint(100000, 999999))
-            
-            # SMS PH API endpoint
-            url = "https://smsapiph.onrender.com/api/v1/send/sms"
-            
-            headers = {
-                "x-api-key": settings.SMS_PH_API_KEY,
-                "Content-Type": "application/json"
-            }
-            
-            # Format recipient number (try different formats)
-            recipient = contact_number.strip()
-            # Try with +63 format
-            if not recipient.startswith('+'):
-                recipient_formatted = '+63' + recipient.lstrip('0')
-            else:
-                recipient_formatted = recipient
-            
-            # Try alternative format (without +)
-            recipient_alt = recipient_formatted[1:] if recipient_formatted.startswith('+') else recipient_formatted
-            
-            # Create message with clear sender ID
-            payload = {
-                "recipient": recipient_formatted,
-                "message": f"Your CrimsoTech verification code is: {otp_code}",
-                "sender_id": "CrimsoTech"  # Add sender ID
-            }
-            
-            print(f"📱 Sending SMS to {recipient_formatted}")
-            print(f"📝 Message: {payload['message']}")
-            print(f"🔑 API Key: {settings.SMS_PH_API_KEY[:6]}...{settings.SMS_PH_API_KEY[-4:]}")
-            print(f"📨 Sender ID: {payload['sender_id']}")
-            
-            # Try first format
-            response = requests.post(url, headers=headers, json=payload, timeout=30)
-            
-            print(f"📡 SMS API Response Status: {response.status_code}")
-            print(f"📄 SMS API Response Body: {response.text}")
-            
-            # If first format fails, try without +63
-            if response.status_code != 200:
-                payload_alt = {
-                    "recipient": recipient_alt,
-                    "message": f"Your CrimsoTech verification code is: {otp_code}",
-                    "sender_id": "CrimsoTech"
-                }
-                print(f"🔄 Trying alternative format: {recipient_alt}")
-                response = requests.post(url, headers=headers, json=payload_alt, timeout=30)
-                print(f"📡 Alternative response: {response.status_code} - {response.text}")
-            
-            if response.status_code == 200:
-                response_data = response.json()
-                if response_data.get('success') == True:
-                    if user_id:
-                        self.last_send_time[user_id] = current_time
-                    
-                    print(f"✅ SMS Sent Successfully!")
-                    print(f"   Recipient: {recipient_formatted}")
-                    
-                    return {
-                        "success": True,
-                        "status": "sent",
-                        "otp_code": otp_code,
-                        "message": response_data.get('message', 'Message sent')
-                    }
-                else:
-                    print(f"❌ API returned failure: {response_data}")
-                    return {
-                        "success": False,
-                        "error": response_data.get('error', 'Unknown error'),
-                        "status": "failed"
-                    }
-            elif response.status_code == 429:
-                try:
-                    error_data = response.json()
-                    return {
-                        "success": False,
-                        "error": "rate_limited",
-                        "retryAfter": error_data.get('retryAfter', 12),
-                        "message": error_data.get('error', 'Rate limit exceeded')
-                    }
-                except:
-                    return {
-                        "success": False,
-                        "error": "rate_limited",
-                        "retryAfter": 12,
-                        "message": "Rate limit exceeded. Please wait before trying again."
-                    }
-            else:
-                print(f"❌ SMS PH API error: {response.status_code} - {response.text}")
-                return {
-                    "success": False,
-                    "error": f"API error: {response.status_code}",
-                    "status": "failed",
-                    "details": response.text
-                }
-                
-        except requests.exceptions.Timeout:
-            print("⏰ SMS API timeout")
-            return {
-                "success": False,
-                "error": "timeout",
-                "message": "Request timed out"
-            }
-        except requests.exceptions.RequestException as e:
-            print(f"❌ SMS sending request error: {e}")
-            return {
-                "success": False,
-                "error": "request_error",
-                "message": str(e)
-            }
-        except Exception as e:
-            print(f"❌ SMS sending error: {e}")
-            return {
-                "success": False,
-                "error": "unknown_error",
-                "message": str(e)
-            }
+            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
 
-    @action(detail=False, methods=['get'], url_path='check_balance')
-    def check_balance(self, request):
-        """Check SMS PH account balance"""
-        balance = self.check_account_balance()
-        return Response(balance or {"error": "Unable to check balance"})
+            verification = client.verify.v2.services(
+                settings.TWILIO_SERVICE_ID
+            ).verifications.create(
+                to='+63' + contact_number,
+                channel='sms'
+            )
+            return verification.status  # returns "pending" if sent successfully
+
+        except TwilioRestException as e:
+            print(f"Twilio error: {e}")
+            return None
 
     @action(detail=False, methods=['post'], url_path='verify_number')
     def verify_number(self, request):
@@ -1033,7 +887,7 @@ class VerifyNumber(viewsets.ViewSet):
         Single action to handle both contact number submission and OTP verification
         """
         user_id = request.headers.get('X-User-Id')
-        action_type = request.data.get('action_type')
+        action_type = request.data.get('action_type')  # 'send_otp' or 'verify_otp'
         contact_number = request.data.get('contact_number')
         otp_code = request.data.get('otp_code')
 
@@ -1050,99 +904,75 @@ class VerifyNumber(viewsets.ViewSet):
             if not contact_number:
                 return Response({"error": "Contact number is required!"}, status=400)
 
-            # Clean the contact number
-            cleaned_number = contact_number.strip()
-            if cleaned_number.startswith('0'):
-                cleaned_number = cleaned_number[1:]
-            
-            # Check if number already exists
-            if User.objects.filter(contact_number=cleaned_number).exclude(id=user_id).exists():
-                return Response({"error": "Contact number already exists!"}, status=400)
-
-            # Send OTP using SMS PH API
-            otp_result = self.send_otp(cleaned_number, user_id=str(user.id))
-            
-            # Handle rate limiting
-            if not otp_result.get('success'):
-                error_type = otp_result.get('error')
-                if error_type == 'rate_limited':
-                    return Response({
-                        "error": "Please wait before requesting another OTP",
-                        "retryAfter": otp_result.get('retryAfter', 12),
-                        "message": otp_result.get('message', 'Rate limit exceeded')
-                    }, status=429)
-                else:
-                    return Response({
-                        "error": "Failed to send OTP",
-                        "details": otp_result.get('message', 'Unknown error'),
-                        "suggestion": "Please check if your SMS PH account has credits and is properly configured"
-                    }, status=500)
-            
+            # Removed the duplicate contact number check - now multiple users can have same number
             # Save user's contact number
-            user.contact_number = cleaned_number
+            user.contact_number = contact_number
             user.save()
 
-            # Store OTP in database
-            try:
-                otp_record, created = OTP.objects.update_or_create(
-                    user=user,
-                    defaults={
-                        'otp': otp_result['otp_code'],
-                        'sent_at': timezone.now(),
-                        'expired_at': timezone.now() + timedelta(minutes=5)
-                    }
-                )
-                print(f"OTP saved: {otp_result['otp_code']} for user {user.id}")
-            except Exception as e:
-                print(f"Error saving OTP: {e}")
+            # Send OTP using Twilio Verify
+            otp_status = self.send_otp(contact_number)
+            if not otp_status:
+                return Response({"error": "Failed to send OTP. Please try again later."}, status=500)
+
+            OTP.objects.update_or_create(
+                user=user,
+                defaults={
+                    'otp': 'pending',
+                    'sent_at': timezone.now(),
+                    'expired_at': timezone.now() + timedelta(minutes=5)
+                }
+            )
 
             return Response({
-                "message": f"OTP sent successfully to +63{cleaned_number}",
+                "message": f"OTP sent successfully to +63{contact_number}",
                 "user_id": str(user.id),
-                "contact_number": cleaned_number,
-                "note": "If you don't receive the SMS within 30 seconds, please check if your SMS PH account has sufficient credits"
+                "contact_number": contact_number
             })
 
         elif action_type == 'verify_otp':
-            # Handle OTP verification (same as before)
+            # Handle OTP verification
             if not contact_number or not otp_code:
                 return Response({"error": "Contact number and OTP code are required!"}, status=400)
 
+            # Verify that the contact number matches the user's stored number
+            if user.contact_number != contact_number:
+                return Response({"error": "Contact number doesn't match user record!"}, status=400)
+
             try:
-                cleaned_number = contact_number.strip()
-                if cleaned_number.startswith('0'):
-                    cleaned_number = cleaned_number[1:]
-                
-                if user.contact_number != cleaned_number:
-                    return Response({"error": "Contact number mismatch!"}, status=400)
-                
-                otp_record = OTP.objects.filter(
-                    user=user,
-                    otp=otp_code,
-                    expired_at__gt=timezone.now()
-                ).first()
-                
-                if otp_record:
-                    user.registration_stage = 3
+                client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+                verification_check = client.verify.v2.services(
+                    settings.TWILIO_SERVICE_ID
+                ).verification_checks.create(
+                    to='+63' + contact_number,
+                    code=otp_code
+                )
+
+                if verification_check.status == 'approved':
+                    # Update user registration stage and OTP record
+                    user.registration_stage = 3  # Mark as verified
                     user.save()
                     
-                    otp_record.expired_at = timezone.now()
-                    otp_record.save()
+                    OTP.objects.filter(user=user).update(
+                        otp=otp_code, 
+                        expired_at=timezone.now()
+                    )
                     
                     return Response({
                         "message": "Phone number verified successfully!",
                         "registration_stage": user.registration_stage
                     })
+
                 else:
                     return Response({"error": "Invalid or expired OTP!"}, status=400)
 
-            except Exception as e:
-                print(f"OTP verification error: {e}")
+            except TwilioRestException as e:
+                print(f"Twilio error: {e}")
                 return Response({"error": "Verification failed. Please try again later."}, status=500)
 
         else:
             return Response({"error": "Invalid action type"}, status=400)
-                                 
+
+            
 class RiderRegistration(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='register')
     def register(self, request):
