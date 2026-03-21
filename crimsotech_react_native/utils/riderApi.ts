@@ -82,7 +82,7 @@ const getUserHeaders = (userId: string) => ({
 });
 
 const handleAxiosError = (error: any, fallbackMessage: string) => {
-  if (axios.isAxiosError(error)) {
+if (axios.isAxiosError(error)) {
     const data: any = error.response?.data;
     throw new Error(data?.error || data?.message || fallbackMessage);
   }
