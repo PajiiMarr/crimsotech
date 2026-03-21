@@ -11,6 +11,8 @@ import {
   Alert,
   ActivityIndicator,
   Switch,
+  Modal,
+  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -18,12 +20,70 @@ import { router, useLocalSearchParams } from 'expo-router';
 import AxiosInstance from '../../../contexts/axios';
 
 interface PaymentFormData {
-  payment_method: string;
+  methodType: 'ewallet' | 'bank';
+  ewalletProvider: string;   // 'gcash' or 'paymaya'
   account_name: string;
-  subscriber_number: string;    // 9 digits after the leading '9'
+  mobile_number: string;       // for e‑wallet, 9 digits after 639
   bank_name: string;
+  account_number: string;      // for bank – stored as raw digits (no spaces)
   is_default: boolean;
+  security_code: string;       // frontend only, 3 digits
 }
+
+// Common Philippine banks for dropdown
+const phBanks = [
+  'BDO Unibank',
+  'BPI (Bank of the Philippine Islands)',
+  'Metrobank',
+  'Landbank',
+  'PNB (Philippine National Bank)',
+  'Security Bank',
+  'UnionBank',
+  'RCBC (Rizal Commercial Banking Corp)',
+  'China Bank',
+  'EastWest Bank',
+  'Maybank',
+  'CIMB Bank',
+  'ING',
+  'Other',
+];
+
+const ewalletProviders = [
+  { label: 'GCash', value: 'gcash' },
+  { label: 'PayMaya', value: 'paymaya' },
+];
+
+// Helper to clean and validate mobile number (9 digits)
+const cleanMobileInput = (text: string): string => {
+  let cleaned = text.replace(/[^0-9]/g, '');
+  if (cleaned.length > 9) cleaned = cleaned.slice(0, 9);
+  return cleaned;
+};
+
+const validateMobileNumber = (number: string): boolean => /^\d{9}$/.test(number);
+
+const formatDisplayNumber = (subscriberNumber: string): string => {
+  if (subscriberNumber.length === 9) {
+    return `🇵🇭 +63 9${subscriberNumber.slice(0, 2)} ${subscriberNumber.slice(2, 5)} ${subscriberNumber.slice(5)}`;
+  }
+  return `🇵🇭 +63 9${subscriberNumber}`;
+};
+
+// Format bank account number: insert spaces every 4 digits for display
+const formatAccountNumber = (raw: string): string => {
+  const digits = raw.replace(/\s/g, '');
+  if (digits.length === 0) return '';
+  const groups = [];
+  for (let i = 0; i < digits.length; i += 4) {
+    groups.push(digits.slice(i, i + 4));
+  }
+  return groups.join(' ');
+};
+
+// Extract raw digits from formatted string
+const extractRawDigits = (formatted: string): string => {
+  return formatted.replace(/\s/g, '');
+};
 
 export default function AddPaymentMethodScreen() {
   const { userId } = useAuth();
@@ -33,19 +93,22 @@ export default function AddPaymentMethodScreen() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [showNumber, setShowNumber] = useState(false);
-  const [formData, setFormData] = useState<PaymentFormData>({
-    payment_method: 'gcash',
-    account_name: '',
-    subscriber_number: '',
-    bank_name: '',
-    is_default: false,
-  });
+  const [displayAccountNumber, setDisplayAccountNumber] = useState(''); // for visual formatting
 
-  const paymentMethodOptions = [
-    { label: 'GCash', value: 'gcash' },
-    { label: 'PayMaya', value: 'paymaya' },
-    { label: 'Bank Account', value: 'bank' },
-  ];
+  // Dropdown modals
+  const [showEwalletModal, setShowEwalletModal] = useState(false);
+  const [showBankModal, setShowBankModal] = useState(false);
+
+  const [formData, setFormData] = useState<PaymentFormData>({
+    methodType: 'ewallet',
+    ewalletProvider: 'gcash',
+    account_name: '',
+    mobile_number: '',
+    bank_name: '',
+    account_number: '',
+    is_default: false,
+    security_code: '',
+  });
 
   useEffect(() => {
     const initializeForm = async () => {
@@ -53,23 +116,38 @@ export default function AddPaymentMethodScreen() {
       if (mode === 'edit' && payment) {
         setIsEditMode(true);
         try {
-          const parsedPayment = JSON.parse(payment as string);
-          setPaymentId(parsedPayment.payment_id);
-          const fullNumber = parsedPayment.full_account_number || '';
-          // Extract the 9 digits after the initial '639'
-          // fullNumber is "639xxxxxxxxx" (12 digits)
-          let subscriberNumber = '';
-          if (fullNumber.startsWith('639') && fullNumber.length === 12) {
-            subscriberNumber = fullNumber.slice(3); // remove "639"
+          const parsed = JSON.parse(payment as string);
+          setPaymentId(parsed.payment_id);
+
+          // Determine method type and populate fields
+          const method = parsed.payment_method;
+          const isBank = method === 'bank';
+          const isGCash = method === 'gcash';
+          const isPayMaya = method === 'paymaya';
+
+          let mobile = '';
+          if (!isBank && parsed.full_account_number) {
+            const full = parsed.full_account_number;
+            if (full.startsWith('639') && full.length === 12) {
+              mobile = full.slice(3);
+            } else {
+              mobile = full;
+            }
           }
+
+          const rawAccountNumber = parsed.account_number || '';
+          setDisplayAccountNumber(formatAccountNumber(rawAccountNumber));
+
           setFormData({
-            payment_method: parsedPayment.payment_method || 'gcash',
-            account_name: parsedPayment.account_name || '',
-            subscriber_number: subscriberNumber,
-            bank_name: parsedPayment.bank_name || '',
-            is_default: parsedPayment.is_default || false,
+            methodType: isBank ? 'bank' : 'ewallet',
+            ewalletProvider: isGCash ? 'gcash' : isPayMaya ? 'paymaya' : 'gcash',
+            account_name: parsed.account_name || '',
+            mobile_number: mobile,
+            bank_name: parsed.bank_name || '',
+            account_number: rawAccountNumber,
+            is_default: parsed.is_default || false,
+            security_code: '',
           });
-          setShowNumber(true);
         } catch (error) {
           console.error('Error parsing payment data:', error);
           Alert.alert('Error', 'Failed to load payment method data');
@@ -78,83 +156,89 @@ export default function AddPaymentMethodScreen() {
       } else {
         setIsEditMode(false);
         setFormData({
-          payment_method: 'gcash',
+          methodType: 'ewallet',
+          ewalletProvider: 'gcash',
           account_name: '',
-          subscriber_number: '',
+          mobile_number: '',
           bank_name: '',
+          account_number: '',
           is_default: false,
+          security_code: '',
         });
-        setShowNumber(false);
+        setDisplayAccountNumber('');
       }
       setLoading(false);
     };
     initializeForm();
   }, [mode, payment]);
 
-  const handleInputChange = (field: keyof PaymentFormData, value: string | boolean) => {
+  const handleInputChange = <K extends keyof PaymentFormData>(field: K, value: PaymentFormData[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  // Validate that the subscriber number is exactly 9 digits (all numbers)
-  const validateSubscriberNumber = (number: string): boolean => {
-    return /^\d{9}$/.test(number);
+  const handleMobileChange = (text: string) => {
+    const cleaned = cleanMobileInput(text);
+    handleInputChange('mobile_number', cleaned);
   };
 
-  // Format the full number for display: 🇵🇭 +63 9XX XXX XXXX
-  const formatDisplayNumber = (subscriberNumber: string): string => {
-    if (subscriberNumber.length === 9) {
-      return `🇵🇭 +63 9${subscriberNumber.slice(0, 2)} ${subscriberNumber.slice(2, 5)} ${subscriberNumber.slice(5)}`;
+  const handleAccountNumberChange = (text: string) => {
+    // Remove any spaces first, then limit to 16 digits
+    let raw = text.replace(/\s/g, '');
+    raw = raw.replace(/[^0-9]/g, '');
+    if (raw.length > 16) raw = raw.slice(0, 16);
+    const formatted = formatAccountNumber(raw);
+    setDisplayAccountNumber(formatted);
+    handleInputChange('account_number', raw);
+  };
+
+  const validateForm = (): string | null => {
+    if (!formData.account_name.trim()) return 'Account name is required';
+
+    if (formData.methodType === 'ewallet') {
+      if (!validateMobileNumber(formData.mobile_number)) {
+        return 'Please enter exactly 9 digits (e.g., 171234567)';
+      }
+    } else { // bank
+      if (!formData.bank_name.trim()) return 'Please select a bank';
+      if (!formData.account_number) return 'Account number is required';
+      if (formData.account_number.length !== 16) {
+        return 'Account number must be exactly 16 digits';
+      }
+      // Security code is frontend only, no validation needed for submission
     }
-    return `🇵🇭 +63 9${subscriberNumber}`;
+    return null;
   };
 
-  // Clean input: only digits, limit to 9
-  const cleanSubscriberInput = (text: string): string => {
-    let cleaned = text.replace(/[^0-9]/g, '');
-    if (cleaned.length > 9) {
-      cleaned = cleaned.slice(0, 9);
+  const buildPayload = () => {
+    const payload: any = {
+      payment_method: '',
+      account_name: formData.account_name.trim(),
+      is_default: formData.is_default,
+    };
+
+    if (formData.methodType === 'ewallet') {
+      const fullNumber = `639${formData.mobile_number}`; // 12 digits
+      payload.account_number = fullNumber;
+      payload.payment_method = formData.ewalletProvider; // 'gcash' or 'paymaya'
+    } else {
+      payload.payment_method = 'bank';
+      payload.account_number = formData.account_number; // raw 16 digits
+      payload.bank_name = formData.bank_name.trim();
     }
-    return cleaned;
-  };
 
-  const handleNumberChange = (text: string) => {
-    const cleaned = cleanSubscriberInput(text);
-    handleInputChange('subscriber_number', cleaned);
+    return payload;
   };
 
   const handleAddPaymentMethod = async () => {
-    if (!userId) {
-      Alert.alert('Error', 'User not found');
-      return;
-    }
-    if (!formData.account_name.trim()) {
-      Alert.alert('Error', 'Account name is required');
-      return;
-    }
-    if (!validateSubscriberNumber(formData.subscriber_number)) {
-      Alert.alert(
-        'Invalid Number',
-        'Please enter exactly 9 digits (e.g., 171234567)'
-      );
-      return;
-    }
-    if (formData.payment_method === 'bank' && !formData.bank_name.trim()) {
-      Alert.alert('Error', 'Bank name is required');
+    const validationError = validateForm();
+    if (validationError) {
+      Alert.alert('Error', validationError);
       return;
     }
 
     try {
       setSaving(true);
-      const fullNumber = `639${formData.subscriber_number}`;
-      const payload: any = {
-        payment_method: formData.payment_method,
-        account_name: formData.account_name.trim(),
-        account_number: fullNumber,
-        is_default: formData.is_default,
-      };
-      if (formData.payment_method === 'bank') {
-        payload.bank_name = formData.bank_name.trim();
-      }
+      const payload = buildPayload();
 
       const response = await AxiosInstance.post(
         '/user-payment-details/add_payment_method/',
@@ -181,38 +265,15 @@ export default function AddPaymentMethodScreen() {
   };
 
   const handleUpdatePaymentMethod = async () => {
-    if (!userId || !paymentId) {
-      Alert.alert('Error', 'Missing required information');
-      return;
-    }
-    if (!formData.account_name.trim()) {
-      Alert.alert('Error', 'Account name is required');
-      return;
-    }
-    if (!validateSubscriberNumber(formData.subscriber_number)) {
-      Alert.alert(
-        'Invalid Number',
-        'Please enter exactly 9 digits (e.g., 171234567)'
-      );
-      return;
-    }
-    if (formData.payment_method === 'bank' && !formData.bank_name.trim()) {
-      Alert.alert('Error', 'Bank name is required');
+    const validationError = validateForm();
+    if (validationError) {
+      Alert.alert('Error', validationError);
       return;
     }
 
     try {
       setSaving(true);
-      const fullNumber = `639${formData.subscriber_number}`;
-      const payload: any = {
-        payment_method: formData.payment_method,
-        account_name: formData.account_name.trim(),
-        account_number: fullNumber,
-        is_default: formData.is_default,
-      };
-      if (formData.payment_method === 'bank') {
-        payload.bank_name = formData.bank_name.trim();
-      }
+      const payload = buildPayload();
 
       const response = await AxiosInstance.put(
         `/user-payment-details/${paymentId}/update_payment_method/`,
@@ -229,9 +290,7 @@ export default function AddPaymentMethodScreen() {
       console.error('Error updating payment method:', error);
       Alert.alert(
         'Error',
-        error.response?.data?.account_number?.[0] ||
-        error.response?.data?.error ||
-        'Failed to update payment method'
+        error.response?.data?.error || 'Failed to update payment method'
       );
     } finally {
       setSaving(false);
@@ -239,7 +298,7 @@ export default function AddPaymentMethodScreen() {
   };
 
   const handleDeletePaymentMethod = () => {
-    if (!userId || !paymentId) return;
+    if (!paymentId) return;
 
     Alert.alert(
       'Delete Payment Method',
@@ -255,7 +314,6 @@ export default function AddPaymentMethodScreen() {
                 `/user-payment-details/${paymentId}/delete_payment_method/`,
                 { headers: { 'X-User-Id': userId } }
               );
-
               if (response.data.message) {
                 Alert.alert('Success', 'Payment method deleted successfully', [
                   { text: 'OK', onPress: () => router.back() }
@@ -263,10 +321,7 @@ export default function AddPaymentMethodScreen() {
               }
             } catch (error: any) {
               console.error('Error deleting payment method:', error);
-              Alert.alert(
-                'Error',
-                error.response?.data?.error || 'Failed to delete payment method'
-              );
+              Alert.alert('Error', error.response?.data?.error || 'Failed to delete payment method');
             }
           }
         }
@@ -280,6 +335,36 @@ export default function AddPaymentMethodScreen() {
     } else {
       handleAddPaymentMethod();
     }
+  };
+
+  const selectEwallet = (value: string) => {
+    handleInputChange('ewalletProvider', value);
+    setShowEwalletModal(false);
+  };
+
+  const selectBank = (bank: string) => {
+    if (bank === 'Other') {
+      // Open a prompt for custom bank name
+      Alert.prompt(
+        'Enter Bank Name',
+        'Please specify the bank name:',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'OK',
+            onPress: (text) => {
+              if (text && text.trim()) {
+                handleInputChange('bank_name', text.trim());
+              }
+            },
+          },
+        ],
+        'plain-text'
+      );
+    } else {
+      handleInputChange('bank_name', bank);
+    }
+    setShowBankModal(false);
   };
 
   if (loading) {
@@ -297,124 +382,197 @@ export default function AddPaymentMethodScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <SafeAreaView style={styles.headerSafeArea}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="black" />
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={24} color="black" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>
+          {isEditMode ? 'Edit Payment Method' : 'Add Payment Method'}
+        </Text>
+        {isEditMode && (
+          <TouchableOpacity style={styles.deleteHeaderButton} onPress={handleDeletePaymentMethod}>
+            <Ionicons name="trash-outline" size={22} color="#EF4444" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            {isEditMode ? 'Edit Payment Method' : 'Add Payment Method'}
-          </Text>
-          {isEditMode && (
-            <TouchableOpacity style={styles.deleteHeaderButton} onPress={handleDeletePaymentMethod}>
-              <Ionicons name="trash-outline" size={22} color="#EF4444" />
-            </TouchableOpacity>
-          )}
-        </View>
-      </SafeAreaView>
+        )}
+      </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Payment Method Selection */}
+        {/* Top-level method type */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Payment Method</Text>
+          <Text style={styles.sectionTitle}>Payment Type</Text>
           <View style={styles.typeButtons}>
-            {paymentMethodOptions.map((option) => (
-              <TouchableOpacity
-                key={option.value}
+            <TouchableOpacity
+              style={[
+                styles.typeButton,
+                formData.methodType === 'ewallet' && styles.typeButtonActive,
+              ]}
+              onPress={() => handleInputChange('methodType', 'ewallet')}
+            >
+              <Text
                 style={[
-                  styles.typeButton,
-                  formData.payment_method === option.value && styles.typeButtonActive,
+                  styles.typeButtonText,
+                  formData.methodType === 'ewallet' && styles.typeButtonTextActive,
                 ]}
-                onPress={() => handleInputChange('payment_method', option.value)}
               >
-                <Text
-                  style={[
-                    styles.typeButtonText,
-                    formData.payment_method === option.value && styles.typeButtonTextActive,
-                  ]}
-                >
-                  {option.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                E‑Wallet
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.typeButton,
+                formData.methodType === 'bank' && styles.typeButtonActive,
+              ]}
+              onPress={() => handleInputChange('methodType', 'bank')}
+            >
+              <Text
+                style={[
+                  styles.typeButtonText,
+                  formData.methodType === 'bank' && styles.typeButtonTextActive,
+                ]}
+              >
+                Bank Account
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* Bank Name (only for bank accounts) */}
-        {formData.payment_method === 'bank' && (
+        {/* E‑Wallet section */}
+        {formData.methodType === 'ewallet' && (
+          <>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>E‑Wallet Provider</Text>
+              <TouchableOpacity
+                style={styles.dropdown}
+                onPress={() => setShowEwalletModal(true)}
+              >
+                <Text style={styles.dropdownText}>
+                  {formData.ewalletProvider === 'gcash' ? 'GCash' : 'PayMaya'}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Account Information</Text>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Account Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  value={formData.account_name}
+                  onChangeText={(text) => handleInputChange('account_name', text)}
+                  placeholder="e.g., Juan Dela Cruz"
+                />
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Mobile Number *
+                  <Text style={styles.phHint}> (PH)</Text>
+                </Text>
+                <View style={styles.numberInputContainer}>
+                  <View style={styles.phFlagContainer}>
+                    <Text style={styles.phFlag}>🇵🇭</Text>
+                    <Text style={styles.phPrefix}>+63 9</Text>
+                  </View>
+                  <TextInput
+                    style={[
+                      styles.numberInput,
+                      Platform.OS === 'ios' && { paddingLeft: 80 }
+                    ]}
+                    value={formData.mobile_number}
+                    onChangeText={handleMobileChange}
+                    placeholder="XXXXXXXXX"
+                    keyboardType="phone-pad"
+                    maxLength={9}
+                    secureTextEntry={!showNumber}
+                    placeholderTextColor="#9CA3AF"
+                  />
+                  <TouchableOpacity 
+                    style={styles.eyeButton} 
+                    onPress={() => setShowNumber(!showNumber)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons 
+                      name={showNumber ? "eye-off" : "eye"} 
+                      size={20} 
+                      color="#6B7280" 
+                    />
+                  </TouchableOpacity>
+                </View>
+                {formData.mobile_number.length > 0 && (
+                  <Text style={styles.numberHint}>
+                    {formatDisplayNumber(formData.mobile_number)}
+                  </Text>
+                )}
+                <Text style={styles.formatHint}>
+                  Enter the 9 digits after the initial '9' (e.g., 171234567)
+                </Text>
+              </View>
+            </View>
+          </>
+        )}
+
+        {/* Bank section */}
+        {formData.methodType === 'bank' && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Bank Details</Text>
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Bank Name *</Text>
+              <TouchableOpacity
+                style={styles.dropdown}
+                onPress={() => setShowBankModal(true)}
+              >
+                <Text style={styles.dropdownText}>
+                  {formData.bank_name || 'Select bank'}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Account Name *</Text>
               <TextInput
                 style={styles.input}
-                value={formData.bank_name}
-                onChangeText={(text) => handleInputChange('bank_name', text)}
-                placeholder="e.g., BDO, BPI, Metrobank"
+                value={formData.account_name}
+                onChangeText={(text) => handleInputChange('account_name', text)}
+                placeholder="Full name as it appears in bank records"
               />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Account Number *</Text>
+              <TextInput
+                style={styles.input}
+                value={displayAccountNumber}
+                onChangeText={handleAccountNumberChange}
+                placeholder="1234 5678 9012 3456"
+                keyboardType="numeric"
+              />
+              <Text style={styles.formatHint}>
+                Exactly 16 digits. Spaces will be added automatically.
+              </Text>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Security Code (3 digits)</Text>
+              <TextInput
+                style={[styles.input, styles.securityCodeInput]}
+                value={formData.security_code}
+                onChangeText={(text) => {
+                  let cleaned = text.replace(/[^0-9]/g, '');
+                  if (cleaned.length > 3) cleaned = cleaned.slice(0, 3);
+                  handleInputChange('security_code', cleaned);
+                }}
+                placeholder="e.g., 123"
+                keyboardType="numeric"
+                maxLength={3}
+                secureTextEntry
+              />
+              <Text style={styles.formatHint}>
+                For verification purposes (this code is not stored)
+              </Text>
             </View>
           </View>
         )}
-
-        {/* Account Information */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account Information</Text>
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Account Name *</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.account_name}
-              onChangeText={(text) => handleInputChange('account_name', text)}
-              placeholder="e.g., Juan Dela Cruz"
-            />
-          </View>
-          
-          {formData.payment_method !== 'bank' && (
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Mobile Number * 
-                <Text style={styles.phHint}> (PH)</Text>
-              </Text>
-              <View style={styles.numberInputContainer}>
-                <View style={styles.phFlagContainer}>
-                  <Text style={styles.phFlag}>🇵🇭</Text>
-                  <Text style={styles.phPrefix}>+63 9</Text>
-                </View>
-                <TextInput
-                  style={[
-                    styles.numberInput,
-                    Platform.OS === 'ios' && { paddingLeft: 80 }
-                  ]}
-                  value={formData.subscriber_number}
-                  onChangeText={handleNumberChange}
-                  placeholder="XXXXXXXXX"   // 9 digits placeholder
-                  keyboardType="phone-pad"
-                  maxLength={9}
-                  secureTextEntry={!showNumber}
-                  placeholderTextColor="#9CA3AF"
-                />
-                <TouchableOpacity 
-                  style={styles.eyeButton} 
-                  onPress={() => setShowNumber(!showNumber)}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons 
-                    name={showNumber ? "eye-off" : "eye"} 
-                    size={20} 
-                    color="#6B7280" 
-                  />
-                </TouchableOpacity>
-              </View>
-              {formData.subscriber_number.length > 0 && (
-                <Text style={styles.numberHint}>
-                  {formatDisplayNumber(formData.subscriber_number)}
-                </Text>
-              )}
-              <Text style={styles.formatHint}>
-                Enter the 9 digits after the initial '9' (e.g., 171234567)
-              </Text>
-            </View>
-          )}
-        </View>
 
         {/* Default Switch */}
         <View style={styles.section}>
@@ -443,12 +601,91 @@ export default function AddPaymentMethodScreen() {
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      {/* E‑Wallet Provider Modal */}
+      <Modal
+        visible={showEwalletModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEwalletModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowEwalletModal(false)}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select E‑Wallet</Text>
+              <TouchableOpacity onPress={() => setShowEwalletModal(false)}>
+                <Ionicons name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={ewalletProviders}
+              keyExtractor={(item) => item.value}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.modalItem}
+                  onPress={() => selectEwallet(item.value)}
+                >
+                  <Text style={styles.modalItemText}>{item.label}</Text>
+                  {formData.ewalletProvider === item.value && (
+                    <Ionicons name="checkmark" size={20} color="#F97316" />
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Bank Modal */}
+      <Modal
+        visible={showBankModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowBankModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowBankModal(false)}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Bank</Text>
+              <TouchableOpacity onPress={() => setShowBankModal(false)}>
+                <Ionicons name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={phBanks}
+              keyExtractor={(item, index) => index.toString()}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.modalItem}
+                  onPress={() => selectBank(item)}
+                >
+                  <Text style={styles.modalItemText}>{item}</Text>
+                  {formData.bank_name === item && (
+                    <Ionicons name="checkmark" size={20} color="#F97316" />
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8F8F8' },
+  container: {
+    flex: 1,
+    backgroundColor: '#F8F8F8',
+  },
   header: {
     height: 56,
     flexDirection: 'row',
@@ -459,11 +696,22 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#EEE',
   },
-  headerSafeArea: { backgroundColor: '#FFF', paddingTop: Platform.OS === 'android' ? 40 : 0 },
-  backButton: { marginRight: 20 },
-  headerTitle: { fontSize: 18, fontWeight: 'bold', color: 'black', flex: 1 },
-  deleteHeaderButton: { padding: 4 },
-  content: { flex: 1, padding: 16 },
+  backButton: {
+    marginRight: 20,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: 'black',
+    flex: 1,
+  },
+  deleteHeaderButton: {
+    padding: 4,
+  },
+  content: {
+    flex: 1,
+    padding: 16,
+  },
   section: {
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
@@ -476,7 +724,9 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginBottom: 16,
   },
-  inputGroup: { marginBottom: 16 },
+  inputGroup: {
+    marginBottom: 16,
+  },
   label: {
     fontSize: 14,
     color: '#374151',
@@ -535,11 +785,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: '#FFFFFF',
   },
+  securityCodeInput: {
+    width: 120,
+  },
   numberHint: {
     fontSize: 14,
     color: '#6B7280',
     marginTop: 8,
-    fontFamily: Platform.OS === 'ios' ? 'SFProDisplay' : undefined,
   },
   formatHint: {
     fontSize: 12,
@@ -549,12 +801,10 @@ const styles = StyleSheet.create({
   },
   typeButtons: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
   },
   typeButton: {
     flex: 1,
-    minWidth: '45%',
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderWidth: 1,
@@ -574,6 +824,21 @@ const styles = StyleSheet.create({
   typeButtonTextActive: {
     color: '#FFFFFF',
   },
+  dropdown: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  dropdownText: {
+    fontSize: 16,
+    color: '#111827',
+  },
   switchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -591,7 +856,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 24,
   },
-  submitButtonDisabled: { backgroundColor: '#FCA5A5' },
+  submitButtonDisabled: {
+    backgroundColor: '#FCA5A5',
+  },
   submitButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
@@ -606,5 +873,42 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
     color: '#6B7280',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    width: '80%',
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  modalItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  modalItemText: {
+    fontSize: 16,
+    color: '#374151',
   },
 });

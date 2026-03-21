@@ -28431,7 +28431,8 @@ class RefundViewSet(viewsets.ViewSet):
                     refund_type=refund_type,
                     customer_note=refund_data.get('customer_note', ''),
                     status='pending',
-                    total_refund_amount=Decimal(str(refund_data.get('total_refund_amount'))) if refund_data.get('total_refund_amount') is not None else None
+                    total_refund_amount=Decimal(str(refund_data.get('total_refund_amount'))) if refund_data.get('total_refund_amount') is not None else None,
+                    refund_fee=Decimal(str(refund_data.get('refund_fee'))) if refund_data.get('refund_fee') is not None else None
                 )
                 refund.save()
 
@@ -30459,10 +30460,10 @@ class RefundViewSet(viewsets.ViewSet):
 
     def _get_product_image_url(self, product, request):
         try:
-            if hasattr(product, 'productmedia_set') and product.productmedia_set.exists():
+            if product.productmedia_set.exists():
                 media = product.productmedia_set.first()
                 if media and media.file_data:
-                    return request.build_absolute_uri(media.file_data.url)
+                    return get_media_url(media.file_data)   # use the helper
         except Exception:
             pass
         return None

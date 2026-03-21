@@ -22,7 +22,7 @@ import AxiosInstance from '../../contexts/axios';
 
 const { width } = Dimensions.get('window');
 
-// Types for refund data
+// Types
 interface OrderItem {
   checkout_id: string;
   product_name: string;
@@ -30,7 +30,7 @@ interface OrderItem {
   quantity: number;
   price: string;
   subtotal: string;
-  product_image?: string;
+  product_image?: string;   // absolute URL from backend
 }
 
 interface PaymentDetail {
@@ -110,12 +110,13 @@ export default function ReturnRefund() {
   const [loading, setLoading] = useState(true);
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [refreshing, setRefreshing] = useState(false);
+  const [cancellingRefund, setCancellingRefund] = useState<string | null>(null);
 
   const getRefundsForTab = (tabId: string): RefundItem[] => {
     if (!refundData) return [];
     const refunds = Array.isArray(refundData) ? refundData : [];
 
-    switch(tabId) {
+    switch (tabId) {
       case 'pending-request':
         return refunds.filter(refund =>
           String(refund.status).toLowerCase() === 'pending' &&
@@ -129,7 +130,7 @@ export default function ReturnRefund() {
           const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
 
           if (st === 'negotiation' && paymentStatus === 'pending') return true;
-          if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped','received'].includes(rrStatus))) return true;
+          if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped', 'received'].includes(rrStatus))) return true;
           if (rtype === 'return' && st === 'approved' && rrStatus === 'shipped') return true;
           if (rtype === 'return' && st === 'approved' && rrStatus === 'received') return true;
           if (rtype === 'return' && st === 'approved' && rrStatus === 'inspected') return true;
@@ -146,8 +147,8 @@ export default function ReturnRefund() {
           const st = String(refund.status || '').toLowerCase();
           const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
           return paymentStatus === 'completed' ||
-                 ['rejected', 'cancelled', 'failed'].includes(st) ||
-                 (st === 'approved' && refund.return_request?.status === 'rejected');
+            ['rejected', 'cancelled', 'failed'].includes(st) ||
+            (st === 'approved' && refund.return_request?.status === 'rejected');
         });
       default:
         return refunds;
@@ -172,10 +173,9 @@ export default function ReturnRefund() {
     }
   }, [activeTab, refundData]);
 
-const fetchRefundData = async () => {
+  const fetchRefundData = async () => {
     try {
       setLoading(true);
-      // Correct list endpoint
       const response = await AxiosInstance.get('/return-refund/get_my_refunds/', {
         headers: { 'X-User-Id': user?.id || '' }
       });
@@ -220,7 +220,8 @@ const fetchRefundData = async () => {
     return getRefundsForTab(tabId).length;
   };
 
-  const toggleRefundExpansion = (refundId: string) => {
+  const toggleRefundExpansion = (refundId: string, e?: any) => {
+    if (e) e.stopPropagation();
     const newExpanded = new Set(expandedRefunds);
     if (newExpanded.has(refundId)) newExpanded.delete(refundId);
     else newExpanded.add(refundId);
@@ -230,11 +231,47 @@ const fetchRefundData = async () => {
   const handleViewDetails = (refundId: string) => {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (uuidRegex.test(refundId)) {
-      // Navigate to detailed refund screen
-      // router.push({ pathname: '/customer/view-refund-details', params: { refundId } });
+      router.push({ pathname: '/customer/view-refund', params: { refundId } });
     } else {
       Alert.alert('Error', 'Invalid refund ID');
     }
+  };
+
+  const handleCancelRefund = async (refundId: string, e: any) => {
+    e.stopPropagation();
+    Alert.alert(
+      'Cancel Refund Request',
+      'Are you sure you want to cancel this refund request? This action cannot be undone.',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            setCancellingRefund(refundId);
+            try {
+              await AxiosInstance.post(`/return-refund/${refundId}/cancel_refund/`, {}, {
+                headers: { 'X-User-Id': user?.id }
+              });
+              await fetchRefundData();
+              Alert.alert('Success', 'Refund request cancelled successfully.');
+            } catch (error: any) {
+              console.error('Error cancelling refund:', error);
+              Alert.alert('Error', error.response?.data?.error || 'Failed to cancel refund');
+            } finally {
+              setCancellingRefund(null);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Helper to get image URL (falls back to placeholder)
+  const getImageUrl = (url?: string): string => {
+    if (!url) return 'https://via.placeholder.com/40';
+    // If URL is relative, you might need to prepend base URL, but backend returns absolute
+    return url;
   };
 
   if (loading) {
@@ -258,7 +295,7 @@ const fetchRefundData = async () => {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         <View style={styles.container}>
-          {/* Tabs – normal flow, no absolute positioning */}
+          {/* Tabs */}
           <View style={styles.tabsWrapper}>
             <ScrollView
               horizontal
@@ -316,6 +353,13 @@ const fetchRefundData = async () => {
             ) : (
               filteredRefunds.map((refund) => {
                 const isExpanded = expandedRefunds.has(refund.refund_id);
+                const isPending = activeTab === 'pending-request';
+                const firstItem = refund.order_items && refund.order_items.length > 0 ? refund.order_items[0] : null;
+                const productImage = firstItem ? getImageUrl(firstItem.product_image) : 'https://via.placeholder.com/40';
+                const productName = firstItem ? firstItem.product_name : 'Product information not available';
+                const productMeta = firstItem ? `Qty: ${firstItem.quantity} • ₱${parseFloat(firstItem.price).toFixed(2)}` : '';
+                const productCount = refund.order_items ? refund.order_items.length : 0;
+
                 return (
                   <TouchableOpacity
                     key={refund.refund_id}
@@ -339,7 +383,7 @@ const fetchRefundData = async () => {
                         <View style={styles.headerRight}>
                           {getStatusBadge(refund)}
                           <TouchableOpacity
-                            onPress={() => toggleRefundExpansion(refund.refund_id)}
+                            onPress={(e) => toggleRefundExpansion(refund.refund_id, e)}
                             style={styles.expandButton}
                           >
                             <MaterialIcons
@@ -353,39 +397,34 @@ const fetchRefundData = async () => {
 
                       {/* Product Preview */}
                       <View style={styles.productPreview}>
-                        {refund.order_items && refund.order_items.length > 0 ? (
+                        {firstItem ? (
                           refund.order_items.length === 1 ? (
                             <View style={styles.singleProduct}>
-                              <Image
-                                source={{ uri: refund.order_items[0].product_image || "https://via.placeholder.com/40" }}
-                                style={styles.productImage}
-                              />
+                              <Image source={{ uri: productImage }} style={styles.productImage} />
                               <View style={styles.productDetails}>
                                 <Text style={styles.productName} numberOfLines={1}>
-                                  {refund.order_items[0].product_name}
+                                  {productName}
                                 </Text>
-                                <Text style={styles.productMeta}>
-                                  Qty: {refund.order_items[0].quantity} • ₱{parseFloat(refund.order_items[0].price).toFixed(2)}
-                                </Text>
+                                <Text style={styles.productMeta}>{productMeta}</Text>
                               </View>
                             </View>
                           ) : (
                             <View style={styles.multipleProducts}>
                               <View style={styles.imageStack}>
-                                {refund.order_items.slice(0, 3).map((item: any, index: number) => (
+                                {refund.order_items.slice(0, 3).map((item, idx) => (
                                   <Image
-                                    key={index}
-                                    source={{ uri: item.product_image || "https://via.placeholder.com/40" }}
-                                    style={[styles.stackImage, { marginLeft: index > 0 ? -15 : 0 }]}
+                                    key={idx}
+                                    source={{ uri: getImageUrl(item.product_image) }}
+                                    style={[styles.stackImage, { marginLeft: idx > 0 ? -15 : 0 }]}
                                   />
                                 ))}
-                                {refund.order_items.length > 3 && (
+                                {productCount > 3 && (
                                   <View style={[styles.moreBadge, { marginLeft: -15 }]}>
-                                    <Text style={styles.moreText}>+{refund.order_items.length - 3}</Text>
+                                    <Text style={styles.moreText}>+{productCount - 3}</Text>
                                   </View>
                                 )}
                               </View>
-                              <Text style={styles.productCount}>{refund.order_items.length} products</Text>
+                              <Text style={styles.productCount}>{productCount} products</Text>
                             </View>
                           )
                         ) : (
@@ -449,16 +488,25 @@ const fetchRefundData = async () => {
                         </View>
                       )}
 
-                      {/* Footer */}
-                      <View style={styles.cardFooter}>
-                        <TouchableOpacity
-                          style={styles.viewButton}
-                          onPress={() => handleViewDetails(refund.refund_id)}
-                        >
-                          <MaterialIcons name="visibility" size={14} color="#F97316" />
-                          <Text style={styles.viewButtonText}>View Details</Text>
-                        </TouchableOpacity>
-                      </View>
+                      {/* Footer - Cancel button only for pending tab */}
+                      {isPending && (
+                        <View style={styles.cardFooter}>
+                          <TouchableOpacity
+                            style={styles.cancelButton}
+                            onPress={(e) => handleCancelRefund(refund.refund_id, e)}
+                            disabled={cancellingRefund === refund.refund_id}
+                          >
+                            {cancellingRefund === refund.refund_id ? (
+                              <ActivityIndicator size="small" color="#EF4444" />
+                            ) : (
+                              <>
+                                <MaterialIcons name="cancel" size={14} color="#EF4444" />
+                                <Text style={styles.cancelButtonText}>Cancel Request</Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
                   </TouchableOpacity>
                 );
@@ -787,20 +835,20 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
   },
-  viewButton: {
+  cancelButton: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#FED7AA',
+    borderColor: '#FEE2E2',
     backgroundColor: 'transparent',
     gap: 6,
   },
-  viewButtonText: {
+  cancelButtonText: {
     fontSize: 11,
     fontWeight: '500',
-    color: '#F97316',
+    color: '#EF4444',
   },
 });
