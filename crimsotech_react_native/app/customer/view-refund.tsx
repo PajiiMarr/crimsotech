@@ -1,4 +1,3 @@
-// view-returns.tsx
 import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
@@ -1270,14 +1269,15 @@ export default function ViewRefundPage() {
     
     // Check if buyer has payment details for this method
     const hasPaymentDetail = () => {
-      const pd = refund.payment_details || {};
+      const selected = refund.payment_details?.selected_payment;
+      if (!selected) return false;
       switch (method) {
         case 'wallet':
-          return Boolean(pd.wallet && (pd.wallet.account_number || pd.wallet.wallet_id || pd.wallet.provider));
+          return Boolean(selected.account_number);
         case 'bank':
-          return Boolean(pd.bank && (pd.bank.account_number || pd.bank.bank_name));
+          return Boolean(selected.account_number);
         case 'remittance':
-          return Boolean(pd.remittance && (pd.remittance.reference || pd.remittance.receiver_name || pd.remittance.provider));
+          return Boolean(selected.account_number);
         default:
           return true; // voucher or other methods
       }
@@ -1746,7 +1746,8 @@ export default function ViewRefundPage() {
 
   // Extract refund data
   const item = (refund.order_items && refund.order_items[0]) || refund.product || {};
-  const imageUrl = (item.primary_image && item.primary_image.url) || item.image || null;
+  // Use product_image first (string), then primary_image.url, then image
+  const imageUrl = item.product_image || (item.primary_image && item.primary_image.url) || item.image || null;
   const order = refund.order || {};
   const shipping = refund.shipping_info || order.shipping_address || shippingAddress || {};
 
@@ -1816,9 +1817,11 @@ export default function ViewRefundPage() {
 
         {/* Refund Payment Details */}
         {(() => {
-          const method = parseRefundMethod(refund);
-          const pd = refund.payment_details || {};
-          if (!method && (!pd || Object.keys(pd).length === 0)) return null;
+          const selected = refund.payment_details?.selected_payment;
+          if (!selected) return null;
+
+          const method = selected.payment_method;
+          const methodName = method === 'bank' ? 'Bank Transfer' : (method === 'gcash' ? 'GCash' : (method === 'paymaya' ? 'PayMaya' : friendlyLabel(method)));
 
           return (
             <View style={styles.section}>
@@ -1831,118 +1834,61 @@ export default function ViewRefundPage() {
                 <View style={styles.metaRow}>
                   <Text style={styles.metaLabel}>Method:</Text>
                   <View style={styles.metaRightSide}>
-                    <Text style={styles.metaValue}>{friendlyLabel(method || '—')}</Text>
+                    <Text style={styles.metaValue}>{methodName}</Text>
                   </View>
                 </View>
 
-                {(method === 'wallet' || (!method && pd.wallet)) && pd.wallet && (
-                  <>
-                    <View style={styles.metaRow}>
-                      <Text style={styles.metaLabel}>Provider:</Text>
-                      <View style={styles.metaRightSide}>
-                        <Text style={styles.metaValue}>{pd.wallet.provider || pd.wallet.wallet_provider || '—'}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.metaRow}>
-                      <Text style={styles.metaLabel}>Account:</Text>
-                      <View style={styles.metaRightSide}>
-                        <Text style={styles.metaValue}>{pd.wallet.account_number || pd.wallet.wallet_id || '—'}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.metaRow}>
-                      <Text style={styles.metaLabel}>Account Name:</Text>
-                      <View style={styles.metaRightSide}>
-                        <Text style={styles.metaValue}>{pd.wallet.account_name || pd.wallet.owner_name || refund.requested_by_username || '—'}</Text>
-                      </View>
-                    </View>
-                    {pd.wallet.contact_number && (
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaLabel}>Contact:</Text>
-                        <View style={styles.metaRightSide}>
-                          <Text style={styles.metaValue}>{pd.wallet.contact_number}</Text>
-                        </View>
-                      </View>
-                    )}
-                  </>
-                )}
-
-                {(method === 'bank' || (!method && pd.bank)) && pd.bank && (
+                {method === 'bank' && (
                   <>
                     <View style={styles.metaRow}>
                       <Text style={styles.metaLabel}>Bank:</Text>
                       <View style={styles.metaRightSide}>
-                        <Text style={styles.metaValue}>{pd.bank.bank_name || pd.bank.name || '—'}</Text>
+                        <Text style={styles.metaValue}>{selected.bank_name || '—'}</Text>
                       </View>
                     </View>
                     <View style={styles.metaRow}>
                       <Text style={styles.metaLabel}>Account Name:</Text>
                       <View style={styles.metaRightSide}>
-                        <Text style={styles.metaValue}>{pd.bank.account_name || refund.requested_by_username || '—'}</Text>
+                        <Text style={styles.metaValue}>{selected.account_name || refund.requested_by_username || '—'}</Text>
                       </View>
                     </View>
                     <View style={styles.metaRow}>
                       <Text style={styles.metaLabel}>Account Number:</Text>
                       <View style={styles.metaRightSide}>
-                        <Text style={styles.metaValue}>{pd.bank.account_number || '—'}</Text>
+                        <Text style={styles.metaValue}>{selected.account_number || '—'}</Text>
                       </View>
                     </View>
-                    {pd.bank.branch && (
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaLabel}>Branch:</Text>
-                        <View style={styles.metaRightSide}>
-                          <Text style={styles.metaValue}>{pd.bank.branch}</Text>
-                        </View>
-                      </View>
-                    )}
                   </>
                 )}
 
-                {(method === 'remittance' || (!method && pd.remittance)) && pd.remittance && (
+                {(method === 'gcash' || method === 'paymaya') && (
                   <>
                     <View style={styles.metaRow}>
                       <Text style={styles.metaLabel}>Provider:</Text>
                       <View style={styles.metaRightSide}>
-                        <Text style={styles.metaValue}>{pd.remittance.provider || pd.remittance.service || '—'}</Text>
+                        <Text style={styles.metaValue}>{method === 'gcash' ? 'GCash' : 'PayMaya'}</Text>
                       </View>
                     </View>
                     <View style={styles.metaRow}>
-                      <Text style={styles.metaLabel}>Receiver:</Text>
+                      <Text style={styles.metaLabel}>Account Name:</Text>
                       <View style={styles.metaRightSide}>
-                        <Text style={styles.metaValue}>{`${pd.remittance.first_name || ''}${pd.remittance.middle_name ? ' ' + pd.remittance.middle_name : ''} ${pd.remittance.last_name || ''}`.trim() || '—'}</Text>
+                        <Text style={styles.metaValue}>{selected.account_name || refund.requested_by_username || '—'}</Text>
                       </View>
                     </View>
-                    {pd.remittance.reference && (
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaLabel}>Reference:</Text>
-                        <View style={styles.metaRightSide}>
-                          <Text style={styles.metaValue}>{pd.remittance.reference}</Text>
-                        </View>
+                    <View style={styles.metaRow}>
+                      <Text style={styles.metaLabel}>Account Number:</Text>
+                      <View style={styles.metaRightSide}>
+                        <Text style={styles.metaValue}>{selected.account_number || '—'}</Text>
                       </View>
-                    )}
-                    {(pd.remittance.street || pd.remittance.city || pd.remittance.province) && (
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaLabel}>Address:</Text>
-                        <View style={styles.metaRightSide}>
-                          <Text style={styles.metaValue}>{`${pd.remittance.street || ''}${pd.remittance.barangay ? ', ' + pd.remittance.barangay : ''}${pd.remittance.city ? ', ' + pd.remittance.city : ''}${pd.remittance.province ? ', ' + pd.remittance.province : ''}${pd.remittance.zip_code ? ', ' + pd.remittance.zip_code : ''}`.replace(/^, /, '')}</Text>
-                        </View>
-                      </View>
-                    )}
-                    {pd.remittance.contact_number && (
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaLabel}>Contact:</Text>
-                        <View style={styles.metaRightSide}>
-                          <Text style={styles.metaValue}>{pd.remittance.contact_number}</Text>
-                        </View>
-                      </View>
-                    )}
+                    </View>
                   </>
                 )}
 
-                {method && (!pd[method] || Object.keys(pd[method]).length === 0) && (
+                {method === 'voucher' && (
                   <View style={styles.metaRow}>
                     <Text style={styles.metaLabel}>Details:</Text>
                     <View style={styles.metaRightSide}>
-                      <Text style={[styles.metaValue, { color: '#9CA3AF' }]}>No payment details provided</Text>
+                      <Text style={styles.metaValue}>Store Voucher will be issued</Text>
                     </View>
                   </View>
                 )}
@@ -2146,6 +2092,7 @@ export default function ViewRefundPage() {
 }
 
 const styles = StyleSheet.create({
+  // ... (all existing styles remain exactly as in your original file)
   container: { 
     flex: 1, 
     backgroundColor: '#F5F5F5' 
