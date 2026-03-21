@@ -28601,7 +28601,8 @@ class RefundViewSet(viewsets.ViewSet):
                     refund_type=refund_type,
                     customer_note=refund_data.get('customer_note', ''),
                     status='pending',
-                    total_refund_amount=Decimal(str(refund_data.get('total_refund_amount'))) if refund_data.get('total_refund_amount') is not None else None
+                    total_refund_amount=Decimal(str(refund_data.get('total_refund_amount'))) if refund_data.get('total_refund_amount') is not None else None,
+                    refund_fee=Decimal(str(refund_data.get('refund_fee'))) if refund_data.get('refund_fee') is not None else None
                 )
                 refund.save()
 

@@ -21,12 +21,11 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
 import AxiosInstance from '../../contexts/axios';
 
 const { width, height } = Dimensions.get('window');
 
-// Types - Update OrderItem to include image fields
+// Types
 interface OrderItem {
   checkout_id: string;
   product_id: string;
@@ -113,7 +112,7 @@ interface BankDetails {
   branch: string;
 }
 
-// Refund types - Matching web
+// Refund types
 const refundTypes: RefundType[] = [
   {
     id: 'return_item',
@@ -138,7 +137,7 @@ const refundTypes: RefundType[] = [
   }
 ];
 
-// Refund methods - Moneyback options commented out
+// Refund methods
 const refundMethods: RefundMethod[] = [
   {
     id: 'wallet',
@@ -164,22 +163,6 @@ const refundMethods: RefundMethod[] = [
     type: 'voucher',
     allowedRefundTypes: ['return_item', 'keep_item']
   },
-  // {
-  //   id: 'moneyback',
-  //   label: 'Money Back (Remittance)',
-  //   description: 'Get cash via remittance',
-  //   icon: 'cash-multiple',
-  //   type: 'moneyback',
-  //   allowedRefundTypes: ['return_item', 'keep_item']
-  // },
-  // {
-  //   id: 'cash_on_hand',
-  //   label: 'Cash on Hand',
-  //   description: 'Collect cash directly from the seller at pickup',
-  //   icon: 'hand-coin-outline',
-  //   type: 'moneyback',
-  //   allowedRefundTypes: ['return_item', 'keep_item']
-  // },
   {
     id: 'replace',
     label: 'Replacement',
@@ -271,12 +254,18 @@ export default function RequestRefundPage() {
     branch: '',
   });
 
-  // Saved payment methods (e‑wallets only)
-  const [savedPaymentMethods, setSavedPaymentMethods] = useState<any[]>([]);
+  // Saved payment methods
+  const [savedEwallets, setSavedEwallets] = useState<any[]>([]);
+  const [savedBanks, setSavedBanks] = useState<any[]>([]);
   const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
+  const [selectedBankId, setSelectedBankId] = useState<string | null>(null);
   const [loadingSaved, setLoadingSaved] = useState(false);
+  const [loadingBanks, setLoadingBanks] = useState(false);
 
-  // Media handling (images + videos)
+  // Already refunded items
+  const [refundedCheckoutIds, setRefundedCheckoutIds] = useState<Set<string>>(new Set());
+
+  // Media handling
   const [mediaFiles, setMediaFiles] = useState<Array<{ uri: string; name: string; type: string; mimeType?: string }>>([]);
   const [mediaUris, setMediaUris] = useState<string[]>([]);
 
@@ -285,37 +274,71 @@ export default function RequestRefundPage() {
   const [showRefundTypeModal, setShowRefundTypeModal] = useState(false);
   const [showMethodModal, setShowMethodModal] = useState(false);
   const [showWalletSelectionModal, setShowWalletSelectionModal] = useState(false);
+  const [showBankSelectionModal, setShowBankSelectionModal] = useState(false);
 
   // Fetch order data
   useEffect(() => {
     fetchOrderData();
   }, [decodedOrderId, userId]);
 
+  // After order loads, fetch existing refunds for this order
+  useEffect(() => {
+    if (order) {
+      fetchExistingRefundsForOrder();
+    }
+  }, [order]);
+
   // Fetch saved payment methods when wallet method is selected
   useEffect(() => {
     if (selectedRefundMethod?.type === 'wallet') {
-      fetchSavedPaymentMethods();
+      fetchSavedEwallets();
     } else {
       setSelectedWalletId(null);
       setEWalletDetails({ provider: '', accountName: '', accountNumber: '', contactNumber: '' });
     }
   }, [selectedRefundMethod]);
 
+  // Fetch saved banks when bank method is selected
+  useEffect(() => {
+    if (selectedRefundMethod?.type === 'bank') {
+      fetchSavedBanks();
+    } else {
+      setSelectedBankId(null);
+      setBankDetails({ bankName: '', accountName: '', accountNumber: '', accountType: '', branch: '' });
+    }
+  }, [selectedRefundMethod]);
+
   // When a saved wallet is selected, populate eWalletDetails
   useEffect(() => {
     if (selectedWalletId) {
-      const selected = savedPaymentMethods.find(m => m.payment_id === selectedWalletId);
+      const selected = savedEwallets.find(m => m.payment_id === selectedWalletId);
       if (selected) {
         const fullNumber = selected.full_account_number || selected.account_number;
         setEWalletDetails({
           provider: selected.payment_method === 'gcash' ? 'GCash' : selected.payment_method === 'paymaya' ? 'PayMaya' : '',
           accountName: selected.account_name,
           accountNumber: fullNumber,
-          contactNumber: fullNumber, // Assuming the number is the contact
+          contactNumber: fullNumber,
         });
       }
     }
-  }, [selectedWalletId, savedPaymentMethods]);
+  }, [selectedWalletId, savedEwallets]);
+
+  // When a saved bank is selected, populate bankDetails
+  useEffect(() => {
+    if (selectedBankId) {
+      const selected = savedBanks.find(b => b.payment_id === selectedBankId);
+      if (selected) {
+        setBankDetails({
+          bankName: selected.bank_name || '',
+          accountName: selected.account_name || '',
+          accountNumber: selected.account_number || '',
+          accountType: selected.account_type || '',
+          branch: selected.branch || '',
+        });
+      }
+    }
+  }, [selectedBankId, savedBanks]);
 
   // When refund type is partial (keep_item), default the partial amount
   useEffect(() => {
@@ -341,11 +364,8 @@ export default function RequestRefundPage() {
 
     try {
       setLoading(true);
-      
       const response = await AxiosInstance.get(`/purchases-buyer/${decodedOrderId}/view-order/`, {
-        headers: {
-          'X-User-Id': userId,
-        },
+        headers: { 'X-User-Id': userId },
       });
       
       if (!response?.data) {
@@ -355,7 +375,6 @@ export default function RequestRefundPage() {
       }
 
       const orderData = response.data;
-      
       const transformedOrder = {
         order_id: orderData.order?.id || decodedOrderId,
         status: orderData.order?.status || 'pending',
@@ -368,9 +387,7 @@ export default function RequestRefundPage() {
         delivery_status: orderData.order?.delivery_status || null,
         delivery_rider: orderData.order?.delivery_rider || null,
         items: orderData.items || [],
-        shipping: {
-          method: orderData.shipping_info?.delivery_method || ''
-        }
+        shipping: { method: orderData.shipping_info?.delivery_method || '' }
       };
 
       setOrder(transformedOrder);
@@ -390,49 +407,72 @@ export default function RequestRefundPage() {
     }
   };
 
-  const fetchSavedPaymentMethods = async () => {
+  const fetchExistingRefundsForOrder = async () => {
+    if (!userId || !decodedOrderId) return;
+    try {
+      const response = await AxiosInstance.get('/return-refund/get_my_refunds/', {
+        headers: { 'X-User-Id': userId }
+      });
+      const allRefunds = response.data || [];
+      const orderRefunds = allRefunds.filter((r: any) => r.order_id === decodedOrderId);
+      const activeStatuses = ['pending', 'approved', 'negotiation', 'under_review', 'waiting', 'to_verify'];
+      const activeRefunds = orderRefunds.filter((r: any) => activeStatuses.includes(r.status));
+      const checkoutIds = new Set<string>();
+      activeRefunds.forEach((refund: any) => {
+        if (refund.items && refund.items.length) {
+          refund.items.forEach((item: any) => {
+            if (item.checkout_id) checkoutIds.add(item.checkout_id);
+          });
+        }
+      });
+      setRefundedCheckoutIds(checkoutIds);
+    } catch (error) {
+      console.error('Error fetching existing refunds:', error);
+    }
+  };
+
+  const fetchSavedEwallets = async () => {
     if (!userId) return;
     setLoadingSaved(true);
     try {
       const response = await AxiosInstance.get('/user-payment-details/get_my_payment_methods/', {
         headers: { 'X-User-Id': userId }
       });
-      // Filter only e‑wallets (GCash, PayMaya)
       const ewallets = (response.data || []).filter(
         (m: any) => m.payment_method === 'gcash' || m.payment_method === 'paymaya'
       );
-      setSavedPaymentMethods(ewallets);
+      setSavedEwallets(ewallets);
     } catch (error) {
-      console.error('Error fetching payment methods:', error);
+      console.error('Error fetching e-wallets:', error);
     } finally {
       setLoadingSaved(false);
     }
   };
 
-  const getProductImageUrl = (item: OrderItem) => {
-    // First try primary_image (from ProductSerializer)
-    if (item.primary_image?.url) {
-      return item.primary_image.url;
+  const fetchSavedBanks = async () => {
+    if (!userId) return;
+    setLoadingBanks(true);
+    try {
+      const response = await AxiosInstance.get('/user-payment-details/get_my_payment_methods/', {
+        headers: { 'X-User-Id': userId }
+      });
+      const banks = (response.data || []).filter((m: any) => m.payment_method === 'bank');
+      setSavedBanks(banks);
+    } catch (error) {
+      console.error('Error fetching banks:', error);
+    } finally {
+      setLoadingBanks(false);
     }
-    
-    // Then try product_images array
+  };
+
+  const getProductImageUrl = (item: OrderItem) => {
+    if (item.primary_image?.url) return item.primary_image.url;
     if (item.product_images && item.product_images.length > 0) {
       const firstImage = item.product_images[0];
-      // Check different possible image URL fields
-      if (firstImage.url) {
-        return firstImage.url;
-      }
-      if (firstImage.file_data) {
-        return firstImage.file_data;
-      }
+      if (firstImage.url) return firstImage.url;
+      if (firstImage.file_data) return firstImage.file_data;
     }
-    
-    // Try shop picture as last resort
-    if (item.shop_info?.picture) {
-      return item.shop_info.picture;
-    }
-    
-    // Return empty string to use fallback
+    if (item.shop_info?.picture) return item.shop_info.picture;
     return '';
   };
 
@@ -446,16 +486,13 @@ export default function RequestRefundPage() {
     try {
       const date = new Date(dateString);
       return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
+        month: 'short', day: 'numeric', year: 'numeric',
       });
-    } catch (e) {
+    } catch {
       return dateString;
     }
   };
 
-  // Calculate progress percentage
   const calculateProgress = () => {
     let progress = 0;
     if (selectedItems.length > 0) progress += 33;
@@ -465,50 +502,37 @@ export default function RequestRefundPage() {
   };
 
   const handleItemSelect = (checkoutId: string) => {
+    if (refundedCheckoutIds.has(checkoutId)) return; // already refunded
     setSelectedItems(prev =>
-      prev.includes(checkoutId)
-        ? prev.filter(id => id !== checkoutId)
-        : [...prev, checkoutId]
+      prev.includes(checkoutId) ? prev.filter(id => id !== checkoutId) : [...prev, checkoutId]
     );
   };
 
   const handleSelectAll = () => {
     if (!order) return;
-    
-    if (selectedItems.length === order.items.length) {
+    const selectableItems = order.items.filter(item => !refundedCheckoutIds.has(item.checkout_id));
+    if (selectedItems.length === selectableItems.length) {
       setSelectedItems([]);
     } else {
-      setSelectedItems(order.items.map(item => item.checkout_id));
+      setSelectedItems(selectableItems.map(item => item.checkout_id));
     }
   };
 
-  // Get selected items details
   const selectedItemsDetails = order?.items.filter(item => 
     selectedItems.includes(item.checkout_id)
   ) || [];
 
   const calculateRefundAmounts = () => {
     if (!order || selectedItems.length === 0) return { fullAmount: 0, maxPartialAmount: 0 };
-    
-    const fullAmount = selectedItemsDetails.reduce((sum: number, item: OrderItem) => 
-      sum + parseFloat(item.subtotal), 0
-    );
-    
-    // For keep items, max 70% of full amount
+    const fullAmount = selectedItemsDetails.reduce((sum, item) => sum + parseFloat(item.subtotal), 0);
     const maxPartialAmount = fullAmount * 0.7;
-    
     return { fullAmount, maxPartialAmount };
   };
 
   const { fullAmount, maxPartialAmount } = calculateRefundAmounts();
 
-  // Compute refund breakdown (base amount, fee, final amount)
   const computeRefundBreakdown = () => {
-    const selectedTotal = selectedItemsDetails.reduce((sum: number, item: OrderItem) => 
-      sum + parseFloat(item.subtotal), 0
-    );
-
-    // Base amount depends on refund type
+    const selectedTotal = selectedItemsDetails.reduce((sum, item) => sum + parseFloat(item.subtotal), 0);
     let baseAmount = selectedTotal;
     if (selectedRefundType && selectedRefundType.id === 'keep_item') {
       baseAmount = partialAmount ? parseFloat(partialAmount) : maxPartialAmount;
@@ -516,22 +540,14 @@ export default function RequestRefundPage() {
       baseAmount = selectedTotal;
     }
 
-    // Fee rules by refund method subtype
     let fee = 0;
     const methodType = selectedRefundMethod?.type;
-    // Cash on Hand should have no extra fee
-    if (selectedRefundMethod?.id === 'cash_on_hand') {
-      fee = 0;
-    } else if (methodType === 'moneyback') {
-      fee = 50; // remittance fee
-    } else if (methodType === 'bank') {
-      fee = 50; // bank transfer fee
-    } else if (methodType === 'wallet') {
-      fee = 10; // e-wallet fee
-    }
+    if (selectedRefundMethod?.id === 'cash_on_hand') fee = 0;
+    else if (methodType === 'moneyback') fee = 50;
+    else if (methodType === 'bank') fee = 50;
+    else if (methodType === 'wallet') fee = 10;
 
     const finalAmount = Math.max(0, baseAmount - fee);
-
     return { baseAmount, fee, finalAmount };
   };
 
@@ -539,16 +555,7 @@ export default function RequestRefundPage() {
 
   const getAvailableMethods = () => {
     if (!selectedRefundType) return refundMethods;
-    
-    const deliveryMethod = (order?.delivery_method || order?.shipping?.method || '').toString().toLowerCase();
-    const isPickup = deliveryMethod.includes('pickup');
-
-    return refundMethods.filter(method => 
-      method.allowedRefundTypes.includes(selectedRefundType.id) &&
-      // Only allow Cash on Hand when the order is a pickup (commented out)
-      // (method.id !== 'cash_on_hand' || isPickup)
-      true // because cash_on_hand is removed, no need to filter
-    );
+    return refundMethods.filter(method => method.allowedRefundTypes.includes(selectedRefundType.id));
   };
 
   const pickMedia = async () => {
@@ -564,10 +571,10 @@ export default function RequestRefundPage() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All, // Allow both images and videos
-      allowsEditing: false, // Disable editing for videos (can be enabled but may cause issues)
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      allowsEditing: false,
       quality: 0.8,
-      videoMaxDuration: 60, // Optional: limit video length to 60 seconds
+      videoMaxDuration: 60,
     });
 
     if (!result.canceled) {
@@ -575,7 +582,6 @@ export default function RequestRefundPage() {
       const uri = asset.uri;
       const fileName = uri.split('/').pop() || (asset.type === 'video' ? 'video.mp4' : 'image.jpg');
       const mimeType = asset.mimeType || (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
-      
       setMediaUris([...mediaUris, uri]);
       setMediaFiles(prev => [...prev, {
         uri,
@@ -593,38 +599,21 @@ export default function RequestRefundPage() {
 
   const isPaymentDetailsValid = () => {
     if (!selectedRefundMethod) return false;
-    
-    if (selectedRefundMethod.type === 'wallet') {
-      // Must have a selected saved wallet
-      return !!selectedWalletId;
-    }
-    
-    if (selectedRefundMethod.type === 'bank') {
-      return bankDetails.bankName && bankDetails.accountNumber && 
-             bankDetails.accountName && bankDetails.accountType;
-    }
-    
-    // For voucher and replace methods, no additional details needed
+    if (selectedRefundMethod.type === 'wallet') return !!selectedWalletId;
+    if (selectedRefundMethod.type === 'bank') return !!selectedBankId;
     return true;
   };
 
   const validateForm = () => {
-    if (selectedItems.length === 0) {
-      return 'Please select at least one item';
-    }
-    if (!selectedRefundType) {
-      return 'Please select a refund type';
-    }
-    if (!selectedRefundMethod) {
-      return 'Please select a refund method';
-    }
+    if (selectedItems.length === 0) return 'Please select at least one item';
+    if (!selectedRefundType) return 'Please select a refund type';
+    if (!selectedRefundMethod) return 'Please select a refund method';
     if (!isPaymentDetailsValid()) {
       if (selectedRefundMethod.type === 'wallet') return 'Please select a saved e-wallet or add one first';
+      if (selectedRefundMethod.type === 'bank') return 'Please select a saved bank account or add one first';
       return 'Please complete the payment details';
     }
-    if (!returnReason) {
-      return 'Please select a reason for return';
-    }
+    if (!returnReason) return 'Please select a reason for return';
     if (selectedRefundType.id === 'keep_item' && (!partialAmount || parseFloat(partialAmount) <= 0)) {
       return 'Please enter a valid partial refund amount';
     }
@@ -645,13 +634,11 @@ export default function RequestRefundPage() {
     setError(null);
 
     try {
-      // Recompute breakdown and use final amount as the total refund stored in DB
       const breakdown = computeRefundBreakdown();
       const requestedBaseAmount = Number((breakdown.baseAmount || 0).toFixed(2));
       const feeAmount = Number((breakdown.fee || 0).toFixed(2));
       const finalRefundAmount = Number((breakdown.finalAmount || 0).toFixed(2));
 
-      // Map type to backend expected value
       const mapTypeToRefundMethod = (type: string) => {
         switch (type) {
           case 'wallet': return 'wallet';
@@ -663,28 +650,24 @@ export default function RequestRefundPage() {
         }
       };
 
-      // Create FormData for file uploads
       const formData = new FormData();
-
-      // Add refund data as JSON string (include breakdown fields)
       const refundData = {
         order_id: order?.order_id,
         reason: returnReason === 'Other' ? customReason : returnReason,
         preferred_refund_method: mapTypeToRefundMethod(selectedRefundMethod!.type),
-        requested_refund_amount: requestedBaseAmount, // buyer requested/base amount (before fees)
+        requested_refund_amount: requestedBaseAmount,
         refund_fee: feeAmount,
-        total_refund_amount: finalRefundAmount, // final amount to be paid to buyer (stored)
+        total_refund_amount: finalRefundAmount,
         customer_note: additionalDetails || '',
         refund_category: selectedRefundType!.id,
-        final_refund_type: null, // default null; final type will be set when seller approves
-        // Add payment method details based on type
+        final_refund_type: null,
+        selected_payment_id: selectedRefundMethod!.type === 'wallet' ? selectedWalletId : (selectedRefundMethod!.type === 'bank' ? selectedBankId : undefined),
         ...(selectedRefundMethod!.type === 'wallet' ? {
           wallet_details: {
             provider: eWalletDetails.provider,
             account_name: eWalletDetails.accountName,
             account_number: eWalletDetails.accountNumber,
             contact_number: eWalletDetails.contactNumber,
-            saved_payment_id: selectedWalletId // optional, may be used on backend
           }
         } : {}),
         ...(selectedRefundMethod!.type === 'bank' ? {
@@ -698,17 +681,13 @@ export default function RequestRefundPage() {
         } : {}),
       };
 
-      // Add JSON data to formData
       formData.append('refund_data', JSON.stringify(refundData));
 
-      // Add selected items
       selectedItems.forEach((itemId, index) => {
         formData.append(`selected_item_${index}`, itemId);
       });
 
-      // Add uploaded media files
       mediaFiles.forEach((file, index) => {
-        // Determine the correct MIME type based on file extension or stored type
         let mimeType = file.mimeType;
         if (!mimeType) {
           const ext = file.name.split('.').pop()?.toLowerCase();
@@ -719,7 +698,6 @@ export default function RequestRefundPage() {
           else if (ext === 'gif') mimeType = 'image/gif';
           else mimeType = 'application/octet-stream';
         }
-
         formData.append(`evidence_${index}`, {
           uri: file.uri,
           name: file.name,
@@ -727,7 +705,6 @@ export default function RequestRefundPage() {
         } as any);
       });
 
-      // Submit to backend
       const response = await AxiosInstance.post('/return-refund/create_refund/', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
@@ -737,7 +714,6 @@ export default function RequestRefundPage() {
 
       if (response.data.refund_id || response.data.request_number) {
         const refundRequestId = response.data.refund_id || response.data.request_number;
-        
         Alert.alert(
           'Success',
           'Return request submitted successfully!',
@@ -745,7 +721,6 @@ export default function RequestRefundPage() {
             {
               text: 'OK',
               onPress: () => {
-                // Redirect buyers to Purchases -> Returns tab to view their request
                 router.replace({
                   pathname: '/customer/purchases' as any,
                   params: { 
@@ -763,20 +738,14 @@ export default function RequestRefundPage() {
         Alert.alert('Success', 'Return request submitted successfully!');
         router.replace({
           pathname: '/customer/purchases' as any,
-          params: { 
-            tab: 'Returns',
-            success: 'true'
-          }
+          params: { tab: 'Returns', success: 'true' }
         });
       } else {
         setError(response.data.error || 'Failed to submit request.');
       }
     } catch (err: any) {
       console.error('Error submitting refund request:', err);
-
       const resp = err?.response;
-
-      // If a refund request already exists, show an alert and offer to view it in Purchases -> Returns
       if (resp?.data?.refund_id) {
         const existingRequestId = resp.data.refund_id;
         Alert.alert(
@@ -789,16 +758,10 @@ export default function RequestRefundPage() {
         );
         setError(resp.data.error || 'A refund request for this order is already in progress');
       } else if (resp) {
-        if (resp.status === 400 && resp.data?.error) {
-          setError(resp.data.error);
-        } else if (resp.data?.errors) {
-          const errors = Object.values(resp.data.errors).flat();
-          setError(errors.join(', '));
-        } else if (resp.data?.detail) {
-          setError(resp.data.detail);
-        } else {
-          setError(resp.data?.error || 'Failed to submit request. Please try again.');
-        }
+        if (resp.status === 400 && resp.data?.error) setError(resp.data.error);
+        else if (resp.data?.errors) setError(Object.values(resp.data.errors).flat().join(', '));
+        else if (resp.data?.detail) setError(resp.data.detail);
+        else setError(resp.data?.error || 'Failed to submit request. Please try again.');
       } else if (err.message === 'Network Error') {
         setError('Network error. Please check your connection.');
       } else {
@@ -811,24 +774,33 @@ export default function RequestRefundPage() {
 
   const renderOrderItem = (item: OrderItem) => {
     const isSelected = selectedItems.includes(item.checkout_id);
+    const isAlreadyRefunded = refundedCheckoutIds.has(item.checkout_id);
     const imageUrl = getProductImageUrl(item);
-    
+
+    // Determine shop/seller display
+    let sellerDisplay = '';
+    if (item.shop_name) {
+      sellerDisplay = `Shop: ${item.shop_name}`;
+    } else if (item.seller_username) {
+      sellerDisplay = `Seller: ${item.seller_username}`;
+    } else {
+      sellerDisplay = '';
+    }
+
     return (
       <TouchableOpacity
         key={item.checkout_id}
-        style={[styles.orderItem, isSelected && styles.orderItemSelected]}
+        style={[styles.orderItem, isSelected && styles.orderItemSelected, isAlreadyRefunded && styles.orderItemDisabled]}
         onPress={() => handleItemSelect(item.checkout_id)}
-        activeOpacity={0.7}
+        activeOpacity={isAlreadyRefunded ? 1 : 0.7}
+        disabled={isAlreadyRefunded}
       >
-        <View style={[styles.checkbox, isSelected && styles.checkboxChecked]}>
+        <View style={[styles.checkbox, isSelected && styles.checkboxChecked, isAlreadyRefunded && styles.checkboxDisabled]}>
           {isSelected && <Icon name="check" size={16} color="#fff" />}
         </View>
         
         {imageUrl ? (
-          <Image 
-            source={{ uri: imageUrl }}
-            style={styles.itemImage}
-          />
+          <Image source={{ uri: imageUrl }} style={styles.itemImage} />
         ) : (
           <View style={styles.itemImagePlaceholder}>
             <Icon name="package-variant" size={24} color="#6b7280" />
@@ -836,26 +808,25 @@ export default function RequestRefundPage() {
         )}
         
         <View style={styles.itemDetails}>
-          <Text style={styles.itemName} numberOfLines={2}>
+          <Text style={[styles.itemName, isAlreadyRefunded && styles.textMuted]} numberOfLines={2}>
             {item.product_name}
           </Text>
-          <Text style={styles.itemShop}>
-            {item.shop_name || item.seller_username || 'Unknown Shop'}
+          <Text style={[styles.itemShop, isAlreadyRefunded && styles.textMuted]}>
+            {sellerDisplay}
           </Text>
           <View style={styles.itemMeta}>
-            <Text style={styles.itemQuantity}>Qty: {item.quantity}</Text>
-            <Text style={styles.itemPrice}>{formatCurrency(item.price)} each</Text>
+            <Text style={[styles.itemQuantity, isAlreadyRefunded && styles.textMuted]}>Qty: {item.quantity}</Text>
+            <Text style={[styles.itemPrice, isAlreadyRefunded && styles.textMuted]}>{formatCurrency(item.price)} each</Text>
           </View>
           {item.remarks && (
-            <Text style={styles.itemRemarks} numberOfLines={1}>{item.remarks}</Text>
+            <Text style={[styles.itemRemarks, isAlreadyRefunded && styles.textMuted]} numberOfLines={1}>{item.remarks}</Text>
           )}
         </View>
         
         <View style={styles.itemTotal}>
-          <Text style={styles.itemTotalText}>{formatCurrency(item.subtotal)}</Text>
-          {isSelected && (
-            <Badge variant="success">Selected</Badge>
-          )}
+          <Text style={[styles.itemTotalText, isAlreadyRefunded && styles.textMuted]}>{formatCurrency(item.subtotal)}</Text>
+          {isSelected && !isAlreadyRefunded && <Badge variant="success">Selected</Badge>}
+          {isAlreadyRefunded && <Badge variant="disabled">Refund requested</Badge>}
         </View>
       </TouchableOpacity>
     );
@@ -863,7 +834,6 @@ export default function RequestRefundPage() {
 
   const renderRefundType = (type: RefundType) => {
     const isSelected = selectedRefundType?.id === type.id;
-    
     return (
       <TouchableOpacity
         key={type.id}
@@ -881,16 +851,13 @@ export default function RequestRefundPage() {
           <Text style={[styles.refundTypeLabel, isSelected && styles.refundTypeLabelSelected]}>{type.label}</Text>
           <Text style={[styles.refundTypeDescription, isSelected && styles.refundTypeDescriptionSelected]}>{type.description}</Text>
         </View>
-        {isSelected && (
-          <Icon name="check-circle" size={24} color="#10b981" />
-        )}
+        {isSelected && <Icon name="check-circle" size={24} color="#10b981" />}
       </TouchableOpacity>
     );
   };
 
   const renderRefundMethod = (method: RefundMethod) => {
     const isSelected = selectedRefundMethod?.id === method.id;
-    
     return (
       <TouchableOpacity
         key={method.id}
@@ -908,14 +875,11 @@ export default function RequestRefundPage() {
           <Text style={[styles.refundMethodLabel, isSelected && styles.refundMethodLabelSelected]}>{method.label}</Text>
           <Text style={[styles.refundMethodDescription, isSelected && styles.refundMethodDescriptionSelected]}>{method.description}</Text>
         </View>
-        {isSelected && (
-          <Icon name="check-circle" size={24} color="#10b981" />
-        )}
+        {isSelected && <Icon name="check-circle" size={24} color="#10b981" />}
       </TouchableOpacity>
     );
   };
 
-  // Render payment details based on selected method
   const renderPaymentDetails = () => {
     if (!selectedRefundMethod) return null;
 
@@ -929,8 +893,7 @@ export default function RequestRefundPage() {
             </View>
           );
         }
-
-        if (savedPaymentMethods.length === 0) {
+        if (savedEwallets.length === 0) {
           return (
             <View style={[styles.paymentDetailsCard, styles.walletCard]}>
               <View style={styles.paymentDetailsHeader}>
@@ -939,23 +902,15 @@ export default function RequestRefundPage() {
               </View>
               <View style={styles.infoBox}>
                 <Icon name="information-outline" size={16} color="#1e40af" />
-                <Text style={styles.infoBoxText}>
-                  You don't have any saved e-wallet yet. Please add one first.
-                </Text>
+                <Text style={styles.infoBoxText}>You don't have any saved e-wallet yet. Please add one first.</Text>
               </View>
-              <TouchableOpacity
-                style={styles.addWalletButton}
-                onPress={() => {
-                  router.push('/customer/create/add-payment-method');
-                }}
-              >
+              <TouchableOpacity style={styles.addWalletButton} onPress={() => router.push('/customer/create/add-payment-method')}>
                 <Icon name="plus-circle" size={20} color="#fff" />
                 <Text style={styles.addWalletButtonText}>Add E-Wallet</Text>
               </TouchableOpacity>
             </View>
           );
         }
-
         return (
           <View style={[styles.paymentDetailsCard, styles.walletCard]}>
             <View style={styles.paymentDetailsHeader}>
@@ -963,10 +918,7 @@ export default function RequestRefundPage() {
               <Text style={styles.paymentDetailsTitle}>Select E-Wallet</Text>
             </View>
             {!selectedWalletId ? (
-              <TouchableOpacity
-                style={styles.selectWalletButton}
-                onPress={() => setShowWalletSelectionModal(true)}
-              >
+              <TouchableOpacity style={styles.selectWalletButton} onPress={() => setShowWalletSelectionModal(true)}>
                 <Text style={styles.selectWalletButtonText}>Choose a saved e-wallet</Text>
                 <Icon name="chevron-down" size={20} color="#4f46e5" />
               </TouchableOpacity>
@@ -976,23 +928,18 @@ export default function RequestRefundPage() {
                   <Icon name="check-circle" size={20} color="#10b981" />
                   <View>
                     <Text style={styles.selectedWalletProvider}>
-                      {savedPaymentMethods.find(m => m.payment_id === selectedWalletId)?.payment_method === 'gcash' ? 'GCash' : 'PayMaya'}
+                      {savedEwallets.find(m => m.payment_id === selectedWalletId)?.payment_method === 'gcash' ? 'GCash' : 'PayMaya'}
                     </Text>
                     <Text style={styles.selectedWalletDetails}>
-                      {savedPaymentMethods.find(m => m.payment_id === selectedWalletId)?.account_name}
+                      {savedEwallets.find(m => m.payment_id === selectedWalletId)?.account_name}
                     </Text>
                     <Text style={styles.selectedWalletDetails}>
-                      {savedPaymentMethods.find(m => m.payment_id === selectedWalletId)?.display_number || 
-                       savedPaymentMethods.find(m => m.payment_id === selectedWalletId)?.account_number}
+                      {savedEwallets.find(m => m.payment_id === selectedWalletId)?.display_number || 
+                       savedEwallets.find(m => m.payment_id === selectedWalletId)?.account_number}
                     </Text>
                   </View>
                 </View>
-                <TouchableOpacity
-                  onPress={() => {
-                    setSelectedWalletId(null);
-                    setEWalletDetails({ provider: '', accountName: '', accountNumber: '', contactNumber: '' });
-                  }}
-                >
+                <TouchableOpacity onPress={() => { setSelectedWalletId(null); setEWalletDetails({ provider: '', accountName: '', accountNumber: '', contactNumber: '' }); }}>
                   <Icon name="close-circle" size={24} color="#ef4444" />
                 </TouchableOpacity>
               </View>
@@ -1001,77 +948,70 @@ export default function RequestRefundPage() {
         );
 
       case 'bank':
+        if (loadingBanks) {
+          return (
+            <View style={[styles.paymentDetailsCard, styles.bankCard]}>
+              <ActivityIndicator size="small" color="#166534" />
+              <Text style={styles.loadingText}>Loading your bank accounts...</Text>
+            </View>
+          );
+        }
+        if (savedBanks.length === 0) {
+          return (
+            <View style={[styles.paymentDetailsCard, styles.bankCard]}>
+              <View style={styles.paymentDetailsHeader}>
+                <Icon name="credit-card-outline" size={20} color="#166534" />
+                <Text style={styles.paymentDetailsTitle}>Bank Account Details</Text>
+              </View>
+              <View style={styles.infoBox}>
+                <Icon name="information-outline" size={16} color="#166534" />
+                <Text style={styles.infoBoxText}>You don't have any saved bank account yet. Please add one first.</Text>
+              </View>
+              <TouchableOpacity style={styles.addWalletButton} onPress={() => router.push('/customer/create/add-payment-method')}>
+                <Icon name="plus-circle" size={20} color="#fff" />
+                <Text style={styles.addWalletButtonText}>Add Bank Account</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        }
         return (
           <View style={[styles.paymentDetailsCard, styles.bankCard]}>
             <View style={styles.paymentDetailsHeader}>
               <Icon name="credit-card-outline" size={20} color="#166534" />
-              <Text style={styles.paymentDetailsTitle}>Bank Account Details</Text>
+              <Text style={styles.paymentDetailsTitle}>Select Bank Account</Text>
             </View>
-            
+            {!selectedBankId ? (
+              <TouchableOpacity style={styles.selectWalletButton} onPress={() => setShowBankSelectionModal(true)}>
+                <Text style={styles.selectWalletButtonText}>Choose a saved bank account</Text>
+                <Icon name="chevron-down" size={20} color="#4f46e5" />
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.selectedWalletContainer}>
+                <View style={styles.selectedWalletInfo}>
+                  <Icon name="check-circle" size={20} color="#10b981" />
+                  <View>
+                    <Text style={styles.selectedWalletProvider}>
+                      {savedBanks.find(b => b.payment_id === selectedBankId)?.bank_name || 'Bank Account'}
+                    </Text>
+                    <Text style={styles.selectedWalletDetails}>
+                      {savedBanks.find(b => b.payment_id === selectedBankId)?.account_name}
+                    </Text>
+                    <Text style={styles.selectedWalletDetails}>
+                      {savedBanks.find(b => b.payment_id === selectedBankId)?.account_number}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity onPress={() => { setSelectedBankId(null); setBankDetails({ bankName: '', accountName: '', accountNumber: '', accountType: '', branch: '' }); }}>
+                  <Icon name="close-circle" size={24} color="#ef4444" />
+                </TouchableOpacity>
+              </View>
+            )}
             <View style={styles.infoBox}>
               <Icon name="bell-outline" size={16} color="#166534" />
               <Text style={styles.infoBoxText}>
                 Refunds will be transferred to this bank account. Processing may take 3-5 business days. 
                 <Text style={styles.boldText}> A bank transfer fee of ₱50 will be deducted from the refund amount.</Text>
               </Text>
-            </View>
-            
-            <View style={styles.formGrid}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Bank Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Select bank (BDO, BPI, etc.)"
-                  value={bankDetails.bankName}
-                  onChangeText={(text) => setBankDetails({...bankDetails, bankName: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Account Number *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="000-000-000"
-                  value={bankDetails.accountNumber}
-                  onChangeText={(text) => setBankDetails({...bankDetails, accountNumber: text})}
-                  keyboardType="numeric"
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Account Name *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="As it appears in bank records"
-                  value={bankDetails.accountName}
-                  onChangeText={(text) => setBankDetails({...bankDetails, accountName: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Account Type *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Savings/Checking/Current"
-                  value={bankDetails.accountType}
-                  onChangeText={(text) => setBankDetails({...bankDetails, accountType: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Branch (Optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Bank branch location"
-                  value={bankDetails.branch}
-                  onChangeText={(text) => setBankDetails({...bankDetails, branch: text})}
-                  placeholderTextColor="#9ca3af"
-                />
-              </View>
             </View>
           </View>
         );
@@ -1084,8 +1024,7 @@ export default function RequestRefundPage() {
               <Text style={styles.infoCardTitle}>Store Voucher</Text>
             </View>
             <Text style={styles.infoCardText}>
-              Vouchers will be sent directly to your notifications and email once approved.
-              No additional details required.
+              Vouchers will be sent directly to your notifications and email once approved. No additional details required.
             </Text>
           </View>
         );
@@ -1098,8 +1037,7 @@ export default function RequestRefundPage() {
               <Text style={styles.infoCardTitle}>Replacement</Text>
             </View>
             <Text style={styles.infoCardText}>
-              A replacement item will be shipped once we receive and verify the returned item.
-              Please allow 7-14 business days for processing.
+              A replacement item will be shipped once we receive and verify the returned item. Please allow 7-14 business days for processing.
             </Text>
           </View>
         );
@@ -1202,7 +1140,6 @@ export default function RequestRefundPage() {
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Progress Bar */}
         <View style={styles.progressSection}>
           <ProgressBar progress={calculateProgress()} />
         </View>
@@ -1223,7 +1160,6 @@ export default function RequestRefundPage() {
               </View>
               <Text style={styles.orderInfoValue}>{formatDate(order.created_at)}</Text>
             </View>
-            
             <View style={styles.orderInfoItem}>
               <View style={styles.orderInfoLabel}>
                 <Icon name="package-outline" size={14} color="#6b7280" />
@@ -1231,7 +1167,6 @@ export default function RequestRefundPage() {
               </View>
               <Text style={styles.orderInfoValue}>{order.items.length} items</Text>
             </View>
-            
             <View style={styles.orderInfoItem}>
               <View style={styles.orderInfoLabel}>
                 <Icon name="credit-card-outline" size={14} color="#6b7280" />
@@ -1239,7 +1174,6 @@ export default function RequestRefundPage() {
               </View>
               <Text style={styles.orderInfoValue}>{order.payment_method?.toUpperCase() || 'N/A'}</Text>
             </View>
-            
             <View style={styles.orderInfoItem}>
               <View style={styles.orderInfoLabel}>
                 <Icon name="check-circle-outline" size={14} color="#6b7280" />
@@ -1251,16 +1185,13 @@ export default function RequestRefundPage() {
             </View>
           </View>
 
-          {/* Delivery Info */}
           {order.delivery_address && (
             <View style={styles.deliveryInfo}>
               <Icon name="map-marker-outline" size={16} color="#6b7280" />
               <View style={styles.deliveryInfoContent}>
                 <Text style={styles.deliveryInfoTitle}>Delivery Address</Text>
                 <Text style={styles.deliveryInfoText}>{order.delivery_address}</Text>
-                {order.delivery_method && (
-                  <Text style={styles.deliveryMethodText}>Method: {order.delivery_method}</Text>
-                )}
+                {order.delivery_method && <Text style={styles.deliveryMethodText}>Method: {order.delivery_method}</Text>}
               </View>
             </View>
           )}
@@ -1275,7 +1206,7 @@ export default function RequestRefundPage() {
             </View>
             <TouchableOpacity onPress={handleSelectAll}>
               <Text style={styles.selectAllText}>
-                {selectedItems.length === order.items.length ? 'Deselect All' : 'Select All'}
+                {selectedItems.length === order.items.filter(i => !refundedCheckoutIds.has(i.checkout_id)).length ? 'Deselect All' : 'Select All'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1297,10 +1228,7 @@ export default function RequestRefundPage() {
         </View>
 
         {/* Refund Type */}
-        <TouchableOpacity
-          style={styles.selectionCard}
-          onPress={() => setShowRefundTypeModal(true)}
-        >
+        <TouchableOpacity style={styles.selectionCard} onPress={() => setShowRefundTypeModal(true)}>
           <View style={styles.selectionHeader}>
             <Icon name="refresh" size={20} color="#4f46e5" />
             <Text style={styles.selectionTitle}>Refund Type</Text>
@@ -1311,8 +1239,7 @@ export default function RequestRefundPage() {
                 <Icon name={selectedRefundType.icon} size={18} color="#10b981" />
                 <Text style={styles.selectedOptionText}>{selectedRefundType.label}</Text>
                 <Badge variant={selectedRefundType.id === 'return_item' ? 'info' : selectedRefundType.id === 'keep_item' ? 'warning' : 'purple'}>
-                  {selectedRefundType.id === 'return_item' ? 'Full Refund' : 
-                   selectedRefundType.id === 'keep_item' ? 'Partial Refund' : 'Replacement'}
+                  {selectedRefundType.id === 'return_item' ? 'Full Refund' : selectedRefundType.id === 'keep_item' ? 'Partial Refund' : 'Replacement'}
                 </Badge>
               </View>
             ) : (
@@ -1360,10 +1287,7 @@ export default function RequestRefundPage() {
 
         {/* Refund Method */}
         {selectedRefundType && (
-          <TouchableOpacity
-            style={styles.selectionCard}
-            onPress={() => setShowMethodModal(true)}
-          >
+          <TouchableOpacity style={styles.selectionCard} onPress={() => setShowMethodModal(true)}>
             <View style={styles.selectionHeader}>
               <Icon name="credit-card-outline" size={20} color="#4f46e5" />
               <Text style={styles.selectionTitle}>Refund Method</Text>
@@ -1492,10 +1416,7 @@ export default function RequestRefundPage() {
         {selectedRefundMethod && renderPaymentDetails()}
 
         {/* Return Reason */}
-        <TouchableOpacity
-          style={styles.selectionCard}
-          onPress={() => setShowReasonModal(true)}
-        >
+        <TouchableOpacity style={styles.selectionCard} onPress={() => setShowReasonModal(true)}>
           <View style={styles.selectionHeader}>
             <Icon name="alert-circle-outline" size={20} color="#4f46e5" />
             <Text style={styles.selectionTitle}>Return Reason</Text>
@@ -1534,7 +1455,7 @@ export default function RequestRefundPage() {
           />
         </View>
 
-        {/* Upload Media (Images & Videos) */}
+        {/* Upload Media */}
         <View style={styles.card}>
           <Text style={styles.uploadTitle}>Upload Evidence (Optional)</Text>
           <Text style={styles.uploadHint}>Max 4 files (images/videos), 100MB each</Text>
@@ -1557,10 +1478,7 @@ export default function RequestRefundPage() {
                       <Icon name="play-circle" size={32} color="#fff" />
                     </View>
                   )}
-                  <TouchableOpacity
-                    style={styles.removeImageButton}
-                    onPress={() => removeMedia(index)}
-                  >
+                  <TouchableOpacity style={styles.removeImageButton} onPress={() => removeMedia(index)}>
                     <Icon name="close-circle" size={24} color="#ef4444" />
                   </TouchableOpacity>
                   <View style={styles.imageOverlay}>
@@ -1632,101 +1550,54 @@ export default function RequestRefundPage() {
       </View>
 
       {/* Modals */}
-      <Modal
-        visible={showRefundTypeModal}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setShowRefundTypeModal(false)}
-      >
+      <Modal visible={showRefundTypeModal} animationType="slide" transparent onRequestClose={() => setShowRefundTypeModal(false)}>
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Refund Type</Text>
-              <TouchableOpacity onPress={() => setShowRefundTypeModal(false)}>
-                <Icon name="close" size={24} color="#374151" />
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowRefundTypeModal(false)}><Icon name="close" size={24} color="#374151" /></TouchableOpacity>
             </View>
-            <FlatList
-              data={refundTypes}
-              renderItem={({ item }) => renderRefundType(item)}
-              keyExtractor={(item) => item.id}
-            />
+            <FlatList data={refundTypes} renderItem={({ item }) => renderRefundType(item)} keyExtractor={(item) => item.id} />
           </View>
         </View>
       </Modal>
 
-      <Modal
-        visible={showMethodModal}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setShowMethodModal(false)}
-      >
+      <Modal visible={showMethodModal} animationType="slide" transparent onRequestClose={() => setShowMethodModal(false)}>
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Refund Method</Text>
-              <TouchableOpacity onPress={() => setShowMethodModal(false)}>
-                <Icon name="close" size={24} color="#374151" />
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowMethodModal(false)}><Icon name="close" size={24} color="#374151" /></TouchableOpacity>
             </View>
-            <FlatList
-              data={getAvailableMethods()}
-              renderItem={({ item }) => renderRefundMethod(item)}
-              keyExtractor={(item) => item.id}
-            />
+            <FlatList data={getAvailableMethods()} renderItem={({ item }) => renderRefundMethod(item)} keyExtractor={(item) => item.id} />
           </View>
         </View>
       </Modal>
 
-      <Modal
-        visible={showWalletSelectionModal}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setShowWalletSelectionModal(false)}
-      >
+      <Modal visible={showWalletSelectionModal} animationType="slide" transparent onRequestClose={() => setShowWalletSelectionModal(false)}>
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select E-Wallet</Text>
-              <TouchableOpacity onPress={() => setShowWalletSelectionModal(false)}>
-                <Icon name="close" size={24} color="#374151" />
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowWalletSelectionModal(false)}><Icon name="close" size={24} color="#374151" /></TouchableOpacity>
             </View>
             <FlatList
-              data={savedPaymentMethods}
+              data={savedEwallets}
               renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[styles.walletItem, selectedWalletId === item.payment_id && styles.walletItemSelected]}
-                  onPress={() => {
-                    setSelectedWalletId(item.payment_id);
-                    setShowWalletSelectionModal(false);
-                  }}
-                >
-                  <View style={styles.walletItemIcon}>
-                    <Icon name={item.payment_method === 'gcash' ? 'cellphone' : 'credit-card'} size={24} color="#4f46e5" />
-                  </View>
+                <TouchableOpacity style={[styles.walletItem, selectedWalletId === item.payment_id && styles.walletItemSelected]} onPress={() => { setSelectedWalletId(item.payment_id); setShowWalletSelectionModal(false); }}>
+                  <View style={styles.walletItemIcon}><Icon name={item.payment_method === 'gcash' ? 'cellphone' : 'credit-card'} size={24} color="#4f46e5" /></View>
                   <View style={styles.walletItemContent}>
-                    <Text style={styles.walletItemProvider}>
-                      {item.payment_method === 'gcash' ? 'GCash' : 'PayMaya'}
-                    </Text>
+                    <Text style={styles.walletItemProvider}>{item.payment_method === 'gcash' ? 'GCash' : 'PayMaya'}</Text>
                     <Text style={styles.walletItemName}>{item.account_name}</Text>
                     <Text style={styles.walletItemNumber}>{item.display_number || item.account_number}</Text>
                   </View>
-                  {selectedWalletId === item.payment_id && (
-                    <Icon name="check-circle" size={24} color="#10b981" />
-                  )}
+                  {selectedWalletId === item.payment_id && <Icon name="check-circle" size={24} color="#10b981" />}
                 </TouchableOpacity>
               )}
               keyExtractor={(item) => item.payment_id}
             />
             <View style={styles.modalFooter}>
-              <TouchableOpacity
-                style={styles.addNewButton}
-                onPress={() => {
-                  setShowWalletSelectionModal(false);
-                  router.push('/customer/create/add-payment-method');
-                }}
-              >
+              <TouchableOpacity style={styles.addNewButton} onPress={() => { setShowWalletSelectionModal(false); router.push('/customer/create/add-payment-method'); }}>
                 <Icon name="plus-circle" size={20} color="#4f46e5" />
                 <Text style={styles.addNewButtonText}>Add New E-Wallet</Text>
               </TouchableOpacity>
@@ -1735,45 +1606,58 @@ export default function RequestRefundPage() {
         </View>
       </Modal>
 
-      <Modal
-        visible={showReasonModal}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setShowReasonModal(false)}
-      >
+      <Modal visible={showBankSelectionModal} animationType="slide" transparent onRequestClose={() => setShowBankSelectionModal(false)}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Bank Account</Text>
+              <TouchableOpacity onPress={() => setShowBankSelectionModal(false)}><Icon name="close" size={24} color="#374151" /></TouchableOpacity>
+            </View>
+            <FlatList
+              data={savedBanks}
+              renderItem={({ item }) => (
+                <TouchableOpacity style={[styles.walletItem, selectedBankId === item.payment_id && styles.walletItemSelected]} onPress={() => { setSelectedBankId(item.payment_id); setShowBankSelectionModal(false); }}>
+                  <View style={styles.walletItemIcon}><Icon name="bank-outline" size={24} color="#4f46e5" /></View>
+                  <View style={styles.walletItemContent}>
+                    <Text style={styles.walletItemProvider}>{item.bank_name || 'Bank Account'}</Text>
+                    <Text style={styles.walletItemName}>{item.account_name}</Text>
+                    <Text style={styles.walletItemNumber}>{item.account_number}</Text>
+                  </View>
+                  {selectedBankId === item.payment_id && <Icon name="check-circle" size={24} color="#10b981" />}
+                </TouchableOpacity>
+              )}
+              keyExtractor={(item) => item.payment_id}
+            />
+            <View style={styles.modalFooter}>
+              <TouchableOpacity style={styles.addNewButton} onPress={() => { setShowBankSelectionModal(false); router.push('/customer/create/add-payment-method'); }}>
+                <Icon name="plus-circle" size={20} color="#4f46e5" />
+                <Text style={styles.addNewButtonText}>Add New Bank Account</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showReasonModal} animationType="slide" transparent onRequestClose={() => setShowReasonModal(false)}>
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Return Reason</Text>
-              <TouchableOpacity onPress={() => setShowReasonModal(false)}>
-                <Icon name="close" size={24} color="#374151" />
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowReasonModal(false)}><Icon name="close" size={24} color="#374151" /></TouchableOpacity>
             </View>
             <FlatList
               data={returnReasons}
               renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.reasonItem}
-                  onPress={() => {
-                    setReturnReason(item);
-                    if (item === 'Other') {
-                      Alert.prompt(
-                        'Specify Reason',
-                        'Please specify your reason for return:',
-                        [
-                          { text: 'Cancel', style: 'cancel' },
-                          {
-                            text: 'OK',
-                            onPress: (reason) => {
-                              if (reason) setCustomReason(reason);
-                            },
-                          },
-                        ]
-                      );
-                    }
-                    setShowReasonModal(false);
-                  }}
-                >
+                <TouchableOpacity style={styles.reasonItem} onPress={() => {
+                  setReturnReason(item);
+                  if (item === 'Other') {
+                    Alert.prompt('Specify Reason', 'Please specify your reason for return:', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'OK', onPress: (reason) => { if (reason) setCustomReason(reason); } }
+                    ]);
+                  }
+                  setShowReasonModal(false);
+                }}>
                   <Text style={styles.reasonText}>{item}</Text>
                   <Icon name="chevron-right" size={20} color="#9ca3af" />
                 </TouchableOpacity>
@@ -1788,1199 +1672,227 @@ export default function RequestRefundPage() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f3f4f6',
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#6b7280',
-  },
-  message: {
-    fontSize: 16,
-    color: '#6b7280',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 50 : 40,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  backButton: {
-    padding: 4,
-  },
-  headerTitleContainer: {
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 2,
-  },
-  headerRight: {
-    width: 32,
-  },
-  statusBadgeContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    gap: 6,
-  },
-  statusCompleted: {
-    backgroundColor: '#d1fae5',
-  },
-  statusDelivered: {
-    backgroundColor: '#dbeafe',
-  },
-  statusShipped: {
-    backgroundColor: '#e0e7ff',
-  },
-  statusProcessing: {
-    backgroundColor: '#fef3c7',
-  },
-  statusPending: {
-    backgroundColor: '#f3f4f6',
-  },
-  statusCancelled: {
-    backgroundColor: '#fee2e2',
-  },
-  statusDefault: {
-    backgroundColor: '#f3f4f6',
-  },
-  statusBadgeText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  statusCompletedText: {
-    color: '#059669',
-  },
-  statusDeliveredText: {
-    color: '#2563eb',
-  },
-  statusShippedText: {
-    color: '#4f46e5',
-  },
-  statusProcessingText: {
-    color: '#b45309',
-  },
-  statusPendingText: {
-    color: '#6b7280',
-  },
-  statusCancelledText: {
-    color: '#dc2626',
-  },
-  statusDefaultText: {
-    color: '#6b7280',
-  },
-  scrollView: {
-    flex: 1,
-    marginBottom: 80,
-  },
-  progressSection: {
-    backgroundColor: '#fff',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  progressBarContainer: {
-    marginBottom: 8,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: '#e5e7eb',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#4f46e5',
-  },
-  progressLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-  },
-  progressLabel: {
-    fontSize: 12,
-    color: '#9ca3af',
-  },
-  progressLabelActive: {
-    fontSize: 12,
-    color: '#4f46e5',
-    fontWeight: '600',
-  },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
-  },
-  orderHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  orderId: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    flex: 1,
-  },
-  orderInfoGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 12,
-  },
-  orderInfoItem: {
-    width: '47%',
-  },
-  orderInfoLabel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: 2,
-  },
-  orderInfoLabelText: {
-    fontSize: 11,
-    color: '#6b7280',
-  },
-  orderInfoValue: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#111827',
-    marginLeft: 18,
-  },
-  paymentStatusPaid: {
-    color: '#059669',
-  },
-  deliveryInfo: {
-    flexDirection: 'row',
-    backgroundColor: '#f9fafb',
-    borderRadius: 8,
-    padding: 12,
-    gap: 8,
-  },
-  deliveryInfoContent: {
-    flex: 1,
-  },
-  deliveryInfoTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  deliveryInfoText: {
-    fontSize: 12,
-    color: '#4b5563',
-    lineHeight: 16,
-  },
-  deliveryMethodText: {
-    fontSize: 11,
-    color: '#6b7280',
-    marginTop: 4,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  sectionTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  selectAllText: {
-    fontSize: 13,
-    color: '#4f46e5',
-    fontWeight: '500',
-  },
-  itemsList: {
-    gap: 8,
-  },
-  orderItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
-    backgroundColor: '#fff',
-  },
-  orderItemSelected: {
-    borderColor: '#4f46e5',
-    backgroundColor: '#f5f3ff',
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderWidth: 2,
-    borderColor: '#d1d5db',
-    borderRadius: 4,
-    marginRight: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxChecked: {
-    backgroundColor: '#4f46e5',
-    borderColor: '#4f46e5',
-  },
-  itemImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    marginRight: 12,
-    backgroundColor: '#f3f4f6',
-  },
-  itemImagePlaceholder: {
-    width: 60,
-    height: 60,
-    backgroundColor: '#f3f4f6',
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  itemDetails: {
-    flex: 1,
-  },
-  itemName: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  itemShop: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 4,
-  },
-  itemMeta: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  itemQuantity: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  itemPrice: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  itemRemarks: {
-    fontSize: 11,
-    color: '#2563eb',
-    fontStyle: 'italic',
-    marginTop: 2,
-  },
-  itemTotal: {
-    marginLeft: 8,
-    alignItems: 'flex-end',
-    gap: 4,
-  },
-  itemTotalText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  selectedSummary: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-  },
-  selectedCount: {
-    fontSize: 14,
-    color: '#6b7280',
-  },
-  selectedAmount: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  badgeinfo: {
-    backgroundColor: '#dbeafe',
-  },
-  badgesuccess: {
-    backgroundColor: '#d1fae5',
-  },
-  badgewarning: {
-    backgroundColor: '#fef3c7',
-  },
-  badgedefault: {
-    backgroundColor: '#f3f4f6',
-  },
-  badgepurple: {
-    backgroundColor: '#f3e8ff',
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  badgeTextinfo: {
-    color: '#1e40af',
-  },
-  badgeTextsuccess: {
-    color: '#065f46',
-  },
-  badgeTextwarning: {
-    color: '#b45309',
-  },
-  badgeTextdefault: {
-    color: '#4b5563',
-  },
-  badgeTextpurple: {
-    color: '#6b21a8',
-  },
-  selectionCard: {
-    backgroundColor: '#fff',
-    padding: 16,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
-  },
-  selectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  selectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  selectionContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  selectedOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    gap: 8,
-  },
-  selectedOptionText: {
-    fontSize: 14,
-    color: '#111827',
-    flex: 1,
-  },
-  placeholderText: {
-    fontSize: 14,
-    color: '#9ca3af',
-    flex: 1,
-  },
-  refundTypeInfo: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-  },
-  refundTypeInfoText: {
-    fontSize: 12,
-    color: '#4b5563',
-    lineHeight: 18,
-  },
-  boldText: {
-    fontWeight: '700',
-    color: '#111827',
-  },
-  refundMethodInfo: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  refundMethodInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  refundMethodInfoLabel: {
-    fontSize: 12,
-    color: '#6b7280',
-  },
-  refundMethodInfoValue: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#ef4444',
-  },
-  refundMethodInfoNet: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#059669',
-  },
-  refundBreakdownCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  refundBreakdownTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 16,
-  },
-  breakdownRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  breakdownLabel: {
-    fontSize: 14,
-    color: '#111827',
-    fontWeight: '500',
-  },
-  breakdownSubLabel: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 2,
-  },
-  breakdownAmount: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  breakdownFee: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#ef4444',
-  },
-  separator: {
-    height: 1,
-    backgroundColor: '#e5e7eb',
-    marginVertical: 12,
-  },
-  finalAmountRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  finalAmountLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  finalAmount: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#10b981',
-  },
-  partialAmountInfo: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-  },
-  partialAmountTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 12,
-  },
-  partialAmountGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  partialAmountItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  partialAmountLabel: {
-    fontSize: 11,
-    color: '#6b7280',
-    marginBottom: 4,
-  },
-  partialAmountValue: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#111827',
-  },
-  partialAmountMax: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#f59e0b',
-  },
-  partialAmountRequest: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#10b981',
-  },
-  amountInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    marginTop: 8,
-    backgroundColor: '#f9fafb',
-  },
-  currencySymbol: {
-    fontSize: 16,
-    color: '#374151',
-    marginRight: 4,
-  },
-  amountInput: {
-    flex: 1,
-    fontSize: 16,
-    color: '#111827',
-    paddingVertical: 12,
-  },
-  amountError: {
-    fontSize: 12,
-    color: '#ef4444',
-    marginTop: 4,
-  },
-  paymentDetailsCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  walletCard: {
-    borderColor: '#bfdbfe',
-  },
-  bankCard: {
-    borderColor: '#bbf7d0',
-  },
-  remittanceCard: {
-    borderColor: '#fed7aa',
-  },
-  paymentDetailsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  paymentDetailsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  infoBox: {
-    flexDirection: 'row',
-    backgroundColor: '#f9fafb',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  infoBoxText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#4b5563',
-    lineHeight: 16,
-  },
-  formGrid: {
-    gap: 12,
-  },
-  inputGroup: {
-    width: '100%',
-  },
-  inputGroupFull: {
-    width: '100%',
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#374151',
-    marginBottom: 4,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 14,
-    color: '#111827',
-    backgroundColor: '#f9fafb',
-  },
-  infoCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-  },
-  cashOnHandCard: {
-    borderColor: '#fde68a',
-    backgroundColor: '#fffbeb',
-  },
-  voucherCard: {
-    borderColor: '#e9d5ff',
-    backgroundColor: '#faf5ff',
-  },
-  replacementCard: {
-    borderColor: '#bbf7d0',
-    backgroundColor: '#f0fdf4',
-  },
-  infoCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  infoCardTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  infoCardText: {
-    fontSize: 13,
-    color: '#4b5563',
-    lineHeight: 18,
-  },
-  selectedReasonBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#d1fae5',
-    padding: 8,
-    borderRadius: 8,
-    marginTop: 12,
-    gap: 6,
-  },
-  selectedReasonText: {
-    fontSize: 12,
-    color: '#065f46',
-    flex: 1,
-  },
-  textAreaTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 12,
-  },
-  textArea: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 14,
-    color: '#111827',
-    minHeight: 100,
-    backgroundColor: '#f9fafb',
-  },
-  uploadTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  uploadHint: {
-    fontSize: 13,
-    color: '#6b7280',
-    marginBottom: 12,
-  },
-  imageScrollView: {
-    flexDirection: 'row',
-  },
-  uploadButton: {
-    width: 100,
-    height: 100,
-    borderWidth: 2,
-    borderColor: '#d1d5db',
-    borderStyle: 'dashed',
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    backgroundColor: '#f9fafb',
-  },
-  uploadButtonText: {
-    fontSize: 11,
-    color: '#9ca3af',
-    marginTop: 4,
-  },
-  uploadCounter: {
-    fontSize: 10,
-    color: '#9ca3af',
-    marginTop: 2,
-  },
-  imageContainer: {
-    position: 'relative',
-    marginRight: 12,
-  },
-  uploadedImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  videoOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-  },
-  removeImageButton: {
-    position: 'absolute',
-    top: -8,
-    right: -8,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
-  },
-  imageOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderBottomLeftRadius: 10,
-    borderBottomRightRadius: 10,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  imageOverlayText: {
-    color: '#fff',
-    fontSize: 9,
-    textAlign: 'center',
-  },
-  policyCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginHorizontal: 16,
-    marginBottom: 100,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  policyHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  policyTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  policyPoints: {
-    marginLeft: 4,
-  },
-  policyPoint: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-    gap: 8,
-  },
-  policyText: {
-    fontSize: 13,
-    color: '#4b5563',
-    flex: 1,
-    lineHeight: 18,
-  },
-  footer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#fff',
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
-  },
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fef2f2',
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 12,
-    gap: 8,
-  },
-  errorBannerText: {
-    fontSize: 13,
-    color: '#991b1b',
-    flex: 1,
-  },
-  submitButton: {
-    backgroundColor: '#4f46e5',
-    borderRadius: 10,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  submitButtonDisabled: {
-    backgroundColor: '#9ca3af',
-  },
-  submitButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: height * 0.8,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  refundTypeCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  refundTypeCardSelected: {
-    backgroundColor: '#f5f3ff',
-  },
-  refundTypeIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#f5f3ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  refundTypeIconContainerSelected: {
-    backgroundColor: '#4f46e5',
-  },
-  refundTypeContent: {
-    flex: 1,
-  },
-  refundTypeLabel: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  refundTypeLabelSelected: {
-    color: '#4f46e5',
-  },
-  refundTypeDescription: {
-    fontSize: 13,
-    color: '#6b7280',
-  },
-  refundTypeDescriptionSelected: {
-    color: '#4f46e5',
-  },
-  refundMethodCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  refundMethodCardSelected: {
-    backgroundColor: '#f5f3ff',
-  },
-  refundMethodIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#f5f3ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  refundMethodIconContainerSelected: {
-    backgroundColor: '#4f46e5',
-  },
-  refundMethodContent: {
-    flex: 1,
-  },
-  refundMethodLabel: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  refundMethodLabelSelected: {
-    color: '#4f46e5',
-  },
-  refundMethodDescription: {
-    fontSize: 13,
-    color: '#6b7280',
-  },
-  refundMethodDescriptionSelected: {
-    color: '#4f46e5',
-  },
-  reasonItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  reasonText: {
-    fontSize: 15,
-    color: '#374151',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 32,
-  },
-  errorTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#111827',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  errorMessage: {
-    fontSize: 15,
-    color: '#6b7280',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
-  },
-  goBackButton: {
-    backgroundColor: '#4f46e5',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  backButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  // New styles for wallet selection
-  addWalletButton: {
-    backgroundColor: '#4f46e5',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 12,
-  },
-  addWalletButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  selectWalletButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 12,
-    backgroundColor: '#f9fafb',
-  },
-  selectWalletButtonText: {
-    fontSize: 14,
-    color: '#374151',
-  },
-  selectedWalletContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#f3f4f6',
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 8,
-  },
-  selectedWalletInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  selectedWalletProvider: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  selectedWalletDetails: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 2,
-  },
-  walletItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  walletItemSelected: {
-    backgroundColor: '#f5f3ff',
-  },
-  walletItemIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f3f4f6',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  walletItemContent: {
-    flex: 1,
-  },
-  walletItemProvider: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  walletItemName: {
-    fontSize: 14,
-    color: '#4b5563',
-  },
-  walletItemNumber: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 2,
-  },
-  modalFooter: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-  },
-  addNewButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 12,
-    backgroundColor: '#f3f4f6',
-    borderRadius: 8,
-  },
-  addNewButtonText: {
-    fontSize: 14,
-    color: '#4f46e5',
-    fontWeight: '500',
-  },
+  // ... existing styles ...
+  container: { flex: 1, backgroundColor: '#f3f4f6' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
+  loadingText: { marginTop: 12, fontSize: 16, color: '#6b7280' },
+  message: { fontSize: 16, color: '#6b7280' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 50 : 40, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
+  backButton: { padding: 4 },
+  headerTitleContainer: { alignItems: 'center' },
+  headerTitle: { fontSize: 16, fontWeight: '600', color: '#111827' },
+  headerSubtitle: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  headerRight: { width: 32 },
+  statusBadgeContainer: { paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, gap: 6 },
+  statusCompleted: { backgroundColor: '#d1fae5' },
+  statusDelivered: { backgroundColor: '#dbeafe' },
+  statusShipped: { backgroundColor: '#e0e7ff' },
+  statusProcessing: { backgroundColor: '#fef3c7' },
+  statusPending: { backgroundColor: '#f3f4f6' },
+  statusCancelled: { backgroundColor: '#fee2e2' },
+  statusDefault: { backgroundColor: '#f3f4f6' },
+  statusBadgeText: { fontSize: 12, fontWeight: '500' },
+  statusCompletedText: { color: '#059669' },
+  statusDeliveredText: { color: '#2563eb' },
+  statusShippedText: { color: '#4f46e5' },
+  statusProcessingText: { color: '#b45309' },
+  statusPendingText: { color: '#6b7280' },
+  statusCancelledText: { color: '#dc2626' },
+  statusDefaultText: { color: '#6b7280' },
+  scrollView: { flex: 1, marginBottom: 80 },
+  progressSection: { backgroundColor: '#fff', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
+  progressBarContainer: { marginBottom: 8 },
+  progressBar: { height: 4, backgroundColor: '#e5e7eb', borderRadius: 2, overflow: 'hidden' },
+  progressFill: { height: '100%', backgroundColor: '#4f46e5' },
+  progressLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
+  progressLabel: { fontSize: 12, color: '#9ca3af' },
+  progressLabelActive: { fontSize: 12, color: '#4f46e5', fontWeight: '600' },
+  card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginHorizontal: 16, marginBottom: 12, ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 }, android: { elevation: 2 } }) },
+  orderHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  orderId: { fontSize: 16, fontWeight: '600', color: '#111827', flex: 1 },
+  orderInfoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 12 },
+  orderInfoItem: { width: '47%' },
+  orderInfoLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 },
+  orderInfoLabelText: { fontSize: 11, color: '#6b7280' },
+  orderInfoValue: { fontSize: 13, fontWeight: '500', color: '#111827', marginLeft: 18 },
+  paymentStatusPaid: { color: '#059669' },
+  deliveryInfo: { flexDirection: 'row', backgroundColor: '#f9fafb', borderRadius: 8, padding: 12, gap: 8 },
+  deliveryInfoContent: { flex: 1 },
+  deliveryInfoTitle: { fontSize: 13, fontWeight: '600', color: '#111827', marginBottom: 2 },
+  deliveryInfoText: { fontSize: 12, color: '#4b5563', lineHeight: 16 },
+  deliveryMethodText: { fontSize: 11, color: '#6b7280', marginTop: 4 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  sectionTitleContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#111827' },
+  selectAllText: { fontSize: 13, color: '#4f46e5', fontWeight: '500' },
+  itemsList: { gap: 8 },
+  orderItem: { flexDirection: 'row', alignItems: 'center', padding: 12, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, backgroundColor: '#fff' },
+  orderItemSelected: { borderColor: '#4f46e5', backgroundColor: '#f5f3ff' },
+  orderItemDisabled: { backgroundColor: '#f9fafb', borderColor: '#e5e7eb', opacity: 0.7 },
+  checkbox: { width: 20, height: 20, borderWidth: 2, borderColor: '#d1d5db', borderRadius: 4, marginRight: 12, alignItems: 'center', justifyContent: 'center' },
+  checkboxChecked: { backgroundColor: '#4f46e5', borderColor: '#4f46e5' },
+  checkboxDisabled: { borderColor: '#d1d5db', backgroundColor: '#f3f4f6' },
+  itemImage: { width: 60, height: 60, borderRadius: 8, marginRight: 12, backgroundColor: '#f3f4f6' },
+  itemImagePlaceholder: { width: 60, height: 60, backgroundColor: '#f3f4f6', borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  itemDetails: { flex: 1 },
+  itemName: { fontSize: 14, fontWeight: '500', color: '#111827', marginBottom: 2 },
+  itemShop: { fontSize: 12, color: '#6b7280', marginBottom: 4 },
+  itemMeta: { flexDirection: 'row', justifyContent: 'space-between' },
+  itemQuantity: { fontSize: 12, color: '#6b7280' },
+  itemPrice: { fontSize: 12, color: '#6b7280' },
+  itemRemarks: { fontSize: 11, color: '#2563eb', fontStyle: 'italic', marginTop: 2 },
+  itemTotal: { marginLeft: 8, alignItems: 'flex-end', gap: 4 },
+  itemTotalText: { fontSize: 14, fontWeight: '600', color: '#111827' },
+  textMuted: { color: '#9ca3af' },
+  selectedSummary: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e5e7eb' },
+  selectedCount: { fontSize: 14, color: '#6b7280' },
+  selectedAmount: { fontSize: 16, fontWeight: '600', color: '#111827' },
+  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 },
+  badgeinfo: { backgroundColor: '#dbeafe' },
+  badgesuccess: { backgroundColor: '#d1fae5' },
+  badgewarning: { backgroundColor: '#fef3c7' },
+  badgedefault: { backgroundColor: '#f3f4f6' },
+  badgepurple: { backgroundColor: '#f3e8ff' },
+  badgedisabled: { backgroundColor: '#f3f4f6' },
+  badgeText: { fontSize: 10, fontWeight: '600' },
+  badgeTextinfo: { color: '#1e40af' },
+  badgeTextsuccess: { color: '#065f46' },
+  badgeTextwarning: { color: '#b45309' },
+  badgeTextdefault: { color: '#4b5563' },
+  badgeTextpurple: { color: '#6b21a8' },
+  badgeTextdisabled: { color: '#6b7280' },
+  selectionCard: { backgroundColor: '#fff', padding: 16, marginHorizontal: 16, marginBottom: 12, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb', ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 }, android: { elevation: 2 } }) },
+  selectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  selectionTitle: { fontSize: 14, fontWeight: '600', color: '#374151' },
+  selectionContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  selectedOption: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 },
+  selectedOptionText: { fontSize: 14, color: '#111827', flex: 1 },
+  placeholderText: { fontSize: 14, color: '#9ca3af', flex: 1 },
+  refundTypeInfo: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e5e7eb' },
+  refundTypeInfoText: { fontSize: 12, color: '#4b5563', lineHeight: 18 },
+  boldText: { fontWeight: '700', color: '#111827' },
+  refundMethodInfo: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e5e7eb', flexDirection: 'row', justifyContent: 'space-between' },
+  refundMethodInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  refundMethodInfoLabel: { fontSize: 12, color: '#6b7280' },
+  refundMethodInfoValue: { fontSize: 12, fontWeight: '500', color: '#ef4444' },
+  refundMethodInfoNet: { fontSize: 14, fontWeight: '700', color: '#059669' },
+  refundBreakdownCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginHorizontal: 16, marginBottom: 12, borderWidth: 1, borderColor: '#e5e7eb' },
+  refundBreakdownTitle: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: 16 },
+  breakdownRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  breakdownLabel: { fontSize: 14, color: '#111827', fontWeight: '500' },
+  breakdownSubLabel: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  breakdownAmount: { fontSize: 16, fontWeight: '600', color: '#111827' },
+  breakdownFee: { fontSize: 14, fontWeight: '600', color: '#ef4444' },
+  separator: { height: 1, backgroundColor: '#e5e7eb', marginVertical: 12 },
+  finalAmountRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  finalAmountLabel: { fontSize: 16, fontWeight: '600', color: '#111827' },
+  finalAmount: { fontSize: 20, fontWeight: '700', color: '#10b981' },
+  partialAmountInfo: { marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#e5e7eb' },
+  partialAmountTitle: { fontSize: 14, fontWeight: '600', color: '#111827', marginBottom: 12 },
+  partialAmountGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
+  partialAmountItem: { alignItems: 'center', flex: 1 },
+  partialAmountLabel: { fontSize: 11, color: '#6b7280', marginBottom: 4 },
+  partialAmountValue: { fontSize: 13, fontWeight: '500', color: '#111827' },
+  partialAmountMax: { fontSize: 13, fontWeight: '600', color: '#f59e0b' },
+  partialAmountRequest: { fontSize: 13, fontWeight: '700', color: '#10b981' },
+  amountInputContainer: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, paddingHorizontal: 12, marginTop: 8, backgroundColor: '#f9fafb' },
+  currencySymbol: { fontSize: 16, color: '#374151', marginRight: 4 },
+  amountInput: { flex: 1, fontSize: 16, color: '#111827', paddingVertical: 12 },
+  amountError: { fontSize: 12, color: '#ef4444', marginTop: 4 },
+  paymentDetailsCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginHorizontal: 16, marginBottom: 12, borderWidth: 1, borderColor: '#e5e7eb' },
+  walletCard: { borderColor: '#bfdbfe' },
+  bankCard: { borderColor: '#bbf7d0' },
+  remittanceCard: { borderColor: '#fed7aa' },
+  paymentDetailsHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  paymentDetailsTitle: { fontSize: 16, fontWeight: '600', color: '#111827' },
+  infoBox: { flexDirection: 'row', backgroundColor: '#f9fafb', borderRadius: 8, padding: 12, marginBottom: 16, gap: 8, borderWidth: 1, borderColor: '#e5e7eb' },
+  infoBoxText: { flex: 1, fontSize: 12, color: '#4b5563', lineHeight: 16 },
+  formGrid: { gap: 12 },
+  inputGroup: { width: '100%' },
+  inputGroupFull: { width: '100%' },
+  inputLabel: { fontSize: 12, fontWeight: '500', color: '#374151', marginBottom: 4 },
+  input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, padding: 12, fontSize: 14, color: '#111827', backgroundColor: '#f9fafb' },
+  infoCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginHorizontal: 16, marginBottom: 12, borderWidth: 1 },
+  cashOnHandCard: { borderColor: '#fde68a', backgroundColor: '#fffbeb' },
+  voucherCard: { borderColor: '#e9d5ff', backgroundColor: '#faf5ff' },
+  replacementCard: { borderColor: '#bbf7d0', backgroundColor: '#f0fdf4' },
+  infoCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  infoCardTitle: { fontSize: 16, fontWeight: '600' },
+  infoCardText: { fontSize: 13, color: '#4b5563', lineHeight: 18 },
+  selectedReasonBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#d1fae5', padding: 8, borderRadius: 8, marginTop: 12, gap: 6 },
+  selectedReasonText: { fontSize: 12, color: '#065f46', flex: 1 },
+  textAreaTitle: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: 12 },
+  textArea: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 10, padding: 12, fontSize: 14, color: '#111827', minHeight: 100, backgroundColor: '#f9fafb' },
+  uploadTitle: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: 4 },
+  uploadHint: { fontSize: 13, color: '#6b7280', marginBottom: 12 },
+  imageScrollView: { flexDirection: 'row' },
+  uploadButton: { width: 100, height: 100, borderWidth: 2, borderColor: '#d1d5db', borderStyle: 'dashed', borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 12, backgroundColor: '#f9fafb' },
+  uploadButtonText: { fontSize: 11, color: '#9ca3af', marginTop: 4 },
+  uploadCounter: { fontSize: 10, color: '#9ca3af', marginTop: 2 },
+  imageContainer: { position: 'relative', marginRight: 12 },
+  uploadedImage: { width: 100, height: 100, borderRadius: 10, borderWidth: 1, borderColor: '#e5e7eb' },
+  videoOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+  removeImageButton: { position: 'absolute', top: -8, right: -8, backgroundColor: '#fff', borderRadius: 12, ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 2 }, android: { elevation: 2 } }) },
+  imageOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.5)', borderBottomLeftRadius: 10, borderBottomRightRadius: 10, paddingVertical: 4, paddingHorizontal: 8 },
+  imageOverlayText: { color: '#fff', fontSize: 9, textAlign: 'center' },
+  policyCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginHorizontal: 16, marginBottom: 100, borderWidth: 1, borderColor: '#e5e7eb' },
+  policyHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  policyTitle: { fontSize: 16, fontWeight: '600', color: '#111827' },
+  policyPoints: { marginLeft: 4 },
+  policyPoint: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8, gap: 8 },
+  policyText: { fontSize: 13, color: '#4b5563', flex: 1, lineHeight: 18 },
+  footer: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', padding: 16, borderTopWidth: 1, borderTopColor: '#e5e7eb', ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.05, shadowRadius: 4 }, android: { elevation: 4 } }) },
+  errorBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, padding: 12, marginBottom: 12, gap: 8 },
+  errorBannerText: { fontSize: 13, color: '#991b1b', flex: 1 },
+  submitButton: { backgroundColor: '#4f46e5', borderRadius: 10, padding: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  submitButtonDisabled: { backgroundColor: '#9ca3af' },
+  submitButtonText: { fontSize: 16, fontWeight: '600', color: '#fff' },
+  modalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: height * 0.8 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
+  modalTitle: { fontSize: 18, fontWeight: '600', color: '#111827' },
+  refundTypeCard: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+  refundTypeCardSelected: { backgroundColor: '#f5f3ff' },
+  refundTypeIconContainer: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#f5f3ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  refundTypeIconContainerSelected: { backgroundColor: '#4f46e5' },
+  refundTypeContent: { flex: 1 },
+  refundTypeLabel: { fontSize: 16, fontWeight: '500', color: '#111827', marginBottom: 2 },
+  refundTypeLabelSelected: { color: '#4f46e5' },
+  refundTypeDescription: { fontSize: 13, color: '#6b7280' },
+  refundTypeDescriptionSelected: { color: '#4f46e5' },
+  refundMethodCard: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+  refundMethodCardSelected: { backgroundColor: '#f5f3ff' },
+  refundMethodIconContainer: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#f5f3ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  refundMethodIconContainerSelected: { backgroundColor: '#4f46e5' },
+  refundMethodContent: { flex: 1 },
+  refundMethodLabel: { fontSize: 16, fontWeight: '500', color: '#111827', marginBottom: 2 },
+  refundMethodLabelSelected: { color: '#4f46e5' },
+  refundMethodDescription: { fontSize: 13, color: '#6b7280' },
+  refundMethodDescriptionSelected: { color: '#4f46e5' },
+  reasonItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+  reasonText: { fontSize: 15, color: '#374151' },
+  errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  errorTitle: { fontSize: 20, fontWeight: '600', color: '#111827', marginTop: 16, marginBottom: 8 },
+  errorMessage: { fontSize: 15, color: '#6b7280', textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+  goBackButton: { backgroundColor: '#4f46e5', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 },
+  backButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  addWalletButton: { backgroundColor: '#4f46e5', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12, borderRadius: 8, marginTop: 12 },
+  addWalletButtonText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  selectWalletButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, padding: 12, backgroundColor: '#f9fafb' },
+  selectWalletButtonText: { fontSize: 14, color: '#374151' },
+  selectedWalletContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f3f4f6', padding: 12, borderRadius: 8, marginTop: 8 },
+  selectedWalletInfo: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
+  selectedWalletProvider: { fontSize: 14, fontWeight: '600', color: '#111827' },
+  selectedWalletDetails: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  walletItem: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+  walletItemSelected: { backgroundColor: '#f5f3ff' },
+  walletItemIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  walletItemContent: { flex: 1 },
+  walletItemProvider: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: 2 },
+  walletItemName: { fontSize: 14, color: '#4b5563' },
+  walletItemNumber: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  modalFooter: { padding: 16, borderTopWidth: 1, borderTopColor: '#e5e7eb' },
+  addNewButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 12, backgroundColor: '#f3f4f6', borderRadius: 8 },
+  addNewButtonText: { fontSize: 14, color: '#4f46e5', fontWeight: '500' },
 });

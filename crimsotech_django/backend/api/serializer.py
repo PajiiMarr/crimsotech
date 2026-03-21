@@ -1253,36 +1253,60 @@ class UserPaymentDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ['payment_id', 'created_at', 'updated_at', 'verified_by']
 
     def validate_account_number(self, value):
-        """Validate PH mobile number format: 639XXXXXXXXX (12 digits)"""
         clean_value = re.sub(r'[^0-9]', '', str(value))
-        # Must be exactly 12 digits and start with 639
-        if not re.match(r'^639\d{9}$', clean_value):
-            raise serializers.ValidationError(
-                "Enter a valid Philippine mobile number starting with 639 followed by 9 digits (e.g., 639171234567)"
-            )
+        # Determine the payment method from the request data or instance
+        payment_method = self.initial_data.get('payment_method')
+        if not payment_method and self.instance:
+            payment_method = self.instance.payment_method
+
+        if payment_method in ['gcash', 'paymaya']:
+            # Validate PH mobile number: 639 + 9 digits = 12 digits total
+            if not re.match(r'^639\d{9}$', clean_value):
+                raise serializers.ValidationError(
+                    "Enter a valid Philippine mobile number starting with 639 followed by 9 digits (e.g., 639171234567)"
+                )
+        elif payment_method == 'bank':
+            # Bank account validation: exactly 16 digits (adjust as needed)
+            if len(clean_value) != 16:
+                raise serializers.ValidationError(
+                    "Bank account number must be exactly 16 digits"
+                )
+        else:
+            # Fallback (if payment_method is not recognized)
+            pass
+
         return clean_value
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        # Mask account number for security - show only last 4 digits
+        # Mask account number for security – show only last 4 digits
         if data.get('account_number'):
             acc_num = data['account_number']
             if len(acc_num) > 4:
                 data['account_number'] = '*' * (len(acc_num) - 4) + acc_num[-4:]
-            # Add formatted display with PH flag for wallet list
-            # acc_num is 12 digits: "639XXXXXXXXX"
-            data['display_number'] = f"🇵🇭 +63 {acc_num[3:6]} {acc_num[6:]}"
+            # For e-wallets, add a formatted display with PH flag
+            if instance.payment_method in ['gcash', 'paymaya']:
+                data['display_number'] = f"🇵🇭 +63 {acc_num[3:6]} {acc_num[6:]}"
+            else:
+                # For banks, just show the masked number
+                data['display_number'] = data['account_number']
             # Store full number for edit mode
             data['full_account_number'] = acc_num
         return data
+    
+
 
 class RefundSerializer(serializers.ModelSerializer):
+    items = serializers.SerializerMethodField()
     medias = RefundMediaSerializer(many=True, read_only=True)
     counter_requests = CounterRefundRequestSerializer(many=True, read_only=True)
     dispute = DisputeRequestSerializer(read_only=True)
     return_request = ReturnRequestItemSerializer(read_only=True)
     proofs = RefundProofSerializer(many=True, read_only=True)
     payment_detail = UserPaymentDetailSerializer(read_only=True)  # Add this line
+
+    def get_items(self, obj):
+        return [{'checkout_id': str(item.checkout.id)} for item in obj.items.all()]
 
     class Meta:
         model = Refund
