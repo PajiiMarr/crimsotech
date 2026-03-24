@@ -9,14 +9,13 @@ import {
   Modal,
   Image,
   ActivityIndicator,
-  Dimensions,
-  SafeAreaView,
-  StatusBar,
+  Dimensions
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import RiderPageHeader from './includes/riderPageHeader';
 
@@ -208,7 +207,6 @@ export default function ActiveOrders() {
       Alert.alert('Limit Reached', 'Maximum 6 media files allowed');
       return;
     }
-          <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
