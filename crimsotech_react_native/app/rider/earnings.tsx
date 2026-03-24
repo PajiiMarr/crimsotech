@@ -8,10 +8,11 @@ import {
   TouchableOpacity,
   Linking,
   Alert,
+  SafeAreaView,
+  StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import AxiosInstance from '../../contexts/axios';
 import { useAuth } from '../../contexts/AuthContext';
 import RiderPageHeader from './includes/riderPageHeader';
@@ -165,6 +166,7 @@ export default function Earnings() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <RiderPageHeader 
         title="Earnings" 
         subtitle="Quick summary of your delivery performance"

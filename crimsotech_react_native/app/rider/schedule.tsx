@@ -10,13 +10,14 @@ import {
   ActivityIndicator,
   Switch,
   Dimensions,
-  Platform
+  Platform,
+  SafeAreaView,
+  StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import RiderPageHeader from './includes/riderPageHeader';
 
@@ -632,6 +633,7 @@ export default function RiderSchedule() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <RiderPageHeader 
         title="Schedule" 
         subtitle="Manage your working hours"
