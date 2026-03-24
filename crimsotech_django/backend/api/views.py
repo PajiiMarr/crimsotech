@@ -1,8 +1,7 @@
 from asyncio.log import logger
-import csv
 from asgiref.sync import async_to_sync
 from email import parser
-from django.http import HttpResponse, JsonResponse
+from django.http import JsonResponse
 import re
 import time
 from django.utils.text import slugify
@@ -853,12 +852,12 @@ class VerifyNumber(viewsets.ViewSet):
             return Response({"error": "User ID not provided"}, status=400)
 
         try:
-            user = User.objects.get(id=user_id)
+            user = User.objects.get(id=user_id)  # Changed from user_id to id
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
 
         return Response({
-            "user_id": user.id,
+            "user_id": user.id,  # Changed from user.user_id to user.id
             "registration_stage": user.registration_stage,
         })
 
@@ -895,7 +894,7 @@ class VerifyNumber(viewsets.ViewSet):
             return Response({"error": "User ID header is required!"}, status=400)
 
         try:
-            user = User.objects.get(id=user_id)
+            user = User.objects.get(id=user_id)  # Changed from user_id to id
         except User.DoesNotExist:
             return Response({"error": "User not found!"}, status=404)
 
@@ -904,7 +903,9 @@ class VerifyNumber(viewsets.ViewSet):
             if not contact_number:
                 return Response({"error": "Contact number is required!"}, status=400)
 
-            # Removed the duplicate contact number check - now multiple users can have same number
+            if User.objects.filter(contact_number=contact_number).exclude(id=user_id).exists():  # Changed from user_id to id
+                return Response({"error": "Contact number already exists!"}, status=400)
+
             # Save user's contact number
             user.contact_number = contact_number
             user.save()
@@ -915,7 +916,7 @@ class VerifyNumber(viewsets.ViewSet):
                 return Response({"error": "Failed to send OTP. Please try again later."}, status=500)
 
             OTP.objects.update_or_create(
-                user=user,
+                user=user,  # Changed from user_otp_id to user
                 defaults={
                     'otp': 'pending',
                     'sent_at': timezone.now(),
@@ -925,7 +926,7 @@ class VerifyNumber(viewsets.ViewSet):
 
             return Response({
                 "message": f"OTP sent successfully to +63{contact_number}",
-                "user_id": str(user.id),
+                "user_id": str(user.id),  # Changed from user.user_id to user.id
                 "contact_number": contact_number
             })
 
@@ -933,10 +934,6 @@ class VerifyNumber(viewsets.ViewSet):
             # Handle OTP verification
             if not contact_number or not otp_code:
                 return Response({"error": "Contact number and OTP code are required!"}, status=400)
-
-            # Verify that the contact number matches the user's stored number
-            if user.contact_number != contact_number:
-                return Response({"error": "Contact number doesn't match user record!"}, status=400)
 
             try:
                 client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
@@ -952,7 +949,7 @@ class VerifyNumber(viewsets.ViewSet):
                     user.registration_stage = 3  # Mark as verified
                     user.save()
                     
-                    OTP.objects.filter(user=user).update(
+                    OTP.objects.filter(user=user).update(  # Changed from user_otp_id to user
                         otp=otp_code, 
                         expired_at=timezone.now()
                     )
@@ -971,8 +968,7 @@ class VerifyNumber(viewsets.ViewSet):
 
         else:
             return Response({"error": "Invalid action type"}, status=400)
-
-            
+        
 class RiderRegistration(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='register')
     def register(self, request):
@@ -7628,82 +7624,14 @@ class AdminRiders(viewsets.ViewSet):
             }, status=status.HTTP_404_NOT_FOUND)
 
 class AdminVouchers(viewsets.ViewSet):
-    @action(detail=False, methods=['post'])
-    def add_voucher(self, request):
-        """
-        Add a new voucher
-        """
-        try:
-            data = request.data.copy()
-            
-            # Set created_by to current user
-            data['created_by'] = request.user.id if request.user.is_authenticated else None
-            
-            # Validate required fields
-            required_fields = ['name', 'code', 'discount_type', 'value']
-            for field in required_fields:
-                if field not in data or not data[field]:
-                    return Response({
-                        'success': False,
-                        'error': f'{field} is required'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Check if voucher code already exists
-            if Voucher.objects.filter(code=data['code']).exists():
-                return Response({
-                    'success': False,
-                    'error': 'Voucher code already exists'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Handle date fields
-            if 'start_date' in data and data['start_date']:
-                if isinstance(data['start_date'], str):
-                    data['start_date'] = parse_date(data['start_date'])
-            
-            if 'end_date' in data and data['end_date']:
-                if isinstance(data['end_date'], str):
-                    data['end_date'] = parse_date(data['end_date'])
-            
-            # Create voucher
-            serializer = VoucherSerializer(data=data)
-            if serializer.is_valid():
-                voucher = serializer.save()
-                
-                return Response({
-                    'success': True,
-                    'message': 'Voucher created successfully',
-                    'voucher': {
-                        'id': str(voucher.id),
-                        'name': voucher.name,
-                        'code': voucher.code,
-                        'discount_type': voucher.discount_type,
-                        'value': float(voucher.value),
-                        'start_date': voucher.start_date.isoformat() if voucher.start_date else None,
-                        'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
-                        'is_active': voucher.is_active
-                    }
-                }, status=status.HTTP_201_CREATED)
-            else:
-                return Response({
-                    'success': False,
-                    'error': serializer.errors
-                }, status=status.HTTP_400_BAD_REQUEST)
-                
-        except Exception as e:
-            import traceback
-            print(f"Error in add_voucher: {e}")
-            print(traceback.format_exc())
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """
         Get voucher metrics for admin dashboard with date range filtering
         """
         try:
+            from django.utils.dateparse import parse_datetime, parse_date
+            
             # Parse date range parameters
             start_date_str = request.GET.get('start_date')
             end_date_str = request.GET.get('end_date')
@@ -7712,78 +7640,112 @@ class AdminVouchers(viewsets.ViewSet):
             date_filter = {}
             
             if start_date_str:
-                start_date = parse_date(start_date_str)
-                if start_date:
-                    date_filter['added_at__gte'] = start_date
-            
+                try:
+                    # Try parsing as datetime first, then as date
+                    start_date = parse_datetime(start_date_str)
+                    if start_date:
+                        date_filter['added_at__gte'] = start_date.date()
+                    else:
+                        # Try parsing as date string
+                        start_date = parse_date(start_date_str)
+                        if start_date:
+                            date_filter['added_at__gte'] = start_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing start date: {e}")
+                    pass
+                    
             if end_date_str:
-                end_date = parse_date(end_date_str)
-                if end_date:
-                    date_filter['added_at__lte'] = end_date
+                try:
+                    # Try parsing as datetime first, then as date
+                    end_date = parse_datetime(end_date_str)
+                    if end_date:
+                        date_filter['added_at__lte'] = end_date.date()
+                    else:
+                        # Try parsing as date string
+                        end_date = parse_date(end_date_str)
+                        if end_date:
+                            date_filter['added_at__lte'] = end_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing end date: {e}")
+                    pass
             
             print(f"Date filter: {date_filter}")
             
             # Calculate total vouchers with date filter
             total_vouchers = Voucher.objects.filter(**date_filter).count()
             
-            # Calculate active vouchers (is_active=True and within date range)
+            # Calculate active vouchers (is_active=True and not expired)
             now = timezone.now().date()
             active_filter = date_filter.copy()
             active_filter.update({
                 'is_active': True,
-                'start_date__lte': now,
+                'valid_until__gte': now
             })
-            
-            # Add end_date condition if it exists
-            active_filter['end_date__gte'] = now
-            
             active_vouchers = Voucher.objects.filter(**active_filter).count()
             
-            # Calculate expired vouchers (end_date < now)
+            # Calculate expired vouchers
             expired_filter = date_filter.copy()
-            expired_filter['end_date__lt'] = now
+            expired_filter['valid_until__lt'] = now
             expired_vouchers = Voucher.objects.filter(**expired_filter).count()
-            
-            # Calculate scheduled vouchers (future start date)
-            scheduled_filter = date_filter.copy()
-            scheduled_filter['start_date__gt'] = now
-            scheduled_vouchers = Voucher.objects.filter(**scheduled_filter).count()
             
             # Calculate total usage from Checkout model with date range
             usage_filter = {}
             if start_date_str:
-                start_date = parse_date(start_date_str)
-                if start_date:
-                    start_datetime = timezone.make_aware(
-                        datetime.combine(start_date, datetime.min.time())
-                    )
-                    usage_filter['created_at__gte'] = start_datetime
+                try:
+                    start_date = parse_datetime(start_date_str)
+                    if start_date:
+                        usage_filter['created_at__gte'] = start_date
+                    else:
+                        start_date = parse_date(start_date_str)
+                        if start_date:
+                            # Convert date to datetime for start of day
+                            start_datetime = timezone.make_aware(
+                                datetime.combine(start_date, datetime.min.time())
+                            )
+                            usage_filter['created_at__gte'] = start_datetime
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing start date for usage: {e}")
+                    pass
                     
             if end_date_str:
-                end_date = parse_date(end_date_str)
-                if end_date:
-                    end_datetime = timezone.make_aware(
-                        datetime.combine(end_date, datetime.max.time())
-                    )
-                    usage_filter['created_at__lte'] = end_datetime
+                try:
+                    end_date = parse_datetime(end_date_str)
+                    if end_date:
+                        # Include the entire end date (up to end of day)
+                        end_date = end_date.replace(hour=23, minute=59, second=59)
+                        usage_filter['created_at__lte'] = end_date
+                    else:
+                        end_date = parse_date(end_date_str)
+                        if end_date:
+                            # Convert date to datetime for end of day
+                            end_datetime = timezone.make_aware(
+                                datetime.combine(end_date, datetime.max.time())
+                            ).replace(second=59)
+                            usage_filter['created_at__lte'] = end_datetime
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing end date for usage: {e}")
+                    pass
             
-            # Get checkouts that used vouchers
-            checkouts_with_voucher = Checkout.objects.filter(
+            print(f"Usage filter: {usage_filter}")
+            
+            total_usage = Checkout.objects.filter(
                 voucher__isnull=False,
                 **usage_filter
+            ).count()
+            
+            # Calculate total discount amount with date range
+            total_discount_result = Checkout.objects.filter(
+                voucher__isnull=False,
+                **usage_filter
+            ).aggregate(
+                total_discount=Sum('voucher__value')
             )
-            
-            total_usage = checkouts_with_voucher.count()
-            
-            # Since there's no discount_amount field, we'll set total_discount to 0
-            # You can calculate this differently if needed, perhaps by summing voucher values
-            total_discount = 0
+            total_discount = total_discount_result['total_discount'] or 0
             
             metrics = {
                 'total_vouchers': total_vouchers,
                 'active_vouchers': active_vouchers,
                 'expired_vouchers': expired_vouchers,
-                'scheduled_vouchers': scheduled_vouchers,
                 'total_usage': total_usage,
                 'total_discount': float(total_discount),
             }
@@ -7808,6 +7770,9 @@ class AdminVouchers(viewsets.ViewSet):
         Get paginated list of vouchers with all required fields and date range filtering
         """
         try:
+            from django.utils.dateparse import parse_datetime, parse_date
+            from datetime import datetime
+            
             # Get query parameters
             page = int(request.GET.get('page', 1))
             page_size = int(request.GET.get('page_size', 10))
@@ -7824,20 +7789,42 @@ class AdminVouchers(viewsets.ViewSet):
             date_filter = {}
             
             if start_date_str:
-                start_date = parse_date(start_date_str)
-                if start_date:
-                    date_filter['added_at__gte'] = start_date
+                try:
+                    # Try parsing as datetime first, then as date
+                    start_date = parse_datetime(start_date_str)
+                    if start_date:
+                        date_filter['added_at__gte'] = start_date.date()
+                    else:
+                        # Try parsing as date string
+                        start_date = parse_date(start_date_str)
+                        if start_date:
+                            date_filter['added_at__gte'] = start_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing start date: {e}")
+                    pass
                     
             if end_date_str:
-                end_date = parse_date(end_date_str)
-                if end_date:
-                    date_filter['added_at__lte'] = end_date
+                try:
+                    # Try parsing as datetime first, then as date
+                    end_date = parse_datetime(end_date_str)
+                    if end_date:
+                        date_filter['added_at__lte'] = end_date.date()
+                    else:
+                        # Try parsing as date string
+                        end_date = parse_date(end_date_str)
+                        if end_date:
+                            date_filter['added_at__lte'] = end_date
+                except (ValueError, TypeError, AttributeError) as e:
+                    print(f"Error parsing end date: {e}")
+                    pass
             
             print(f"Date filter for vouchers_list: {date_filter}")
             
             # Start with all vouchers with date filter
             vouchers_qs = Voucher.objects.select_related(
                 'shop', 'created_by'
+            ).prefetch_related(
+                'checkout_set'
             ).filter(**date_filter)
             
             # Apply search filter
@@ -7853,16 +7840,16 @@ class AdminVouchers(viewsets.ViewSet):
                 if status_filter == 'active':
                     vouchers_qs = vouchers_qs.filter(
                         is_active=True,
-                        start_date__lte=now,
-                        end_date__gte=now
+                        valid_until__gte=now
                     )
                 elif status_filter == 'expired':
                     vouchers_qs = vouchers_qs.filter(
-                        end_date__lt=now
+                        valid_until__lt=now
                     )
                 elif status_filter == 'scheduled':
                     vouchers_qs = vouchers_qs.filter(
-                        start_date__gt=now
+                        is_active=False,
+                        valid_until__gte=now
                     )
             
             # Apply discount type filter
@@ -7909,17 +7896,14 @@ class AdminVouchers(viewsets.ViewSet):
                     }
                 
                 # Determine status
-                if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
-                    status_value = 'active'
-                elif voucher.end_date and voucher.end_date < now:
+                status_value = 'active'
+                if not voucher.is_active:
+                    if voucher.valid_until >= now:
+                        status_value = 'scheduled'
+                    else:
+                        status_value = 'expired'
+                elif voucher.valid_until < now:
                     status_value = 'expired'
-                elif not voucher.is_active and voucher.start_date > now:
-                    status_value = 'scheduled'
-                else:
-                    status_value = 'inactive'
-                
-                # Calculate usage count
-                usage_count = Checkout.objects.filter(voucher=voucher).count()
                 
                 voucher_data = {
                     'id': str(voucher.id),
@@ -7928,26 +7912,24 @@ class AdminVouchers(viewsets.ViewSet):
                     'shop': shop_data,
                     'discount_type': voucher.discount_type,
                     'value': float(voucher.value),
-                    'minimum_spend': float(voucher.minimum_spend),
-                    'maximum_usage': voucher.maximum_usage,
-                    'start_date': voucher.start_date.isoformat() if voucher.start_date else None,
-                    'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
+                    'valid_until': voucher.valid_until.isoformat(),
                     'added_at': voucher.added_at.isoformat(),
                     'created_by': created_by_data,
                     'is_active': voucher.is_active,
                     'status': status_value,
-                    'usage_count': usage_count,
                     'shopName': shop_data['name'] if shop_data else 'Global'
                 }
                 vouchers_data.append(voucher_data)
             
-            # Get filter options for frontend
+            # Get filter options for frontend (respecting date range)
+            # Get shops that have vouchers in the current date range
+            shop_ids = vouchers_qs.filter(shop__isnull=False).values_list('shop_id', flat=True).distinct()
+            shops_with_vouchers = Shop.objects.filter(id__in=shop_ids)
+            
             filter_options = {
-                'discount_types': list(Voucher.objects.values_list('discount_type', flat=True).distinct()),
-                'shops': list(Shop.objects.filter(
-                    id__in=Voucher.objects.filter(shop__isnull=False).values_list('shop_id', flat=True).distinct()
-                ).values_list('name', flat=True)),
-                'statuses': ['active', 'expired', 'scheduled', 'inactive']
+                'discount_types': list(Voucher.objects.filter(**date_filter).values_list('discount_type', flat=True).distinct()),
+                'shops': list(shops_with_vouchers.values_list('name', flat=True).distinct()),
+                'statuses': ['active', 'expired', 'scheduled']
             }
             
             return Response({
@@ -7969,662 +7951,729 @@ class AdminVouchers(viewsets.ViewSet):
             return Response({
                 'success': False,
                 'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['put', 'patch'])
-    def update_voucher(self, request, pk=None):
-        """
-        Update an existing voucher
-        """
-        try:
-            # Get voucher by UUID
-            try:
-                voucher = Voucher.objects.get(id=pk)
-            except Voucher.DoesNotExist:
-                return Response({
-                    'success': False,
-                    'error': 'Voucher not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-            
-            data = request.data.copy()
-            
-            # Check if code is being changed and if it already exists
-            if 'code' in data and data['code'] != voucher.code:
-                if Voucher.objects.filter(code=data['code']).exists():
-                    return Response({
-                        'success': False,
-                        'error': 'Voucher code already exists'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Handle date fields
-            if 'start_date' in data and data['start_date']:
-                if isinstance(data['start_date'], str):
-                    data['start_date'] = parse_date(data['start_date'])
-            
-            if 'end_date' in data and data['end_date']:
-                if isinstance(data['end_date'], str):
-                    data['end_date'] = parse_date(data['end_date'])
-            
-            # Update voucher
-            serializer = VoucherSerializer(voucher, data=data, partial=True)
-            if serializer.is_valid():
-                updated_voucher = serializer.save()
-                
-                return Response({
-                    'success': True,
-                    'message': 'Voucher updated successfully',
-                    'voucher': {
-                        'id': str(updated_voucher.id),
-                        'name': updated_voucher.name,
-                        'code': updated_voucher.code,
-                        'discount_type': updated_voucher.discount_type,
-                        'value': float(updated_voucher.value),
-                        'start_date': updated_voucher.start_date.isoformat() if updated_voucher.start_date else None,
-                        'end_date': updated_voucher.end_date.isoformat() if updated_voucher.end_date else None,
-                        'is_active': updated_voucher.is_active
-                    }
-                })
-            else:
-                return Response({
-                    'success': False,
-                    'error': serializer.errors
-                }, status=status.HTTP_400_BAD_REQUEST)
-                
-        except Exception as e:
-            import traceback
-            print(f"Error in update_voucher: {e}")
-            print(traceback.format_exc())
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['delete'])
-    def delete_voucher(self, request, pk=None):
-        """
-        Delete a voucher
-        """
-        try:
-            # Get voucher by UUID
-            try:
-                voucher = Voucher.objects.get(id=pk)
-            except Voucher.DoesNotExist:
-                return Response({
-                    'success': False,
-                    'error': 'Voucher not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-            
-            # Check if voucher has been used
-            usage_count = Checkout.objects.filter(voucher=voucher).count()
-            if usage_count > 0:
-                # Instead of deleting, just deactivate it
-                voucher.is_active = False
-                voucher.save()
-                return Response({
-                    'success': True,
-                    'message': 'Voucher has been used and cannot be deleted. It has been deactivated instead.',
-                    'deactivated': True
-                })
-            
-            # Delete if not used
-            voucher.delete()
-            return Response({
-                'success': True,
-                'message': 'Voucher deleted successfully'
-            })
-            
-        except Exception as e:
-            import traceback
-            print(f"Error in delete_voucher: {e}")
-            print(traceback.format_exc())
-            return Response({
-                'success': False,
-                'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
-class AdminRefunds(viewsets.ViewSet):
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _base_queryset(self):
-        """Single source of truth for the fully-joined Refund queryset."""
-        return (
-            Refund.objects
-            .select_related(
-                'order',
-                'requested_by',
-                'processed_by',
-                'return_request',
-                # payment-detail one-to-ones
-                'wallet',
-                'bank',
-                'remittance',
-            )
-            .prefetch_related(
-                'proofs',
-                'order__payment_set',
-                Prefetch(
-                    'return_request__medias',
-                    queryset=ReturnRequestMedia.objects.all(),
-                    to_attr='prefetched_medias',
-                ),
-            )
-        )
-
-    def _serialize_refund(self, refund, request):
-        """Return a plain dict for a single Refund instance."""
-        order = refund.order
-
-        # amounts
-        order_total = float(order.total_amount) if order else 0.0
-        approved_amt = float(refund.approved_refund_amount) if refund.approved_refund_amount is not None else None
-        refund_fee = round(order_total * 0.05, 2) if order else None
-        total_refund = round(order_total - refund_fee, 2) if refund_fee is not None else None
-
-        data = {
-            'refund': str(refund.refund_id),
-            'order_id': str(order.order) if order else 'N/A',
-            'order_total_amount': order_total,
-            'status': refund.status or 'pending',
-            'reason': refund.reason or 'No reason provided',
-            'requested_at': refund.requested_at.isoformat() if refund.requested_at else None,
-            'processed_at': refund.processed_at.isoformat() if refund.processed_at else None,
-
-            # user info
-            'requested_by_username': refund.requested_by.username if refund.requested_by else 'Unknown',
-            'requested_by_email': refund.requested_by.email if refund.requested_by else 'N/A',
-            'processed_by_username': refund.processed_by.username if refund.processed_by else None,
-            'processed_by_email': refund.processed_by.email if refund.processed_by else None,
-
-            # amounts
-            'requested_refund_amount': order_total,
-            'refund_fee': refund_fee,
-            'total_refund_amount': total_refund,
-            'approved_refund_amount': approved_amt,
-
-            # logistics
-            'logistic_service': getattr(refund, 'logistic_service', None),
-            'tracking_number': getattr(refund, 'tracking_number', None),
-
-            # type / payment-status fields
-            'final_refund_type': getattr(refund, 'final_refund_type', None),
-            'refund_type': getattr(refund, 'refund_type', None),
-            'refund_payment_status': getattr(refund, 'refund_payment_status', None),
-
-            # refund method
-            'buyer_preferred_refund_method': getattr(refund, 'buyer_preferred_refund_method', None),
-            'preferred_refund_method': getattr(refund, 'preferred_refund_method', None),
-            'final_refund_method': getattr(refund, 'final_refund_method', None),
-
-            # payment-detail objects
-            'wallet': self._serialize_wallet(refund.wallet if hasattr(refund, 'wallet') else None),
-            'bank': self._serialize_bank(refund.bank if hasattr(refund, 'bank') else None),
-            'remittance': self._serialize_remittance(refund.remittance if hasattr(refund, 'remittance') else None),
-
-            # proofs
-            'proofs': self._serialize_proofs(refund, request),
-            'has_media': refund.refundmedia_set.exists() if hasattr(refund, 'refundmedia_set') else False,
-            'media_count': refund.refundmedia_set.count() if hasattr(refund, 'refundmedia_set') else 0,
-
-            # return request
-            'return_request': None,
-            'has_return_request': refund.return_request is not None,
-            'return_request_status': refund.return_request.status if refund.return_request else None,
-            'return_deadline': (
-                refund.return_request.return_deadline.isoformat()
-                if refund.return_request and refund.return_request.return_deadline
-                else None
-            ),
-        }
-
-        if refund.return_request:
-            data['return_request'] = self._serialize_return_request(refund.return_request, request)
-
-        return data
-
-    # ---------- tiny serializer helpers ----------
-
-    def _serialize_wallet(self, obj):
-        if not obj:
-            return None
-        return {
-            'provider': getattr(obj, 'provider', None),
-            'account_name': getattr(obj, 'account_name', None),
-            'account_number': getattr(obj, 'account_number', None),
-            'contact_number': getattr(obj, 'contact_number', None),
-        }
-
-    def _serialize_bank(self, obj):
-        if not obj:
-            return None
-        return {
-            'bank_name': getattr(obj, 'bank_name', None),
-            'account_name': getattr(obj, 'account_name', None),
-            'account_number': getattr(obj, 'account_number', None),
-            'account_type': getattr(obj, 'account_type', None),
-            'branch': getattr(obj, 'branch', None),
-        }
-
-    def _serialize_remittance(self, obj):
-        if not obj:
-            return None
-        return {
-            'provider': getattr(obj, 'provider', None),
-            'first_name': getattr(obj, 'first_name', None),
-            'middle_name': getattr(obj, 'middle_name', None),
-            'last_name': getattr(obj, 'last_name', None),
-            'contact_number': getattr(obj, 'contact_number', None),
-            'country': getattr(obj, 'country', None),
-            'city': getattr(obj, 'city', None),
-            'province': getattr(obj, 'province', None),
-            'barangay': getattr(obj, 'barangay', None),
-            'street': getattr(obj, 'street', None),
-            'zip_code': getattr(obj, 'zip_code', None),
-        }
-
-    def _serialize_proofs(self, refund, request):
-        result = []
-        try:
-            for p in refund.proofs.all():
-                file_url = None
-                if getattr(p, 'file_data', None):
-                    try:
-                        file_url = request.build_absolute_uri(p.file_data.url)
-                    except Exception:
-                        pass
-                result.append({
-                    'id': str(p.id),
-                    'file_url': file_url,
-                    'file_type': getattr(p, 'file_type', None),
-                    'notes': getattr(p, 'notes', None),
-                })
-        except Exception:
-            pass
-        return result
-
-    def _serialize_return_request(self, rr, request):
-        medias = []
-        try:
-            media_qs = getattr(rr, 'prefetched_medias', None) or rr.medias.all()
-            for m in media_qs:
-                file_url = None
-                if getattr(m, 'file_data', None):
-                    try:
-                        file_url = request.build_absolute_uri(m.file_data.url)
-                    except Exception:
-                        pass
-                medias.append({
-                    'id': str(getattr(m, 'id', '')),
-                    'file_url': file_url,
-                    'file_type': getattr(m, 'file_type', None),
-                    'notes': getattr(m, 'notes', None),
-                })
-        except Exception:
-            pass
-
-        return {
-            'id': str(rr.id),
-            'status': getattr(rr, 'status', None),
-            'tracking_number': getattr(rr, 'tracking_number', None),
-            'tracking_url': getattr(rr, 'tracking_url', None),
-            'shipped_at': rr.shipped_at.isoformat() if getattr(rr, 'shipped_at', None) else None,
-            'received_at': rr.received_at.isoformat() if getattr(rr, 'received_at', None) else None,
-            'logistic_service': getattr(rr, 'logistic_service', None),
-            'notes': getattr(rr, 'notes', None),
-            'medias': medias,
-        }
-
-    # ------------------------------------------------------------------
-    # Actions
-    # ------------------------------------------------------------------
-
+class AdminRefunds(viewsets.ViewSet):    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
-        """Get refund metrics for the admin dashboard."""
+        """Get refund metrics for admin dashboard"""
         try:
-            qs = self._base_queryset()
+            # Dynamically resolve the Refund -> Order FK field name (handles 'order' or 'order_id')
+            order_field = None
+            for f in Refund._meta.get_fields():
+                if getattr(f, 'related_model', None) == Order and getattr(f, 'many_to_one', False):
+                    order_field = f.name
+                    break
+            if not order_field:
+                order_field = 'order_id'
 
-            status_counts = {
-                item['status']: item['count']
-                for item in qs.values('status').annotate(count=Count('refund_id'))
-            }
-
-            approved_qs = qs.filter(status__in=['approved', 'completed'])
-            total_refund_amount = (
-                approved_qs.aggregate(total=Sum('approved_refund_amount'))['total']
-                or Decimal('0.00')
+            refunds_queryset = Refund.objects.select_related(
+                order_field,
+                'requested_by',
+                'processed_by'
             )
-            avg_refund_amount = (
-                approved_qs.aggregate(avg=Avg('approved_refund_amount'))['avg']
-                or Decimal('0.00')
+            
+            # Total counts by status
+            status_counts = refunds_queryset.values('status').annotate(
+                count=Count('refund_id')
             )
-
-            completed = qs.filter(
+            
+            status_count_map = {item['status']: item['count'] for item in status_counts}
+            
+            # Total refund amount (only approved/completed refunds)
+            total_refund_amount = refunds_queryset.filter(
+                status__in=['approved', 'completed']
+            ).aggregate(
+                total_amount=Sum(f"{order_field}__total_amount")
+            )['total_amount'] or Decimal('0.00')
+            
+            # Average processing time in hours (for completed refunds)
+            completed_refunds = refunds_queryset.filter(
                 status='completed',
                 processed_at__isnull=False,
-                requested_at__isnull=False,
+                requested_at__isnull=False
             )
-            avg_processing_hours = 0.0
-            if completed.exists():
+            
+            if completed_refunds.exists():
                 total_seconds = sum(
-                    (r.processed_at - r.requested_at).total_seconds()
-                    for r in completed
+                    (refund.processed_at - refund.requested_at).total_seconds()
+                    for refund in completed_refunds
                 )
-                avg_processing_hours = total_seconds / (completed.count() * 3600)
-
-            common_reason = (
-                qs.exclude(Q(reason__isnull=True) | Q(reason__exact=''))
-                .values('reason')
-                .annotate(count=Count('refund_id'))
-                .order_by('-count')
-                .first()
-            )
-
-            now = timezone.now()
-            refunds_this_month = qs.filter(
-                requested_at__month=now.month,
-                requested_at__year=now.year,
+                avg_processing_hours = total_seconds / (len(completed_refunds) * 3600)
+            else:
+                avg_processing_hours = Decimal('0.00')
+            
+            # Most common reason (excluding empty reasons)
+            common_reason = refunds_queryset.exclude(
+                Q(reason__isnull=True) | Q(reason__exact='')
+            ).values('reason').annotate(
+                count=Count('refund_id')
+            ).order_by('-count').first()
+            
+            # This month's refunds
+            current_month = timezone.now().month
+            current_year = timezone.now().year
+            
+            refunds_this_month = refunds_queryset.filter(
+                requested_at__month=current_month,
+                requested_at__year=current_year
             ).count()
-
-            return Response({
-                'total_refunds': qs.count(),
-                'pending_refunds': status_counts.get('pending', 0),
-                'approved_refunds': status_counts.get('approved', 0),
-                'rejected_refunds': status_counts.get('rejected', 0),
-                'waiting_refunds': status_counts.get('waiting', 0),
-                'to_process_refunds': status_counts.get('to process', 0),
-                'completed_refunds': status_counts.get('completed', 0),
+            
+            # Average refund amount
+            avg_refund_amount = refunds_queryset.filter(
+                status__in=['approved', 'completed']
+            ).aggregate(
+                avg_amount=Avg(f"{order_field}__total_amount")
+            )['avg_amount'] or Decimal('0.00')
+            
+            metrics = {
+                'total_refunds': refunds_queryset.count(),
+                'pending_refunds': status_count_map.get('pending', 0),
+                'approved_refunds': status_count_map.get('approved', 0),
+                'rejected_refunds': status_count_map.get('rejected', 0),
+                'waiting_refunds': status_count_map.get('waiting', 0),
+                'to_process_refunds': status_count_map.get('to process', 0),
+                'completed_refunds': status_count_map.get('completed', 0),
                 'total_refund_amount': float(total_refund_amount),
-                'avg_processing_time_hours': round(avg_processing_hours, 1),
-                'most_common_reason': common_reason['reason'] if common_reason else 'No refunds available',
+                'avg_processing_time_hours': round(float(avg_processing_hours), 1),
+                'most_common_reason': common_reason['reason'] if common_reason else "No refunds available",
                 'refunds_this_month': refunds_this_month,
                 'avg_refund_amount': round(float(avg_refund_amount), 2),
-            }, status=status.HTTP_200_OK)
-
+            }
+            
+            return Response(metrics, status=status.HTTP_200_OK)
+            
         except Exception as e:
-            logger.error(f"Metrics error: {e}", exc_info=True)
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+            print(f"Metrics error: {str(e)}")  # Debug print
+            return Response(
+                {
+                    'error': f'Model access error: {str(e)}',
+                    'model_check': 'Refund model may not be properly defined or imported',
+                    'fallback_metrics': {
+                        'total_refunds': 0,
+                        'pending_refunds': 0,
+                        'approved_refunds': 0,
+                        'rejected_refunds': 0,
+                        'waiting_refunds': 0,
+                        'to_process_refunds': 0,
+                        'completed_refunds': 0,
+                        'total_refund_amount': 0.0,
+                        'avg_processing_time_hours': 0.0,
+                        'most_common_reason': "System configuration issue",
+                        'refunds_this_month': 0,
+                        'avg_refund_amount': 0.0,
+                    }
+                }, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
     @action(detail=False, methods=['get'])
     def get_analytics(self, request):
-        """Get analytics data for charts."""
+        """Get analytics data for charts"""
         try:
-            # Status distribution
-            status_dist_qs = (
-                Refund.objects.values('status')
-                .annotate(count=Count('refund_id'))
-                .order_by('status')
-            )
-            total = sum(i['count'] for i in status_dist_qs)
-            status_data = [
-                {
-                    'status': i['status'],
-                    'count': i['count'],
-                    'percentage': round(i['count'] / total * 100, 1) if total else 0,
-                }
-                for i in status_dist_qs
-            ]
-
-            # Monthly trend (last 12 months)
+            # Use the correct model reference (based on which solution you chose)
+            # If you used Solution 1 (explicit imports), use Refund
+            # If you used Solution 2 (alias), use RefundModel
+            
+            # Status distribution - ACTUALLY QUERY THE DATABASE
+            status_distribution = Refund.objects.values('status').annotate(
+                count=Count('refund_id')
+            ).order_by('status')
+            
+            total_refunds = sum(item['count'] for item in status_distribution)
+            
+            status_data = []
+            for item in status_distribution:
+                percentage = (item['count'] / total_refunds * 100) if total_refunds > 0 else 0
+                status_data.append({
+                    'status': item['status'],
+                    'count': item['count'],
+                    'percentage': round(percentage, 1)
+                })
+            
+            # Monthly trend data (last 12 months)
+            from django.db.models.functions import TruncMonth
+            from datetime import timedelta
+            
             twelve_months_ago = timezone.now() - timedelta(days=365)
-            monthly_qs = (
-                Refund.objects.filter(requested_at__gte=twelve_months_ago)
-                .annotate(month=TruncMonth('requested_at'))
-                .values('month')
-                .annotate(
-                    requested=Count('refund_id'),
-                    processed=Count(
-                        'refund_id',
-                        filter=Q(status__in=['completed', 'approved']),
-                    ),
-                )
-                .order_by('month')
-            )
-            monthly_trend = [
-                {
-                    'month': i['month'].strftime('%b %Y'),
-                    'full_month': i['month'].strftime('%B %Y'),
-                    'requested': i['requested'],
-                    'processed': i['processed'],
-                }
-                for i in monthly_qs
-            ]
-
-            # Top 10 reasons
-            reasons_qs = (
-                Refund.objects.exclude(Q(reason__isnull=True) | Q(reason__exact=''))
-                .values('reason')
-                .annotate(count=Count('refund_id'))
-                .order_by('-count')[:10]
-            )
-            total_reasons = sum(i['count'] for i in reasons_qs)
-            reasons_data = [
-                {
-                    'reason': i['reason'],
-                    'count': i['count'],
-                    'percentage': round(i['count'] / total_reasons * 100, 1) if total_reasons else 0,
-                }
-                for i in reasons_qs
-            ]
-
-            # Refund method distribution
-            methods_qs = (
-                Refund.objects.exclude(
-                    Q(buyer_preferred_refund_method__isnull=True) |
-                    Q(buyer_preferred_refund_method__exact='')
-                )
-                .values('buyer_preferred_refund_method')
-                .annotate(count=Count('refund_id'))
-                .order_by('-count')
-            )
-            total_methods = sum(i['count'] for i in methods_qs)
-            methods_data = [
-                {
-                    'method': i['buyer_preferred_refund_method'],
-                    'count': i['count'],
-                    'percentage': round(i['count'] / total_methods * 100, 1) if total_methods else 0,
-                }
-                for i in methods_qs
-            ]
-
-            return Response({
+            
+            monthly_data = Refund.objects.filter(
+                requested_at__gte=twelve_months_ago
+            ).annotate(
+                month=TruncMonth('requested_at')
+            ).values('month').annotate(
+                requested=Count('refund_id'),
+                processed=Count('refund_id', filter=Q(status__in=['completed', 'approved']))
+            ).order_by('month')
+            
+            monthly_trend = []
+            for item in monthly_data:
+                monthly_trend.append({
+                    'month': item['month'].strftime('%b %Y'),
+                    'requested': item['requested'],
+                    'processed': item['processed'],
+                    'full_month': item['month'].strftime('%B %Y')
+                })
+            
+              # Refund reasons (top 10)
+            refund_reasons = Refund.objects.exclude(
+                Q(reason__isnull=True) | Q(reason__exact='')
+            ).values('reason').annotate(
+                count=Count('refund_id')
+            ).order_by('-count')[:10]
+            
+            total_with_reasons = sum(item['count'] for item in refund_reasons)
+            
+            reasons_data = []
+            for item in refund_reasons:
+                percentage = (item['count'] / total_with_reasons * 100) if total_with_reasons > 0 else 0
+                reasons_data.append({
+                    'reason': item['reason'],
+                    'count': item['count'],
+                    'percentage': round(percentage, 1)
+                })
+            
+            # Refund methods distribution (use actual model field name)
+            refund_methods = Refund.objects.exclude(
+                Q(buyer_preferred_refund_method__isnull=True) | 
+                Q(buyer_preferred_refund_method__exact='')
+            ).values('buyer_preferred_refund_method').annotate(
+                count=Count('refund_id')
+            ).order_by('-count')
+            
+            total_with_methods = sum(item.get('count', 0) for item in refund_methods)
+            
+            methods_data = []
+            for item in refund_methods:
+                percentage = (item['count'] / total_with_methods * 100) if total_with_methods > 0 else 0
+                methods_data.append({
+                    'method': item['buyer_preferred_refund_method'],
+                    'count': item['count'],
+                    'percentage': round(percentage, 1)
+                })
+        
+            analytics_data = {
                 'status_distribution': status_data,
                 'monthly_trend_data': monthly_trend,
                 'refund_reasons': reasons_data,
-                'refund_methods': methods_data,
-            }, status=status.HTTP_200_OK)
-
+                'refund_methods': methods_data
+            }
+            
+            return Response(analytics_data, status=status.HTTP_200_OK)
+            
         except Exception as e:
-            logger.error(f"Analytics error: {e}", exc_info=True)
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+            print(f"Analytics error: {str(e)}")  # Debug print
+            # Return fallback data with error info
+            return Response(
+                {
+                    'error': f'Analytics error: {str(e)}',
+                    'fallback_data': {
+                        'status_distribution': [
+                            {'status': 'pending', 'count': 0, 'percentage': 0},
+                            {'status': 'approved', 'count': 0, 'percentage': 0},
+                            {'status': 'rejected', 'count': 0, 'percentage': 0},
+                            {'status': 'waiting', 'count': 0, 'percentage': 0},
+                            {'status': 'to process', 'count': 0, 'percentage': 0},
+                            {'status': 'completed', 'count': 0, 'percentage': 0}
+                        ],
+                        'monthly_trend_data': [],
+                        'refund_reasons': [],
+                        'refund_methods': []
+                    }
+                }, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     @action(detail=False, methods=['get'])
     def refund_list(self, request):
-        """Get all refund requests for the admin / moderation team."""
+        """Get all refund requests for admin/moderation team"""
         try:
-            refunds = self._base_queryset().order_by('-requested_at')
-            return Response(
-                [self._serialize_refund(r, request) for r in refunds],
-                status=status.HTTP_200_OK,
-            )
-        except Exception as e:
-            logger.error(f"Refund list error: {e}", exc_info=True)
-            return Response(
-                {'error': f'Failed to fetch refund list: {e}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            # Resolve FK name used for Refund->Order relationship and fetch related data
+            order_field = None
+            for f in Refund._meta.get_fields():
+                if getattr(f, 'related_model', None) == Order and getattr(f, 'many_to_one', False):
+                    order_field = f.name
+                    break
+            if not order_field:
+                order_field = 'order_id'
 
+            refunds = Refund.objects.select_related(
+                order_field,
+                'requested_by',
+                'processed_by'
+            ).prefetch_related(
+                f'{order_field}__payment_set'  # Payments are a reverse FK (use payment_set)
+            ).all().order_by('-requested_at')  # Most recent first
+
+            refunds_data = []
+
+            for refund in refunds:
+                # Get refund amounts based on your model structure
+                requested_amount = None
+                refund_fee = None
+                total_refund_amount = None
+
+                # Calculate amounts using the resolved related order object
+                order_obj = getattr(refund, order_field, None)
+                if order_obj:
+                    requested_amount = float(order_obj.total_amount)
+                    # Example: 5% processing fee
+                    refund_fee = float(order_obj.total_amount) * 0.05
+                    total_refund_amount = requested_amount - refund_fee
+
+                refund_data = {
+                    'refund': str(getattr(refund, 'refund_id', getattr(refund, 'refund', ''))),
+                    'order_id': str(getattr(order_obj, 'order')) if order_obj else 'N/A',
+                    'order_total_amount': float(order_obj.total_amount) if order_obj else 0.0,
+                    
+                    # Requested by user info
+                    'requested_by_username': refund.requested_by.username if refund.requested_by else 'Unknown',
+                    'requested_by_email': refund.requested_by.email if refund.requested_by else 'N/A',
+                    
+                    # Processed by user info (if processed)
+                    'processed_by_username': refund.processed_by.username if refund.processed_by else None,
+                    'processed_by_email': refund.processed_by.email if refund.processed_by else None,
+                    
+                    # Refund details
+                    'reason': refund.reason or 'No reason provided',
+                    'status': refund.status or 'pending',
+                    'requested_at': refund.requested_at.isoformat() if refund.requested_at else None,
+                    'processed_at': refund.processed_at.isoformat() if refund.processed_at else None,
+                    
+                    # Amount information
+                    'requested_refund_amount': requested_amount,
+                    'refund_fee': refund_fee,
+                    'total_refund_amount': total_refund_amount,
+                    'approved_refund_amount': float(refund.approved_refund_amount) if getattr(refund, 'approved_refund_amount', None) is not None else None,
+                    
+                    # Shipping/logistics info (if available in your model)
+                    'logistic_service': refund.logistic_service if hasattr(refund, 'logistic_service') else None,
+                    'tracking_number': refund.tracking_number if hasattr(refund, 'tracking_number') else None,
+                    
+                    # Refund types and payment status
+                    'final_refund_type': getattr(refund, 'final_refund_type', None),
+                    'refund_type': getattr(refund, 'refund_type', None),
+                    'refund_payment_status': getattr(refund, 'refund_payment_status', None),
+
+                    # Return request serialized (if present) so clients can render return lifecycle UIs
+                    'return_request': None,
+                    'has_return_request': bool(getattr(refund, 'return_request', None)),
+                    'return_request_status': getattr(getattr(refund, 'return_request', None), 'status', None),
+                    'return_deadline': getattr(getattr(refund, 'return_request', None), 'return_deadline', None).isoformat() if (getattr(refund, 'return_request', None) and getattr(getattr(refund, 'return_request', None), 'return_deadline', None)) else None,
+
+                    # Refund method (provide both buyer_preferred_refund_method and preferred_refund_method for compatibility)
+                    'buyer_preferred_refund_method': getattr(refund, 'buyer_preferred_refund_method', getattr(refund, 'preferred_refund_method', None)),
+                    'preferred_refund_method': getattr(refund, 'preferred_refund_method', getattr(refund, 'buyer_preferred_refund_method', None)),
+                    'final_refund_method': refund.final_refund_method if hasattr(refund, 'final_refund_method') else None,
+                    
+                    # Media attachments
+                    'has_media': refund.refundmedia_set.exists() if hasattr(refund, 'refundmedia_set') else False,
+                    'media_count': refund.refundmedia_set.count() if hasattr(refund, 'refundmedia_set') else 0,
+                }
+                # If a ReturnRequestItem exists on the refund, include a serialized shape for UI consumption
+                rr_obj = getattr(refund, 'return_request', None)
+                if rr_obj:
+                    medias_list = []
+                    try:
+                        media_qs = rr_obj.medias.all() if hasattr(rr_obj, 'medias') else (rr_obj.returnrequestmedia_set.all() if hasattr(rr_obj, 'returnrequestmedia_set') else [])
+                        for m in media_qs:
+                            file_url = None
+                            if getattr(m, 'file_data', None):
+                                try:
+                                    file_url = request.build_absolute_uri(m.file_data.url)
+                                except Exception:
+                                    file_url = None
+                            medias_list.append({
+                                'id': str(getattr(m, 'id', None)),
+                                'file_url': file_url,
+                                'file_type': getattr(m, 'file_type', None),
+                                'notes': getattr(m, 'notes', None)
+                            })
+                    except Exception:
+                        medias_list = []
+
+                    refund_data['return_request'] = {
+                        'id': str(getattr(rr_obj, 'id', None)),
+                        'status': getattr(rr_obj, 'status', None),
+                        'tracking_number': getattr(rr_obj, 'tracking_number', None),
+                        'tracking_url': getattr(rr_obj, 'tracking_url', None),
+                        'shipped_at': getattr(rr_obj, 'shipped_at').isoformat() if getattr(rr_obj, 'shipped_at', None) else None,
+                        'received_at': getattr(rr_obj, 'received_at').isoformat() if getattr(rr_obj, 'received_at', None) else None,
+                        'logistic_service': getattr(rr_obj, 'logistic_service', None),
+                        'notes': getattr(rr_obj, 'notes', None),
+                        'medias': medias_list
+                    }
+
+                refunds_data.append(refund_data)
+
+            return Response(refunds_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Refund list error: {str(e)}")
+            return Response(
+                {'error': f'Failed to fetch refund list: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )  
+    
     @action(detail=True, methods=['post'])
     def admin_process_refund(self, request, pk=None):
-        """Set refund_payment_status to 'processing'."""
+        """Process a refund - update refund_payment_status to 'processing'"""
         try:
+            # Get the refund object using the pk parameter
+            # In a regular ViewSet, you need to get the object manually
             refund = Refund.objects.get(refund_id=pk)
+            
+            # Get the status from request
+            status_value = request.data.get('status') or request.POST.get('status')
+            
+            if status_value == 'processing':
+                # Update refund_payment_status to processing
+                refund.refund_payment_status = 'processing'
+                refund.save(update_fields=['refund_payment_status'])
+                
+                return Response({
+                    'success': True,
+                    'message': 'Refund payment status set to processing',
+                    'refund_payment_status': refund.refund_payment_status
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'error': f'Invalid status value. Expected "processing", got: {status_value}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
         except Refund.DoesNotExist:
-            return Response({'error': 'Refund not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        status_value = request.data.get('status')
-        if status_value != 'processing':
-            return Response(
-                {'error': f'Invalid status. Expected "processing", got: {status_value}'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        refund.refund_payment_status = 'processing'
-        refund.save(update_fields=['refund_payment_status'])
-        return Response({
-            'success': True,
-            'message': 'Refund payment status set to processing',
-            'refund_payment_status': refund.refund_payment_status,
-        }, status=status.HTTP_200_OK)
+            return Response({
+                'error': 'Refund not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def add_proof(self, request, pk=None):
-        """Upload proof files for a refund (seller or admin)."""
+        """
+        SELLER VIEW: Upload one or more proof files (images/pdf) for a refund. Only seller owning the shop can upload.
+        Accepts multipart/form-data fields:
+          - file_data (file) (can be multiple)
+          - file_type (optional)
+          - notes (optional)
+        Returns the updated refund payload.
+        """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            refund = Refund.objects.get(refund_id=pk)
-        except (Refund.DoesNotExist, ValueError, TypeError):
-            return Response({'error': 'Refund not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if not (user.is_admin or user.is_moderator):
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
-            if err:
-                return err
-
-        files = request.FILES.getlist('file_data') or []
-        if not files:
-            single = request.FILES.get('file')
-            if single:
-                files = [single]
-        if not files:
-            return Response({'error': 'No files uploaded'}, status=status.HTTP_400_BAD_REQUEST)
-
-        existing_count = RefundProof.objects.filter(refund=refund).count()
-        remaining = 4 - existing_count
-        if len(files) > remaining:
-            return Response(
-                {'error': f'Cannot upload: only {remaining} proof(s) remaining'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        created = []
-        for f in files:
             try:
-                rp = RefundProof.objects.create(
-                    refund=refund,
-                    uploaded_by=user,
-                    file_type=request.data.get('file_type') or f.content_type or '',
-                    file_data=f,
-                    notes=request.data.get('notes', ''),
-                )
-                created.append(str(rp.id))
-            except Exception as e:
-                logger.warning(f'Failed to save refund proof: {e}')
+                try:
+                    refund = Refund.objects.get(refund_id=pk)
+                except (ValueError, TypeError):
+                    return Response({"error": "Invalid refund id"}, status=status.HTTP_400_BAD_REQUEST)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        refund.refresh_from_db()
-        data = self._serialize_refund(
-            self._base_queryset().get(refund_id=refund.refund_id),
-            request,
-        )
-        return Response({'message': 'Proof(s) uploaded', 'created': created, 'refund': data},
-                        status=status.HTTP_201_CREATED)
+            # Authorization check: seller must own the shop for this refund
+            # Allow admin/moderator to upload proofs for any shop
+            if not (user.is_admin or user.is_moderator):
+                shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+                if err:
+                    return err
+
+            files = request.FILES.getlist('file_data') or []
+            if not files:
+                # Also accept single file under 'file'
+                single = request.FILES.get('file')
+                if single:
+                    files = [single]
+
+            if not files:
+                return Response({"error": "No files uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Enforce server-side limit: max 4 proofs per refund
+            existing_count = RefundProof.objects.filter(refund=refund).count()
+            if existing_count + len(files) > 4:
+                remaining = max(0, 4 - existing_count)
+                return Response({"error": f"Cannot upload: only {remaining} proof(s) remaining"}, status=status.HTTP_400_BAD_REQUEST)
+
+            created = []
+            for f in files:
+                file_type = request.data.get('file_type') or f.content_type or ''
+                notes = request.data.get('notes', '')
+                try:
+                    rp = RefundProof.objects.create(
+                        refund=refund,
+                        uploaded_by=user,
+                        file_type=file_type,
+                        file_data=f,
+                        notes=notes
+                    )
+                    created.append(str(rp.id))
+                except Exception as e:
+                    # Log and continue saving the rest
+                    print('Failed to save refund proof', e)
+
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Proof(s) uploaded", "created": created, "refund": data}, status=status.HTTP_201_CREATED)
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+    def _get_refund_details_data(self, refund, request, user):
+        """
+        Internal helper to serialize a refund and its related payment details (wallet/bank/remittance/proofs)
+        Returns a plain dict safe for JSON response.
+        """
+        data = {}
+        try:
+            # Basic refund identifiers
+            data['refund'] = str(getattr(refund, 'refund_id', getattr(refund, 'refund', '')))
+            data['status'] = getattr(refund, 'status', None)
+            data['requested_at'] = getattr(refund, 'requested_at').isoformat() if getattr(refund, 'requested_at', None) else None
+            data['processed_at'] = getattr(refund, 'processed_at').isoformat() if getattr(refund, 'processed_at', None) else None
+
+            # Amounts
+            data['total_refund_amount'] = float(getattr(refund, 'total_refund_amount', getattr(refund, 'approved_refund_amount', 0) or 0))
+            data['approved_refund_amount'] = float(getattr(refund, 'approved_refund_amount', 0) or 0)
+            data['order_total_amount'] = float(getattr(getattr(refund, 'order', None), 'total_amount', getattr(refund, 'order_total_amount', 0) or 0))
+
+            # Refund method fields
+            data['buyer_preferred_refund_method'] = getattr(refund, 'buyer_preferred_refund_method', getattr(refund, 'preferred_refund_method', None))
+            data['preferred_refund_method'] = getattr(refund, 'preferred_refund_method', getattr(refund, 'buyer_preferred_refund_method', None))
+            data['final_refund_method'] = getattr(refund, 'final_refund_method', None)
+
+            # Try to attach wallet/bank/remittance related objects (OneToOne related_name: wallet, bank, remittance)
+            # Wallet
+            wallet_obj = None
+            try:
+                wallet_obj = refund.wallet
+            except Exception:
+                wallet_obj = None
+            if not wallet_obj:
+                # fallback attribute names
+                wallet_obj = getattr(refund, 'refundwallet', None) or getattr(refund, 'refund_wallet', None)
+
+            if wallet_obj:
+                data['wallet'] = {
+                    'provider': getattr(wallet_obj, 'provider', None),
+                    'account_name': getattr(wallet_obj, 'account_name', None),
+                    'account_number': getattr(wallet_obj, 'account_number', None),
+                    'contact_number': getattr(wallet_obj, 'contact_number', None)
+                }
+            else:
+                data['wallet'] = None
+
+            # Bank
+            bank_obj = None
+            try:
+                bank_obj = refund.bank
+            except Exception:
+                bank_obj = None
+            if not bank_obj:
+                bank_obj = getattr(refund, 'refundbank', None) or getattr(refund, 'refund_bank', None)
+
+            if bank_obj:
+                data['bank'] = {
+                    'bank_name': getattr(bank_obj, 'bank_name', None),
+                    'account_name': getattr(bank_obj, 'account_name', None),
+                    'account_number': getattr(bank_obj, 'account_number', None),
+                    'account_type': getattr(bank_obj, 'account_type', None),
+                    'branch': getattr(bank_obj, 'branch', None)
+                }
+            else:
+                data['bank'] = None
+
+            # Remittance
+            rem_obj = None
+            try:
+                rem_obj = refund.remittance
+            except Exception:
+                rem_obj = None
+            if not rem_obj:
+                rem_obj = getattr(refund, 'refundremittance', None) or getattr(refund, 'refund_remittance', None)
+
+            if rem_obj:
+                data['remittance'] = {
+                    'provider': getattr(rem_obj, 'provider', None),
+                    'first_name': getattr(rem_obj, 'first_name', None),
+                    'middle_name': getattr(rem_obj, 'middle_name', None),
+                    'last_name': getattr(rem_obj, 'last_name', None),
+                    'contact_number': getattr(rem_obj, 'contact_number', None),
+                    'country': getattr(rem_obj, 'country', None),
+                    'city': getattr(rem_obj, 'city', None),
+                    'province': getattr(rem_obj, 'province', None),
+                    'barangay': getattr(rem_obj, 'barangay', None),
+                    'street': getattr(rem_obj, 'street', None),
+                    'zip_code': getattr(rem_obj, 'zip_code', None)
+                }
+            else:
+                data['remittance'] = None
+
+            # Proofs (RefundProof related_name = 'proofs')
+            proofs_list = []
+            try:
+                for p in getattr(refund, 'proofs').all():
+                    file_url = None
+                    try:
+                        file_url = request.build_absolute_uri(p.file_data.url) if getattr(p, 'file_data', None) else None
+                    except Exception:
+                        file_url = None
+                    proofs_list.append({
+                        'id': str(getattr(p, 'id', None)),
+                        'file_url': file_url,
+                        'file_type': getattr(p, 'file_type', None),
+                        'notes': getattr(p, 'notes', None)
+                    })
+            except Exception:
+                proofs_list = []
+
+            data['proofs'] = proofs_list
+
+            # Raw dispute fields placeholders (frontend expects some shapes)
+            data['dispute_request'] = None
+            data['dispute_details'] = None
+
+            return data
+        except Exception as e:
+            print(f"Error serializing refund details: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {}
 
     @action(detail=True, methods=['get'])
     def get_admin_refund_details(self, request, pk=None):
-        """Get detailed refund information for admin."""
+        """
+        ADMIN VIEW: Get detailed refund information for admin
+        """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             user = User.objects.get(id=user_id)
+            
+            # Check if user is admin
+            if not user.is_admin:
+                return Response({"error": "Admin access required"}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                print(f"Error fetching refund: {str(e)}")
+                return Response({"error": f"Invalid refund ID format: {str(e)}"}, 
+                                status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get comprehensive refund data
+            try:
+                data = self._get_refund_details_data(refund, request, user)
+            except Exception as e:
+                print(f"Error in _get_refund_details_data: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                return Response({"error": f"Failed to get refund details: {str(e)}"}, 
+                                status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # Add admin-specific information
+            data['admin_notes'] = refund.customer_note
+            data['processed_by'] = {
+                "id": str(refund.processed_by.id) if refund.processed_by else None,
+                "username": refund.processed_by.username if refund.processed_by else None,
+                "email": refund.processed_by.email if refund.processed_by else None
+            } if refund.processed_by else None
+            
+            # Add all related disputes
+            try:
+                disputes = DisputeRequest.objects.filter(refund_id=refund).order_by('-created_at')
+                print(f"Found {disputes.count()} disputes for refund {refund.refund_id}")
+                
+                data['disputes'] = []
+                for d in disputes:
+                    try:
+                        dispute_data = {
+                            "id": str(d.id),
+                            "requested_by": {
+                                "id": str(d.requested_by.id),
+                                "username": d.requested_by.username,
+                                "email": d.requested_by.email
+                            },
+                            "reason": d.reason,
+                            "status": d.status,
+                            "case_category": d.case_category,  # This is a JSONField
+                            "admin_notes": d.admin_notes,
+                            "created_at": d.created_at.isoformat() if d.created_at else None,
+                            "resolved_at": d.resolved_at.isoformat() if d.resolved_at else None
+                        }
+                        print(f"Dispute {d.id} case_category: {d.case_category}")
+                        data['disputes'].append(dispute_data)
+                    except Exception as e:
+                        print(f"Error serializing dispute {d.id}: {str(e)}")
+                        continue
+                        
+            except Exception as e:
+                print(f"Error fetching disputes: {str(e)}")
+                data['disputes'] = []
+            
+            # Add all counter requests
+            try:
+                counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
+                data['counter_requests'] = [
+                    {
+                        "counter_id": str(cr.counter_id),
+                        "requested_by": cr.requested_by,
+                        "seller": {
+                            "id": str(cr.seller_id.id),
+                            "username": cr.seller_id.username
+                        },
+                        "shop": {
+                            "id": str(cr.shop_id.id),
+                            "name": cr.shop_id.name
+                        },
+                        "counter_refund_method": cr.counter_refund_method,
+                        "counter_refund_type": cr.counter_refund_type,
+                        "counter_refund_amount": float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
+                        "notes": cr.notes,
+                        "status": cr.status,
+                        "requested_at": cr.requested_at.isoformat()
+                    }
+                    for cr in counter_requests
+                ]
+            except Exception as e:
+                print(f"Error fetching counter requests: {str(e)}")
+                data['counter_requests'] = []
+            
+            return Response(data)
+            
         except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if not user.is_admin:
-            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
-
-        try:
-            refund = self._base_queryset().get(refund_id=pk)
-        except Refund.DoesNotExist:
-            return Response({'error': 'Refund not found'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({'error': f'Invalid refund ID: {e}'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            data = self._serialize_refund(refund, request)
+            try:
+                logger.error(f"Error in get_my_refunds (personal): {str(e)}", exc_info=True)
+            except Exception:
+                print(f"Error in get_my_refunds (personal): {str(e)}")
+            return Response({"error": "Internal server error", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
-            logger.error(f'Error serializing refund {pk}: {e}', exc_info=True)
-            return Response({'error': f'Failed to serialize refund: {e}'},
+            try:
+                logger.error(f"Error in get_my_refunds: {str(e)}", exc_info=True)
+            except Exception:
+                print(f"Error in get_my_refunds: {str(e)}")
+            return Response({"error": "Internal server error", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            print(f"Unexpected error in get_admin_refund_details: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response({"error": f"Internal server error: {str(e)}"}, 
                             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # Admin-only extras
-        data['admin_notes'] = refund.customer_note
-        data['processed_by'] = (
-            {
-                'id': str(refund.processed_by.id),
-                'username': refund.processed_by.username,
-                'email': refund.processed_by.email,
-            }
-            if refund.processed_by else None
-        )
-
-        # Disputes
-        try:
-            disputes = DisputeRequest.objects.filter(refund_id=refund).order_by('-created_at')
-            data['disputes'] = [
-                {
-                    'id': str(d.id),
-                    'requested_by': {
-                        'id': str(d.requested_by.id),
-                        'username': d.requested_by.username,
-                        'email': d.requested_by.email,
-                    },
-                    'reason': d.reason,
-                    'status': d.status,
-                    'case_category': d.case_category,
-                    'admin_notes': d.admin_notes,
-                    'created_at': d.created_at.isoformat() if d.created_at else None,
-                    'resolved_at': d.resolved_at.isoformat() if d.resolved_at else None,
-                }
-                for d in disputes
-            ]
-        except Exception as e:
-            logger.error(f'Error fetching disputes: {e}', exc_info=True)
-            data['disputes'] = []
-
-        # Counter requests
-        try:
-            counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
-            data['counter_requests'] = [
-                {
-                    'counter_id': str(cr.counter_id),
-                    'requested_by': cr.requested_by,
-                    'seller': {'id': str(cr.seller_id.id), 'username': cr.seller_id.username},
-                    'shop': {'id': str(cr.shop_id.id), 'name': cr.shop_id.name},
-                    'counter_refund_method': cr.counter_refund_method,
-                    'counter_refund_type': cr.counter_refund_type,
-                    'counter_refund_amount': float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
-                    'notes': cr.notes,
-                    'status': cr.status,
-                    'requested_at': cr.requested_at.isoformat(),
-                }
-                for cr in counter_requests
-            ]
-        except Exception as e:
-            logger.error(f'Error fetching counter requests: {e}', exc_info=True)
-            data['counter_requests'] = []
-
-        return Response(data)
+        
 
 class AdminUsers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
@@ -15849,8 +15898,8 @@ class SellerProducts(viewsets.ModelViewSet):
     def update_product(self, request, pk=None):
         """
         Update basic product fields from the seller edit form.
-        Editable: name, description, condition (1-5 integer),
-                upload_status, is_refundable, refund_days, category_admin_id
+        Editable: name, description, condition, upload_status,
+                  is_refundable, refund_days, category_admin_id
         """
         user_id = request.data.get('user_id')
         if not user_id:
@@ -15872,8 +15921,6 @@ class SellerProducts(viewsets.ModelViewSet):
         if name:
             if len(name) > 100:
                 return Response({"error": "Name cannot exceed 100 characters"}, status=status.HTTP_400_BAD_REQUEST)
-            if len(name) < 2:
-                return Response({"error": "Name must be at least 2 characters"}, status=status.HTTP_400_BAD_REQUEST)
             product.name = name
             update_fields.append('name')
 
@@ -15881,28 +15928,16 @@ class SellerProducts(viewsets.ModelViewSet):
         if description:
             if len(description) > 1000:
                 return Response({"error": "Description cannot exceed 1000 characters"}, status=status.HTTP_400_BAD_REQUEST)
-            if len(description) < 10:
-                return Response({"error": "Description must be at least 10 characters"}, status=status.HTTP_400_BAD_REQUEST)
             product.description = description
             update_fields.append('description')
 
-        # Condition field - now expects integer 1-5
         condition = request.data.get('condition')
-        if condition is not None:
-            try:
-                condition_int = int(condition)
-                if condition_int < 1 or condition_int > 5:
-                    return Response(
-                        {"error": "Condition must be an integer between 1 and 5 (1=Poor, 5=Like New)"}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                product.condition = condition_int
-                update_fields.append('condition')
-            except (ValueError, TypeError):
-                return Response(
-                    {"error": "Condition must be a valid integer between 1 and 5"}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        valid_conditions = ['Like New', 'New', 'Refurbished', 'Used - Excellent', 'Used - Good']
+        if condition:
+            if condition not in valid_conditions:
+                return Response({"error": f"Invalid condition. Choose from: {', '.join(valid_conditions)}"}, status=status.HTTP_400_BAD_REQUEST)
+            product.condition = condition
+            update_fields.append('condition')
 
         upload_status = request.data.get('upload_status')
         valid_statuses = ['draft', 'published', 'archived']
@@ -15925,10 +15960,6 @@ class SellerProducts(viewsets.ModelViewSet):
         if refund_days is not None:
             try:
                 refund_days_int = int(refund_days)
-                if product.is_refundable and refund_days_int <= 0:
-                    return Response({"error": "Refund days must be greater than 0 for refundable products"}, status=status.HTTP_400_BAD_REQUEST)
-                if refund_days_int > 365:
-                    return Response({"error": "Refund days cannot exceed 365"}, status=status.HTTP_400_BAD_REQUEST)
                 if refund_days_int < 0:
                     return Response({"error": "refund_days cannot be negative"}, status=status.HTTP_400_BAD_REQUEST)
                 product.refund_days = refund_days_int
@@ -15977,6 +16008,7 @@ class SellerProducts(viewsets.ModelViewSet):
                 } if product.category_admin else None,
             }
         }, status=status.HTTP_200_OK)
+
         
     @action(detail=False, methods=['get'], url_path='global-categories')    
     def get_global_categories(self, request):
@@ -16063,20 +16095,12 @@ class SellerProducts(viewsets.ModelViewSet):
             
             # Validate data types
             try:
-                # Condition should be integer 1-5
-                condition_val = int(data['condition'])
-                if condition_val < 1 or condition_val > 5:
-                    return Response(
-                        {'success': False, 'error': 'Condition must be between 1 and 5'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
                 item_data = {
                     'name': str(data['name']),
                     'description': str(data['description']),
                     'quantity': int(data['quantity']),
                     'price': float(data['price']),
-                    'condition': condition_val
+                    'condition': str(data['condition'])
                 }
                 
                 if item_data['quantity'] < 0:
@@ -16120,15 +16144,22 @@ class SellerProducts(viewsets.ModelViewSet):
                 if feat_name in feature_columns:
                     features[feat_name] = feat_value
             
-            # Condition features - now using integer value
-            condition_value = item_data['condition']
+            # Condition features
+            condition_lower = item_data['condition'].lower()
+            
+            condition_scores = {
+                'new': 3, 'like new': 2, 'refurbished': 1,
+                'excellent': 0, 'good': -1, 'fair': -2
+            }
             
             if 'condition_score' in feature_columns:
-                # Map 1-5 to a normalized score
-                features['condition_score'] = (condition_value - 1) / 4  # Normalized to 0-1
+                features['condition_score'] = next(
+                    (score for keyword, score in condition_scores.items() 
+                     if keyword in condition_lower), 0
+                )
             
             if 'is_refurbished' in feature_columns:
-                features['is_refurbished'] = 0  # No longer based on condition string
+                features['is_refurbished'] = 1 if 'refurbished' in condition_lower else 0
             
             # Text features
             name_lower = item_data['name'].lower()
@@ -16190,11 +16221,11 @@ class SellerProducts(viewsets.ModelViewSet):
                 if brand_feature in feature_columns:
                     features[brand_feature] = 1 if brand in all_text else 0
             
-            # New/Used flags - based on condition value
+            # New/Used flags
             if 'is_new' in feature_columns:
-                features['is_new'] = 1 if condition_value >= 4 else 0  # 4-5 = Like New/Very Good
+                features['is_new'] = 1 if 'new' in condition_lower else 0
             if 'is_used' in feature_columns:
-                features['is_used'] = 1 if condition_value <= 3 else 0  # 1-3 = Used conditions
+                features['is_used'] = 1 if 'used' in condition_lower else 0
             
             # Create DataFrame with exactly the expected features
             X_item = pd.DataFrame([features])
@@ -16420,27 +16451,6 @@ class SellerProducts(viewsets.ModelViewSet):
                 "error": f"Cannot add more than {seller.product_limit} products. Current count: {seller.current_product_count}"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate condition field - must be integer 1-5
-        condition = request.data.get("condition")
-        try:
-            condition_int = int(condition)
-            if condition_int < 1 or condition_int > 5:
-                return Response({
-                    "error": "Condition must be an integer between 1 and 5 (1=Poor, 5=Like New)"
-                }, status=status.HTTP_400_BAD_REQUEST)
-        except (ValueError, TypeError):
-            return Response({
-                "error": "Condition must be a valid integer between 1 and 5"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Validate upload_status if provided
-        upload_status = request.data.get('upload_status', 'draft')
-        valid_statuses = ['draft', 'published', 'archived']
-        if upload_status not in valid_statuses:
-            return Response({
-                "error": f"Invalid upload_status. Must be one of: {', '.join(valid_statuses)}"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
         # Check if variants are provided and not empty
         variants_raw = request.data.get('variants')
         if not variants_raw:
@@ -16467,37 +16477,15 @@ class SellerProducts(viewsets.ModelViewSet):
             if not hasattr(value, 'file'):
                 product_data[key] = value
         
-        # Set required fields
+        # Set defaults - CHANGED upload_status to 'draft' instead of 'published'
         product_data['status'] = product_data.get('status', 'active')
-        product_data['upload_status'] = upload_status
-        product_data['condition'] = condition_int
+        product_data['upload_status'] = 'draft'  # Changed from 'published' to 'draft'
         
-        # Handle refundable flag
-        if 'is_refundable' in product_data:
-            product_data['is_refundable'] = str(product_data['is_refundable']).lower() in ('true', '1', 'yes')
-        else:
+        # Handle refundable flag - now primarily handled at variant level
+        if 'refundable' in product_data:
+            product_data['is_refundable'] = str(product_data['refundable']).lower() in ('true', '1')
+        elif 'is_refundable' not in product_data:
             product_data['is_refundable'] = True
-        
-        # Validate refund_days if product is refundable
-        refund_days = request.data.get('refund_days')
-        if refund_days:
-            try:
-                refund_days_int = int(refund_days)
-                if product_data['is_refundable'] and refund_days_int <= 0:
-                    return Response({
-                        "error": "Refund days must be greater than 0 for refundable products"
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                if refund_days_int > 365:
-                    return Response({
-                        "error": "Refund days cannot exceed 365"
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                product_data['refund_days'] = refund_days_int
-            except (ValueError, TypeError):
-                return Response({
-                    "error": "Invalid refund_days value"
-                }, status=status.HTTP_400_BAD_REQUEST)
-        elif product_data['is_refundable']:
-            product_data['refund_days'] = 30  # Default value
             
         product_data['customer'] = seller.customer_id
         
@@ -16567,21 +16555,14 @@ class SellerProducts(viewsets.ModelViewSet):
                 # Save product
                 product = serializer.save()
                 
+                # Set default refund_days if needed
+                if product.is_refundable and not product.refund_days:
+                    product.refund_days = 30
+                    product.save(update_fields=['refund_days'])
+
                 # Handle media files
                 media_files = request.FILES.getlist('media_files')
-                if len(media_files) < 3:
-                    raise ValidationError("Please upload at least 3 product images")
-                    
                 for media_file in media_files:
-                    # Validate file type
-                    valid_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'video/mp4']
-                    if media_file.content_type not in valid_types:
-                        raise ValidationError(f"Invalid file type: {media_file.content_type}")
-                        
-                    # Validate file size (50MB max)
-                    if media_file.size > 50 * 1024 * 1024:
-                        raise ValidationError(f"File size exceeds 50MB: {media_file.name}")
-                        
                     try:
                         ProductMedia.objects.create(
                             product=product,
@@ -16591,7 +16572,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     except Exception as e:
                         logger.error(f"Error creating ProductMedia: {e}")
 
-                # Process variants with all new fields including dimensions and dimension_unit
+                # Process variants with depreciation data
                 created_variants = self._process_variants(variants_raw, request.FILES, product, shop)
                 
                 # Verify at least one variant was created
@@ -16614,6 +16595,7 @@ class SellerProducts(viewsets.ModelViewSet):
                 "error": "Failed to create product",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 
     def _process_variants(self, variants_raw, files, product, shop):
         created_variants = []
@@ -16649,28 +16631,6 @@ class SellerProducts(viewsets.ModelViewSet):
                     'critical_stock': variant_data.get('critical_stock'),
                 }
                 
-                # Handle dimension_unit field - UPDATED
-                dimension_unit = variant_data.get('dimension_unit')
-                if dimension_unit in ['cm', 'm', 'in', 'ft']:
-                    variant_fields['dimension_unit'] = dimension_unit
-                else:
-                    variant_fields['dimension_unit'] = 'cm'  # default
-                
-                # Handle dimension fields - length, width, height
-                dimension_fields = ['length', 'width', 'height']
-                for field in dimension_fields:
-                    value = variant_data.get(field)
-                    if value not in (None, ''):
-                        try:
-                            decimal_value = Decimal(str(value))
-                            if decimal_value <= 0:
-                                raise ValidationError(f"{field} must be greater than 0")
-                            if decimal_value > 100000:
-                                logger.warning(f"{field} value is very high: {decimal_value}")
-                            variant_fields[field] = decimal_value
-                        except (ValueError, TypeError, Decimal.InvalidOperation):
-                            logger.warning(f"Invalid decimal value for {field}: {value}")
-                
                 # Handle refundable flag
                 ref_flag = variant_data.get('is_refundable', variant_data.get('refundable', False))
                 if isinstance(ref_flag, bool):
@@ -16683,12 +16643,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     refund_days = variant_data.get('refund_days')
                     if refund_days not in (None, ''):
                         try:
-                            refund_days_int = int(refund_days)
-                            if refund_days_int <= 0:
-                                raise ValidationError("Refund days must be greater than 0")
-                            if refund_days_int > 365:
-                                raise ValidationError("Refund days cannot exceed 365")
-                            variant_fields['refund_days'] = refund_days_int
+                            variant_fields['refund_days'] = int(refund_days)
                         except (ValueError, TypeError):
                             variant_fields['refund_days'] = 30
                     else:
@@ -16704,10 +16659,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     value = variant_data.get(field)
                     if value not in (None, ''):
                         try:
-                            decimal_value = Decimal(str(value))
-                            if decimal_value < 0:
-                                raise ValidationError(f"{field} cannot be negative")
-                            variant_fields[field] = decimal_value
+                            variant_fields[field] = Decimal(str(value))
                         except (ValueError, TypeError, Decimal.InvalidOperation):
                             logger.warning(f"Invalid decimal value for {field}: {value}")
                             if 'payment' in field:
@@ -16719,10 +16671,7 @@ class SellerProducts(viewsets.ModelViewSet):
                 quantity_val = variant_data.get('quantity')
                 if quantity_val not in (None, ''):
                     try:
-                        quantity_int = int(quantity_val)
-                        if quantity_int < 0:
-                            raise ValidationError("Quantity cannot be negative")
-                        variant_fields['quantity'] = quantity_int
+                        variant_fields['quantity'] = int(quantity_val)
                     except (ValueError, TypeError):
                         variant_fields['quantity'] = 0
                 else:
@@ -16732,84 +16681,39 @@ class SellerProducts(viewsets.ModelViewSet):
                 trigger_val = variant_data.get('critical_trigger')
                 if trigger_val not in (None, ''):
                     try:
-                        trigger_int = int(trigger_val)
-                        if trigger_int < 0:
-                            raise ValidationError("Critical trigger cannot be negative")
-                        variant_fields['critical_trigger'] = trigger_int
+                        variant_fields['critical_trigger'] = int(trigger_val)
                     except (ValueError, TypeError):
                         variant_fields['critical_trigger'] = None
                 
                 # Handle depreciation fields
+                # Original Price
                 original_price = variant_data.get('original_price')
                 if original_price not in (None, ''):
                     try:
-                        original_price_decimal = Decimal(str(original_price))
-                        if original_price_decimal < 0:
-                            raise ValidationError("Original price cannot be negative")
-                        variant_fields['original_price'] = original_price_decimal
+                        variant_fields['original_price'] = Decimal(str(original_price))
                     except (ValueError, TypeError, Decimal.InvalidOperation):
                         logger.warning(f"Invalid original_price value: {original_price}")
                 
-                # Validate price vs original price
-                if variant_fields.get('price') and variant_fields.get('original_price'):
-                    if variant_fields['price'] > variant_fields['original_price']:
-                        logger.warning(f"Current price ({variant_fields['price']}) is greater than original price ({variant_fields['original_price']})")
-                
+                # Usage Period
                 usage_period = variant_data.get('usage_period')
                 if usage_period not in (None, ''):
                     try:
-                        usage_period_float = float(usage_period)
-                        if usage_period_float < 0:
-                            raise ValidationError("Usage period cannot be negative")
-                        if usage_period_float > 1000:
-                            logger.warning(f"Usage period seems too high: {usage_period_float}")
-                        variant_fields['usage_period'] = usage_period_float
+                        variant_fields['usage_period'] = float(usage_period)
                     except (ValueError, TypeError):
                         logger.warning(f"Invalid usage_period value: {usage_period}")
                 
+                # Usage Unit
                 usage_unit = variant_data.get('usage_unit')
                 if usage_unit in ['weeks', 'months', 'years']:
                     variant_fields['usage_unit'] = usage_unit
-                elif usage_unit:
-                    logger.warning(f"Invalid usage_unit: {usage_unit}, using default")
-                    variant_fields['usage_unit'] = 'months'
                 
+                # Depreciation Rate
                 depreciation_rate = variant_data.get('depreciation_rate')
                 if depreciation_rate not in (None, ''):
                     try:
-                        rate_float = float(depreciation_rate)
-                        if rate_float < 0 or rate_float > 100:
-                            raise ValidationError("Depreciation rate must be between 0 and 100")
-                        variant_fields['depreciation_rate'] = rate_float
+                        variant_fields['depreciation_rate'] = float(depreciation_rate)
                     except (ValueError, TypeError):
                         logger.warning(f"Invalid depreciation_rate value: {depreciation_rate}")
-                
-                purchase_date = variant_data.get('purchase_date')
-                if purchase_date:
-                    try:
-                        from django.utils.dateparse import parse_datetime
-                        parsed_date = parse_datetime(purchase_date)
-                        if parsed_date:
-                            from django.utils import timezone
-                            if parsed_date > timezone.now():
-                                raise ValidationError("Purchase date cannot be in the future")
-                            variant_fields['purchase_date'] = parsed_date
-                    except Exception as e:
-                        logger.warning(f"Invalid purchase_date: {purchase_date}, error: {e}")
-                
-                # Validate swap fields
-                if variant_fields['allow_swap']:
-                    if not variant_fields['swap_type']:
-                        raise ValidationError("Swap type is required when swap is allowed")
-                    
-                    if variant_fields['swap_type'] == 'swap_plus_payment':
-                        if variant_fields.get('minimum_additional_payment', Decimal('0.00')) < 0:
-                            raise ValidationError("Minimum additional payment cannot be negative")
-                        if variant_fields.get('maximum_additional_payment', Decimal('0.00')) < 0:
-                            raise ValidationError("Maximum additional payment cannot be negative")
-                        if (variant_fields.get('minimum_additional_payment', Decimal('0.00')) > 
-                            variant_fields.get('maximum_additional_payment', Decimal('0.00'))):
-                            raise ValidationError("Minimum payment cannot be greater than maximum payment")
                 
                 # Handle variant image
                 provided_id = variant_data.get('id')
@@ -16848,9 +16752,10 @@ class SellerProducts(viewsets.ModelViewSet):
             traceback.print_exc()
             raise
 
+    
     def _build_product_response(self, product, seller, status_code):
         """
-        Build standardized product response with variant data including dimensions
+        Build standardized product response with variant data
         """
         variants_data = []
         for variant in product.variants.all():
@@ -16864,11 +16769,6 @@ class SellerProducts(viewsets.ModelViewSet):
                 "price": str(variant.price) if variant.price else None,
                 "compare_price": str(variant.compare_price) if variant.compare_price else None,
                 "quantity": variant.quantity,
-                # Dimension fields
-                "length": str(variant.length) if variant.length else None,
-                "width": str(variant.width) if variant.width else None,
-                "height": str(variant.height) if variant.height else None,
-                "dimension_unit": variant.dimension_unit,  # ADDED
                 "is_active": variant.is_active,
                 "is_refundable": variant.is_refundable,
                 "refund_days": variant.refund_days,
@@ -16905,6 +16805,8 @@ class SellerProducts(viewsets.ModelViewSet):
                     "id": str(product.id),
                     "name": product.name,
                     "description": product.description,
+                    # REMOVED: quantity and price from product level
+                    # These fields no longer exist, but we can provide aggregate info
                     "total_stock": total_quantity,
                     "starting_price": min_price,
                     "status": product.status,
@@ -16939,7 +16841,6 @@ class SellerProducts(viewsets.ModelViewSet):
         }
         
         return Response(response_data, status=status_code)
-    
 
     def list(self, request):
         """
@@ -16976,11 +16877,6 @@ class SellerProducts(viewsets.ModelViewSet):
                         "price": str(variant.price) if variant.price else None,
                         "compare_price": str(variant.compare_price) if variant.compare_price else None,
                         "quantity": variant.quantity,
-                        # Dimension fields
-                        "length": str(variant.length) if variant.length else None,
-                        "width": str(variant.width) if variant.width else None,
-                        "height": str(variant.height) if variant.height else None,
-                        "dimension_unit": variant.dimension_unit,  # ADDED
                         "is_active": variant.is_active,
                         "is_refundable": variant.is_refundable,
                         "refund_days": variant.refund_days,
@@ -17015,6 +16911,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     "id": str(product.id),
                     "name": product.name,
                     "description": product.description,
+                    # REMOVED: quantity and price from product level
                     "total_stock": total_quantity,
                     "starting_price": min_price,
                     "status": product.status,
@@ -17265,11 +17162,6 @@ class SellerProducts(viewsets.ModelViewSet):
                     "price": str(variant.price) if variant.price else None,
                     "compare_price": str(variant.compare_price) if variant.compare_price else None,
                     "quantity": variant.quantity,
-                    # Dimension fields
-                    "length": str(variant.length) if variant.length else None,
-                    "width": str(variant.width) if variant.width else None,
-                    "height": str(variant.height) if variant.height else None,
-                    "dimension_unit": variant.dimension_unit,  # ADDED
                     "weight": str(variant.weight) if variant.weight else None,
                     "weight_unit": variant.weight_unit,
                     "critical_trigger": variant.critical_trigger,
@@ -17354,7 +17246,7 @@ class SellerProducts(viewsets.ModelViewSet):
                 },
                 "upload_status": product.upload_status,
                 "status": product.status,
-                "condition": product.condition,  # Now returns integer 1-5
+                "condition": product.condition,
                 "is_refundable": product.is_refundable,
                 "refund_days": product.refund_days,
                 "created_at": product.created_at.isoformat() if product.created_at else None,
@@ -17444,360 +17336,7 @@ class SellerProducts(viewsets.ModelViewSet):
             return Response({"error": "Product not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['get'], url_path='variants')
-    def get_variants(self, request, pk=None):
-        """
-        GET /seller-products/{product_id}/variants/
-        """
-        try:
-            product = Product.objects.get(pk=pk)
-        except Product.DoesNotExist:
-            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        variants = Variants.objects.filter(product=product).order_by('created_at')
-        variants_data = []
-
-        for variant in variants:
-            variants_data.append({
-                'id': str(variant.id),
-                'title': variant.title,
-                'option_title': variant.option_title,
-                'option_ids': variant.option_ids,
-                'option_map': variant.option_map,
-                'sku_code': variant.sku_code,
-                'price': str(variant.price) if variant.price else None,
-                'compare_price': str(variant.compare_price) if variant.compare_price else None,
-                'quantity': variant.quantity,
-                # Dimension fields
-                'length': str(variant.length) if variant.length else None,
-                'width': str(variant.width) if variant.width else None,
-                'height': str(variant.height) if variant.height else None,
-                'weight': str(variant.weight) if variant.weight else None,
-                'weight_unit': variant.weight_unit,
-                'critical_trigger': variant.critical_trigger,
-                'critical_stock': variant.critical_stock,
-                'is_active': variant.is_active,
-                'is_refundable': variant.is_refundable,
-                'refund_days': variant.refund_days,
-                'allow_swap': variant.allow_swap,
-                'swap_type': variant.swap_type,
-                'swap_description': variant.swap_description,
-                'original_price': str(variant.original_price) if variant.original_price else None,
-                'usage_period': variant.usage_period,
-                'usage_unit': variant.usage_unit,
-                'depreciation_rate': variant.depreciation_rate,
-                'minimum_additional_payment': str(variant.minimum_additional_payment),
-                'maximum_additional_payment': str(variant.maximum_additional_payment),
-                'image': variant.image.url if variant.image else None,
-                'proof_image': variant.proof_image.url if variant.proof_image else None,
-                'created_at': variant.created_at.isoformat() if variant.created_at else None,
-                'updated_at': variant.updated_at.isoformat() if variant.updated_at else None,
-            })
-
-        return Response({
-            'success': True,
-            'variants': variants_data,
-            'count': len(variants_data),
-        }, status=status.HTTP_200_OK)
-
-    @action(detail=True, methods=['put'], url_path='variants-bulk-update')
-    def variants_bulk_update(self, request, pk=None):
-        """
-        Bulk update variants for a product.
-        PUT /seller-products/{product_id}/variants/bulk_update/
-        Body: { "variants": [ { "id": "uuid", ...fields }, ... ] }
-        """
-        user_id = request.data.get('user_id') or request.query_params.get('user_id')
-
-        try:
-            product = Product.objects.get(pk=pk)
-        except Product.DoesNotExist:
-            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Ownership check — user_id is optional but enforced if provided
-        if user_id and str(product.customer.customer_id) != str(user_id):
-            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-
-        variants_data = request.data.get('variants', [])
-        if not isinstance(variants_data, list):
-            return Response({'error': 'variants must be a list'}, status=status.HTTP_400_BAD_REQUEST)
-
-        updated = []
-        errors = []
-
-        for v_data in variants_data:
-            variant_id = v_data.get('id')
-            if not variant_id:
-                errors.append({'error': 'id is required for each variant'})
-                continue
-
-            try:
-                variant = Variants.objects.get(id=variant_id, product=product)
-            except Variants.DoesNotExist:
-                errors.append({'id': variant_id, 'error': 'Variant not found or does not belong to this product'})
-                continue
-
-            # Fields allowed to update
-            update_fields = []
-
-            simple_str_fields = ['title', 'sku_code', 'weight_unit', 'swap_type',
-                                'swap_description', 'usage_unit', 'dimension_unit']  # ADDED dimension_unit
-            for field in simple_str_fields:
-                if field in v_data:
-                    if field == 'usage_unit' and v_data[field] not in ['weeks', 'months', 'years']:
-                        errors.append({'id': variant_id, 'field': field, 'error': f'Invalid {field}'})
-                        continue
-                    if field == 'dimension_unit' and v_data[field] not in ['cm', 'm', 'in', 'ft']:
-                        errors.append({'id': variant_id, 'field': field, 'error': f'Invalid {field}. Must be cm, m, in, or ft'})
-                        continue
-                    setattr(variant, field, v_data[field])
-                    update_fields.append(field)
-
-            simple_bool_fields = ['is_active', 'is_refundable', 'allow_swap']
-            for field in simple_bool_fields:
-                if field in v_data:
-                    val = v_data[field]
-                    if isinstance(val, bool):
-                        setattr(variant, field, val)
-                    else:
-                        setattr(variant, field, str(val).lower() in ('true', '1', 'yes'))
-                    update_fields.append(field)
-
-            int_fields = ['quantity', 'refund_days', 'critical_trigger', 'critical_stock']
-            for field in int_fields:
-                if field in v_data and v_data[field] is not None:
-                    try:
-                        int_val = int(v_data[field])
-                        if field == 'quantity' and int_val < 0:
-                            errors.append({'id': variant_id, 'field': field, 'error': f'{field} cannot be negative'})
-                            continue
-                        if field == 'refund_days' and variant.is_refundable and int_val <= 0:
-                            errors.append({'id': variant_id, 'field': field, 'error': 'Refund days must be > 0 for refundable variants'})
-                            continue
-                        if field == 'refund_days' and int_val > 365:
-                            errors.append({'id': variant_id, 'field': field, 'error': 'Refund days cannot exceed 365'})
-                            continue
-                        if field == 'critical_trigger' and int_val < 0:
-                            errors.append({'id': variant_id, 'field': field, 'error': 'Critical trigger cannot be negative'})
-                            continue
-                        setattr(variant, field, int_val)
-                        update_fields.append(field)
-                    except (ValueError, TypeError):
-                        errors.append({'id': variant_id, 'field': field, 'error': f'Invalid integer value for {field}'})
-
-            # Dimension fields - LENGTH, WIDTH, HEIGHT
-            dimension_fields = ['length', 'width', 'height']
-            for field in dimension_fields:
-                if field in v_data:
-                    val = v_data[field]
-                    if val is None or val == '':
-                        setattr(variant, field, None)
-                        update_fields.append(field)
-                    else:
-                        try:
-                            from decimal import Decimal
-                            decimal_val = Decimal(str(val))
-                            if decimal_val <= 0:
-                                errors.append({'id': variant_id, 'field': field, 'error': f'{field} must be greater than 0'})
-                                continue
-                            setattr(variant, field, decimal_val)
-                            update_fields.append(field)
-                        except (ValueError, TypeError, Decimal.InvalidOperation):
-                            errors.append({'id': variant_id, 'field': field, 'error': f'Invalid decimal value for {field}'})
-
-            decimal_fields = ['price', 'compare_price', 'weight',
-                            'original_price', 'minimum_additional_payment', 'maximum_additional_payment']
-            for field in decimal_fields:
-                if field in v_data:
-                    val = v_data[field]
-                    if val is None or val == '':
-                        setattr(variant, field, None)
-                        update_fields.append(field)
-                    else:
-                        try:
-                            from decimal import Decimal
-                            decimal_val = Decimal(str(val))
-                            if decimal_val < 0:
-                                errors.append({'id': variant_id, 'field': field, 'error': f'{field} cannot be negative'})
-                                continue
-                            setattr(variant, field, decimal_val)
-                            update_fields.append(field)
-                        except (ValueError, TypeError, Decimal.InvalidOperation):
-                            errors.append({'id': variant_id, 'field': field, 'error': f'Invalid decimal value for {field}'})
-
-            # Validate price vs original_price
-            if 'price' in update_fields and variant.original_price and variant.price:
-                if variant.price > variant.original_price:
-                    logger.warning(f"Variant {variant_id}: Current price ({variant.price}) is greater than original price ({variant.original_price})")
-
-            float_fields = ['usage_period', 'depreciation_rate']
-            for field in float_fields:
-                if field in v_data:
-                    val = v_data[field]
-                    if val is None or val == '':
-                        setattr(variant, field, None)
-                        update_fields.append(field)
-                    else:
-                        try:
-                            float_val = float(val)
-                            if field == 'usage_period' and float_val < 0:
-                                errors.append({'id': variant_id, 'field': field, 'error': f'{field} cannot be negative'})
-                                continue
-                            if field == 'usage_period' and float_val > 1000:
-                                logger.warning(f"Variant {variant_id}: Usage period seems too high: {float_val}")
-                            if field == 'depreciation_rate' and (float_val < 0 or float_val > 100):
-                                errors.append({'id': variant_id, 'field': field, 'error': f'{field} must be between 0 and 100'})
-                                continue
-                            setattr(variant, field, float_val)
-                            update_fields.append(field)
-                        except (ValueError, TypeError):
-                            errors.append({'id': variant_id, 'field': field, 'error': f'Invalid float value for {field}'})
-
-            # Validate swap fields
-            if 'allow_swap' in update_fields and variant.allow_swap:
-                if not variant.swap_type:
-                    errors.append({'id': variant_id, 'error': 'Swap type is required when swap is allowed'})
-                elif variant.swap_type == 'swap_plus_payment':
-                    if variant.minimum_additional_payment < 0:
-                        errors.append({'id': variant_id, 'error': 'Minimum additional payment cannot be negative'})
-                    if variant.maximum_additional_payment < 0:
-                        errors.append({'id': variant_id, 'error': 'Maximum additional payment cannot be negative'})
-                    if variant.minimum_additional_payment > variant.maximum_additional_payment:
-                        errors.append({'id': variant_id, 'error': 'Minimum payment cannot be greater than maximum payment'})
-
-            # Purchase Date
-            purchase_date = v_data.get('purchase_date')
-            if purchase_date is not None:
-                if purchase_date == '' or purchase_date is None:
-                    variant.purchase_date = None
-                    update_fields.append('purchase_date')
-                else:
-                    try:
-                        from django.utils.dateparse import parse_datetime
-                        from django.utils import timezone
-                        parsed_date = parse_datetime(purchase_date)
-                        if parsed_date:
-                            if parsed_date > timezone.now():
-                                errors.append({'id': variant_id, 'error': 'Purchase date cannot be in the future'})
-                                continue
-                            variant.purchase_date = parsed_date
-                            update_fields.append('purchase_date')
-                        else:
-                            errors.append({'id': variant_id, 'error': 'Invalid purchase date format'})
-                    except Exception:
-                        errors.append({'id': variant_id, 'error': 'Invalid purchase date'})
-
-            if update_fields:
-                update_fields.append('updated_at')
-                variant.save(update_fields=update_fields)
-
-            updated.append({
-                'id': str(variant.id),
-                'title': variant.title,
-                'price': str(variant.price) if variant.price else None,
-                'quantity': variant.quantity,
-                # Dimension fields
-                'length': str(variant.length) if variant.length else None,
-                'width': str(variant.width) if variant.width else None,
-                'height': str(variant.height) if variant.height else None,
-                'dimension_unit': variant.dimension_unit,  # ADDED
-                'is_active': variant.is_active,
-                'original_price': str(variant.original_price) if variant.original_price else None,
-                'usage_period': variant.usage_period,
-                'usage_unit': variant.usage_unit,
-                'depreciation_rate': variant.depreciation_rate,
-                'allow_swap': variant.allow_swap,
-                'swap_type': variant.swap_type,
-                'updated_fields': [f for f in update_fields if f != 'updated_at'],
-            })
-
-        return Response({
-            'success': True,
-            'updated_count': len(updated),
-            'updated': updated,
-            'errors': errors,
-            'message': f'Successfully updated {len(updated)} variant(s)'
-            + (f' with {len(errors)} error(s)' if errors else ''),
-        }, status=status.HTTP_200_OK)
-    
-    @action(detail=True, methods=['get', 'post'], url_path='media')
-    def media(self, request, pk=None):
-        """
-        GET  /seller-products/{product_id}/media/  — list media
-        POST /seller-products/{product_id}/media/  — upload media
-        """
-        try:
-            product = Product.objects.get(pk=pk)
-        except Product.DoesNotExist:
-            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if request.method == 'GET':
-            media_items = ProductMedia.objects.filter(product=product)
-            media_data = [
-                {
-                    'id': str(m.id),
-                    'file_data': get_media_url(m.file_data) if m.file_data else None,
-                    'file_type': m.file_type,
-                }
-                for m in media_items
-            ]
-            return Response({
-                'success': True,
-                'media': media_data,
-                'count': len(media_data),
-            }, status=status.HTTP_200_OK)
-
-        # POST
-        file = request.FILES.get('file')
-        if not file:
-            return Response({'error': 'file is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        media = ProductMedia.objects.create(
-            product=product,
-            file_data=file,
-            file_type=file.content_type or 'image/jpeg',
-        )
-
-        return Response({
-            'success': True,
-            'media': {
-                'id': str(media.id),
-                'file_data': get_media_url(media.file_data) if media.file_data else None,
-                'file_type': media.file_type,
-            },
-            'message': 'Media uploaded successfully',
-        }, status=status.HTTP_201_CREATED)
-
-
-    @action(detail=True, methods=['delete'], url_path='media/(?P<media_id>[^/.]+)')
-    def delete_media(self, request, pk=None, media_id=None):
-        """
-        DELETE /seller-products/{product_id}/media/{media_id}/
-        """
-        try:
-            product = Product.objects.get(pk=pk)
-        except Product.DoesNotExist:
-            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            media = ProductMedia.objects.get(id=media_id, product=product)
-        except ProductMedia.DoesNotExist:
-            return Response({'error': 'Media not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if media.file_data:
-            try:
-                media.file_data.delete(save=False)
-            except Exception:
-                pass
-
-        media.delete()
-
-        return Response({
-            'success': True,
-            'message': 'Media deleted successfully',
-        }, status=status.HTTP_200_OK)    
-
+        
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
@@ -18894,7 +18433,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                 'success': False,
                 'error': f'Image prediction failed: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
 class PublicProducts(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
 
@@ -18919,7 +18458,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             'shop',
             'shop__customer__customer',
             'customer',
-            'customer__customer',  # To get User from Customer
             'category',
             'category_admin'
         ).prefetch_related(
@@ -18933,8 +18471,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             )
         ).distinct()
 
-        # Exclude user's own products (both shop and personal listings)
         if user_id:
+            # Exclude user's own products and shops
             queryset = queryset.exclude(
                 Q(customer__customer__id=user_id) | 
                 Q(shop__customer__customer__id=user_id)
@@ -18943,8 +18481,9 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         # Filter to products that have at least one active variant
         queryset = queryset.filter(active_variant_count__gt=0)
         
-        # Show all products regardless of stock status
-        # We'll handle stock status in the serialized data
+        # CRITICAL: Only show products that have total stock > 0
+        # This filters out products where all variants have quantity = 0
+        queryset = queryset.filter(total_variant_stock__gt=0)
         
         print(f"PublicProducts: Returning {queryset.count()} products for user {user_id}")
         
@@ -18952,8 +18491,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
     def get_detail_queryset(self):
         """Detail view with all variants for single product page"""
-        user_id = self.request.headers.get('X-User-Id')
-        
         return Product.objects.filter(
             upload_status='published',
             is_removed=False
@@ -18966,7 +18503,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             'shop',
             'shop__customer__customer',
             'customer',
-            'customer__customer',
             'category',
             'category_admin'
         ).prefetch_related(
@@ -19028,39 +18564,13 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 variant_ordered[str(item['variant_id'])] = item['total']
         
         return variant_ordered
-
-    def _check_if_favorite(self, product_id, user_id):
-        """Check if a product is in user's favorites"""
-        if not user_id:
-            return False
-        
-        try:
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
-            
-            # Get the customer instance for this user
-            customer = Customer.objects.filter(customer__id=user_id).first()
-            if not customer:
-                return False
-            
-            # Check if this product is in favorites
-            return Favorites.objects.filter(
-                product_id=product_id,
-                customer=customer
-            ).exists()
-        except Exception as e:
-            print(f"Error checking favorite: {e}")
-            return False
     
     def list(self, request, *args, **kwargs):
-        """Return list of products with all necessary info for display"""
+        """Return list of products with only basic info and price range"""
         queryset = self.get_queryset()
         
         # Debug logging
         print(f"PublicProducts.list: Found {queryset.count()} products")
-        
-        # Get user_id for favorite checking
-        user_id = request.headers.get('X-User-Id')
         
         # Get ordered quantities for all products in the queryset
         product_ids = [str(p.id) for p in queryset]
@@ -19073,62 +18583,34 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         for item in data:
             product_id = item.get('id')
             
-            # Check if product is in user's favorites
-            item['is_favorite'] = self._check_if_favorite(product_id, user_id)
+            # Set display price
+            if item.get('min_variant_price') and item.get('max_variant_price'):
+                if item['min_variant_price'] == item['max_variant_price']:
+                    item['display_price'] = f"₱{item['min_variant_price']}"
+                else:
+                    item['display_price'] = f"₱{item['min_variant_price']} - ₱{item['max_variant_price']}"
+            elif item.get('min_variant_price'):
+                item['display_price'] = f"₱{item['min_variant_price']}"
+            else:
+                item['display_price'] = "Price not available"
             
-            # Use price_display from serializer (already correctly formatted)
-            item['display_price'] = item.get('price_display', 'Price unavailable')
-            
-            # Get total stock from the serializer field (uses model's total_stock property)
-            total_stock = item.get('total_stock', 0) or 0
-            
-            # Get ordered quantity for this product
+            # Calculate available stock (total stock - ordered quantity)
+            total_stock = item.get('total_variant_stock', 0) or 0
             ordered_quantity = ordered_quantities.get(product_id, 0)
-            
-            # Calculate available stock
             available_stock = max(0, total_stock - ordered_quantity)
             
-            # Set stock fields
-            item['total_stock'] = total_stock  # This is the sum of all variant quantities from model property
+            # Add total available stock from variants
+            item['total_stock'] = total_stock
             item['available_stock'] = available_stock
             item['ordered_quantity'] = ordered_quantity
             
-            # Count variants with stock > 0 (from annotation)
+            # Add availability status based on available stock, not total stock
             in_stock_variant_count = item.get('in_stock_variant_count', 0)
-            
-            # Determine if product has any available stock
             item['has_stock'] = available_stock > 0
             item['in_stock_variant_count'] = in_stock_variant_count
             
-            # Add listing type (shop or personal)
-            if item.get('shop'):
-                item['listing_type'] = 'shop'
-                item['seller_id'] = str(item['shop']['id'])
-                item['seller_name'] = item['shop']['name']
-                item['seller_avatar'] = self._convert_to_public_url(item['shop'].get('shop_picture'))
-            elif item.get('customer'):
-                item['listing_type'] = 'personal'
-                # Get customer user info
-                if 'customer' in item and item['customer']:
-                    customer_data = item['customer']
-                    if isinstance(customer_data, dict):
-                        item['seller_id'] = customer_data.get('customer_id')
-                        item['seller_name'] = f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}".strip()
-                        if not item['seller_name']:
-                            item['seller_name'] = customer_data.get('username', 'Unknown Seller')
-                        item['seller_avatar'] = None
-                    else:
-                        item['seller_id'] = str(item['customer'])
-                        item['seller_name'] = 'Unknown Seller'
-                        item['seller_avatar'] = None
-            else:
-                item['listing_type'] = 'unknown'
-                item['seller_id'] = None
-                item['seller_name'] = 'Unknown Seller'
-                item['seller_avatar'] = None
-            
-            # Add status message based on available stock
-            if available_stock > 0:
+            # Add status message
+            if item['has_stock']:
                 item['availability_status'] = 'in_stock'
                 item['availability_message'] = f"{available_stock} items available"
             elif total_stock > 0 and ordered_quantity >= total_stock:
@@ -19138,64 +18620,21 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 item['availability_status'] = 'out_of_stock'
                 item['availability_message'] = 'Out of stock'
             
-            # Get primary image URL
-            if item.get('primary_image') and item['primary_image'].get('url'):
-                item['primary_image_url'] = self._convert_to_public_url(item['primary_image']['url'])
-            elif item.get('media_files') and len(item['media_files']) > 0:
-                # Use first media file as primary
-                first_media = item['media_files'][0]
-                if first_media.get('file_data'):
-                    item['primary_image_url'] = self._convert_to_public_url(first_media['file_data'])
-                elif first_media.get('file_url'):
-                    item['primary_image_url'] = self._convert_to_public_url(first_media['file_url'])
-                else:
-                    item['primary_image_url'] = None
-            else:
-                item['primary_image_url'] = None
-            
             # Remove variant details from list view to keep it light
             item.pop('variants', None)
         
         return Response(data)
-    
+
     def retrieve(self, request, pk=None):
-        """Return a single product with all variant details including ownership info"""
+        """Return a single product with all variant details"""
         try:
             product = self.get_detail_queryset().get(pk=pk)
         except Product.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Get user_id for favorite checking
-        user_id = request.headers.get('X-User-Id')
-        
         # Get the serializer data with full context
         serializer = ProductSerializer(product, context={'request': request})
         data = serializer.data
-        
-        # Check if product is in user's favorites
-        data['is_favorite'] = self._check_if_favorite(pk, user_id)
-        
-        # Add listing type
-        if data.get('shop'):
-            data['listing_type'] = 'shop'
-            data['seller_id'] = str(data['shop']['id'])
-            data['seller_name'] = data['shop']['name']
-        elif data.get('customer'):
-            data['listing_type'] = 'personal'
-            # Get customer user info
-            customer_data = data['customer']
-            if isinstance(customer_data, dict):
-                data['seller_id'] = customer_data.get('customer_id')
-                data['seller_name'] = f"{customer_data.get('first_name', '')} {customer_data.get('last_name', '')}".strip()
-                if not data['seller_name']:
-                    data['seller_name'] = customer_data.get('username', 'Unknown Seller')
-            else:
-                data['seller_id'] = str(data['customer'])
-                data['seller_name'] = 'Unknown Seller'
-        else:
-            data['listing_type'] = 'unknown'
-            data['seller_id'] = None
-            data['seller_name'] = 'Unknown Seller'
         
         # Process variants
         if 'variants' in data and data['variants']:
@@ -19221,19 +18660,10 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 ordered_qty = ordered_quantities.get(variant_id, 0)
                 available_qty = max(0, total_qty - ordered_qty)
                 
-                # Ownership fields - include original_price, purchase_date, proof_image
                 variant['total_quantity'] = total_qty
                 variant['ordered_quantity'] = ordered_qty
                 variant['available_quantity'] = available_qty
                 variant['in_stock'] = available_qty > 0
-                
-                # Ownership information
-                variant['original_price'] = variant.get('original_price')
-                variant['purchase_date'] = variant.get('purchase_date')
-                
-                # Convert proof_image URL if exists
-                if variant.get('proof_image'):
-                    variant['proof_image'] = self._convert_to_public_url(variant['proof_image'])
                 
                 if available_qty > 0:
                     in_stock_variants.append(variant)
@@ -19247,12 +18677,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                     variant['out_of_stock'] = False
                     variant['stock_status'] = 'in_stock'
                     variant['stock_quantity'] = available_qty
-                
-                # Convert image URLs
-                if variant.get('image'):
-                    variant['image'] = self._convert_to_public_url(variant['image'])
-                if variant.get('image_url'):
-                    variant['image_url'] = self._convert_to_public_url(variant['image_url'])
             
             data['in_stock_variant_count'] = len(in_stock_variants)
             data['has_stock'] = len(in_stock_variants) > 0
@@ -19285,35 +18709,26 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         
         # Convert media URLs to public format
         if data.get('primary_image'):
-            data['primary_image']['url'] = self._convert_to_public_url(data['primary_image']['url'])
+            data['primary_image']['url'] = convert_s3_to_public_url(data['primary_image']['url'])
         
         if data.get('media_files'):
             for media in data['media_files']:
                 if media.get('file_data'):
-                    media['file_data'] = self._convert_to_public_url(media['file_data'])
-                if media.get('file_url'):
-                    media['file_url'] = self._convert_to_public_url(media['file_url'])
+                    media['file_data'] = convert_s3_to_public_url(media['file_data'])
         
-        return Response(data)
+        # Convert variant image URLs
+        if data.get('variants'):
+            for variant in data['variants']:
+                if variant.get('image'):
+                    variant['image'] = convert_s3_to_public_url(variant['image'])
+                if variant.get('image_url'):
+                    variant['image_url'] = convert_s3_to_public_url(variant['image_url'])
 
-    def _convert_to_public_url(self, url):
-        """Helper function to convert URLs to public format"""
-        if not url:
-            return None
-        # If it's already a full URL, return as is
-        if isinstance(url, str) and (url.startswith('http://') or url.startswith('https://')):
-            return url
-        # Otherwise, assume it's a relative path and prepend your media URL
-        from django.conf import settings
-        media_url = getattr(settings, 'MEDIA_URL', '/media/')
-        base_url = getattr(settings, 'BASE_URL', '')
-        if base_url:
-            return f"{base_url}{media_url}{url.lstrip('/')}"
-        return f"{media_url}{url.lstrip('/')}"
+        return Response(data)
 
     @action(detail=False, methods=['get'])
     def get_variant_for_options(self, request):
-        """Get variant details for specific selected options including ownership info"""
+        """Get variant details for specific selected options"""
         product_id = request.query_params.get('product_id')
         option_ids = request.query_params.getlist('option_ids[]') or []
         
@@ -19347,9 +18762,11 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             total_qty = matching_variant.quantity or 0
             available_qty = max(0, total_qty - ordered_qty)
             
-            # Build response with variant details including ownership fields
-            image_url = self._convert_to_public_url(matching_variant.image.url) if matching_variant.image else None
-            proof_image_url = self._convert_to_public_url(matching_variant.proof_image.url) if matching_variant.proof_image else None
+            # Build response with variant details
+            image_url = None
+            if matching_variant.image:
+                image_url = request.build_absolute_uri(matching_variant.image.url)
+                image_url = convert_s3_to_public_url(image_url)
             
             response_data = {
                 'id': str(matching_variant.id),
@@ -19364,12 +18781,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'in_stock': available_qty > 0,
                 'stock_status': 'in_stock' if available_qty > 0 else 'out_of_stock',
                 'image': image_url,
-                'proof_image': proof_image_url,  # Added proof image URL
-                'original_price': float(matching_variant.original_price) if matching_variant.original_price else None,  # Added original price
-                'purchase_date': matching_variant.purchase_date.isoformat() if matching_variant.purchase_date else None,  # Added purchase date
-                'usage_period': matching_variant.usage_period,
-                'usage_unit': matching_variant.usage_unit,
-                'depreciation_rate': matching_variant.depreciation_rate,
                 'weight': float(matching_variant.weight) if matching_variant.weight else None,
                 'weight_unit': matching_variant.weight_unit,
                 'swap_type': matching_variant.swap_type,
@@ -19379,10 +18790,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'is_refundable': matching_variant.is_refundable,
                 'refund_days': matching_variant.refund_days,
                 'allow_swap': matching_variant.allow_swap,
-                'length': float(matching_variant.length) if matching_variant.length else None,
-                'width': float(matching_variant.width) if matching_variant.width else None,
-                'height': float(matching_variant.height) if matching_variant.height else None,
-                'dimension_unit': matching_variant.dimension_unit,
             }
             return Response(response_data)
         
@@ -19436,7 +18843,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['get'])
     def variants(self, request, pk=None):
-        """Get all active variants for a product including ownership info"""
+        """Get all active variants for a product"""
         try:
             product = Product.objects.get(id=pk, is_removed=False, upload_status='published')
         except Product.DoesNotExist:
@@ -19457,8 +18864,10 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             ordered_qty = ordered_quantities.get(variant_id, 0)
             available_qty = max(0, total_qty - ordered_qty)
             
-            image_url = self._convert_to_public_url(variant.image.url) if variant.image else None
-            proof_image_url = self._convert_to_public_url(variant.proof_image.url) if variant.proof_image else None
+            image_url = None
+            if variant.image:
+                image_url = request.build_absolute_uri(variant.image.url)
+                image_url = convert_s3_to_public_url(image_url)
             
             variant_data.append({
                 'id': variant_id,
@@ -19473,12 +18882,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'in_stock': available_qty > 0,
                 'stock_status': 'in_stock' if available_qty > 0 else 'out_of_stock',
                 'image': image_url,
-                'proof_image': proof_image_url,  # Added proof image URL
-                'original_price': float(variant.original_price) if variant.original_price else None,  # Added original price
-                'purchase_date': variant.purchase_date.isoformat() if variant.purchase_date else None,  # Added purchase date
-                'usage_period': variant.usage_period,
-                'usage_unit': variant.usage_unit,
-                'depreciation_rate': variant.depreciation_rate,
                 'option_ids': variant.option_ids,
                 'option_map': variant.option_map,
                 'weight': float(variant.weight) if variant.weight else None,
@@ -19486,10 +18889,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'swap_type': variant.swap_type,
                 'minimum_additional_payment': float(variant.minimum_additional_payment) if variant.minimum_additional_payment else None,
                 'maximum_additional_payment': float(variant.maximum_additional_payment) if variant.maximum_additional_payment else None,
-                'length': float(variant.length) if variant.length else None,
-                'width': float(variant.width) if variant.width else None,
-                'height': float(variant.height) if variant.height else None,
-                'dimension_unit': variant.dimension_unit,
             })
         
         return Response(variant_data)
@@ -19538,8 +18937,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'total_quantity': variant.quantity,
                 'ordered_quantity': variant_ordered_qty,
                 'available_quantity': variant_available,
-                'in_stock': variant_available > 0,
-                'original_price': float(variant.original_price) if variant.original_price else None,
+                'in_stock': variant_available > 0
             })
         
         return Response({
@@ -19556,6 +18954,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             'max_price': float(product.max_price) if product.max_price else None,
             'variants': variants_data
         })
+
 
     @action(detail=True, methods=['get'], url_path='seller')
     def get_seller_info(self, request, pk=None):
@@ -19577,7 +18976,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         except Product.DoesNotExist:
             return Response({"error": "Product not found"}, status=404)
         except Exception as e:
-            print(f"Error fetching product: {str(e)}")
+            print(f"Error fetching product: {str(e)}")  # Use print for debugging
             return Response({"error": "Database error"}, status=500)
 
         try:
@@ -19590,7 +18989,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                     'name': shop.name,
                     'address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}" if shop.street else None,
                     'avg_rating': float(shop.avg_rating) if shop.avg_rating else None,
-                    'shop_picture': self._convert_to_public_url(shop.shop_picture.url) if shop.shop_picture and hasattr(shop.shop_picture, 'url') else None,
+                    'shop_picture': convert_s3_to_public_url(shop.shop_picture.url) if shop.shop_picture and hasattr(shop.shop_picture, 'url') else None,
                     'description': shop.description,
                     'verified': shop.verified,
                     'total_sales': str(shop.total_sales),
@@ -19618,7 +19017,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                         address_parts.append(user.province)
                 address = ', '.join(address_parts) if address_parts else None
                 
-                # Customers don't have profile pictures in the current model
+                # Safely get profile picture URL (Customer model doesn't have profile_picture, so set to None)
                 profile_picture_url = None
                 
                 seller_data = {
@@ -19639,10 +19038,23 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             return Response({"error": "No seller information found"}, status=404)
             
         except Exception as e:
-            print(f"Error in get_seller_info: {str(e)}")
+            print(f"Error in get_seller_info: {str(e)}")  # Use print for debugging
             import traceback
             traceback.print_exc()
             return Response({"error": str(e)}, status=500)
+
+    def convert_s3_to_public_url(url):
+        """Helper function to convert URLs to public format"""
+        if not url:
+            return None
+        # If it's already a full URL, return as is
+        if url.startswith('http://') or url.startswith('https://'):
+            return url
+        # Otherwise, assume it's a relative path and prepend your media URL
+        media_url = getattr(settings, 'MEDIA_URL', '/media/')
+        return f"{media_url}{url.lstrip('/')}"
+    
+
 
         
 class AddToCartView(APIView):
@@ -19799,114 +19211,12 @@ class AddToCartView(APIView):
                 "details": str(e)
             }, status=500)
 
+
 class CartListView(APIView):
-    def get_item_total(self, cart_item):
-        """Calculate total price for a cart item - ONLY from variant"""
-        if not cart_item.variant:
-            print(f"Error: Cart item {cart_item.id} has no variant")
-            return 0
-        
-        if cart_item.variant.price is None:
-            print(f"Error: Variant {cart_item.variant.id} has no price")
-            return 0
-        
-        try:
-            price = cart_item.variant.price
-            quantity = cart_item.quantity
-            return float(price) * quantity
-        except (TypeError, ValueError) as e:
-            print(f"Error calculating total for cart item {cart_item.id}: {e}")
-            return 0
-
-    def get_available_vouchers(self, cart_items, user, applied_voucher_code=None):
-        """
-        Get all available vouchers that can be applied to the cart
-        """
-        now = timezone.now().date()
-        cart_total = sum(self.get_item_total(item) for item in cart_items)
-        
-        vouchers_qs = Voucher.objects.filter(
-            is_active=True,
-            start_date__lte=now,
-            end_date__gte=now
-        )
-        
-        available_vouchers = []
-        
-        for voucher in vouchers_qs:
-            if applied_voucher_code and voucher.code == applied_voucher_code:
-                continue
-                
-            if voucher.minimum_spend and cart_total < voucher.minimum_spend:
-                continue
-            
-            if voucher.maximum_usage > 0:
-                usage_count = Checkout.objects.filter(voucher=voucher).count()
-                if usage_count >= voucher.maximum_usage:
-                    continue
-            
-            discount_amount = 0
-            if voucher.discount_type == 'percentage':
-                discount_amount = (cart_total * float(voucher.value)) / 100
-            elif voucher.discount_type == 'fixed':
-                discount_amount = min(float(voucher.value), cart_total)
-            
-            available_vouchers.append({
-                'id': str(voucher.id),
-                'name': voucher.name,
-                'code': voucher.code,
-                'discount_type': voucher.discount_type,
-                'value': float(voucher.value),
-                'discount_amount': float(discount_amount),
-                'minimum_spend': float(voucher.minimum_spend) if voucher.minimum_spend else 0,
-                'shop_id': str(voucher.shop.id) if voucher.shop else None,
-                'shop_name': voucher.shop.name if voucher.shop else 'Global',
-                'voucher_type': voucher.voucher_type
-            })
-        
-        available_vouchers.sort(key=lambda x: x['discount_amount'], reverse=True)
-        return available_vouchers
-
-    def calculate_cart_totals(self, cart_items, applied_voucher=None):
-        """
-        Calculate cart totals including discounts
-        """
-        subtotal = sum(self.get_item_total(item) for item in cart_items)
-        
-        discount = 0
-        applied_voucher_data = None
-        
-        if applied_voucher:
-            if applied_voucher.discount_type == 'percentage':
-                discount = (subtotal * float(applied_voucher.value)) / 100
-            elif applied_voucher.discount_type == 'fixed':
-                discount = min(float(applied_voucher.value), subtotal)
-            
-            applied_voucher_data = {
-                'id': str(applied_voucher.id),
-                'name': applied_voucher.name,
-                'code': applied_voucher.code,
-                'discount_type': applied_voucher.discount_type,
-                'value': float(applied_voucher.value),
-                'discount_amount': float(discount)
-            }
-        
-        total = subtotal - discount
-        
-        return {
-            'subtotal': float(subtotal),
-            'discount': float(discount),
-            'total': float(total),
-            'applied_voucher': applied_voucher_data
-        }
-
     def get(self, request):
         user_id = request.GET.get("user_id")
-        voucher_code = request.GET.get("voucher_code")
-        
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
-            
         try:
             user = User.objects.get(pk=user_id)
         except User.DoesNotExist:
@@ -19919,82 +19229,19 @@ class CartListView(APIView):
                 .order_by('-added_at')
 
             serializer = CartItemSerializer(cart_items, many=True, context={"request": request})
-            
-            applied_voucher = None
-            voucher_error = None
-            
-            if voucher_code:
-                try:
-                    now = timezone.now().date()
-                    voucher = Voucher.objects.get(
-                        code=voucher_code,
-                        is_active=True,
-                        start_date__lte=now,
-                        end_date__gte=now
-                    )
-                    
-                    cart_total = sum(self.get_item_total(item) for item in cart_items)
-                    
-                    if voucher.minimum_spend and cart_total < float(voucher.minimum_spend):
-                        voucher_error = f"Minimum spend of ₱{voucher.minimum_spend} required"
-                    elif voucher.maximum_usage > 0:
-                        usage_count = Checkout.objects.filter(voucher=voucher).count()
-                        if usage_count >= voucher.maximum_usage:
-                            voucher_error = "Voucher usage limit reached"
-                    else:
-                        applied_voucher = voucher
-                        
-                except Voucher.DoesNotExist:
-                    voucher_error = "Invalid or expired voucher code"
-            
-            totals = self.calculate_cart_totals(cart_items, applied_voucher)
-            
-            available_vouchers = self.get_available_vouchers(
-                cart_items, 
-                user, 
-                applied_voucher.code if applied_voucher else None
-            )
-            
-            response_data = {
-                "success": True,
-                "cart_items": serializer.data,
-                "totals": totals,
-                "available_vouchers": available_vouchers
-            }
-            
-            if voucher_error:
-                response_data["voucher_error"] = voucher_error
-                response_data["totals"] = self.calculate_cart_totals(cart_items, None)
-            
-            return Response(response_data)
-            
+            return Response({"success": True, "cart_items": serializer.data})
         except Exception as e:
-            import traceback
-            print("Error in CartListView:", str(e))
-            print(traceback.format_exc())
-            return Response({
-                "success": False, 
-                "error": "Failed to fetch cart items", 
-                "details": str(e)
-            }, status=500)
+            return Response({"success": False, "error": "Failed to fetch cart items", "details": str(e)}, status=500)
 
     def put(self, request, item_id):
-        """
-        Update cart item quantity
-        URL: /api/view-cart/update/<item_id>/
-        Expected data: {
-            "user_id": "uuid",
-            "quantity": 2
-        }
-        """
         user_id = request.data.get("user_id")
-        quantity = request.data.get("quantity")
+        quantity_raw = request.data.get("quantity")
 
         if not user_id:
             return Response({"error": "user_id is required"}, status=400)
 
         try:
-            quantity = int(quantity)
+            quantity = int(quantity_raw)
         except (TypeError, ValueError):
             return Response({"error": "Quantity must be an integer"}, status=400)
 
@@ -20002,7 +19249,6 @@ class CartListView(APIView):
             return Response({"error": "Quantity must be at least 1"}, status=400)
 
         try:
-            # Get the cart item with related product and variant
             cart_item = CartItem.objects.select_related("product", "variant").get(
                 id=item_id,
                 user_id=user_id,
@@ -20011,66 +19257,41 @@ class CartListView(APIView):
         except CartItem.DoesNotExist:
             return Response({"error": "Cart item not found"}, status=404)
 
-        # Check stock availability
         try:
             if cart_item.variant:
-                # Check variant stock
                 if not cart_item.variant.is_active:
                     return Response({
                         "error": "This variant is no longer available",
                         "can_remove": True
                     }, status=400)
-                
-                if quantity > cart_item.variant.quantity:
-                    return Response({
-                        "error": f"Only {cart_item.variant.quantity} items available in stock",
-                        "available_quantity": cart_item.variant.quantity,
-                        "current_quantity": cart_item.quantity
-                    }, status=400)
-                    
+                available_quantity = cart_item.variant.quantity
             elif cart_item.product:
-                # Check product stock (for products without variants)
                 available_quantity = cart_item.product.total_stock
-                if quantity > available_quantity:
-                    return Response({
-                        "error": f"Only {available_quantity} items available in stock",
-                        "available_quantity": available_quantity,
-                        "current_quantity": cart_item.quantity
-                    }, status=400)
             else:
                 return Response({"error": "Cart item has no product or variant"}, status=400)
 
-            # Update quantity
+            if quantity > available_quantity:
+                return Response({
+                    "error": f"Only {available_quantity} items available in stock",
+                    "available_quantity": available_quantity,
+                    "current_quantity": cart_item.quantity
+                }, status=400)
+
             cart_item.quantity = quantity
             cart_item.save()
 
-            # Recalculate totals for all cart items
-            cart_items = CartItem.objects.filter(user_id=user_id, is_ordered=False)
-            totals = self.calculate_cart_totals(cart_items)
-
-            # Get updated serializer for this item
             serializer = CartItemSerializer(cart_item, context={"request": request})
-            
             return Response({
                 "success": True,
                 "message": "Quantity updated successfully",
-                "cart_item": serializer.data,
-                "totals": totals
+                "cart_item": serializer.data
             })
 
         except Exception as e:
-            print(f"Error updating cart item {item_id}: {str(e)}")
-            return Response({
-                "success": False, 
-                "error": "Failed to update quantity", 
-                "details": str(e)
-            }, status=500)
+            return Response({"success": False, "error": "Failed to update quantity", "details": str(e)}, status=500)
 
     def delete(self, request, item_id):
-        """
-        Remove item from cart
-        URL: /api/view-cart/delete/<item_id>/?user_id=uuid
-        """
+        # Use GET params instead of request.data — more reliable for DELETE requests
         user_id = request.GET.get("user_id")
 
         if not user_id:
@@ -20091,28 +19312,19 @@ class CartListView(APIView):
             }
 
             cart_item.delete()
-            
-            # Recalculate totals for remaining items
-            cart_items = CartItem.objects.filter(user_id=user_id, is_ordered=False)
-            totals = self.calculate_cart_totals(cart_items)
 
             return Response({
                 "success": True,
                 "message": "Item removed from cart",
-                "removed_item": item_info,
-                "totals": totals
+                "removed_item": item_info
             })
 
         except CartItem.DoesNotExist:
             return Response({"error": "Cart item not found"}, status=404)
         except Exception as e:
-            print(f"Error removing cart item {item_id}: {str(e)}")
-            return Response({
-                "success": False, 
-                "error": "Failed to remove item", 
-                "details": str(e)
-            }, status=500)
-            
+            return Response({"success": False, "error": "Failed to remove item", "details": str(e)}, status=500)
+
+# Add this separate view for bulk operations if needed
 class CartBulkUpdateView(APIView):
     """
     Handle bulk updates to cart (update multiple quantities at once)
@@ -22477,19 +21689,16 @@ class CheckoutOrder(viewsets.ViewSet):
             vouchers = Voucher.objects.filter(
                 shop_id__in=shop_ids,
                 is_active=True,
-                start_date__lte=current_date,
-                end_date__gte=current_date,
+                valid_until__gte=current_date,
                 minimum_spend__lte=current_subtotal
             ).select_related('shop').only(
                 'id', 'name', 'code', 'discount_type', 'value', 
-                'minimum_spend', 'shop__name', 'shop__id', 'voucher_type'
+                'minimum_spend', 'shop__name'
             ).order_by('-value')[:10]
             
             voucher_list = []
             for voucher in vouchers:
                 potential_savings = self._calculate_discount(voucher, current_subtotal)
-                
-                customer_tier = "all"
                 
                 voucher_data = {
                     "id": str(voucher.id),
@@ -22499,12 +21708,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
                     "shop_name": voucher.shop.name if voucher.shop else "Unknown Shop",
-                    "shop_id": str(voucher.shop.id) if voucher.shop else None,  # Add shop_id
                     "description": self._get_voucher_description(voucher),
                     "potential_savings": float(potential_savings),
-                    "customer_tier": customer_tier,
-                    "voucher_type": voucher.voucher_type,
-                    "is_general": False
                 }
                 voucher_list.append(voucher_data)
             
@@ -22518,7 +21723,6 @@ class CheckoutOrder(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Error fetching vouchers: {str(e)}")
             return []
-    
     
     def _get_voucher_description(self, voucher):
         """Generate a user-friendly description for the voucher"""
@@ -22623,8 +21827,7 @@ class CheckoutOrder(viewsets.ViewSet):
         
         try:
             user_cart_shop_ids = CartItem.objects.filter(
-                user_id=user_id,
-                is_ordered=False
+                user_id=user_id
             ).values_list('product__shop_id', flat=True).distinct()
             
             user_purchase_history = self._get_user_purchase_history(user_id)
@@ -22637,13 +21840,10 @@ class CheckoutOrder(viewsets.ViewSet):
             )
             
             current_date = timezone.now().date()
-            
-            # Get general vouchers (no shop)
             general_vouchers = Voucher.objects.filter(
                 shop__isnull=True,
                 is_active=True,
-                start_date__lte=current_date,
-                end_date__gte=current_date,
+                valid_until__gte=current_date,
                 minimum_spend__lte=amount
             ).order_by('-value')[:5]
             
@@ -22658,11 +21858,9 @@ class CheckoutOrder(viewsets.ViewSet):
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
                     "shop_name": "All Shops",
-                    "shop_id": None,  # No shop for general vouchers
                     "description": self._get_voucher_description(voucher),
                     "potential_savings": float(potential_savings),
-                    "is_general": True,
-                    "customer_tier": "all"
+                    "is_general": True
                 })
             
             if general_list:
@@ -22699,7 +21897,7 @@ class CheckoutOrder(viewsets.ViewSet):
         voucher_code = request.data.get("voucher_code", "").strip().upper()
         user_id = request.data.get("user_id")
         subtotal = float(request.data.get("subtotal", 0))
-        shop_id = request.data.get("shop_id")  # This can be None for general vouchers
+        shop_id = request.data.get("shop_id")
         
         if not voucher_code:
             return Response({"valid": False, "error": "Voucher code is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -22710,43 +21908,23 @@ class CheckoutOrder(viewsets.ViewSet):
         try:
             current_date = timezone.now().date()
             
-            # Start with base query
             voucher_query = Voucher.objects.filter(
                 code=voucher_code,
                 is_active=True,
-                start_date__lte=current_date,
-                end_date__gte=current_date,
+                valid_until__gte=current_date,
                 minimum_spend__lte=subtotal
             )
             
-            # Filter by shop_id if provided
             if shop_id:
-                # For shop-specific voucher
                 voucher_query = voucher_query.filter(shop_id=shop_id)
-            else:
-                # For general vouchers (no shop) - only if no shop_id is provided
-                voucher_query = voucher_query.filter(shop__isnull=True)
             
             voucher = voucher_query.first()
             
             if not voucher:
-                # If not found with shop filter, try general vouchers
-                if not shop_id:
-                    voucher_query = Voucher.objects.filter(
-                        code=voucher_code,
-                        is_active=True,
-                        start_date__lte=current_date,
-                        end_date__gte=current_date,
-                        minimum_spend__lte=subtotal,
-                        shop__isnull=True
-                    )
-                    voucher = voucher_query.first()
-                
-                if not voucher:
-                    return Response({
-                        "valid": False, 
-                        "error": "Invalid voucher code or voucher not applicable"
-                    }, status=status.HTTP_404_NOT_FOUND)
+                return Response({
+                    "valid": False, 
+                    "error": "Invalid voucher code or voucher not applicable"
+                }, status=status.HTTP_404_NOT_FOUND)
             
             discount_amount = self._calculate_discount(voucher, subtotal)
             
@@ -22759,10 +21937,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     "discount_type": voucher.discount_type,
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
-                    "shop_name": voucher.shop.name if voucher.shop else "All Shops",
-                    "discount_amount": float(discount_amount),
-                    "customer_tier": "all",
-                    "is_general": voucher.shop is None
+                    "shop_name": voucher.shop.name if voucher.shop else None,
+                    "discount_amount": discount_amount
                 }
             })
             
@@ -22775,27 +21951,20 @@ class CheckoutOrder(viewsets.ViewSet):
     
     def _calculate_discount(self, voucher, subtotal):
         """Calculate discount amount based on voucher type"""
-        from decimal import Decimal, ROUND_HALF_UP
-        
-        # Convert to Decimal if it's a float
         if isinstance(subtotal, float):
             subtotal = Decimal(str(subtotal))
         
-        voucher_value = Decimal(str(voucher.value))
-        
         if voucher.discount_type == 'percentage':
-            discount = subtotal * (voucher_value / Decimal('100'))
-            # Round to 2 decimal places
-            return discount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            return subtotal * (Decimal(str(voucher.value)) / Decimal('100'))
         elif voucher.discount_type == 'fixed':
-            return min(voucher_value, subtotal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            voucher_value = Decimal(str(voucher.value))
+            return min(voucher_value, subtotal)
         return Decimal('0')
     
     @action(detail=False, methods=['POST'], url_path='create_order')
     def create_order(self, request):
         """
         Create an order from selected cart items.
-        Items are NOT marked as ordered and stock is NOT decreased until seller confirms.
         Expected data: {
             "user_id": "user_uuid",
             "selected_ids": ["cart_item_id1", "cart_item_id2"],
@@ -22858,18 +22027,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Check if any items are already ordered
-            already_ordered = cart_items.filter(is_ordered=True).exists()
-            if already_ordered:
-                return Response({
-                    "error": "Some items have already been ordered",
-                    "details": "Please refresh your cart"
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
             # Validate variants and calculate subtotal
             subtotal = Decimal('0')
-            stock_validation_errors = []
-            
             for cart_item in cart_items:
                 # Check if product has variants and variant is selected
                 has_variants = Variants.objects.filter(
@@ -22893,37 +22052,30 @@ class CheckoutOrder(viewsets.ViewSet):
                 line_total = price * cart_item.quantity
                 subtotal += line_total
                 
-                # Check stock availability (but don't decrement yet)
+                # Check stock
                 if cart_item.variant:
                     if cart_item.quantity > cart_item.variant.quantity:
-                        stock_validation_errors.append(
-                            f"Insufficient stock for {cart_item.variant.title}. Available: {cart_item.variant.quantity}"
-                        )
+                        return Response({
+                            "error": f"Insufficient stock for {cart_item.variant.title}",
+                            "cart_item_id": str(cart_item.id)
+                        }, status=status.HTTP_400_BAD_REQUEST)
                 elif cart_item.product:
                     if cart_item.quantity > cart_item.product.quantity:
-                        stock_validation_errors.append(
-                            f"Insufficient stock for {cart_item.product.name}. Available: {cart_item.product.quantity}"
-                        )
-            
-            # Return stock errors if any
-            if stock_validation_errors:
-                return Response({
-                    "error": "Some items are out of stock",
-                    "details": stock_validation_errors
-                }, status=status.HTTP_400_BAD_REQUEST)
+                        return Response({
+                            "error": f"Insufficient stock for {cart_item.product.name}",
+                            "cart_item_id": str(cart_item.id)
+                        }, status=status.HTTP_400_BAD_REQUEST)
             
             # Apply voucher discount if provided
             discount_amount = Decimal('0')
             voucher = None
-            current_date = timezone.now().date()
             
             if voucher_id:
                 try:
                     voucher = Voucher.objects.get(
                         id=voucher_id,
                         is_active=True,
-                        start_date__lte=current_date,
-                        end_date__gte=current_date,
+                        valid_until__gte=timezone.now().date(),
                         minimum_spend__lte=subtotal
                     )
                     discount_amount = self._calculate_discount(voucher, subtotal)
@@ -22934,14 +22086,14 @@ class CheckoutOrder(viewsets.ViewSet):
                     )
             
             # Calculate final amount
-            delivery_fee = Decimal('0') if shipping_method.lower() == "pickup" else Decimal('50.00')
+            delivery_fee = Decimal('0') if shipping_method == "pickup" else Decimal('50.00')
             total_amount = subtotal + delivery_fee - discount_amount
             
             # Create Order
             order = Order.objects.create(
                 user=user,
                 shipping_address=shipping_address,
-                status='pending',  # Order starts as pending - waiting for seller confirmation
+                status='pending',
                 total_amount=total_amount,
                 payment_method=payment_method,
                 delivery_method=shipping_method,
@@ -22949,9 +22101,8 @@ class CheckoutOrder(viewsets.ViewSet):
             )
             
             cart_item_ids = []
-            checkout_items = []
             
-            # Create Checkout entries - DON'T mark items as ordered or decrease stock
+            # Create Checkout entries and update stock
             for cart_item in cart_items:
                 # Get unit price
                 if cart_item.variant and cart_item.variant.price is not None:
@@ -22961,45 +22112,36 @@ class CheckoutOrder(viewsets.ViewSet):
                 
                 checkout_total = unit_price * cart_item.quantity
                 
-                # Create checkout record
-                checkout_item = Checkout.objects.create(
+                Checkout.objects.create(
                     order=order,
                     cart_item=cart_item,
                     voucher=voucher,
                     quantity=cart_item.quantity,
                     total_amount=checkout_total,
-                    status='pending',  # Checkout status is pending - waiting for seller confirmation
+                    status='pending',
                     remarks=remarks[:500] if remarks else None
                 )
                 
-                # IMPORTANT: Do NOT set is_ordered = True yet
-                # Do NOT decrease stock yet
-                # These will happen when seller confirms the order
+                # Decrement stock
+                if cart_item.variant:
+                    cart_item.variant.quantity -= cart_item.quantity
+                    cart_item.variant.save()
+                elif cart_item.product:
+                    cart_item.product.quantity -= cart_item.quantity
+                    cart_item.product.save()
                 
+                cart_item.is_ordered = True
                 cart_item_ids.append(str(cart_item.id))
-                checkout_items.append({
-                    "id": str(checkout_item.id),
-                    "cart_item_id": str(cart_item.id),
-                    "product_name": cart_item.product.name if cart_item.product else "Unknown",
-                    "quantity": cart_item.quantity,
-                    "total_amount": float(checkout_total),
-                    "status": "pending"
-                })
+                cart_item.save()
             
             return Response({
                 "success": True,
-                "message": "Order created successfully. Waiting for seller confirmation.",
+                "message": "Order created successfully",
                 "order_id": str(order.order),
                 "cart_item_ids": cart_item_ids,
-                "checkout_items": checkout_items,
                 "total_amount": float(total_amount),
-                "subtotal": float(subtotal),
-                "delivery_fee": float(delivery_fee),
                 "discount_applied": float(discount_amount),
-                "voucher_used": voucher.code if voucher else None,
-                "status": "pending",  # Order is pending seller confirmation
-                "payment_method": payment_method,
-                "shipping_method": shipping_method
+                "voucher_used": voucher.code if voucher else None
             })
             
         except Exception as e:
@@ -23314,7 +22456,7 @@ class CheckoutOrder(viewsets.ViewSet):
         try:
             order = get_object_or_404(Order, order=order_id)
 
-            order.status = 'pending'
+            order.status = 'processing'
             order.save(update_fields=['status'])
 
             payment, created = Payment.objects.get_or_create(
@@ -24895,7 +24037,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             "order_id": str(order.order), 
             "riders": riders_data
     })
-
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def get_return_products(self, request):
@@ -28149,55 +27290,51 @@ class RefundViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'])
     def get_my_refunds(self, request):
+        """
+        BUYER VIEW: Get refunds for current user.
+        - Returns refunds requested by the user.
+        """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
+            # Get refunds requested by this user
             refunds = Refund.objects.filter(requested_by=user).order_by('-requested_at')
-
-            # Optional filters
+            
+            # Filter by status if provided
             status_filter = request.query_params.get('status')
             if status_filter:
                 refunds = refunds.filter(status=status_filter)
-
+            
+            # Filter by refund type if provided
             refund_type = request.query_params.get('refund_type')
             if refund_type:
                 refunds = refunds.filter(refund_type=refund_type)
-
-            # Prefetch related items to reduce queries
-            refunds = refunds.prefetch_related(
-                'items__checkout',
-                'medias',
-                'payment_detail',
-                'counter_requests',
-                'return_request',
-                'proofs'
-            )
-
+            
             serializer = RefundSerializer(refunds, many=True, context={'request': request})
             refund_data = serializer.data
-
-            # Add order items and shop information
+            
+            # Add order items and shop information for each refund
             for i, refund in enumerate(refunds):
                 refund_data[i]['order_items'] = self._get_order_items_for_refund(refund, request)
+                
+                # Add shop information for each refund
+                # Get the shop from the order items
                 order_items = refund_data[i]['order_items']
-                if order_items:
-                    refund_data[i]['shop'] = order_items[0].get('shop', {})
-
+                if order_items and len(order_items) > 0:
+                    # All items in an order should be from the same shop, so take the first one
+                    shop_info = order_items[0].get('shop', {})
+                    refund_data[i]['shop'] = shop_info
+            
             return Response(refund_data)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
 
-        except Exception as e:
-            logger.exception("Error in get_my_refunds")
-            return Response({
-                "error": "Internal server error",
-                "detail": str(e)  # Only in development; remove in production
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     @action(detail=False, methods=['post'])
     def create_refund_request(self, request):
         """
@@ -28345,81 +27482,69 @@ class RefundViewSet(viewsets.ViewSet):
         """
         Simple view-based refund creation endpoint
         """
-        def validate_media_file(file):
-            """Raise ValidationError if file is not allowed or exceeds 10MB."""
-            max_size = 10 * 1024 * 1024  # 10 MB
-            allowed_image_types = ['image/jpeg', 'image/png', 'image/gif']
-            allowed_video_types = ['video/mp4', 'video/quicktime']  # .mov = quicktime
-            content_type = file.content_type
-
-            if content_type in allowed_image_types or content_type in allowed_video_types:
-                if file.size > max_size:
-                    raise ValidationError(f"File {file.name} exceeds 10MB limit.")
-            else:
-                raise ValidationError(f"Unsupported file type: {content_type}. Only images (JPEG, PNG, GIF) and videos (MP4) are allowed.")
-
         try:
             # Get user ID from headers
             user_id = request.headers.get('X-User-Id')
             if not user_id:
-                return JsonResponse({'error': 'User ID required'}, status=400)
+                return JsonResponse({
+                    'error': 'User ID required'
+                }, status=400)
             
             try:
                 user = User.objects.get(id=user_id)
             except User.DoesNotExist:
-                return JsonResponse({'error': 'User not found'}, status=404)
+                return JsonResponse({
+                    'error': 'User not found'
+                }, status=404)
             
             # Parse refund data from form data
+            # DRF's MultiPartParser exposes fields in request.data; Django exposes in request.POST
             refund_data_str = request.data.get('refund_data') or request.POST.get('refund_data')
             if not refund_data_str:
-                return JsonResponse({'error': 'Refund data required'}, status=400)
+                return JsonResponse({
+                    'error': 'Refund data required'
+                }, status=400)
             
             try:
                 refund_data = json.loads(refund_data_str)
             except json.JSONDecodeError:
-                return JsonResponse({'error': 'Invalid refund data format'}, status=400)
+                return JsonResponse({
+                    'error': 'Invalid refund data format'
+                }, status=400)
             
             # Validate required fields
-            required_fields = ['order_id', 'reason', 'preferred_refund_method', 'items']
+            required_fields = ['order_id', 'reason', 'preferred_refund_method', 'total_refund_amount']
             for field in required_fields:
                 if not refund_data.get(field):
-                    return JsonResponse({'error': f'{field.replace("_", " ").title()} is required'}, status=400)
+                    return JsonResponse({
+                        'error': f'{field.replace("_", " ").title()} is required'
+                    }, status=400)
             
             # Get order
             try:
                 order = Order.objects.get(order=refund_data['order_id'], user=user)
             except Order.DoesNotExist:
-                return JsonResponse({'error': 'Order not found or does not belong to user'}, status=404)
+                return JsonResponse({
+                    'error': 'Order not found or does not belong to user'
+                }, status=404)
             
-            # Validate items structure
-            items_data = refund_data.get('items', [])
-            if not items_data:
-                return JsonResponse({'error': 'Refund items must be provided'}, status=400)
-            
-            # Check for existing refunds (to avoid duplicates) using the checkout IDs from the items
-            checkout_ids_in_request = [item['checkout_id'] for item in items_data if item.get('checkout_id')]
-            active_statuses = ['pending', 'approved', 'negotiation', 'under_review', 'waiting', 'to_verify']
-            existing_refunds = Refund.objects.filter(
+            # Check if refund already exists
+            existing_refund = Refund.objects.filter(
                 order_id=order,
                 requested_by=user,
-                status__in=active_statuses
-            )
+                status__in=['pending', 'approved', 'negotiation', 'under_review', 'waiting', 'to_verify']
+            ).first()
             
-            already_refunded_checkouts = set()
-            for refund in existing_refunds:
-                refunded_ids = refund.items.values_list('checkout', flat=True)
-                already_refunded_checkouts.update(refunded_ids)
-            
-            already_refunded_selected = [cid for cid in checkout_ids_in_request if cid in already_refunded_checkouts]
-            if already_refunded_selected:
+            if existing_refund:
                 return JsonResponse({
-                    'error': 'Some selected items are already part of an active refund request',
-                    'already_refunded': already_refunded_selected
+                    'error': 'A refund request for this order is already in progress',
+                    'refund_id': str(existing_refund.refund_id),
+                    'request_number': getattr(existing_refund, 'request_number', None)
                 }, status=400)
-
+            
             # Start transaction
             with transaction.atomic():
-                # Map legacy category to current refund_type
+                # Map legacy category to current refund_type, and create Refund with current field names
                 refund_type = 'return' if str(refund_data.get('refund_category', 'return_item')).lower().startswith('return') else 'keep'
                 refund = Refund.objects.create(
                     order_id=order,
@@ -28429,77 +27554,85 @@ class RefundViewSet(viewsets.ViewSet):
                     refund_type=refund_type,
                     customer_note=refund_data.get('customer_note', ''),
                     status='pending',
-                    # total_refund_amount will be recomputed from items
-                    total_refund_amount=None,
-                    refund_fee=Decimal(str(refund_data.get('refund_fee'))) if refund_data.get('refund_fee') is not None else None
+                    total_refund_amount=Decimal(str(refund_data.get('total_refund_amount'))) if refund_data.get('total_refund_amount') is not None else None
                 )
+
+                # Save will auto-generate request_number
                 refund.save()
 
-                # Link selected payment detail
-                selected_payment_id = refund_data.get('selected_payment_id') or refund_data.get('wallet_details', {}).get('saved_payment_id')
-                if selected_payment_id:
-                    try:
-                        payment_detail = UserPaymentDetail.objects.get(payment_id=selected_payment_id, user=user)
-                        refund.payment_detail = payment_detail
-                        refund.save(update_fields=['payment_detail'])
-                    except UserPaymentDetail.DoesNotExist:
-                        pass
-
-                # ========== Upload evidence files with validation ==========
+                wallet_details = refund_data.get('wallet_details')
+                if wallet_details:
+                    RefundWallet.objects.create(
+                        refund_id=refund,
+                        provider=wallet_details.get('provider', ''),
+                        account_name=wallet_details.get('account_name', ''),
+                        account_number=wallet_details.get('account_number', ''),
+                        contact_number=wallet_details.get('contact_number', '')
+                    )
+                
+                bank_details = refund_data.get('bank_details')
+                if bank_details:
+                    RefundBank.objects.create(
+                        refund_id=refund,
+                        bank_name=bank_details.get('bank_name', ''),
+                        account_name=bank_details.get('account_name', ''),
+                        account_number=bank_details.get('account_number', ''),
+                        account_type=bank_details.get('account_type', ''),
+                        branch=bank_details.get('branch', '')
+                    )
+                
+                remittance_details = refund_data.get('remittance_details')
+                if remittance_details:
+                    RefundRemittance.objects.create(
+                        refund_id=refund,
+                        provider=remittance_details.get('provider', ''),
+                        first_name=remittance_details.get('first_name', ''),
+                        middle_name=remittance_details.get('middle_name', ''),
+                        last_name=remittance_details.get('last_name', ''),
+                        contact_number=remittance_details.get('contact_number', ''),
+                        country=remittance_details.get('country', ''),
+                        city=remittance_details.get('city', ''),
+                        province=remittance_details.get('province', ''),
+                        zip_code=remittance_details.get('zip_code', ''),
+                        barangay=remittance_details.get('barangay', ''),
+                        street=remittance_details.get('address', ''),
+                        valid_id_type=remittance_details.get('valid_id_type', ''),
+                        valid_id_number=remittance_details.get('valid_id_number', '')
+                    )
+                
+                # Handle uploaded files
                 for key, file in request.FILES.items():
                     if key.startswith('evidence_'):
-                        try:
-                            validate_media_file(file)  # raises ValidationError if invalid
-                            file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
-                            RefundMedia.objects.create(
-                                refund_id=refund,
-                                file_data=file,
-                                file_type=file_type,
-                                uploaded_by=user
-                            )
-                        except ValidationError as e:
-                            return JsonResponse({'error': str(e)}, status=400)
-                # ========== End file validation ==========
-
-                # ========== Create Refund Items with quantity and amount ==========
-                total_refund_amount = Decimal('0.00')
-                created_items = []
-                for item_data in items_data:
-                    checkout_id = item_data.get('checkout_id')
-                    quantity = item_data.get('quantity')
-                    amount = item_data.get('amount')
-                    if not checkout_id or quantity is None or amount is None:
-                        return JsonResponse({'error': 'Each refund item must have checkout_id, quantity, and amount'}, status=400)
-                    try:
-                        checkout = Checkout.objects.get(id=checkout_id, order=order)
-                    except Checkout.DoesNotExist:
-                        return JsonResponse({'error': f'Checkout {checkout_id} not found in this order'}, status=400)
-                    total_refund_amount += Decimal(str(amount))
-                    RefundItem.objects.create(
-                        refund=refund,
-                        checkout=checkout,
-                        quantity=quantity,
-                        amount=Decimal(str(amount))
-                    )
-                    created_items.append(str(checkout.id))
-
-                # Update refund total amount (overwrites any frontend-sent total)
-                refund.total_refund_amount = total_refund_amount
-                refund.save(update_fields=['total_refund_amount'])
-
-                # Append a note with the selected checkout IDs (optional)
-                if created_items:
-                    refund.customer_note = (refund.customer_note or '') + f"\n\nSelected Checkout IDs: {', '.join(created_items)}"
-                    refund.save(update_fields=['customer_note'])
-
+                        file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
+                        RefundMedia.objects.create(
+                            refund_id=refund,
+                            file_data=file,
+                            file_type=file_type,
+                            uploaded_by=user
+                        )
+                
+                # Handle selected items (store in customer_note for reference)
+                selected_items = []
+                for key, value in request.POST.items():
+                    if key.startswith('selected_item_'):
+                        selected_items.append(value)
+                
+                if selected_items:
+                    refund.customer_note += f"\n\nSelected Checkout IDs: {', '.join(selected_items)}"
+                    refund.save()
+                
                 return JsonResponse({
                     'message': 'Refund request created successfully',
                     'refund_id': str(refund.refund_id),
                     'request_number': getattr(refund, 'request_number', None)
                 }, status=201)
-
+                
         except Exception as e:
-            return JsonResponse({'error': f'Failed to create refund: {str(e)}'}, status=500)
+            return JsonResponse({
+                'error': f'Failed to create refund: {str(e)}'
+            }, status=500)
+    
+
     @action(detail=True, methods=['get'])
     def get_my_refund(self, request, pk=None):
         """
@@ -30091,10 +29224,11 @@ class RefundViewSet(viewsets.ViewSet):
         """Get detailed refund data (common for buyer, seller, and admin views)"""
         data = RefundSerializer(refund, context={'request': request}).data
 
-        # Expose requester info
+
+        # Expose requester info for easier frontend display
         data['requested_by_username'] = refund.requested_by.username if refund.requested_by else None
         data['requested_by_email'] = refund.requested_by.email if refund.requested_by else None
-
+        
         # Add order information
         if refund.order_id:
             order = refund.order_id
@@ -30114,8 +29248,10 @@ class RefundViewSet(viewsets.ViewSet):
                     "full_address": order.shipping_address.get_full_address() if order.shipping_address else (order.delivery_address_text or None)
                 } if order.shipping_address or order.delivery_address_text else None,
             }
-
+            
+            # Get order items from this shop (for seller) or all items (for buyer/admin)
             data['order_items'] = self._get_order_items_for_refund(refund, request)
+            # Prefer stored total_refund_amount; otherwise compute total from order items as a fallback
             try:
                 if getattr(refund, 'total_refund_amount', None) is not None:
                     data['total_refund_amount'] = float(refund.total_refund_amount)
@@ -30128,25 +29264,60 @@ class RefundViewSet(viewsets.ViewSet):
                             qty = it.get('quantity') or 0
                             itm_total = float(price) * int(qty)
                         total_refund_amount += float(itm_total)
-                    data['total_refund_amount'] = round(total_refund_amount, 2) if total_refund_amount > 0 else None
+                    data['total_refund_amount'] = round(float(total_refund_amount), 2) if total_refund_amount > 0 else None
             except Exception:
                 data['total_refund_amount'] = None
-
-        # ========== NEW: Payment details from payment_detail ==========
+        
+        # Add payment method details
         payment_details = {}
-        if refund.payment_detail:
-            pd = refund.payment_detail
-            payment_details['selected_payment'] = {
-                "payment_id": str(pd.payment_id),
-                "payment_method": pd.payment_method,
-                "account_name": pd.account_name,
-                "account_number": pd.account_number,
-                "bank_name": pd.bank_name,
-                "is_default": pd.is_default,
+        
+        try:
+            wallet = refund.wallet
+            payment_details['wallet'] = {
+                "provider": wallet.provider,
+                "account_name": wallet.account_name,
+                "account_number": wallet.account_number,
+                "contact_number": wallet.contact_number
             }
+        except RefundWallet.DoesNotExist:
+            pass
+        
+        try:
+            bank = refund.bank
+            payment_details['bank'] = {
+                "bank_name": bank.bank_name,
+                "account_name": bank.account_name,
+                "account_number": bank.account_number,
+                "account_type": bank.account_type,
+                "branch": bank.branch
+            }
+        except RefundBank.DoesNotExist:
+            pass
+        
+        try:
+            remittance = refund.remittance
+            payment_details['remittance'] = {
+                "provider": remittance.provider,
+                "first_name": remittance.first_name,
+                "middle_name": remittance.middle_name,
+                "last_name": remittance.last_name,
+                "contact_number": remittance.contact_number,
+                "address": {
+                    "street": remittance.street,
+                    "barangay": remittance.barangay,
+                    "city": remittance.city,
+                    "province": remittance.province,
+                    "zip_code": remittance.zip_code,
+                    "country": remittance.country
+                },
+                "valid_id_type": remittance.valid_id_type,
+                "valid_id_number": remittance.valid_id_number
+            }
+        except RefundRemittance.DoesNotExist:
+            pass
+        
         data['payment_details'] = payment_details
-        # ========== End payment details ==========
-
+        
         # Add evidence/media files
         media_files = RefundMedia.objects.filter(refund_id=refund)
         data['evidence'] = [
@@ -30162,7 +29333,7 @@ class RefundViewSet(viewsets.ViewSet):
             for media in media_files
         ]
 
-        # Add seller-uploaded proofs
+        # Add seller-uploaded proofs (files uploaded as proof of refund) stored in RefundProof
         proofs_qs = RefundProof.objects.filter(refund=refund)
         data['proofs'] = [
             {
@@ -30176,10 +29347,8 @@ class RefundViewSet(viewsets.ViewSet):
             }
             for p in proofs_qs
         ]
-
-        # Seller delivery proofs
+        # additionally include proofs saved under the delivery/Proof table with type 'seller'
         try:
-            from .models import Delivery, Proof
             delivery = Delivery.objects.filter(order=refund.order_id).first()
             if delivery:
                 seller_proofs = Proof.objects.filter(delivery=delivery, proof_type='seller').order_by('-uploaded_at')
@@ -30196,8 +29365,8 @@ class RefundViewSet(viewsets.ViewSet):
                 data['seller_delivery_proofs'] = []
         except Exception:
             data['seller_delivery_proofs'] = []
-
-        # Return request information
+        
+        # Add return request information (if applicable)
         if refund.refund_type == 'return':
             try:
                 return_request = refund.return_request
@@ -30212,6 +29381,8 @@ class RefundViewSet(viewsets.ViewSet):
                     "return_deadline": return_request.return_deadline.isoformat() if return_request.return_deadline else None,
                     "notes": return_request.notes
                 }
+                
+                # Add return media
                 return_media = ReturnRequestMedia.objects.filter(return_id=return_request)
                 data['return_request']['media'] = [
                     {
@@ -30223,10 +29394,11 @@ class RefundViewSet(viewsets.ViewSet):
                     }
                     for rm in return_media
                 ]
+                
             except ReturnRequestItem.DoesNotExist:
                 data['return_request'] = None
 
-        # Return address
+        # Add return address information (if any)
         try:
             ra = refund.return_address
             data['return_address'] = {
@@ -30251,19 +29423,22 @@ class RefundViewSet(viewsets.ViewSet):
                     'username': ra.seller.username if ra.seller else None
                 } if ra.seller else None
             }
+            
         except ReturnAddress.DoesNotExist:
             data['return_address'] = None
-
-        # Timeline
+        
+        # Add timeline/activity log
         timeline = []
-
+        
+        # Refund requested
         timeline.append({
             "event": "refund_requested",
             "timestamp": refund.requested_at.isoformat(),
             "user": str(refund.requested_by.id),
             "details": f"Refund requested: {refund.reason}"
         })
-
+        
+        # Status changes
         if refund.processed_at:
             timeline.append({
                 "event": "status_changed",
@@ -30271,14 +29446,16 @@ class RefundViewSet(viewsets.ViewSet):
                 "user": str(refund.processed_by.id) if refund.processed_by else None,
                 "details": f"Status changed to {refund.status}"
             })
-
+        
+        # Buyer notified
         if refund.buyer_notified_at:
             timeline.append({
                 "event": "buyer_notified",
                 "timestamp": refund.buyer_notified_at.isoformat(),
                 "details": "Buyer notified about refund approval"
             })
-
+        
+        # Counter requests
         counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
         for cr in counter_requests:
             timeline.append({
@@ -30288,7 +29465,7 @@ class RefundViewSet(viewsets.ViewSet):
                 "details": f"Counter offer: {cr.counter_refund_method} - Status: {cr.status}"
             })
 
-        # Expose structured counter request list
+        # Expose structured counter request list and latest suggestion for frontend
         try:
             data['counter_requests'] = [
                 {
@@ -30319,8 +29496,7 @@ class RefundViewSet(viewsets.ViewSet):
             data['counter_requests'] = []
             data['seller_suggested_method'] = None
             data['seller_suggested_type'] = None
-            data['seller_suggested_amount'] = None
-
+        
         # Return request activities
         if refund.refund_type == 'return':
             try:
@@ -30332,14 +29508,14 @@ class RefundViewSet(viewsets.ViewSet):
                         "user": str(return_request.shipped_by.id) if return_request.shipped_by else None,
                         "details": f"Item shipped via {return_request.logistic_service}"
                     })
-
+                
                 if return_request.received_at:
                     timeline.append({
                         "event": "item_received",
                         "timestamp": return_request.received_at.isoformat(),
                         "details": "Item received by seller"
                     })
-
+                
                 if return_request.updated_at and return_request.updated_by:
                     timeline.append({
                         "event": "return_updated",
@@ -30347,9 +29523,10 @@ class RefundViewSet(viewsets.ViewSet):
                         "user": str(return_request.updated_by.id),
                         "details": f"Return status updated to {return_request.status}"
                     })
+                    
             except ReturnRequestItem.DoesNotExist:
                 pass
-
+        
         # Dispute activities
         try:
             dispute = refund.dispute
@@ -30362,17 +29539,21 @@ class RefundViewSet(viewsets.ViewSet):
                 })
         except DisputeRequest.DoesNotExist:
             pass
-
+        
+        # Sort timeline by timestamp
         timeline.sort(key=lambda x: x['timestamp'], reverse=True)
         data['timeline'] = timeline
-
+        
+        # Add available actions based on status and user role
         data['available_actions'] = self._get_available_actions(refund, user)
+        # Normalize status to lowercase for consistent frontend handling
         try:
             data['status'] = str(refund.status).lower()
         except Exception:
             pass
-
+        
         return data
+
     @action(detail=True, methods=['post'])
     def add_refund_payment_detail(self, request, pk=None):
         """Allow buyer to provide refund-specific account details for this refund (wallet/bank/remittance).
@@ -30474,54 +29655,122 @@ class RefundViewSet(viewsets.ViewSet):
         except Exception as e:
             return Response({"error": "Failed to save payment detail", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def _get_product_image_url(self, product, request):
-        try:
-            if product.productmedia_set.exists():
-                media = product.productmedia_set.first()
-                if media and media.file_data:
-                    return get_media_url(media.file_data)   # use the helper
-        except Exception:
-            pass
-        return None
-
     def _get_order_items_for_refund(self, refund, request):
-        """Return order items (checkout details) linked to this refund."""
+        """Get order items for a refund (used in list views) with variant information"""
         if not refund.order_id:
             return []
-
-        # Get the checkout IDs from RefundItem
-        checkout_ids = refund.items.values_list('checkout', flat=True)
-        if not checkout_ids:
-            return []
-
-        # Fetch the checkouts with related product info
-        checkouts = Checkout.objects.filter(
-            id__in=checkout_ids,
-            order=refund.order_id
-        ).select_related('cart_item__product__shop')
-
+        
+        order = refund.order_id
+        checkouts = Checkout.objects.filter(order=order)
+        
         order_items = []
         for checkout in checkouts:
             cart_item = checkout.cart_item
             if cart_item and cart_item.product:
                 product = cart_item.product
+                # Get product image if available
+                product_image = None
+                if hasattr(product, 'productmedia_set') and product.productmedia_set.exists():
+                    first_media = product.productmedia_set.first()
+                    media_file = getattr(first_media, 'file_data', None)
+                    if first_media and media_file:
+                        try:
+                            product_image = request.build_absolute_uri(media_file.url)
+                        except Exception:
+                            product_image = None
+                elif hasattr(product, 'productimage_set') and product.productimage_set.exists():
+                    first_image = product.productimage_set.first()
+                    image_file = getattr(first_image, 'image', None)
+                    if first_image and image_file:
+                        try:
+                            product_image = request.build_absolute_uri(image_file.url)
+                        except Exception:
+                            product_image = None
+                
+                # Get variant information
                 variant = cart_item.variant
-                price = variant.price if variant else product.min_price or product.price if hasattr(product, 'price') else None
+                variant_data = None
+                if variant:
+                    variant_data = {
+                        'id': str(variant.id),
+                        'title': variant.title,
+                        'sku_code': variant.sku_code,
+                        'price': float(variant.price) if variant.price is not None else None,
+                        'image': request.build_absolute_uri(variant.image.url) if getattr(variant, 'image', None) else None,
+                        'option_ids': getattr(variant, 'option_ids', None) or None,
+                        'option_map': getattr(variant, 'option_map', None) or {},
+                    }
+
+                # Build variants payload (include option titles) for frontend label resolution
+                variants = []
+                try:
+                    variant_qs = Variants.objects.filter(product=product)
+                    for v in variant_qs:
+                        variants.append({
+                            'id': str(v.id),
+                            'title': v.title,
+                            'sku_code': v.sku_code,
+                            'price': float(v.price) if v.price else None,
+                            'option_map': v.option_map or {},
+                        })
+                except Exception:
+                    variants = []
+
+                # Provide a nested product object that includes a cover image (product_image) for frontend convenience
+                # Build media files list for product
+                media_files = []
+                if hasattr(product, 'productmedia_set') and product.productmedia_set.exists():
+                    for media in product.productmedia_set.all():
+                        media_file = getattr(media, 'file_data', None)
+                        if media_file:
+                            try:
+                                media_files.append({'file_url': request.build_absolute_uri(media_file.url)})
+                            except Exception:
+                                pass
+                elif hasattr(product, 'productimage_set') and product.productimage_set.exists():
+                    for img in product.productimage_set.all():
+                        image_file = getattr(img, 'image', None)
+                        if image_file:
+                            try:
+                                media_files.append({'file_url': request.build_absolute_uri(image_file.url)})
+                            except Exception:
+                                pass
+
+                product_price = getattr(product, 'price', None)
+
+                product_obj = {
+                    'id': str(product.id),
+                    'name': product.name,
+                    'description': product.description if hasattr(product, 'description') else None,
+                    'image': product_image,
+                    'price': float(product_price) if product_price is not None else None,
+                    'condition': getattr(product, 'condition', None),
+                    'category_name': product.category.name if getattr(product, 'category', None) else None,
+                    'shop_name': product.shop.name if getattr(product, 'shop', None) else None,
+                    'variants': variants,
+                    'media_files': media_files,
+                }
 
                 order_items.append({
-                    "checkout_id": str(checkout.id),
+                    "product_id": str(product.id),
                     "product_name": product.name,
-                    "shop_name": product.shop.name if product.shop else '',
                     "quantity": checkout.quantity,
-                    "price": str(price) if price else '0',
-                    "subtotal": str(checkout.total_amount),
-                    "product_image": self._get_product_image_url(product, request),
+                    "price": float(variant.price) if variant and variant.price is not None else (float(product_price) if product_price is not None else None),
+                    "total": float(checkout.total_amount) if checkout.total_amount else None,
+                    "product_image": product_image,
+                    # selected variant exposed explicitly for frontend
+                    "variant": variant_data,
+                    "variants": variants,
+                    # Provide nested product object (image present) for easier frontend fallbacks
+                    "product": product_obj,
                     "shop": {
                         "id": str(product.shop.id) if product.shop else None,
                         "name": product.shop.name if product.shop else None
-                    }
+                    } if product.shop else None
                 })
+        
         return order_items
+    
     def _get_available_actions(self, refund, user):
         """Get available actions based on refund status and user role"""
         actions = []
@@ -33729,31 +32978,32 @@ class RiderDeliveryActionsViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class RiderOrderHistoryViewSet(viewsets.ViewSet):
     """
     Rider Order History API endpoints with optimized queries and data integrity
     """
-
-    # ================================================================
-    # PRIVATE HELPERS
-    # ================================================================
-
+    
     def _get_user_from_header(self, request):
         """Extract and validate user from X-User-Id header"""
         user_id = request.headers.get('X-User-Id')
+        
         if not user_id:
             raise ValueError('X-User-Id header is required')
+        
         try:
+            # Try UUID conversion for validation
             user_uuid = uuid.UUID(user_id)
             user = User.objects.get(id=user_uuid)
             return user
         except (ValueError, User.DoesNotExist):
             raise ValueError(f'Invalid or non-existent user ID: {user_id}')
-
+    
     def get_queryset(self, user):
         """Get optimized queryset for rider's deliveries with all necessary relations"""
         try:
             rider = user.rider
+            # Get all deliveries for the rider with optimized queries
             return Delivery.objects.filter(rider=rider).select_related(
                 'order',
                 'order__user',
@@ -33763,7 +33013,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
             ).order_by('-created_at')
         except (Rider.DoesNotExist, AttributeError):
             return Delivery.objects.none()
-
+    
     def _apply_date_filter(self, queryset, start_date, end_date):
         """Apply date filtering to queryset"""
         if start_date and end_date:
@@ -33772,128 +33022,92 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 created_at__date__lte=end_date
             )
         return queryset
-
-    def _is_cod_order(self, order):
-        """Check if order is Cash on Delivery"""
-        return order.payment_method and order.payment_method.lower() in ['cod', 'cash on delivery', 'cash']
-
-    def _calculate_amount_to_remit(self, order, delivery):
-        """Calculate total amount rider needs to remit for an order"""
-        if self._is_cod_order(order):
-            return float(order.total_amount) + float(delivery.delivery_fee or 0)
-        else:
-            return float(delivery.delivery_fee or 0)
-
-    def _calculate_rider_earnings(self, delivery):
-        """Calculate rider's earnings from delivery"""
-        return float(delivery.delivery_fee or 0)
-
-    def _get_unremitted_deliveries_queryset(self, user):
-        """
-        Returns delivered deliveries that have NOT been included
-        in a completed remittance. Used by both unremitted_amounts
-        and initiate_remittance to stay in sync.
-        """
-        return self.get_queryset(user).filter(
-            status='delivered',
-            delivered_at__isnull=False
-        ).exclude(
-            remittance_items__remittance__status='completed'
-        )
-
-    # ================================================================
-    # ORDER HISTORY
-    # ================================================================
-
+    
     @action(detail=False, methods=['get'])
     def order_history(self, request):
         """
-        Get comprehensive order history for rider with metrics.
-        Query params: status (optional)
+        Get comprehensive order history for rider with metrics
+        Query params: start_date, end_date, status
         """
         try:
+            # Get user from X-User-Id header
             user = self._get_user_from_header(request)
-
+            
+            # Check if user is a rider
             if not hasattr(user, 'rider'):
                 return Response({
                     'success': False,
                     'error': 'User is not a rider'
                 }, status=status.HTTP_403_FORBIDDEN)
-
+            
+            # Get query parameters
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
             status_filter = request.query_params.get('status', 'all')
+            
+            # Get base queryset
             deliveries = self.get_queryset(user)
-
+            
+            # Apply date filtering
+            if start_date and end_date:
+                deliveries = self._apply_date_filter(deliveries, start_date, end_date)
+            
+            # Apply status filter
             if status_filter != 'all':
-                status_map = {
-                    'completed': {'status': 'delivered'},
-                    'active':    {'status__in': ['pending', 'picked_up', 'in_progress', 'accepted']},
-                    'cancelled': {'status': 'cancelled'},
-                    'pending':   {'status': 'pending'},
-                    'accepted':  {'status': 'accepted'},
-                    'picked_up': {'status': 'picked_up'},
-                    'in_progress': {'status': 'in_progress'},
-                    'delivered': {'status': 'delivered'},
-                }
-                if status_filter in status_map:
-                    deliveries = deliveries.filter(**status_map[status_filter])
+                if status_filter == 'completed':
+                    deliveries = deliveries.filter(status='delivered')
+                elif status_filter == 'active':
+                    deliveries = deliveries.filter(status__in=['pending', 'picked_up', 'in_progress'])
                 else:
                     deliveries = deliveries.filter(status=status_filter)
-
-            metrics = self._calculate_all_time_metrics(deliveries, user.rider)
+            
+            # Calculate metrics
+            metrics = self._calculate_metrics(deliveries, user.rider, start_date, end_date)
+            
+            # Format response data
             deliveries_data = self._format_delivery_data(deliveries)
-
+            
             return Response({
                 'success': True,
                 'metrics': metrics,
                 'deliveries': deliveries_data,
                 'count': len(deliveries_data),
-                'filters': {'status': status_filter}
+                'filters': {
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'status': status_filter
+                }
             })
-
+            
         except ValueError as e:
-            return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response({'success': False, 'error': f'An unexpected error occurred: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    # ================================================================
-    # METRICS
-    # ================================================================
-
-    def _calculate_all_time_metrics(self, deliveries, rider):
-        """Calculate comprehensive all-time metrics for the rider"""
+            return Response({
+                'success': False,
+                'error': f'An unexpected error occurred: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _calculate_metrics(self, deliveries, rider, start_date=None, end_date=None):
+        """Calculate comprehensive metrics for the rider"""
         if not deliveries.exists():
             return self._get_empty_metrics()
-
-        delivered_deliveries = deliveries.filter(status='delivered')
-
-        total_earnings = 0.0
-        total_to_remit = 0.0
-        total_cod_amount = 0.0
-        total_online_amount = 0.0
-        cod_count = 0
-        online_count = 0
-
-        for delivery in delivered_deliveries:
-            order = delivery.order
-            is_cod = self._is_cod_order(order)
-            total_earnings += float(delivery.delivery_fee or 0)
-            if is_cod:
-                total_to_remit += float(order.total_amount) + float(delivery.delivery_fee or 0)
-                total_cod_amount += float(order.total_amount)
-                cod_count += 1
-            else:
-                total_to_remit += float(delivery.delivery_fee or 0)
-                total_online_amount += float(order.total_amount)
-                online_count += 1
-
+        
+        # Use database aggregation for efficiency
         aggregated = deliveries.aggregate(
             total_deliveries=Count('id'),
             delivered_count=Count('id', filter=Q(status='delivered')),
             cancelled_count=Count('id', filter=Q(status='cancelled')),
-            pending_count=Count('id', filter=Q(status='pending')),
-            accepted_count=Count('id', filter=Q(status='accepted')),
-            picked_up_count=Count('id', filter=Q(status='picked_up')),
-            in_progress_count=Count('id', filter=Q(status='in_progress')),
+            total_earnings=Coalesce(
+                Sum(
+                    'delivery_fee',
+                    filter=Q(status='delivered')
+                ),
+                Decimal('0.00'),
+                output_field=DecimalField()
+            ),
             avg_delivery_time=Avg(
                 F('actual_minutes'),
                 filter=Q(status='delivered', actual_minutes__isnull=False)
@@ -33907,713 +33121,64 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                     actual_minutes__isnull=False,
                     actual_minutes__lte=F('estimated_minutes')
                 )
-            ),
-            total_distance=Coalesce(
-                Sum('distance_km', filter=Q(status='delivered')),
+            )
+        )
+        
+        # Calculate percentages
+        delivered_count = aggregated['delivered_count'] or 0
+        on_time_percentage = 0
+        if delivered_count > 0:
+            on_time_percentage = round((aggregated['on_time_count'] / delivered_count) * 100, 1)
+        
+        # Today's deliveries
+        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_deliveries = deliveries.filter(
+            status='delivered',
+            delivered_at__gte=today_start
+        ).count()
+        
+        # This week's earnings
+        week_start = timezone.now() - timedelta(days=timezone.now().weekday())
+        week_earnings = deliveries.filter(
+            status='delivered',
+            delivered_at__gte=week_start,
+            order__payment__status='success'
+        ).aggregate(
+            total=Coalesce(
+                Sum('order__total_amount'),
                 Decimal('0.00'),
                 output_field=DecimalField()
             )
-        )
-
-        delivered_count = aggregated['delivered_count'] or 0
-        on_time_percentage = 0
-        if delivered_count > 0:
-            on_time_percentage = round((aggregated['on_time_count'] / delivered_count) * 100, 1)
-
-        date_range = deliveries.filter(status='delivered').aggregate(
-            first_delivery=Min('delivered_at'),
-            last_delivery=Max('delivered_at')
-        )
-
-        unremitted_data = delivered_deliveries.aggregate(unremitted_count=Count('id'))
-
+        )['total']
+        
         return {
             'total_deliveries': aggregated['total_deliveries'],
             'delivered_count': aggregated['delivered_count'],
             'cancelled_count': aggregated['cancelled_count'],
-            'pending_count': aggregated['pending_count'],
-            'accepted_count': aggregated['accepted_count'],
-            'picked_up_count': aggregated['picked_up_count'],
-            'in_progress_count': aggregated['in_progress_count'],
-            'total_earnings': total_earnings,
-            'total_to_remit': total_to_remit,
-            'cod_orders': {
-                'count': cod_count,
-                'total_order_amount': total_cod_amount,
-                'total_with_fees': total_cod_amount
-            },
-            'online_orders': {
-                'count': online_count,
-                'total_order_amount': total_online_amount,
-                'total_with_fees': total_online_amount
-            },
-            'unremitted_count': unremitted_data['unremitted_count'],
-            'avg_delivery_time': round(aggregated['avg_delivery_time'] or 0, 1),
-            'avg_rating': round(aggregated['avg_rating'] or 0, 1),
-            'on_time_percentage': on_time_percentage,
-            'total_distance_km': float(aggregated['total_distance']),
-            'first_delivery': date_range['first_delivery'].isoformat() if date_range['first_delivery'] else None,
-            'last_delivery': date_range['last_delivery'].isoformat() if date_range['last_delivery'] else None,
-            'has_data': aggregated['total_deliveries'] > 0,
-            'rider_since': rider.approval_date.isoformat() if rider.approval_date else None,
-            'rider_verified': rider.verified,
-            'rider_status': rider.availability_status,
-            'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
-        }
-
-    def _calculate_metrics(self, deliveries, rider, start_date=None, end_date=None):
-        """Calculate metrics for a filtered queryset"""
-        if not deliveries.exists():
-            return self._get_empty_metrics()
-
-        delivered_deliveries = deliveries.filter(status='delivered')
-
-        total_earnings = 0.0
-        total_to_remit = 0.0
-
-        for delivery in delivered_deliveries:
-            order = delivery.order
-            total_earnings += float(delivery.delivery_fee or 0)
-            if self._is_cod_order(order):
-                total_to_remit += float(order.total_amount) + float(delivery.delivery_fee or 0)
-            else:
-                total_to_remit += float(delivery.delivery_fee or 0)
-
-        aggregated = deliveries.aggregate(
-            total_deliveries=Count('id'),
-            delivered_count=Count('id', filter=Q(status='delivered')),
-            cancelled_count=Count('id', filter=Q(status='cancelled')),
-            avg_delivery_time=Avg(
-                F('actual_minutes'),
-                filter=Q(status='delivered', actual_minutes__isnull=False)
-            ),
-            avg_rating=Avg('delivery_rating', filter=Q(delivery_rating__isnull=False)),
-            on_time_count=Count(
-                'id',
-                filter=Q(
-                    status='delivered',
-                    estimated_minutes__isnull=False,
-                    actual_minutes__isnull=False,
-                    actual_minutes__lte=F('estimated_minutes')
-                )
-            )
-        )
-
-        delivered_count = aggregated['delivered_count'] or 0
-        on_time_percentage = 0
-        if delivered_count > 0:
-            on_time_percentage = round((aggregated['on_time_count'] / delivered_count) * 100, 1)
-
-        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        today_deliveries = deliveries.filter(status='delivered', delivered_at__gte=today_start).count()
-
-        week_start = timezone.now() - timedelta(days=timezone.now().weekday())
-        week_deliveries = deliveries.filter(status='delivered', delivered_at__gte=week_start)
-
-        week_earnings = 0.0
-        week_to_remit = 0.0
-        for delivery in week_deliveries:
-            order = delivery.order
-            week_earnings += float(delivery.delivery_fee or 0)
-            if self._is_cod_order(order):
-                week_to_remit += float(order.total_amount) + float(delivery.delivery_fee or 0)
-            else:
-                week_to_remit += float(delivery.delivery_fee or 0)
-
-        return {
-            'total_deliveries': aggregated['total_deliveries'],
-            'delivered_count': aggregated['delivered_count'],
-            'cancelled_count': aggregated['cancelled_count'],
-            'total_earnings': total_earnings,
-            'total_to_remit': total_to_remit,
+            'total_earnings': float(aggregated['total_earnings']),
             'avg_delivery_time': round(aggregated['avg_delivery_time'] or 0, 1),
             'avg_rating': round(aggregated['avg_rating'] or 0, 1),
             'on_time_percentage': on_time_percentage,
             'today_deliveries': today_deliveries,
-            'week_earnings': week_earnings,
-            'week_to_remit': week_to_remit,
+            'week_earnings': float(week_earnings),
             'has_data': aggregated['total_deliveries'] > 0,
-            'date_range': {'start_date': start_date, 'end_date': end_date},
-            'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
-        }
-
-    def _get_empty_metrics(self):
-        return {
-            'total_deliveries': 0,
-            'delivered_count': 0,
-            'cancelled_count': 0,
-            'pending_count': 0,
-            'accepted_count': 0,
-            'picked_up_count': 0,
-            'in_progress_count': 0,
-            'total_earnings': 0.0,
-            'total_to_remit': 0.0,
-            'cod_orders': {'count': 0, 'total_order_amount': 0.0, 'total_with_fees': 0.0},
-            'online_orders': {'count': 0, 'total_order_amount': 0.0, 'total_with_fees': 0.0},
-            'unremitted_count': 0,
-            'avg_delivery_time': 0,
-            'avg_rating': 0,
-            'on_time_percentage': 0,
-            'total_distance_km': 0.0,
-            'first_delivery': None,
-            'last_delivery': None,
-            'has_data': False,
-            'rider_since': None,
-            'rider_verified': False,
-            'rider_status': None,
-            'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
-        }
-
-    # ================================================================
-    # UNREMITTED AMOUNTS
-    # ================================================================
-
-    @action(detail=False, methods=['get'])
-    def unremitted_amounts(self, request):
-        """
-        Get all unremitted amounts for the rider.
-        Excludes deliveries already covered by a completed remittance.
-        Query params: start_date, end_date
-        """
-        try:
-            user = self._get_user_from_header(request)
-
-            if not hasattr(user, 'rider'):
-                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
-
-            start_date = request.query_params.get('start_date')
-            end_date = request.query_params.get('end_date')
-
-            deliveries = self._get_unremitted_deliveries_queryset(user)
-
-            if start_date and end_date:
-                deliveries = self._apply_date_filter(deliveries, start_date, end_date)
-
-            total_unremitted = Decimal('0.00')
-            total_cod_amount = Decimal('0.00')
-            total_delivery_fees = Decimal('0.00')
-            cod_count = 0
-            online_count = 0
-            unremitted_deliveries = []
-
-            for delivery in deliveries:
-                order = delivery.order
-                customer = order.user
-                is_cod = self._is_cod_order(order)
-
-                if is_cod:
-                    amount_to_remit = order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
-                    total_cod_amount += order.total_amount
-                    cod_count += 1
-                else:
-                    amount_to_remit = delivery.delivery_fee or Decimal('0.00')
-                    online_count += 1
-
-                total_unremitted += amount_to_remit
-                total_delivery_fees += (delivery.delivery_fee or Decimal('0.00'))
-
-                unremitted_deliveries.append({
-                    'delivery_id': str(delivery.id),
-                    'order_id': str(order.order),
-                    'order_number': str(order.order)[:8].upper(),
-                    'customer_name': f"{customer.first_name} {customer.last_name}".strip() or customer.username,
-                    'delivery_date': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
-                    'order_amount': float(order.total_amount),
-                    'delivery_fee': float(delivery.delivery_fee or 0),
-                    'total_to_remit': float(amount_to_remit),
-                    'payment_method': order.payment_method,
-                    'is_cod': is_cod,
-                    'has_been_remitted': False,
-                    'remittance_due_date': (delivery.delivered_at + timedelta(days=7)).isoformat() if delivery.delivered_at else None
-                })
-
-            return Response({
-                'success': True,
-                'summary': {
-                    'total_unremitted_amount': float(total_unremitted),
-                    'total_delivery_fees': float(total_delivery_fees),
-                    'total_cod_order_amount': float(total_cod_amount),
-                    'cod_orders_count': cod_count,
-                    'online_orders_count': online_count,
-                    'total_orders': cod_count + online_count,
-                    'total_deliveries': len(unremitted_deliveries),
-                    'currency': 'PHP',
-                    'note': 'For COD orders, total includes order amount + delivery fee. For online payments, only delivery fee needs to be remitted.'
-                },
-                'unremitted_deliveries': unremitted_deliveries,
-                'date_range': {'start_date': start_date, 'end_date': end_date},
-                'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False),
-                'test_card': {
-                    'message': 'For sandbox testing, use:',
-                    'card_number': '5123450000000008',
-                    'expiry': '12/25',
-                    'cvv': '123',
-                    'otp': '123456'
-                } if getattr(settings, 'ENABLE_SANDBOX', False) else None
-            })
-
-        except ValueError as e:
-            return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response({'success': False, 'error': f'An unexpected error occurred: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    # ================================================================
-    # INITIATE REMITTANCE (Maya)
-    # ================================================================
-
-    @action(detail=False, methods=['POST'], url_path='initiate_remittance')
-    def initiate_remittance(self, request):
-        """
-        Initiate rider remittance via Maya PWM.
-        Creates a PENDING RiderRemittance record, then redirects to Maya.
-        Body: { "delivery_ids": ["uuid1", "uuid2"], "user_id": "uuid" }
-        """
-        enable_sandbox = getattr(settings, 'ENABLE_SANDBOX', False)
-        if not enable_sandbox:
-            return Response({'success': False, 'error': 'Sandbox mode is not enabled'}, status=status.HTTP_403_FORBIDDEN)
-
-        try:
-            import base64
-            import requests as http_requests
-            from datetime import datetime as dt
-
-            # Resolve user
-            try:
-                user = self._get_user_from_header(request)
-                user_id = str(user.id)
-            except ValueError:
-                user_id = request.data.get('user_id')
-                if not user_id:
-                    return Response({'success': False, 'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-                try:
-                    user = User.objects.get(id=user_id)
-                except User.DoesNotExist:
-                    return Response({'success': False, 'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-            if not hasattr(user, 'rider'):
-                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
-
-            delivery_ids = request.data.get('delivery_ids', [])
-            if not delivery_ids:
-                return Response({'success': False, 'error': 'delivery_ids are required'}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Only delivered + not yet in a completed remittance
-            deliveries = Delivery.objects.filter(
-                id__in=delivery_ids,
-                rider=user.rider,
-                status='delivered'
-            ).exclude(
-                remittance_items__remittance__status='completed'
-            ).select_related('order')
-
-            if not deliveries.exists():
-                return Response({
-                    'success': False,
-                    'error': 'No valid unremitted deliveries found. These may have already been remitted.'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Calculate total
-            total_amount = Decimal('0.00')
-            items_preview = []
-            for delivery in deliveries:
-                order = delivery.order
-                is_cod = self._is_cod_order(order)
-                amount = (
-                    order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
-                    if is_cod else
-                    (delivery.delivery_fee or Decimal('0.00'))
-                )
-                total_amount += amount
-                items_preview.append({
-                    'delivery_id': str(delivery.id),
-                    'order_number': str(order.order)[:8].upper(),
-                    'amount': float(amount),
-                    'is_cod': is_cod,
-                })
-
-            reference = f"REM-{user_id[:8].upper()}-{dt.now().strftime('%H%M%S')}"
-
-            # Build Maya payload
-            maya_config = settings.MAYA_SANDBOX
-            base_url = maya_config['BASE_URL']
-            public_key = maya_config['PUBLIC_KEY']
-            frontend_url = settings.FRONTEND_URL
-
-            credentials = base64.b64encode(f"{public_key}:".encode()).decode()
-
-            payload = {
-                "totalAmount": {"value": round(float(total_amount), 2), "currency": "PHP"},
-                "requestReferenceNumber": reference,
-                "items": [{
-                    "name": f"Rider Remittance ({len(items_preview)} delivery{'s' if len(items_preview) != 1 else ''})",
-                    "quantity": len(items_preview),
-                    "code": f"REM-{user_id[:8].upper()}",
-                    "description": "Rider remittance payment",
-                    "amount": {"value": round(float(total_amount / len(items_preview)), 2), "currency": "PHP"},
-                    "totalAmount": {"value": round(float(total_amount), 2), "currency": "PHP"}
-                }],
-                "redirectUrl": {
-                    "success": f"{frontend_url}/rider/remit-amount?status=success&reference={reference}",
-                    "failure": f"{frontend_url}/rider/remit-amount?status=failed&reference={reference}",
-                    "cancel":  f"{frontend_url}/rider/remit-amount?status=cancelled&reference={reference}"
-                }
+            'date_range': {
+                'start_date': start_date,
+                'end_date': end_date
             }
-
-            maya_response = http_requests.post(
-                f"{base_url}/payby/v2/paymaya/payments",
-                json=payload,
-                headers={
-                    "Authorization": f"Basic {credentials}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json"
-                },
-                timeout=30
-            )
-
-            if maya_response.status_code not in [200, 201]:
-                logger.error(f"Maya API error {maya_response.status_code}: {maya_response.text}")
-                return Response({
-                    'success': False,
-                    'error': f"Maya API error: {maya_response.text}"
-                }, status=status.HTTP_502_BAD_GATEWAY)
-
-            maya_data = maya_response.json()
-            redirect_url = maya_data.get('redirectUrl')
-            payment_id = maya_data.get('paymentId') or maya_data.get('id')
-
-            if not redirect_url:
-                return Response({'success': False, 'error': 'No redirect URL from Maya'}, status=status.HTTP_502_BAD_GATEWAY)
-
-            # Create PENDING remittance + items
-            remittance = RiderRemittance.objects.create(
-                rider=user.rider,
-                reference_number=reference,
-                total_amount=total_amount,
-                payment_method='Maya',
-                maya_payment_id=payment_id,
-                status='pending'
-            )
-            for delivery in deliveries:
-                order = delivery.order
-                is_cod = self._is_cod_order(order)
-                amount = (
-                    order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
-                    if is_cod else
-                    (delivery.delivery_fee or Decimal('0.00'))
-                )
-                RiderRemittanceItem.objects.create(
-                    remittance=remittance,
-                    delivery=delivery,
-                    order_amount=order.total_amount,
-                    delivery_fee=delivery.delivery_fee or Decimal('0.00'),
-                    amount_remitted=amount,
-                    is_cod=is_cod,
-                    payment_method=order.payment_method,
-                )
-
-            logger.info(f"Created pending remittance {reference} for rider {user.rider}")
-
-            return Response({
-                'success': True,
-                'message': 'Remittance initiated. Redirecting to Maya payment.',
-                'reference_number': reference,
-                'total_amount': float(total_amount),
-                'deliveries_count': len(items_preview),
-                'items': items_preview,
-                'redirect_url': redirect_url,
-                'payment_id': payment_id,
-                'sandbox_mode': True,
-            })
-
-        except Exception as e:
-            logger.error(f"Error initiating remittance: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return Response({
-                'success': False,
-                'error': 'Failed to initiate remittance',
-                'details': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-    @action(detail=False, methods=['get'], url_path='remittance-success')
-    def remittance_success(self, request):
-        """
-        Maya browser redirect after successful payment.
-        Marks the RiderRemittance as completed, then redirects frontend.
-        """
-        reference = request.GET.get('reference')
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
-
-        if not reference:
-            from django.shortcuts import redirect
-            return redirect(f"{frontend_url}/rider/remit-amount?status=failed&error=missing_reference")
-
-        try:
-            remittance = RiderRemittance.objects.get(reference_number=reference)
-
-            if remittance.status == 'pending':
-                remittance.status = 'completed'
-                remittance.processed_at = timezone.now()
-                remittance.save(update_fields=['status', 'processed_at'])
-                logger.info(f"Remittance {reference} marked as completed via success callback")
-            elif remittance.status == 'completed':
-                logger.info(f"Remittance {reference} already completed — duplicate callback ignored")
-
-        except RiderRemittance.DoesNotExist:
-            logger.error(f"Remittance {reference} not found in success callback")
-            from django.shortcuts import redirect
-            return redirect(f"{frontend_url}/rider/remit-amount?status=failed&error=not_found&reference={reference}")
-        except Exception as e:
-            logger.error(f"Error completing remittance {reference}: {str(e)}")
-            from django.shortcuts import redirect
-            return redirect(f"{frontend_url}/rider/remit-amount?status=failed&error=server_error&reference={reference}")
-
-        from django.shortcuts import redirect
-        return redirect(f"{frontend_url}/rider/remit-amount?status=success&reference={reference}")
-
-
-    @action(detail=False, methods=['get'], url_path='remittance-failure')
-    def remittance_failure(self, request):
-        """Maya browser redirect after failed payment."""
-        reference = request.GET.get('reference')
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
-
-        if reference:
-            try:
-                RiderRemittance.objects.filter(
-                    reference_number=reference,
-                    status='pending'
-                ).update(status='failed')
-                logger.info(f"Remittance {reference} marked as failed")
-            except Exception as e:
-                logger.error(f"Error marking remittance {reference} as failed: {str(e)}")
-
-        from django.shortcuts import redirect
-        return redirect(f"{frontend_url}/rider/remit-amount?status=failed&reference={reference or ''}")
-
-
-    @action(detail=False, methods=['get'], url_path='remittance-cancel')
-    def remittance_cancel(self, request):
-        """Maya browser redirect after cancelled payment."""
-        reference = request.GET.get('reference')
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
-
-        if reference:
-            try:
-                RiderRemittance.objects.filter(
-                    reference_number=reference,
-                    status='pending'
-                ).update(status='cancelled')
-                logger.info(f"Remittance {reference} marked as cancelled")
-            except Exception as e:
-                logger.error(f"Error marking remittance {reference} as cancelled: {str(e)}")
-
-        from django.shortcuts import redirect
-        return redirect(f"{frontend_url}/rider/remit-amount?status=cancelled&reference={reference or ''}")
-
-
-    @action(detail=False, methods=['post'], url_path='process_remittance')
-    def process_remittance(self, request):
-        """
-        Sandbox shortcut: directly creates a completed remittance without Maya.
-        Body: { "delivery_ids": ["uuid1"], "user_id": "uuid" }
-        """
-        enable_sandbox = getattr(settings, 'ENABLE_SANDBOX', False)
-        if not enable_sandbox:
-            return Response({'success': False, 'error': 'Sandbox mode is not enabled'}, status=status.HTTP_403_FORBIDDEN)
-
-        try:
-            user_id = request.data.get('user_id')
-            delivery_ids = request.data.get('delivery_ids', [])
-
-            if not user_id or not delivery_ids:
-                return Response({'success': False, 'error': 'user_id and delivery_ids are required'}, status=status.HTTP_400_BAD_REQUEST)
-
-            try:
-                user = User.objects.get(id=user_id)
-            except User.DoesNotExist:
-                return Response({'success': False, 'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-            if not hasattr(user, 'rider'):
-                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
-
-            deliveries = Delivery.objects.filter(
-                id__in=delivery_ids,
-                rider=user.rider,
-                status='delivered'
-            ).exclude(
-                remittance_items__remittance__status='completed'
-            ).select_related('order')
-
-            if not deliveries.exists():
-                return Response({
-                    'success': False,
-                    'error': 'No valid unremitted deliveries found'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            total_amount = Decimal('0.00')
-            remittance_details = []
-
-            for delivery in deliveries:
-                order = delivery.order
-                is_cod = self._is_cod_order(order)
-                amount = (
-                    order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
-                    if is_cod else
-                    (delivery.delivery_fee or Decimal('0.00'))
-                )
-                total_amount += amount
-                remittance_details.append({
-                    'delivery_id': str(delivery.id),
-                    'order_number': str(order.order)[:8].upper(),
-                    'amount': float(amount),
-                    'is_cod': is_cod,
-                    'payment_method': order.payment_method,
-                })
-
-            reference = f"REM{str(uuid.uuid4())[:8].upper()}"
-
-            # Create completed remittance directly
-            remittance = RiderRemittance.objects.create(
-                rider=user.rider,
-                reference_number=reference,
-                total_amount=total_amount,
-                payment_method='Cash',
-                status='completed',
-                processed_at=timezone.now()
-            )
-            for delivery in deliveries:
-                order = delivery.order
-                is_cod = self._is_cod_order(order)
-                amount = (
-                    order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
-                    if is_cod else
-                    (delivery.delivery_fee or Decimal('0.00'))
-                )
-                RiderRemittanceItem.objects.create(
-                    remittance=remittance,
-                    delivery=delivery,
-                    order_amount=order.total_amount,
-                    delivery_fee=delivery.delivery_fee or Decimal('0.00'),
-                    amount_remitted=amount,
-                    is_cod=is_cod,
-                    payment_method=order.payment_method,
-                )
-
-            logger.info(f"Sandbox: completed remittance {reference} for rider {user.rider}")
-
-            return Response({
-                'success': True,
-                'message': 'Remittance processed successfully',
-                'reference_number': reference,
-                'total_amount': float(total_amount),
-                'deliveries_count': len(remittance_details),
-                'deliveries': remittance_details,
-                'sandbox_mode': True,
-            })
-
-        except Exception as e:
-            logger.error(f"Error processing remittance: {str(e)}")
-            return Response({
-                'success': False,
-                'error': 'Failed to process remittance',
-                'details': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-    @action(detail=False, methods=['get'], url_path='remittance-history')
-    def remittance_history(self, request):
-        """
-        Get rider's remittance history from RiderRemittance records.
-        Query params: start_date, end_date, status
-        """
-        try:
-            user = self._get_user_from_header(request)
-
-            if not hasattr(user, 'rider'):
-                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
-
-            start_date = request.query_params.get('start_date')
-            end_date = request.query_params.get('end_date')
-            status_filter = request.query_params.get('status', 'all')
-
-            remittances = RiderRemittance.objects.filter(
-                rider=user.rider
-            ).prefetch_related('items__delivery__order').order_by('-created_at')
-
-            if status_filter != 'all':
-                remittances = remittances.filter(status=status_filter)
-
-            if start_date and end_date:
-                remittances = remittances.filter(
-                    created_at__date__gte=start_date,
-                    created_at__date__lte=end_date
-                )
-
-            history_data = []
-            for remittance in remittances:
-                items_data = []
-                for item in remittance.items.all():
-                    delivery = item.delivery
-                    items_data.append({
-                        'delivery_id': str(delivery.id) if delivery else None,
-                        'order_id': str(delivery.order.order) if delivery else None,
-                        'order_number': str(delivery.order.order)[:8].upper() if delivery else None,
-                        'order_amount': float(item.order_amount),
-                        'delivery_fee': float(item.delivery_fee),
-                        'amount_remitted': float(item.amount_remitted),
-                        'is_cod': item.is_cod,
-                        'payment_method': item.payment_method,
-                    })
-
-                history_data.append({
-                    'id': str(remittance.id),
-                    'reference_number': remittance.reference_number,
-                    'total_amount': float(remittance.total_amount),
-                    'status': remittance.status,
-                    'payment_method': remittance.payment_method,
-                    'maya_payment_id': remittance.maya_payment_id,
-                    'deliveries_count': remittance.deliveries_count,
-                    'processed_at': remittance.processed_at.isoformat() if remittance.processed_at else None,
-                    'created_at': remittance.created_at.isoformat(),
-                    'items': items_data,
-                })
-
-            # Summary
-            total_remitted = sum(r['total_amount'] for r in history_data if r['status'] == 'completed')
-
-            return Response({
-                'success': True,
-                'remittance_history': history_data,
-                'count': len(history_data),
-                'summary': {
-                    'total_remitted': total_remitted,
-                    'completed_count': sum(1 for r in history_data if r['status'] == 'completed'),
-                    'pending_count': sum(1 for r in history_data if r['status'] == 'pending'),
-                    'failed_count': sum(1 for r in history_data if r['status'] == 'failed'),
-                },
-                'date_range': {'start_date': start_date, 'end_date': end_date},
-                'current_filter': status_filter,
-            })
-
-        except Exception as e:
-            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    # ================================================================
-    # FORMAT HELPERS
-    # ================================================================
-
+        }
+    
     def _format_delivery_data(self, deliveries):
         """Format delivery data for frontend consumption"""
         formatted_deliveries = []
-
+        
         for delivery in deliveries:
             order = delivery.order
             customer = order.user
             shipping_address = order.shipping_address
             payment = order.payment_set.filter(status='success').first()
-            is_cod = self._is_cod_order(order)
-
+            
+            # Calculate time elapsed for pending deliveries
             time_elapsed = None
             is_late = False
             if delivery.status in ['pending', 'picked_up', 'in_progress']:
@@ -34621,26 +33186,25 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 hours = int(time_diff.total_seconds() // 3600)
                 minutes = int((time_diff.total_seconds() % 3600) // 60)
                 time_elapsed = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+                
+                # Check if delivery is late (more than estimated time or 2 hours for pending)
                 if delivery.estimated_minutes:
                     expected_delivery_time = delivery.created_at + timedelta(minutes=delivery.estimated_minutes)
                     is_late = timezone.now() > expected_delivery_time
                 else:
-                    is_late = time_diff.total_seconds() > 7200
-
+                    # Default: pending for more than 2 hours is late
+                    is_late = time_diff.total_seconds() > 7200  # 2 hours in seconds
+            
+            # Get shop name from order items if available
             shop_name = None
             try:
                 if order.checkout_set.exists():
                     first_item = order.checkout_set.first()
                     if first_item.cart_item and first_item.cart_item.product and first_item.cart_item.product.shop:
                         shop_name = first_item.cart_item.product.shop.name
-            except Exception:
+            except:
                 shop_name = None
-
-            # Check if this delivery has been remitted
-            is_remitted = delivery.remittance_items.filter(
-                remittance__status='completed'
-            ).exists()
-
+            
             formatted_deliveries.append({
                 'id': str(delivery.id),
                 'order_id': str(order.order),
@@ -34648,128 +33212,153 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 'customer_name': f"{customer.first_name} {customer.last_name}".strip() or customer.username,
                 'customer_contact': customer.contact_number,
                 'customer_email': customer.email,
+                
+                # Shipping address info
                 'pickup_location': shop_name or "Pickup Location",
                 'delivery_location': shipping_address.get_full_address() if shipping_address else "Address not available",
                 'recipient_name': shipping_address.recipient_name if shipping_address else customer.first_name,
                 'recipient_phone': shipping_address.recipient_phone if shipping_address else customer.contact_number,
+                
+                # Delivery details
                 'status': delivery.status,
                 'distance_km': float(delivery.distance_km) if delivery.distance_km else None,
                 'estimated_minutes': delivery.estimated_minutes,
                 'actual_minutes': delivery.actual_minutes,
                 'delivery_rating': delivery.delivery_rating,
                 'notes': delivery.notes,
+                
+                # Order financials
                 'order_amount': float(order.total_amount),
                 'delivery_fee': float(delivery.delivery_fee or 0),
-                'total_amount': float(order.total_amount + (delivery.delivery_fee or 0)),
                 'payment_method': order.payment_method,
-                'is_cod': is_cod,
                 'payment_status': payment.status if payment else 'unknown',
-                'amount_to_remit': float(order.total_amount + (delivery.delivery_fee or 0)) if is_cod else float(delivery.delivery_fee or 0),
-                'rider_earnings': float(delivery.delivery_fee or 0),
-                'is_remitted': is_remitted,
+                
+                # Shop information
                 'shop_name': shop_name,
-                'shop_contact': None,
+                'shop_contact': None,  # Could be fetched from shop if available
+                
+                # Timestamps
                 'order_created_at': order.created_at.isoformat(),
                 'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
                 'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
                 'created_at': delivery.created_at.isoformat(),
+                
+                # Additional metadata
                 'items_count': order.checkout_set.count(),
                 'items_summary': self._get_items_summary(order),
                 'is_late': is_late,
                 'time_elapsed': time_elapsed,
-                'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
             })
-
+        
         return formatted_deliveries
-
+    
     def _get_items_summary(self, order):
         """Get a brief summary of order items"""
-        items = order.checkout_set.all()[:3]
+        items = order.checkout_set.all()[:3]  # Get first 3 items
         if not items.exists():
             return "No items"
-
+        
         item_names = []
         for item in items:
             if item.cart_item and item.cart_item.product:
                 item_names.append(item.cart_item.product.name)
             else:
                 item_names.append("Unknown Product")
-
+        
         summary = ", ".join(item_names)
         if order.checkout_set.count() > 3:
             summary += f" and {order.checkout_set.count() - 3} more"
+        
         return summary
-
-    # ================================================================
-    # EXPORT
-    # ================================================================
-
+    
+    def _get_empty_metrics(self):
+        """Return empty metrics structure"""
+        return {
+            'total_deliveries': 0,
+            'delivered_count': 0,
+            'cancelled_count': 0,
+            'total_earnings': 0.0,
+            'avg_delivery_time': 0,
+            'avg_rating': 0,
+            'on_time_percentage': 0,
+            'today_deliveries': 0,
+            'week_earnings': 0.0,
+            'has_data': False,
+        }
+    
     @action(detail=False, methods=['get'])
     def export_history(self, request):
         """Export order history as CSV or JSON"""
         try:
             user = self._get_user_from_header(request)
-
+            
             if not hasattr(user, 'rider'):
-                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
-
+                return Response({
+                    'success': False,
+                    'error': 'User is not a rider'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
             format_type = request.query_params.get('format', 'json')
             start_date = request.query_params.get('start_date')
             end_date = request.query_params.get('end_date')
-
+            
             deliveries = self.get_queryset(user)
+            
             if start_date and end_date:
                 deliveries = self._apply_date_filter(deliveries, start_date, end_date)
-
+            
             if format_type == 'csv':
+                # Return CSV response
+                import csv
+                from django.http import HttpResponse
+                
                 response = HttpResponse(content_type='text/csv')
                 response['Content-Disposition'] = 'attachment; filename="rider_history.csv"'
+                
                 writer = csv.writer(response)
                 writer.writerow([
                     'Order ID', 'Customer', 'Delivery Address', 'Status',
-                    'Payment Method', 'Order Amount', 'Delivery Fee', 'Total Amount',
-                    'Amount to Remit', 'Rider Earnings', 'Is Remitted', 'Rating',
-                    'Delivery Time', 'Order Date', 'Delivered Date'
+                    'Amount', 'Payment Method', 'Rating', 'Delivery Time',
+                    'Order Date', 'Delivered Date'
                 ])
+                
                 for delivery in deliveries:
                     order = delivery.order
                     customer = order.user
                     shipping_address = order.shipping_address
-                    is_cod = self._is_cod_order(order)
-                    amount_to_remit = float(order.total_amount + (delivery.delivery_fee or 0)) if is_cod else float(delivery.delivery_fee or 0)
-                    is_remitted = delivery.remittance_items.filter(remittance__status='completed').exists()
-
+                    
                     writer.writerow([
                         str(order.order)[:8],
                         f"{customer.first_name} {customer.last_name}",
                         shipping_address.get_full_address() if shipping_address else "N/A",
                         delivery.get_status_display(),
-                        order.payment_method,
                         str(order.total_amount),
-                        str(delivery.delivery_fee or 0),
-                        str(order.total_amount + (delivery.delivery_fee or 0)),
-                        str(amount_to_remit),
-                        str(delivery.delivery_fee or 0),
-                        'Yes' if is_remitted else 'No',
+                        order.payment_method,
                         str(delivery.delivery_rating) if delivery.delivery_rating else "N/A",
                         f"{delivery.actual_minutes}m" if delivery.actual_minutes else "N/A",
                         order.created_at.strftime('%Y-%m-%d'),
                         delivery.delivered_at.strftime('%Y-%m-%d') if delivery.delivered_at else "N/A"
                     ])
+                
                 return response
+            
             else:
+                # Return JSON response
                 deliveries_data = self._format_delivery_data(deliveries)
+                
                 return Response({
                     'success': True,
                     'format': 'json',
                     'count': len(deliveries_data),
-                    'data': deliveries_data,
-                    'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
+                    'data': deliveries_data
                 })
-
+                
         except Exception as e:
-            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                   
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class RiderScheduleViewSet(viewsets.ViewSet):
     """
     Rider Schedule API endpoints for managing rider availability and schedules
@@ -36041,7 +34630,7 @@ class ProfileView(APIView):
             # Safely handle profile picture (user may not have this attribute)
             profile_pic = getattr(user, 'profile_picture', None)
             user_data['has_profile_picture'] = bool(profile_pic)
-            user_data['profile_picture_url'] = get_media_url(profile_pic) if profile_pic else None
+            user_data['profile_picture_url'] = profile_pic.url if profile_pic else None
 
             user_data['is_complete_profile'] = all([
                 user.first_name,
@@ -36182,7 +34771,7 @@ class ProfileView(APIView):
             )
 
     def post(self, request):
-        """Handle POST requests for payment methods and profile picture"""
+        """Handle POST requests for payment methods"""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response(
@@ -36200,10 +34789,6 @@ class ProfileView(APIView):
                 return self.delete_payment_method(request, user)
             elif action == 'set_default_payment':
                 return self.set_default_payment(request, user)
-            elif action == 'update_profile_picture':
-                return self.update_profile_picture(request, user)
-            elif action == 'remove_profile_picture':
-                return self.remove_profile_picture(request, user)
             else:
                 return Response(
                     {"error": "Invalid action"},
@@ -36219,137 +34804,6 @@ class ProfileView(APIView):
             logger.error(f"Error in profile POST: {str(e)}")
             return Response(
                 {"error": "Internal server error"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def put(self, request):
-        """Handle PUT requests for updating user profile information"""
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response(
-                {"error": "X-User-Id header is required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            user = User.objects.get(id=user_id)
-            serializer = UserSerializer(user, data=request.data, partial=True)
-            
-            if serializer.is_valid():
-                serializer.save()
-                
-                # Return updated user data
-                user_data = serializer.data
-                profile_pic = getattr(user, 'profile_picture', None)
-                user_data['has_profile_picture'] = bool(profile_pic)
-                user_data['profile_picture_url'] = get_media_url(profile_pic) if profile_pic else None
-                user_data['full_name'] = " ".join(filter(None, [
-                    user.first_name, 
-                    user.middle_name, 
-                    user.last_name
-                ]))
-                
-                return Response({
-                    "success": True,
-                    "message": "Profile updated successfully",
-                    "user": user_data
-                })
-            else:
-                return Response({
-                    "success": False,
-                    "error": "Invalid data",
-                    "errors": serializer.errors
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-        except User.DoesNotExist:
-            return Response(
-                {"error": "User not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            logger.error(f"Error updating profile: {str(e)}")
-            return Response(
-                {"error": "Internal server error"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def update_profile_picture(self, request, user):
-        """Update user profile picture"""
-        try:
-            # Check if file is in request.FILES (multipart form data)
-            if 'profile_picture' in request.FILES:
-                profile_picture = request.FILES['profile_picture']
-                
-                # Validate file type
-                allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif']
-                if profile_picture.content_type not in allowed_types:
-                    return Response(
-                        {"error": "Invalid file type. Only JPEG, PNG, and GIF are allowed."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Validate file size (max 5MB)
-                max_size = 5 * 1024 * 1024  # 5MB
-                if profile_picture.size > max_size:
-                    return Response(
-                        {"error": "File too large. Maximum size is 5MB."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Delete old profile picture if it exists
-                if user.profile_picture:
-                    user.profile_picture.delete(save=False)
-                
-                # Save new profile picture
-                user.profile_picture = profile_picture
-                user.save()
-                
-                # Return success response with updated URLs
-                return Response({
-                    "success": True,
-                    "message": "Profile picture updated successfully",
-                    "profile_picture_url": get_media_url(user.profile_picture),
-                    "has_profile_picture": True
-                })
-            else:
-                return Response(
-                    {"error": "No profile picture provided"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        except Exception as e:
-            logger.error(f"Error updating profile picture: {str(e)}")
-            return Response(
-                {"error": "Failed to update profile picture"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def remove_profile_picture(self, request, user):
-        """Remove user profile picture"""
-        try:
-            if user.profile_picture:
-                # Delete the file
-                user.profile_picture.delete(save=False)
-                user.profile_picture = None
-                user.save()
-                
-                return Response({
-                    "success": True,
-                    "message": "Profile picture removed successfully",
-                    "profile_picture_url": None,
-                    "has_profile_picture": False
-                })
-            else:
-                return Response({
-                    "success": True,
-                    "message": "No profile picture to remove",
-                    "has_profile_picture": False
-                })
-
-        except Exception as e:
-            logger.error(f"Error removing profile picture: {str(e)}")
-            return Response(
-                {"error": "Failed to remove profile picture"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -36496,6 +34950,7 @@ class ProfileView(APIView):
         if len(account_number) <= 4:
             return '*' * len(account_number)
         return '*' * (len(account_number) - 4) + account_number[-4:]
+
 
 
 class SellerBoosts(viewsets.ViewSet):
@@ -37993,7 +36448,6 @@ class SellerBoosts(viewsets.ViewSet):
             print(f"Error in initiate_maya_payment: {str(e)}")
             print(traceback.format_exc())
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 class HomeBoosts(viewsets.ViewSet):
     """ViewSet for showing boosted products on home page"""
     
@@ -41911,86 +40365,146 @@ class PersonalRefundViewSet(viewsets.ViewSet):
         return list(set(actions)) 
 
 
+
 class UserWalletViewSet(viewsets.ModelViewSet):
     """
     ViewSet for UserWallet operations.
-    Credits go immediately to available_balance — no 30-day hold.
-    Withdrawals are allowed as soon as available_balance > 0.
+    Handles wallet balance and transactions.
     """
     queryset = UserWallet.objects.all()
     serializer_class = UserWalletSerializer
-
+    
     def get_queryset(self):
         user_id = self.request.headers.get('X-User-Id')
         if user_id:
             return UserWallet.objects.filter(user_id=user_id)
         return UserWallet.objects.none()
-
+    
     def get_user_from_header(self, request):
-        """Helper to get user from X-User-Id header."""
+        """Helper to get user from header"""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return None, Response(
-                {'error': 'X-User-Id header is required'},
+                {'error': 'X-User-Id header is required'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
         try:
             user = User.objects.get(id=user_id)
             return user, None
         except User.DoesNotExist:
             return None, Response(
-                {'error': 'User not found'},
+                {'error': 'User not found'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
-
-    # ================================================================
-    # WALLET INFO
-    # ================================================================
-
+    
+    def _release_user_pending_balances(self, user):
+        """
+        Helper method to release pending balances for a specific user
+        Moves money from pending to available for transactions older than 30 days
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+        from decimal import Decimal
+        
+        # Calculate date 30 days ago
+        thirty_days_ago = timezone.now() - timedelta(days=30)
+        
+        # Find all pending credit transactions for this user older than 30 days
+        pending_transactions = WalletTransaction.objects.filter(
+            wallet__user=user,
+            status='pending',
+            transaction_type='credit',
+            source_type__in=['personal_sale', 'shop_sale'],
+            created_at__lte=thirty_days_ago
+        ).select_related('wallet', 'shop', 'order')
+        
+        released_count = 0
+        released_amount = Decimal('0')
+        
+        with transaction.atomic():
+            for pending_tx in pending_transactions:
+                wallet = pending_tx.wallet
+                
+                # Create a release transaction record
+                WalletTransaction.objects.create(
+                    wallet=wallet,
+                    user=user,
+                    amount=pending_tx.amount,
+                    transaction_type='credit',
+                    source_type='release',
+                    status='completed',
+                    created_at=timezone.now(),
+                    shop=pending_tx.shop,
+                    order=pending_tx.order
+                )
+                
+                # Update the original transaction status to 'completed'
+                pending_tx.status = 'completed'
+                pending_tx.save()
+                
+                # Move money from pending to available in the wallet
+                wallet.pending_balance -= pending_tx.amount
+                wallet.available_balance += pending_tx.amount
+                wallet.save()
+                
+                released_count += 1
+                released_amount += pending_tx.amount
+        
+        return released_count, released_amount
+    
     @action(detail=False, methods=['get'])
     def my_wallet(self, request):
-        """Get or create wallet for the authenticated user."""
+        """Get or create wallet for the user"""
         user, error_response = self.get_user_from_header(request)
         if error_response:
             return error_response
-
+        
+        # Auto-release pending balances for this user
+        self._release_user_pending_balances(user)
+        
         wallet, created = UserWallet.objects.get_or_create(user=user)
         serializer = self.get_serializer(wallet)
-
+        
         return Response({
             'success': True,
             'wallet': serializer.data,
             'created': created
         })
-
+    
     @action(detail=False, methods=['get'])
     def balance(self, request):
-        """Get wallet balance summary."""
+        """Get wallet balance summary with auto-release check"""
         user, error_response = self.get_user_from_header(request)
         if error_response:
             return error_response
-
+        
+        # Auto-release pending balances for this user
+        released_count, released_amount = self._release_user_pending_balances(user)
+        
         try:
             wallet = UserWallet.objects.get(user=user)
         except UserWallet.DoesNotExist:
             wallet = UserWallet.objects.create(user=user)
-
-        transactions_qs = WalletTransaction.objects.filter(wallet=wallet)
-
-        total_credits = transactions_qs.filter(
+        
+        # Get transaction summary
+        transactions = WalletTransaction.objects.filter(wallet=wallet)
+        
+        total_credits = transactions.filter(
             transaction_type='credit'
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-
-        total_debits = transactions_qs.filter(
+        
+        total_debits = transactions.filter(
             transaction_type='debit'
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-
+        
+        # Get pending withdrawals
         pending_withdrawals = WithdrawalRequest.objects.filter(
             user=user,
             status__in=['pending', 'processing', 'approved']
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-
-        return Response({
+        
+        response_data = {
             'success': True,
             'wallet_id': str(wallet.wallet_id),
             'available_balance': float(wallet.available_balance),
@@ -41998,159 +40512,175 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             'total_balance': float(wallet.available_balance + wallet.pending_balance),
             'lifetime_earnings': float(total_credits),
             'lifetime_withdrawals': float(total_debits),
-            'pending_withdrawals': float(pending_withdrawals),
-        })
-
-    # ================================================================
-    # CREDIT
-    # ================================================================
-
+            'pending_withdrawals': float(pending_withdrawals)
+        }
+        
+        # Add release info if any were processed
+        if released_count > 0:
+            response_data['released_today'] = {
+                'count': released_count,
+                'amount': float(released_amount)
+            }
+        
+        return Response(response_data)
+    
     @action(detail=False, methods=['post'])
     def credit(self, request):
         """
-        Credit amount to wallet — goes directly to available_balance.
-        Expected data:
+        Credit amount to wallet (add money)
+        Expected data: 
             - amount: decimal
-            - source_type: 'personal_sale' | 'shop_sale' | 'refund' | 'dispute' | 'release'
-            - shop_id: optional
-            - order_id: optional
+            - source_type: 'personal_sale', 'shop_sale', 'refund', etc.
+            - shop_id: optional, for shop sales
+            - order_id: optional, to link to order
         """
         user, error_response = self.get_user_from_header(request)
         if error_response:
             return error_response
-
+        
         amount = request.data.get('amount')
         source_type = request.data.get('source_type')
         shop_id = request.data.get('shop_id')
         order_id = request.data.get('order_id')
-
+        
         if not amount or not source_type:
-            return Response(
-                {'error': 'amount and source_type are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+            return Response({
+                'error': 'amount and source_type are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             amount = Decimal(str(amount))
             if amount <= 0:
-                return Response(
-                    {'error': 'Amount must be greater than zero'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except Exception:
+                return Response({
+                    'error': 'Amount must be greater than zero'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        except:
             return Response({'error': 'Invalid amount'}, status=status.HTTP_400_BAD_REQUEST)
-
+        
+        # Validate source_type
         valid_source_types = ['personal_sale', 'shop_sale', 'refund', 'dispute', 'release']
         if source_type not in valid_source_types:
-            return Response(
-                {'error': f'source_type must be one of: {", ".join(valid_source_types)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+            return Response({
+                'error': f'source_type must be one of: {", ".join(valid_source_types)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get shop if provided
         shop = None
         if shop_id:
             try:
+                from api.models import Shop
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
-                return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
-
+                return Response({
+                    'error': 'Shop not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get order if provided
         order = None
         if order_id:
             try:
+                from api.models import Order
                 order = Order.objects.get(order=order_id)
             except Order.DoesNotExist:
-                return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
-
+                return Response({
+                    'error': 'Order not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+        
         with transaction.atomic():
             wallet, _ = UserWallet.objects.get_or_create(user=user)
-
-            # Credit goes directly to available_balance — no hold period
-            wallet.available_balance += amount
+            
+            # Update pending balance
+            wallet.pending_balance += amount
             wallet.save()
-
-            wallet_transaction = WalletTransaction.objects.create(
-                wallet=wallet,
-                user=user,
-                amount=amount,
-                transaction_type='credit',
-                source_type=source_type,
-                status='completed',
-                shop=shop,
-                order=order,
-            )
-
-            logger.info(f"Credit of {amount} to user {user.id} for {source_type} (completed immediately)")
-
+            
+            # Create transaction record with status 'pending' for 30-day rule
+            transaction_data = {
+                'wallet': wallet,
+                'user': user,
+                'amount': amount,
+                'transaction_type': 'credit',
+                'source_type': source_type,
+                'status': 'pending',  # Start as pending, will be released after 30 days
+                'created_at': timezone.now()
+            }
+            
+            if shop:
+                transaction_data['shop'] = shop
+            if order:
+                transaction_data['order'] = order
+            
+            wallet_transaction = WalletTransaction.objects.create(**transaction_data)
+            
+            logger.info(f"Credit of {amount} to user {user.id} for {source_type} (pending)")
+        
         serializer = WalletTransactionSerializer(wallet_transaction)
-
+        
         return Response({
             'success': True,
-            'message': 'Amount credited to available balance successfully.',
+            'message': 'Amount credited to pending balance successfully',
             'wallet': {
                 'available_balance': float(wallet.available_balance),
                 'pending_balance': float(wallet.pending_balance),
-                'total_balance': float(wallet.available_balance + wallet.pending_balance),
+                'total_balance': float(wallet.available_balance + wallet.pending_balance)
             },
             'transaction': serializer.data
         })
-
-    # ================================================================
-    # DEBIT
-    # ================================================================
-
+    
     @action(detail=False, methods=['post'])
     def debit(self, request):
         """
-        Debit amount from available wallet balance.
-        Expected data:
+        Debit amount from wallet (withdraw money)
+        Expected data: 
             - amount: decimal
-            - source_type: 'withdrawal' | 'refund' | 'dispute' | 'fee'
+            - source_type: 'withdrawal', 'refund', etc.
         """
         user, error_response = self.get_user_from_header(request)
         if error_response:
             return error_response
-
+        
         amount = request.data.get('amount')
         source_type = request.data.get('source_type')
-
+        
         if not amount or not source_type:
-            return Response(
-                {'error': 'amount and source_type are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+            return Response({
+                'error': 'amount and source_type are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             amount = Decimal(str(amount))
             if amount <= 0:
-                return Response(
-                    {'error': 'Amount must be greater than zero'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except Exception:
+                return Response({
+                    'error': 'Amount must be greater than zero'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        except:
             return Response({'error': 'Invalid amount'}, status=status.HTTP_400_BAD_REQUEST)
-
+        
+        # Validate source_type
         valid_source_types = ['withdrawal', 'refund', 'dispute', 'fee']
         if source_type not in valid_source_types:
-            return Response(
-                {'error': f'source_type must be one of: {", ".join(valid_source_types)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+            return Response({
+                'error': f'source_type must be one of: {", ".join(valid_source_types)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             wallet = UserWallet.objects.get(user=user)
         except UserWallet.DoesNotExist:
-            return Response({'error': 'Wallet not found'}, status=status.HTTP_404_NOT_FOUND)
-
+            return Response({
+                'error': 'Wallet not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if enough balance - only available balance can be debited
         if amount > wallet.available_balance:
-            return Response(
-                {'error': f'Insufficient available balance. Available: {wallet.available_balance}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+            return Response({
+                'error': f'Insufficient available balance. Available: {wallet.available_balance}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         with transaction.atomic():
+            # Debit from available balance only
             wallet.available_balance -= amount
             wallet.save()
-
+            
+            # Create transaction record
             wallet_transaction = WalletTransaction.objects.create(
                 wallet=wallet,
                 user=user,
@@ -42158,103 +40688,334 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                 transaction_type='debit',
                 source_type=source_type,
                 status='completed',
+                created_at=timezone.now()
             )
-
+            
             logger.info(f"Debit of {amount} from user {user.id} for {source_type}")
-
+        
         serializer = WalletTransactionSerializer(wallet_transaction)
-
+        
         return Response({
             'success': True,
-            'message': 'Amount debited successfully.',
+            'message': 'Amount debited successfully',
             'wallet': {
                 'available_balance': float(wallet.available_balance),
                 'pending_balance': float(wallet.pending_balance),
-                'total_balance': float(wallet.available_balance + wallet.pending_balance),
+                'total_balance': float(wallet.available_balance + wallet.pending_balance)
             },
             'transaction': serializer.data
         })
-
-    # ================================================================
-    # TRANSACTIONS
-    # ================================================================
-
-    @action(detail=False, methods=['get'])
-    def transactions(self, request):
+    
+    @action(detail=False, methods=['post'])
+    def release_pending(self, request):
         """
-        Get transaction history.
-        Query params:
-            - source_type: filter by source
-            - transaction_type: 'credit' | 'debit'
-            - shop_id: filter by shop
-            - start_date: YYYY-MM-DD
-            - end_date: YYYY-MM-DD
-            - limit: number of results (default 50)
+        Release specific pending balance to available
+        Expected data: 
+            - amount: optional (if not provided, release all pending)
         """
         user, error_response = self.get_user_from_header(request)
         if error_response:
             return error_response
-
+        
         try:
             wallet = UserWallet.objects.get(user=user)
         except UserWallet.DoesNotExist:
-            return Response({'success': True, 'transactions': [], 'count': 0})
-
-        transactions_qs = WalletTransaction.objects.filter(
-            wallet=wallet
-        ).select_related('shop', 'order').order_by('-created_at')
-
-        # Filters
+            return Response({'error': 'Wallet not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        amount = request.data.get('amount')
+        
+        with transaction.atomic():
+            if amount:
+                try:
+                    amount = Decimal(str(amount))
+                    if amount > wallet.pending_balance:
+                        return Response({
+                            'error': 'Amount exceeds pending balance'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    wallet.pending_balance -= amount
+                    wallet.available_balance += amount
+                    
+                except:
+                    return Response({'error': 'Invalid amount'}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                # Release all pending
+                amount = wallet.pending_balance
+                wallet.available_balance += wallet.pending_balance
+                wallet.pending_balance = 0
+            
+            wallet.save()
+            
+            # Create transaction record for the release
+            wallet_transaction = WalletTransaction.objects.create(
+                wallet=wallet,
+                user=user,
+                amount=amount,
+                transaction_type='credit',
+                source_type='release',
+                status='completed',
+                created_at=timezone.now()
+            )
+            
+            logger.info(f"Released {amount} from pending to available for user {user.id}")
+        
+        serializer = WalletTransactionSerializer(wallet_transaction)
+        
+        return Response({
+            'success': True,
+            'message': 'Pending balance released to available',
+            'wallet': {
+                'available_balance': float(wallet.available_balance),
+                'pending_balance': float(wallet.pending_balance),
+                'total_balance': float(wallet.available_balance + wallet.pending_balance)
+            },
+            'transaction': serializer.data
+        })
+    
+    @action(detail=False, methods=['post'])
+    def auto_release_all(self, request):
+        """
+        Automatically release ALL pending balances older than 30 days
+        This should be called by a cron job daily
+        """
+        # Optional: Check if user is admin
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        if not user.is_staff and not user.is_superuser:
+            return Response({
+                'error': 'Admin access required'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        from django.utils import timezone
+        from datetime import timedelta
+        from decimal import Decimal
+        from django.db.models import Sum
+        
+        # Calculate date 30 days ago
+        thirty_days_ago = timezone.now() - timedelta(days=30)
+        
+        # Find all pending credit transactions older than 30 days
+        old_pending_transactions = WalletTransaction.objects.filter(
+            status='pending',
+            transaction_type='credit',
+            source_type__in=['personal_sale', 'shop_sale'],
+            created_at__lte=thirty_days_ago
+        ).select_related('wallet', 'user', 'shop', 'order')
+        
+        total_found = old_pending_transactions.count()
+        total_amount = old_pending_transactions.aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        
+        if total_found == 0:
+            return Response({
+                'success': True,
+                'message': 'No pending transactions to release',
+                'released_count': 0,
+                'released_amount': 0
+            })
+        
+        released_count = 0
+        released_amount = Decimal('0')
+        errors = []
+        users_affected = set()
+        
+        with transaction.atomic():
+            for pending_tx in old_pending_transactions:
+                try:
+                    wallet = pending_tx.wallet
+                    users_affected.add(pending_tx.user.id)
+                    
+                    # Create a release transaction record
+                    WalletTransaction.objects.create(
+                        wallet=wallet,
+                        user=pending_tx.user,
+                        amount=pending_tx.amount,
+                        transaction_type='credit',
+                        source_type='release',
+                        status='completed',
+                        created_at=timezone.now(),
+                        shop=pending_tx.shop,
+                        order=pending_tx.order
+                    )
+                    
+                    # Update the original transaction status to 'completed'
+                    pending_tx.status = 'completed'
+                    pending_tx.save()
+                    
+                    # Move money from pending to available in the wallet
+                    wallet.pending_balance -= pending_tx.amount
+                    wallet.available_balance += pending_tx.amount
+                    wallet.save()
+                    
+                    released_count += 1
+                    released_amount += pending_tx.amount
+                    
+                except Exception as e:
+                    errors.append({
+                        'transaction_id': str(pending_tx.transaction_id),
+                        'error': str(e)
+                    })
+                    logger.error(f"Error releasing transaction {pending_tx.transaction_id}: {str(e)}")
+        
+        return Response({
+            'success': True,
+            'message': f'Released {released_count} transactions totaling {float(released_amount)}',
+            'released_count': released_count,
+            'released_amount': float(released_amount),
+            'total_found': total_found,
+            'total_amount': float(total_amount),
+            'users_affected': len(users_affected),
+            'errors': errors
+        })
+    
+    @action(detail=False, methods=['get'])
+    def pending_stats(self, request):
+        """
+        Get statistics about pending transactions (admin only)
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        if not user.is_staff and not user.is_superuser:
+            return Response({
+                'error': 'Admin access required'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        from django.utils import timezone
+        from datetime import timedelta
+        from django.db.models import Sum, Count
+        
+        thirty_days_ago = timezone.now() - timedelta(days=30)
+        
+        # Stats for all pending transactions
+        all_pending = WalletTransaction.objects.filter(
+            status='pending',
+            transaction_type='credit',
+            source_type__in=['personal_sale', 'shop_sale']
+        )
+        
+        # Stats for old pending transactions (older than 30 days)
+        old_pending = all_pending.filter(created_at__lte=thirty_days_ago)
+        
+        # Stats for recent pending transactions (within 30 days)
+        recent_pending = all_pending.filter(created_at__gt=thirty_days_ago)
+        
+        stats = {
+            'all_pending': {
+                'count': all_pending.count(),
+                'amount': float(all_pending.aggregate(total=Sum('amount'))['total'] or 0)
+            },
+            'old_pending': {
+                'count': old_pending.count(),
+                'amount': float(old_pending.aggregate(total=Sum('amount'))['total'] or 0)
+            },
+            'recent_pending': {
+                'count': recent_pending.count(),
+                'amount': float(recent_pending.aggregate(total=Sum('amount'))['total'] or 0)
+            },
+            'release_cutoff_date': thirty_days_ago.isoformat()
+        }
+        
+        return Response({
+            'success': True,
+            'stats': stats
+        })
+    
+    @action(detail=False, methods=['get'])
+    def transactions(self, request):
+        """
+        Get transaction history with filters
+        Query params:
+            - source_type: filter by source type
+            - transaction_type: 'credit' or 'debit'
+            - shop_id: filter by specific shop
+            - start_date: YYYY-MM-DD
+            - end_date: YYYY-MM-DD
+            - limit: number of transactions (default 50)
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        # Auto-release pending balances for this user before showing transactions
+        self._release_user_pending_balances(user)
+        
+        try:
+            wallet = UserWallet.objects.get(user=user)
+        except UserWallet.DoesNotExist:
+            return Response({
+                'success': True,
+                'transactions': [],
+                'count': 0
+            })
+        
+        # Base queryset
+        transactions = WalletTransaction.objects.filter(wallet=wallet).select_related('shop', 'order')
+        
+        # Apply filters
         source_type = request.GET.get('source_type')
         if source_type:
-            transactions_qs = transactions_qs.filter(source_type=source_type)
-
+            transactions = transactions.filter(source_type=source_type)
+        
         transaction_type = request.GET.get('transaction_type')
         if transaction_type:
-            transactions_qs = transactions_qs.filter(transaction_type=transaction_type)
-
+            transactions = transactions.filter(transaction_type=transaction_type)
+        
+        # Filter by shop
         shop_id = request.GET.get('shop_id')
         if shop_id:
-            transactions_qs = transactions_qs.filter(shop_id=shop_id)
-
+            transactions = transactions.filter(shop_id=shop_id)
+        
         start_date = request.GET.get('start_date')
         if start_date:
             try:
                 start = datetime.strptime(start_date, '%Y-%m-%d')
-                transactions_qs = transactions_qs.filter(created_at__date__gte=start.date())
+                transactions = transactions.filter(created_at__date__gte=start.date())
             except ValueError:
                 pass
-
+        
         end_date = request.GET.get('end_date')
         if end_date:
             try:
                 end = datetime.strptime(end_date, '%Y-%m-%d')
-                transactions_qs = transactions_qs.filter(created_at__date__lte=end.date())
+                transactions = transactions.filter(created_at__date__lte=end.date())
             except ValueError:
                 pass
-
+        
+        # Order by date (newest first)
+        transactions = transactions.order_by('-created_at')
+        
+        # Apply limit
         limit = request.GET.get('limit', 50)
         try:
             limit = int(limit)
-            transactions_qs = transactions_qs[:limit]
+            transactions = transactions[:limit]
         except ValueError:
             pass
-
-        serializer = WalletTransactionSerializer(transactions_qs, many=True)
-
+        
+        # Serialize
+        serializer = WalletTransactionSerializer(transactions, many=True)
+        
         return Response({
             'success': True,
             'transactions': serializer.data,
             'count': len(serializer.data)
         })
-
+    
     @action(detail=False, methods=['get'])
     def transaction_summary(self, request):
-        """Get transaction summary statistics with monthly graph data."""
+        """
+        Get transaction summary statistics
+        """
         user, error_response = self.get_user_from_header(request)
         if error_response:
             return error_response
-
+        
+        # Auto-release pending balances for this user
+        self._release_user_pending_balances(user)
+        
         try:
             wallet = UserWallet.objects.get(user=user)
         except UserWallet.DoesNotExist:
@@ -42264,35 +41025,36 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                     'total_credits': 0,
                     'total_debits': 0,
                     'net_balance': 0,
-                    'by_source': {},
-                    'monthly_data': []
+                    'by_source': {}
                 }
             })
-
-        transactions_qs = WalletTransaction.objects.filter(wallet=wallet)
-
-        total_credits = transactions_qs.filter(
+        
+        transactions = WalletTransaction.objects.filter(wallet=wallet)
+        
+        # Total credits and debits - use Decimal
+        total_credits = transactions.filter(
             transaction_type='credit'
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-
-        total_debits = transactions_qs.filter(
+        
+        total_debits = transactions.filter(
             transaction_type='debit'
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-
+        
         # Breakdown by source
         source_totals = {}
         for source_type, _ in WalletTransaction.SOURCE_TYPES:
-            amount = transactions_qs.filter(
+            amount = transactions.filter(
                 source_type=source_type
             ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
             if amount > 0:
                 source_totals[source_type] = float(amount)
-
-        # Monthly data (last 6 months)
+        
+        # Monthly data for graph (last 6 months)
         six_months_ago = timezone.now() - timedelta(days=180)
-
+        monthly_data = []
+        
         from django.db.models.functions import TruncMonth
-        monthly_query = transactions_qs.filter(
+        monthly_query = transactions.filter(
             created_at__gte=six_months_ago
         ).annotate(
             month=TruncMonth('created_at')
@@ -42300,13 +41062,10 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             credits=Sum('amount', filter=Q(transaction_type='credit')),
             debits=Sum('amount', filter=Q(transaction_type='debit'))
         ).order_by('month')
-
-        month_names = [
-            'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-            'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-        ]
-
-        monthly_data = []
+        
+        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        
         for item in monthly_query:
             if item['month']:
                 monthly_data.append({
@@ -42315,7 +41074,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                     'debits': float(item['debits'] or 0),
                     'net': float((item['credits'] or 0) - (item['debits'] or 0))
                 })
-
+        
         return Response({
             'success': True,
             'summary': {
@@ -42327,489 +41086,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             }
         })
 
-    # ================================================================
-    # WITHDRAWALS
-    # ================================================================
 
-    @action(detail=False, methods=['post'])
-    def request_withdrawal(self, request):
-        """
-        Request a withdrawal from available balance.
-        Allowed as soon as available_balance >= minimum (₱100).
-
-        Body:
-            - amount: decimal
-            - payment_method_id: UUID of saved UserPaymentDetail (preferred)
-            OR
-            - payment_method: str (e.g. 'gcash', 'bank')
-            - account_name: str
-            - account_number: str
-            - bank_name: str (optional, for bank transfers)
-        """
-        user, error_response = self.get_user_from_header(request)
-        if error_response:
-            return error_response
-
-        amount = request.data.get('amount')
-        payment_method_id = request.data.get('payment_method_id')
-
-        # ── Validate amount ──────────────────────────────────────────────────
-        if not amount:
-            return Response({'error': 'amount is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            amount = Decimal(str(amount))
-            if amount <= 0:
-                return Response(
-                    {'error': 'Amount must be greater than zero'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except Exception:
-            return Response({'error': 'Invalid amount'}, status=status.HTTP_400_BAD_REQUEST)
-
-        MINIMUM_WITHDRAWAL = Decimal('100.00')
-        if amount < MINIMUM_WITHDRAWAL:
-            return Response(
-                {'error': f'Minimum withdrawal amount is ₱{MINIMUM_WITHDRAWAL}.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # ── Get wallet ───────────────────────────────────────────────────────
-        try:
-            wallet = UserWallet.objects.get(user=user)
-        except UserWallet.DoesNotExist:
-            return Response(
-                {'error': 'Wallet not found. No earnings have been recorded yet.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        # ── Check available balance ──────────────────────────────────────────
-        if amount > wallet.available_balance:
-            return Response(
-                {
-                    'error': 'Insufficient available balance.',
-                    'available_balance': float(wallet.available_balance),
-                    'pending_balance': float(wallet.pending_balance),
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # ── Block duplicate active withdrawal ────────────────────────────────
-        existing = WithdrawalRequest.objects.filter(
-            user=user,
-            status__in=['pending', 'processing', 'approved']
-        ).first()
-
-        if existing:
-            return Response(
-                {
-                    'error': 'You already have a pending withdrawal request.',
-                    'existing_request': {
-                        'withdrawal_id': str(existing.withdrawal_id),
-                        'amount': float(existing.amount),
-                        'status': existing.status,
-                        'requested_at': existing.requested_at.isoformat(),
-                    }
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # ── Resolve payment method ───────────────────────────────────────────
-        payment_detail = None
-
-        if payment_method_id:
-            try:
-                payment_detail = UserPaymentDetail.objects.get(
-                    payment_id=payment_method_id,
-                    user=user
-                )
-            except UserPaymentDetail.DoesNotExist:
-                return Response(
-                    {'error': 'Payment method not found or does not belong to you.'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-        else:
-            # Inline payment details — save for future use
-            payment_method = request.data.get('payment_method', '').strip()
-            account_name = request.data.get('account_name', '').strip()
-            account_number = request.data.get('account_number', '').strip()
-            bank_name = request.data.get('bank_name', '').strip()
-
-            if not payment_method or not account_name or not account_number:
-                return Response(
-                    {
-                        'error': 'Provide payment_method_id (saved method) or '
-                                 'payment_method + account_name + account_number.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            payment_detail = UserPaymentDetail.objects.create(
-                user=user,
-                payment_method=payment_method,
-                account_name=account_name,
-                account_number=account_number,
-                bank_name=bank_name or None,
-                is_default=False,
-            )
-
-        # ── Create withdrawal and reserve balance ────────────────────────────
-        with transaction.atomic():
-            wallet.available_balance -= amount
-            wallet.save(update_fields=['available_balance', 'updated_at'])
-
-            withdrawal = WithdrawalRequest.objects.create(
-                user=user,
-                wallet=wallet,
-                amount=amount,
-                status='pending',
-            )
-
-            WalletTransaction.objects.create(
-                wallet=wallet,
-                user=user,
-                amount=amount,
-                transaction_type='debit',
-                source_type='withdrawal',
-                status='pending',
-            )
-
-            logger.info(
-                f"Withdrawal {withdrawal.withdrawal_id} created — "
-                f"user {user.id}, amount {amount}, "
-                f"method {payment_detail.payment_method} ({payment_detail.account_number})"
-            )
-
-        return Response(
-            {
-                'success': True,
-                'message': 'Withdrawal request submitted. It will be processed within 1–3 business days.',
-                'withdrawal': {
-                    'withdrawal_id': str(withdrawal.withdrawal_id),
-                    'amount': float(withdrawal.amount),
-                    'status': withdrawal.status,
-                    'requested_at': withdrawal.requested_at.isoformat(),
-                    'payment_method': payment_detail.payment_method,
-                    'account_name': payment_detail.account_name,
-                    'account_number': payment_detail.account_number,
-                    'bank_name': payment_detail.bank_name,
-                },
-                'wallet': {
-                    'available_balance': float(wallet.available_balance),
-                    'pending_balance': float(wallet.pending_balance),
-                    'total_balance': float(wallet.available_balance + wallet.pending_balance),
-                },
-            },
-            status=status.HTTP_201_CREATED
-        )
-
-    @action(detail=False, methods=['get'])
-    def withdrawal_history(self, request):
-        """
-        Get withdrawal request history.
-        Query params: status (pending|approved|rejected|processing|completed|all)
-        """
-        user, error_response = self.get_user_from_header(request)
-        if error_response:
-            return error_response
-
-        status_filter = request.query_params.get('status', 'all')
-        withdrawals = WithdrawalRequest.objects.filter(user=user).order_by('-requested_at')
-
-        if status_filter != 'all':
-            valid_statuses = ['pending', 'approved', 'rejected', 'processing', 'completed']
-            if status_filter not in valid_statuses:
-                return Response(
-                    {'error': f'Invalid status. Use: {", ".join(valid_statuses)} or all'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            withdrawals = withdrawals.filter(status=status_filter)
-
-        data = []
-        for w in withdrawals:
-            data.append({
-                'withdrawal_id': str(w.withdrawal_id),
-                'amount': float(w.amount),
-                'status': w.status,
-                'requested_at': w.requested_at.isoformat(),
-                'approved_at': w.approved_at.isoformat() if w.approved_at else None,
-                'completed_at': w.completed_at.isoformat() if w.completed_at else None,
-                'admin_proof': w.admin_proof.url if w.admin_proof else None,
-            })
-
-        summary = {
-            'total': WithdrawalRequest.objects.filter(user=user).count(),
-            'pending': WithdrawalRequest.objects.filter(user=user, status='pending').count(),
-            'completed': WithdrawalRequest.objects.filter(user=user, status='completed').count(),
-            'rejected': WithdrawalRequest.objects.filter(user=user, status='rejected').count(),
-        }
-
-        return Response({
-            'success': True,
-            'withdrawals': data,
-            'count': len(data),
-            'summary': summary,
-        })
-
-    @action(detail=False, methods=['post'], url_path='cancel_withdrawal')
-    def cancel_withdrawal(self, request):
-        """
-        Cancel a pending withdrawal and restore the reserved balance.
-        Body: { "withdrawal_id": "uuid" }
-        """
-        user, error_response = self.get_user_from_header(request)
-        if error_response:
-            return error_response
-
-        withdrawal_id = request.data.get('withdrawal_id')
-        if not withdrawal_id:
-            return Response(
-                {'error': 'withdrawal_id is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            withdrawal = WithdrawalRequest.objects.get(
-                withdrawal_id=withdrawal_id,
-                user=user
-            )
-        except WithdrawalRequest.DoesNotExist:
-            return Response(
-                {'error': 'Withdrawal request not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        if withdrawal.status != 'pending':
-            return Response(
-                {
-                    'error': f'Cannot cancel a "{withdrawal.status}" withdrawal. '
-                             f'Only pending requests can be cancelled.'
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        with transaction.atomic():
-            wallet = withdrawal.wallet
-            wallet.available_balance += withdrawal.amount
-            wallet.save(update_fields=['available_balance', 'updated_at'])
-
-            # Reversal credit to keep ledger accurate
-            WalletTransaction.objects.create(
-                wallet=wallet,
-                user=user,
-                amount=withdrawal.amount,
-                transaction_type='credit',
-                source_type='refund',
-                status='completed',
-            )
-
-            withdrawal.status = 'rejected'
-            withdrawal.save(update_fields=['status'])
-
-            logger.info(
-                f"Withdrawal {withdrawal.withdrawal_id} cancelled by user {user.id}, "
-                f"balance restored: {withdrawal.amount}"
-            )
-
-        return Response({
-            'success': True,
-            'message': 'Withdrawal cancelled. Your balance has been restored.',
-            'wallet': {
-                'available_balance': float(wallet.available_balance),
-                'pending_balance': float(wallet.pending_balance),
-                'total_balance': float(wallet.available_balance + wallet.pending_balance),
-            },
-        })
-
-    # ================================================================
-    # ADMIN ENDPOINTS
-    # ================================================================
-
-    @action(detail=False, methods=['post'])
-    def release_pending(self, request):
-        """
-        Manually release a specific pending balance to available.
-        Admin use only — in normal flow credits are immediate.
-        Body: { "amount": decimal (optional, releases all if omitted) }
-        """
-        user, error_response = self.get_user_from_header(request)
-        if error_response:
-            return error_response
-
-        try:
-            wallet = UserWallet.objects.get(user=user)
-        except UserWallet.DoesNotExist:
-            return Response({'error': 'Wallet not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        amount_raw = request.data.get('amount')
-
-        with transaction.atomic():
-            if amount_raw:
-                try:
-                    amount = Decimal(str(amount_raw))
-                    if amount > wallet.pending_balance:
-                        return Response(
-                            {'error': 'Amount exceeds pending balance'},
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
-                    wallet.pending_balance -= amount
-                    wallet.available_balance += amount
-                except Exception:
-                    return Response({'error': 'Invalid amount'}, status=status.HTTP_400_BAD_REQUEST)
-            else:
-                amount = wallet.pending_balance
-                wallet.available_balance += wallet.pending_balance
-                wallet.pending_balance = Decimal('0')
-
-            wallet.save()
-
-            wallet_transaction = WalletTransaction.objects.create(
-                wallet=wallet,
-                user=user,
-                amount=amount,
-                transaction_type='credit',
-                source_type='release',
-                status='completed',
-            )
-
-            logger.info(f"Released {amount} from pending to available for user {user.id}")
-
-        serializer = WalletTransactionSerializer(wallet_transaction)
-
-        return Response({
-            'success': True,
-            'message': 'Pending balance released to available.',
-            'wallet': {
-                'available_balance': float(wallet.available_balance),
-                'pending_balance': float(wallet.pending_balance),
-                'total_balance': float(wallet.available_balance + wallet.pending_balance),
-            },
-            'transaction': serializer.data
-        })
-
-    @action(detail=False, methods=['post'])
-    def auto_release_all(self, request):
-        """
-        Admin endpoint — release all pending balances older than 30 days.
-        Can be called by a scheduled task.
-        """
-        user, error_response = self.get_user_from_header(request)
-        if error_response:
-            return error_response
-
-        if not user.is_admin:
-            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
-
-        thirty_days_ago = timezone.now() - timedelta(days=30)
-
-        old_pending = WalletTransaction.objects.filter(
-            status='pending',
-            transaction_type='credit',
-            source_type__in=['personal_sale', 'shop_sale'],
-            created_at__lte=thirty_days_ago
-        ).select_related('wallet', 'user', 'shop', 'order')
-
-        total_found = old_pending.count()
-        total_amount = old_pending.aggregate(
-            total=Sum('amount')
-        )['total'] or Decimal('0')
-
-        if total_found == 0:
-            return Response({
-                'success': True,
-                'message': 'No pending transactions to release.',
-                'released_count': 0,
-                'released_amount': 0
-            })
-
-        released_count = 0
-        released_amount = Decimal('0')
-        errors = []
-        users_affected = set()
-
-        with transaction.atomic():
-            for pending_tx in old_pending:
-                try:
-                    wallet = pending_tx.wallet
-                    users_affected.add(str(pending_tx.user.id))
-
-                    WalletTransaction.objects.create(
-                        wallet=wallet,
-                        user=pending_tx.user,
-                        amount=pending_tx.amount,
-                        transaction_type='credit',
-                        source_type='release',
-                        status='completed',
-                        shop=pending_tx.shop,
-                        order=pending_tx.order,
-                    )
-
-                    pending_tx.status = 'completed'
-                    pending_tx.save(update_fields=['status'])
-
-                    wallet.pending_balance -= pending_tx.amount
-                    wallet.available_balance += pending_tx.amount
-                    wallet.save()
-
-                    released_count += 1
-                    released_amount += pending_tx.amount
-
-                except Exception as e:
-                    errors.append({
-                        'transaction_id': str(pending_tx.transaction_id),
-                        'error': str(e)
-                    })
-                    logger.error(f"Error releasing transaction {pending_tx.transaction_id}: {e}")
-
-        return Response({
-            'success': True,
-            'message': f'Released {released_count} transactions totalling ₱{float(released_amount):.2f}.',
-            'released_count': released_count,
-            'released_amount': float(released_amount),
-            'total_found': total_found,
-            'total_amount': float(total_amount),
-            'users_affected': len(users_affected),
-            'errors': errors,
-        })
-
-    @action(detail=False, methods=['get'])
-    def pending_stats(self, request):
-        """Admin endpoint — statistics about pending transactions."""
-        user, error_response = self.get_user_from_header(request)
-        if error_response:
-            return error_response
-
-        if not user.is_admin:
-            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
-
-        thirty_days_ago = timezone.now() - timedelta(days=30)
-
-        all_pending = WalletTransaction.objects.filter(
-            status='pending',
-            transaction_type='credit',
-            source_type__in=['personal_sale', 'shop_sale']
-        )
-        old_pending = all_pending.filter(created_at__lte=thirty_days_ago)
-        recent_pending = all_pending.filter(created_at__gt=thirty_days_ago)
-
-        return Response({
-            'success': True,
-            'stats': {
-                'all_pending': {
-                    'count': all_pending.count(),
-                    'amount': float(all_pending.aggregate(total=Sum('amount'))['total'] or 0)
-                },
-                'old_pending': {
-                    'count': old_pending.count(),
-                    'amount': float(old_pending.aggregate(total=Sum('amount'))['total'] or 0)
-                },
-                'recent_pending': {
-                    'count': recent_pending.count(),
-                    'amount': float(recent_pending.aggregate(total=Sum('amount'))['total'] or 0)
-                },
-                'release_cutoff_date': thirty_days_ago.isoformat()
-            }
-        })
 
 
 class WithdrawalRequestViewSet(viewsets.ModelViewSet):
@@ -43185,11 +41462,12 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
             }, status=500)
 
 
+
 class RiderWalletView(APIView):
     """
     Unified view for rider wallet operations:
     - GET: Get wallet balance and transaction history
-    - POST: Handle delivery status changes and withdrawals
+    - POST: Add delivery fee or process withdrawal
     """
     
     def get_user_from_header(self, request):
@@ -43324,8 +41602,8 @@ class RiderWalletView(APIView):
     def post(self, request):
         """
         Handle wallet operations:
-        1. handle_delivery_status - Called when delivery status changes
-        2. process_withdrawal - Process withdrawal request
+        1. Add delivery fee (credit) - triggered when delivery is marked as delivered
+        2. Process withdrawal (debit)
         """
         user, error_response = self.get_user_from_header(request)
         if error_response:
@@ -43334,8 +41612,8 @@ class RiderWalletView(APIView):
         action = request.data.get('action')
 
         try:
-            if action == 'handle_delivery_status':
-                return self.handle_delivery_status(request, user)
+            if action == 'add_delivery_fee':
+                return self.add_delivery_fee(request, user)
             elif action == 'process_withdrawal':
                 return self.process_withdrawal(request, user)
             else:
@@ -43352,19 +41630,17 @@ class RiderWalletView(APIView):
             )
 
     @transaction.atomic
-    def handle_delivery_status(self, request, user):
+    def add_delivery_fee(self, request, user):
         """
-        Handle delivery status changes for wallet transactions:
-        - When delivery.status = 'accepted' → Create transaction with status 'accepted' (no balance update)
-        - When delivery.status = 'delivered' → Update transaction to 'pending', add to pending_balance
-        - When delivery.status = 'completed' → Update transaction to 'completed', move to available_balance
+        Add delivery fee to rider wallet based on delivery status:
+        - If status = 'delivered' → transaction status = 'pending', add to pending_balance
+        - If status = 'completed' → transaction status = 'completed', add to available_balance
         """
         delivery_id = request.data.get('delivery_id')
-        new_status = request.data.get('status')
         
-        if not delivery_id or not new_status:
+        if not delivery_id:
             return Response(
-                {'success': False, 'error': 'Delivery ID and status are required'},
+                {'success': False, 'error': 'Delivery ID is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -43382,123 +41658,57 @@ class RiderWalletView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Get or create wallet
-            wallet, _ = UserWallet.objects.get_or_create(user=user)
-
-            # Check if transaction already exists
-            existing_transaction = WalletTransaction.objects.filter(
-                order=delivery.order,
-                source_type='delivery_fee'
-            ).first()
-
-            # Handle based on new status
-            if new_status == 'accepted':
-                # Check if transaction already exists
-                if existing_transaction:
-                    return Response(
-                        {'success': False, 'error': 'Transaction already exists for this delivery'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                # Create new accepted transaction (no balance update)
-                transaction = WalletTransaction.objects.create(
-                    wallet=wallet,
-                    amount=delivery.delivery_fee,
-                    transaction_type='credit',
-                    source_type='delivery_fee',
-                    status='accepted',
-                    order=delivery.order,
-                    user=user
-                )
-
-                message = 'Delivery accepted - transaction recorded'
-
-            elif new_status == 'delivered':
-                if not existing_transaction:
-                    # If no transaction exists, create one as pending
-                    transaction = WalletTransaction.objects.create(
-                        wallet=wallet,
-                        amount=delivery.delivery_fee,
-                        transaction_type='credit',
-                        source_type='delivery_fee',
-                        status='pending',
-                        order=delivery.order,
-                        user=user
-                    )
-                    
-                    # Add to pending balance
-                    wallet.pending_balance += delivery.delivery_fee
-                    wallet.save()
-                    
-                    message = 'Delivery delivered - pending transaction created'
-                    
-                elif existing_transaction.status == 'accepted':
-                    # Update existing accepted to pending
-                    existing_transaction.status = 'pending'
-                    existing_transaction.save()
-                    
-                    # Add to pending balance
-                    wallet.pending_balance += delivery.delivery_fee
-                    wallet.save()
-                    
-                    transaction = existing_transaction
-                    message = 'Delivery delivered - transaction updated to pending'
-                    
-                else:
-                    return Response(
-                        {'success': False, 'error': f'Cannot update delivery with status {existing_transaction.status} to delivered'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-            elif new_status == 'completed':
-                if not existing_transaction:
-                    return Response(
-                        {'success': False, 'error': 'No transaction found for this delivery'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                    
-                if existing_transaction.status == 'pending':
-                    # Update pending to completed
-                    existing_transaction.status = 'completed'
-                    existing_transaction.save()
-                    
-                    # Move from pending to available
-                    wallet.pending_balance -= delivery.delivery_fee
-                    wallet.available_balance += delivery.delivery_fee
-                    wallet.save()
-                    
-                    transaction = existing_transaction
-                    message = 'Delivery completed - funds moved to available balance'
-                    
-                elif existing_transaction.status == 'accepted':
-                    # Direct from accepted to completed (should not happen normally)
-                    existing_transaction.status = 'completed'
-                    existing_transaction.save()
-                    
-                    # Add directly to available balance
-                    wallet.available_balance += delivery.delivery_fee
-                    wallet.save()
-                    
-                    transaction = existing_transaction
-                    message = 'Delivery completed - funds added to available balance'
-                    
-                else:
-                    return Response(
-                        {'success': False, 'error': f'Cannot update delivery with status {existing_transaction.status} to completed'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-            else:
+            # Check if delivery is in a valid state for adding fee
+            if delivery.status not in ['delivered', 'completed']:
                 return Response(
-                    {'success': False, 'error': f'Unsupported status: {new_status}'},
+                    {'success': False, 'error': f'Cannot add fee for delivery with status: {delivery.status}'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            logger.info(f"Delivery status updated for delivery {delivery_id}: {new_status} - ₱{delivery.delivery_fee}")
+            # Check if transaction already exists for this delivery
+            existing = WalletTransaction.objects.filter(
+                order=delivery.order,
+                source_type='delivery_fee'
+            ).exists()
+
+            if existing:
+                return Response(
+                    {'success': False, 'error': 'Delivery fee already recorded'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Get or create wallet
+            wallet, _ = UserWallet.objects.get_or_create(user=user)
+
+            # Determine transaction status and balance update based on delivery status
+            if delivery.status == 'delivered':
+                transaction_status = 'pending'
+                # Add to pending balance only
+                wallet.pending_balance += delivery.delivery_fee
+            else:  # completed
+                transaction_status = 'completed'
+                # Add to available balance
+                wallet.available_balance += delivery.delivery_fee
+
+            # Save wallet with updated balances
+            wallet.save()
+
+            # Create transaction record
+            transaction = WalletTransaction.objects.create(
+                wallet=wallet,
+                amount=delivery.delivery_fee,
+                transaction_type='credit',
+                source_type='delivery_fee',
+                status=transaction_status,
+                order=delivery.order,
+                user=user
+            )
+
+            logger.info(f"Delivery fee added for delivery {delivery_id}: ₱{delivery.delivery_fee} ({transaction_status})")
 
             return Response({
                 'success': True,
-                'message': message,
+                'message': f'Delivery fee added successfully ({transaction_status})',
                 'transaction': {
                     'id': str(transaction.transaction_id),
                     'amount': float(transaction.amount),
@@ -43513,7 +41723,7 @@ class RiderWalletView(APIView):
                     'formatted_available': f"₱{wallet.available_balance:,.2f}",
                     'formatted_pending': f"₱{wallet.pending_balance:,.2f}",
                 }
-            }, status=status.HTTP_200_OK)
+            }, status=status.HTTP_201_CREATED)
 
         except Delivery.DoesNotExist:
             return Response(
@@ -43521,9 +41731,9 @@ class RiderWalletView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            logger.error(f"Error handling delivery status: {str(e)}", exc_info=True)
+            logger.error(f"Error adding delivery fee: {str(e)}", exc_info=True)
             return Response(
-                {'success': False, 'error': 'Failed to handle delivery status'},
+                {'success': False, 'error': 'Failed to add delivery fee'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -43623,812 +41833,5 @@ class RiderWalletView(APIView):
             logger.error(f"Error processing withdrawal: {str(e)}", exc_info=True)
             return Response(
                 {'success': False, 'error': 'Failed to process withdrawal'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-class SellerVouchers(viewsets.ViewSet):
-    """
-    ViewSet for seller voucher management following SellerOrderList pattern
-    """
-    
-    def _get_shop(self, shop_id):
-        """Get shop by ID"""
-        try:
-            return Shop.objects.get(id=shop_id)
-        except Shop.DoesNotExist:
-            return None
-
-    @action(detail=False, methods=['get'])
-    def list_vouchers(self, request):
-        """
-        Get paginated list of seller's vouchers with filters
-        """
-        try:
-            # Get shop_id from query parameters
-            shop_id = request.GET.get('shop_id')
-            if not shop_id:
-                return Response({
-                    'success': False,
-                    'error': 'shop_id is required'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get shop
-            shop = self._get_shop(shop_id)
-            if not shop:
-                return Response({
-                    'success': False,
-                    'error': 'Shop not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get query parameters
-            page = int(request.GET.get('page', 1))
-            page_size = int(request.GET.get('page_size', 10))
-            search = request.GET.get('search', '')
-            status_filter = request.GET.get('status', '')
-            voucher_type = request.GET.get('voucher_type', '')
-            
-            # Base queryset for seller's shop
-            vouchers_qs = Voucher.objects.filter(
-                shop=shop
-            ).select_related('created_by').order_by('-added_at')
-            
-            # Apply search filter
-            if search:
-                vouchers_qs = vouchers_qs.filter(
-                    Q(name__icontains=search) |
-                    Q(code__icontains=search)
-                )
-            
-            # Apply voucher type filter
-            if voucher_type:
-                vouchers_qs = vouchers_qs.filter(voucher_type=voucher_type)
-            
-            # Apply status filter
-            now = timezone.now().date()
-            if status_filter:
-                if status_filter == 'active':
-                    vouchers_qs = vouchers_qs.filter(
-                        is_active=True,
-                        start_date__lte=now,
-                        end_date__gte=now
-                    )
-                elif status_filter == 'expired':
-                    vouchers_qs = vouchers_qs.filter(
-                        end_date__lt=now
-                    )
-                elif status_filter == 'scheduled':
-                    vouchers_qs = vouchers_qs.filter(
-                        start_date__gt=now
-                    )
-                elif status_filter == 'inactive':
-                    vouchers_qs = vouchers_qs.filter(
-                        is_active=False
-                    )
-            
-            # Calculate total count
-            total_count = vouchers_qs.count()
-            
-            # Apply pagination
-            start_index = (page - 1) * page_size
-            end_index = start_index + page_size
-            vouchers_page = vouchers_qs[start_index:end_index]
-            
-            # Prepare voucher data with usage stats
-            vouchers_data = []
-            for voucher in vouchers_page:
-                # Calculate usage count from Checkout model
-                usage_count = Checkout.objects.filter(
-                    voucher=voucher
-                ).count()
-                
-                # Calculate total discount given (if you have discount_amount field)
-                total_discount = 0
-                # Uncomment if you have discount_amount field
-                # total_discount = Checkout.objects.filter(
-                #     voucher=voucher
-                # ).aggregate(
-                #     total=Sum('discount_amount')
-                # )['total'] or 0
-                
-                # Determine status
-                if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
-                    status_value = 'active'
-                elif voucher.end_date and voucher.end_date < now:
-                    status_value = 'expired'
-                elif voucher.start_date > now:
-                    status_value = 'scheduled'
-                else:
-                    status_value = 'inactive'
-                
-                # Get created_by name - FIXED: Don't use get_full_name()
-                created_by_name = 'System'
-                if voucher.created_by:
-                    # Try different ways to get the user's name
-                    if hasattr(voucher.created_by, 'get_full_name') and callable(voucher.created_by.get_full_name):
-                        created_by_name = voucher.created_by.get_full_name() or voucher.created_by.username
-                    else:
-                        # Manual construction of full name
-                        first_name = getattr(voucher.created_by, 'first_name', '')
-                        last_name = getattr(voucher.created_by, 'last_name', '')
-                        if first_name or last_name:
-                            created_by_name = f"{first_name} {last_name}".strip()
-                        else:
-                            created_by_name = voucher.created_by.username or 'Unknown'
-                
-                voucher_data = {
-                    'id': str(voucher.id),
-                    'name': voucher.name,
-                    'code': voucher.code,
-                    'voucher_type': voucher.voucher_type,
-                    'discount_type': voucher.discount_type,
-                    'value': float(voucher.value),
-                    'minimum_spend': float(voucher.minimum_spend),
-                    'maximum_usage': voucher.maximum_usage,
-                    'current_usage': usage_count,
-                    'total_discount_given': float(total_discount),
-                    'start_date': voucher.start_date.isoformat() if voucher.start_date else None,
-                    'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
-                    'added_at': voucher.added_at.isoformat(),
-                    'created_by': {
-                        'id': str(voucher.created_by.id) if voucher.created_by else None,
-                        'name': created_by_name
-                    } if voucher.created_by else None,
-                    'is_active': voucher.is_active,
-                    'status': status_value,
-                    'shop': {
-                        'id': str(shop.id),
-                        'name': shop.name
-                    }
-                }
-                vouchers_data.append(voucher_data)
-            
-            # Get filter options
-            filter_options = {
-                'voucher_types': list(Voucher.objects.filter(shop=shop).values_list('voucher_type', flat=True).distinct()),
-                'discount_types': list(Voucher.objects.filter(shop=shop).values_list('discount_type', flat=True).distinct()),
-                'statuses': ['active', 'expired', 'scheduled', 'inactive']
-            }
-            
-            return Response({
-                'success': True,
-                'vouchers': vouchers_data,
-                'pagination': {
-                    'page': page,
-                    'page_size': page_size,
-                    'total_count': total_count,
-                    'total_pages': (total_count + page_size - 1) // page_size
-                },
-                'filter_options': filter_options
-            })
-            
-        except Exception as e:
-            import traceback
-            print(f"Error in list_vouchers: {e}")
-            print(traceback.format_exc())
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['post'])
-    def create_voucher(self, request):
-        """
-        Create a new voucher for the seller's shop
-        """
-        try:
-            data = request.data.copy()
-            
-            # Get shop_id from request data
-            shop_id = data.get('shop_id')
-            if not shop_id:
-                return Response({
-                    'success': False,
-                    'error': 'shop_id is required'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get shop
-            shop = self._get_shop(shop_id)
-            if not shop:
-                return Response({
-                    'success': False,
-                    'error': 'Shop not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get user_id from header (optional - for created_by)
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    data['created_by'] = user.id
-                except User.DoesNotExist:
-                    pass
-            
-            # Set shop
-            data['shop'] = shop.id
-            
-            # Remove shop_id from data as it's not in the model
-            if 'shop_id' in data:
-                del data['shop_id']
-            
-            # Validate required fields
-            required_fields = ['name', 'code', 'voucher_type', 'discount_type', 'value', 'end_date']
-            for field in required_fields:
-                if field not in data or not data[field]:
-                    return Response({
-                        'success': False,
-                        'error': f'{field} is required'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Check if voucher code already exists for this shop
-            if Voucher.objects.filter(shop=shop, code=data['code']).exists():
-                return Response({
-                    'success': False,
-                    'error': 'Voucher code already exists for your shop'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Handle date fields
-            if 'start_date' in data and data['start_date']:
-                if isinstance(data['start_date'], str):
-                    data['start_date'] = parse_date(data['start_date'])
-            else:
-                data['start_date'] = timezone.now().date()
-            
-            if 'end_date' in data and data['end_date']:
-                if isinstance(data['end_date'], str):
-                    data['end_date'] = parse_date(data['end_date'])
-            
-            # Validate dates
-            if data['start_date'] > data['end_date']:
-                return Response({
-                    'success': False,
-                    'error': 'End date must be after start date'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create voucher
-            serializer = VoucherSerializer(data=data)
-            if serializer.is_valid():
-                voucher = serializer.save()
-                
-                return Response({
-                    'success': True,
-                    'message': 'Voucher created successfully',
-                    'voucher': {
-                        'id': str(voucher.id),
-                        'name': voucher.name,
-                        'code': voucher.code,
-                        'voucher_type': voucher.voucher_type,
-                        'discount_type': voucher.discount_type,
-                        'value': float(voucher.value),
-                        'minimum_spend': float(voucher.minimum_spend),
-                        'maximum_usage': voucher.maximum_usage,
-                        'start_date': voucher.start_date.isoformat(),
-                        'end_date': voucher.end_date.isoformat(),
-                        'is_active': voucher.is_active
-                    }
-                }, status=status.HTTP_201_CREATED)
-            else:
-                return Response({
-                    'success': False,
-                    'error': serializer.errors
-                }, status=status.HTTP_400_BAD_REQUEST)
-                
-        except Exception as e:
-            import traceback
-            print(f"Error in create_voucher: {e}")
-            print(traceback.format_exc())
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['get'])
-    def get_voucher(self, request, pk=None):
-        """
-        Get single voucher details
-        """
-        try:
-            # Get shop_id from query parameters
-            shop_id = request.GET.get('shop_id')
-            if not shop_id:
-                return Response({
-                    'success': False,
-                    'error': 'shop_id is required'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get shop
-            shop = self._get_shop(shop_id)
-            if not shop:
-                return Response({
-                    'success': False,
-                    'error': 'Shop not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get voucher
-            try:
-                voucher = Voucher.objects.get(id=pk, shop=shop)
-            except Voucher.DoesNotExist:
-                return Response({
-                    'success': False,
-                    'error': 'Voucher not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-            
-            # Calculate usage stats
-            now = timezone.now().date()
-            usage_count = Checkout.objects.filter(
-                voucher=voucher
-            ).count()
-            
-            total_discount = 0
-            # Uncomment if you have discount_amount field
-            # total_discount = Checkout.objects.filter(
-            #     voucher=voucher
-            # ).aggregate(
-            #     total=Sum('discount_amount')
-            # )['total'] or 0
-            
-            # Determine status
-            if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
-                status_value = 'active'
-            elif voucher.end_date and voucher.end_date < now:
-                status_value = 'expired'
-            elif voucher.start_date > now:
-                status_value = 'scheduled'
-            else:
-                status_value = 'inactive'
-            
-            # Get created_by name - FIXED: Don't use get_full_name()
-            created_by_name = 'System'
-            if voucher.created_by:
-                # Try different ways to get the user's name
-                if hasattr(voucher.created_by, 'get_full_name') and callable(voucher.created_by.get_full_name):
-                    created_by_name = voucher.created_by.get_full_name() or voucher.created_by.username
-                else:
-                    # Manual construction of full name
-                    first_name = getattr(voucher.created_by, 'first_name', '')
-                    last_name = getattr(voucher.created_by, 'last_name', '')
-                    if first_name or last_name:
-                        created_by_name = f"{first_name} {last_name}".strip()
-                    else:
-                        created_by_name = voucher.created_by.username or 'Unknown'
-            
-            voucher_data = {
-                'id': str(voucher.id),
-                'name': voucher.name,
-                'code': voucher.code,
-                'voucher_type': voucher.voucher_type,
-                'discount_type': voucher.discount_type,
-                'value': float(voucher.value),
-                'minimum_spend': float(voucher.minimum_spend),
-                'maximum_usage': voucher.maximum_usage,
-                'current_usage': usage_count,
-                'total_discount_given': float(total_discount),
-                'start_date': voucher.start_date.isoformat(),
-                'end_date': voucher.end_date.isoformat(),
-                'added_at': voucher.added_at.isoformat(),
-                'created_by': {
-                    'id': str(voucher.created_by.id) if voucher.created_by else None,
-                    'name': created_by_name
-                } if voucher.created_by else None,
-                'is_active': voucher.is_active,
-                'status': status_value,
-                'shop': {
-                    'id': str(shop.id),
-                    'name': shop.name
-                }
-            }
-            
-            return Response({
-                'success': True,
-                'voucher': voucher_data
-            })
-            
-        except Exception as e:
-            import traceback
-            print(f"Error in get_voucher: {e}")
-            print(traceback.format_exc())
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['put', 'patch'])
-    def update_voucher(self, request, pk=None):
-        """
-        Update an existing voucher
-        """
-        try:
-            data = request.data.copy()
-            
-            # Get shop_id from request data
-            shop_id = data.get('shop_id')
-            if not shop_id:
-                return Response({
-                    'success': False,
-                    'error': 'shop_id is required'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get shop
-            shop = self._get_shop(shop_id)
-            if not shop:
-                return Response({
-                    'success': False,
-                    'error': 'Shop not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get voucher
-            try:
-                voucher = Voucher.objects.get(id=pk, shop=shop)
-            except Voucher.DoesNotExist:
-                return Response({
-                    'success': False,
-                    'error': 'Voucher not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Remove shop_id from data as it's not in the model
-            if 'shop_id' in data:
-                del data['shop_id']
-            
-            # Check if code is being changed and if it already exists
-            if 'code' in data and data['code'] != voucher.code:
-                if Voucher.objects.filter(shop=shop, code=data['code']).exists():
-                    return Response({
-                        'success': False,
-                        'error': 'Voucher code already exists for your shop'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Handle date fields
-            if 'start_date' in data and data['start_date']:
-                if isinstance(data['start_date'], str):
-                    data['start_date'] = parse_date(data['start_date'])
-            
-            if 'end_date' in data and data['end_date']:
-                if isinstance(data['end_date'], str):
-                    data['end_date'] = parse_date(data['end_date'])
-            
-            # Validate dates if both are provided
-            start_date = data.get('start_date', voucher.start_date)
-            end_date = data.get('end_date', voucher.end_date)
-            
-            if start_date and end_date and start_date > end_date:
-                return Response({
-                    'success': False,
-                    'error': 'End date must be after start date'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Update voucher
-            serializer = VoucherSerializer(voucher, data=data, partial=True)
-            if serializer.is_valid():
-                updated_voucher = serializer.save()
-                
-                return Response({
-                    'success': True,
-                    'message': 'Voucher updated successfully',
-                    'voucher': {
-                        'id': str(updated_voucher.id),
-                        'name': updated_voucher.name,
-                        'code': updated_voucher.code,
-                        'voucher_type': updated_voucher.voucher_type,
-                        'discount_type': updated_voucher.discount_type,
-                        'value': float(updated_voucher.value),
-                        'minimum_spend': float(updated_voucher.minimum_spend),
-                        'maximum_usage': updated_voucher.maximum_usage,
-                        'start_date': updated_voucher.start_date.isoformat(),
-                        'end_date': updated_voucher.end_date.isoformat(),
-                        'is_active': updated_voucher.is_active
-                    }
-                })
-            else:
-                return Response({
-                    'success': False,
-                    'error': serializer.errors
-                }, status=status.HTTP_400_BAD_REQUEST)
-                
-        except Exception as e:
-            import traceback
-            print(f"Error in update_voucher: {e}")
-            print(traceback.format_exc())
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['delete'])
-    def delete_voucher(self, request, pk=None):
-        """
-        Delete a voucher
-        """
-        try:
-            # Get shop_id from query parameters
-            shop_id = request.GET.get('shop_id')
-            if not shop_id:
-                return Response({
-                    'success': False,
-                    'error': 'shop_id is required'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get shop
-            shop = self._get_shop(shop_id)
-            if not shop:
-                return Response({
-                    'success': False,
-                    'error': 'Shop not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            # Get voucher
-            try:
-                voucher = Voucher.objects.get(id=pk, shop=shop)
-            except Voucher.DoesNotExist:
-                return Response({
-                    'success': False,
-                    'error': 'Voucher not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-            
-            # Check if voucher has been used
-            usage_count = Checkout.objects.filter(voucher=voucher).count()
-            if usage_count > 0:
-                # Instead of deleting, just deactivate it
-                voucher.is_active = False
-                voucher.save()
-                return Response({
-                    'success': True,
-                    'message': 'Voucher has been used and cannot be deleted. It has been deactivated instead.',
-                    'deactivated': True
-                })
-            
-            # Delete if not used
-            voucher.delete()
-            return Response({
-                'success': True,
-                'message': 'Voucher deleted successfully'
-            })
-            
-        except Exception as e:
-            import traceback
-            print(f"Error in delete_voucher: {e}")
-            print(traceback.format_exc())
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['get'])
-    def get_metrics(self, request):
-        """
-        Get voucher metrics for seller dashboard
-        """
-        try:
-            # Get shop_id from query parameters
-            shop_id = request.GET.get('shop_id')
-            if not shop_id:
-                return Response({
-                    'success': False,
-                    'error': 'shop_id is required'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get shop
-            shop = self._get_shop(shop_id)
-            if not shop:
-                return Response({
-                    'success': False,
-                    'error': 'Shop not found'
-                }, status=status.HTTP_404_NOT_FOUND)
-
-            now = timezone.now().date()
-            
-            # Get all vouchers for this shop
-            vouchers_qs = Voucher.objects.filter(shop=shop)
-            
-            # Calculate metrics
-            total_vouchers = vouchers_qs.count()
-            
-            active_vouchers = vouchers_qs.filter(
-                is_active=True,
-                start_date__lte=now,
-                end_date__gte=now
-            ).count()
-            
-            expired_vouchers = vouchers_qs.filter(
-                end_date__lt=now
-            ).count()
-            
-            scheduled_vouchers = vouchers_qs.filter(
-                start_date__gt=now
-            ).count()
-            
-            # Calculate total usage
-            total_usage = Checkout.objects.filter(
-                voucher__shop=shop,
-                voucher__isnull=False
-            ).count()
-            
-            # Calculate total discount (if you have discount_amount field)
-            total_discount = 0
-            # Uncomment if you have discount_amount field
-            # total_discount = Checkout.objects.filter(
-            #     voucher__shop=shop,
-            #     voucher__isnull=False
-            # ).aggregate(
-            #     total=Sum('discount_amount')
-            # )['total'] or 0
-            
-            metrics = {
-                'total_vouchers': total_vouchers,
-                'active_vouchers': active_vouchers,
-                'expired_vouchers': expired_vouchers,
-                'scheduled_vouchers': scheduled_vouchers,
-                'total_usage': total_usage,
-                'total_discount': float(total_discount),
-            }
-            
-            return Response({
-                'success': True,
-                'metrics': metrics
-            })
-            
-        except Exception as e:
-            import traceback
-            print(f"Error in get_metrics: {e}")
-            print(traceback.format_exc())
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-class UserPaymentDetailsViewSet(viewsets.ViewSet):
-    """
-    User's saved payment details (e-wallets, bank accounts, etc.)
-    """
-
-    def get_user(self, request):
-        """
-        TEMPORARY: Get user from header
-        (Replace with request.user when authentication is implemented)
-        """
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return None, Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            user = User.objects.get(id=user_id)
-            return user, None
-        except User.DoesNotExist:
-            return None, Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-    # -----------------------------
-    # GET PAYMENT METHODS
-    # -----------------------------
-    @action(detail=False, methods=['get'])
-    def get_my_payment_methods(self, request):
-        user, error = self.get_user(request)
-        if error:
-            return error
-
-        methods = UserPaymentDetail.objects.filter(user=user).order_by('-is_default', '-created_at')
-        serializer = UserPaymentDetailSerializer(methods, many=True)
-
-        return Response(serializer.data)
-
-    # -----------------------------
-    # ADD PAYMENT METHOD
-    # -----------------------------
-    @action(detail=False, methods=['post'])
-    def add_payment_method(self, request):
-        user, error = self.get_user(request)
-        if error:
-            return error
-
-        data = request.data.copy()
-        data['user'] = user.id
-
-        # Remove read-only fields
-        for field in ['payment_id', 'created_at', 'updated_at', 'verified_by']:
-            data.pop(field, None)
-
-        serializer = UserPaymentDetailSerializer(data=data)
-
-        if serializer.is_valid():
-            try:
-                with transaction.atomic():
-                    # If new method is default → remove other defaults
-                    if serializer.validated_data.get('is_default'):
-                        UserPaymentDetail.objects.filter(user=user, is_default=True).update(is_default=False)
-
-                    method = serializer.save()
-
-                return Response({
-                    "message": "Payment method added successfully",
-                    "payment_id": str(method.payment_id)
-                }, status=status.HTTP_201_CREATED)
-
-            except Exception as e:
-                logger.error(f"Database error: {e}\n{traceback.format_exc()}")
-                return Response(
-                    {"error": "Database error, please try again"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-
-        logger.error(f"Validation errors: {serializer.errors}")
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    # -----------------------------
-    # UPDATE PAYMENT METHOD
-    # -----------------------------
-    @action(detail=True, methods=['put'])
-    def update_payment_method(self, request, pk=None):
-        user, error = self.get_user(request)
-        if error:
-            return error
-
-        method = get_object_or_404(UserPaymentDetail, payment_id=pk, user=user)
-
-        serializer = UserPaymentDetailSerializer(method, data=request.data, partial=True)
-
-        if serializer.is_valid():
-            try:
-                with transaction.atomic():
-                    # If setting as default → remove other defaults
-                    if serializer.validated_data.get('is_default'):
-                        UserPaymentDetail.objects.filter(user=user, is_default=True).update(is_default=False)
-
-                    serializer.save()
-
-                return Response({
-                    "message": "Payment method updated",
-                    "payment_id": str(method.payment_id)
-                })
-
-            except Exception as e:
-                logger.error(f"Update error: {e}\n{traceback.format_exc()}")
-                return Response(
-                    {"error": "Update failed"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    # -----------------------------
-    # DELETE PAYMENT METHOD
-    # -----------------------------
-    @action(detail=True, methods=['delete'])
-    def delete_payment_method(self, request, pk=None):
-        user, error = self.get_user(request)
-        if error:
-            return error
-
-        method = get_object_or_404(UserPaymentDetail, payment_id=pk, user=user)
-        method.delete()
-
-        return Response({
-            "message": "Payment method deleted",
-            "payment_id": str(pk)
-        })
-
-    # -----------------------------
-    # SET DEFAULT PAYMENT METHOD
-    # -----------------------------
-    @action(detail=True, methods=['post'])
-    def set_default(self, request, pk=None):
-        user, error = self.get_user(request)
-        if error:
-            return error
-
-        method = get_object_or_404(UserPaymentDetail, payment_id=pk, user=user)
-
-        try:
-            with transaction.atomic():
-                # Remove existing default
-                UserPaymentDetail.objects.filter(user=user, is_default=True).update(is_default=False)
-
-                # Set new default
-                method.is_default = True
-                method.save()
-
-            return Response({
-                "message": "Payment method set as default",
-                "payment_id": str(method.payment_id)
-            })
-
-        except Exception as e:
-            logger.error(f"Set default error: {e}\n{traceback.format_exc()}")
-            return Response(
-                {"error": "Failed to set default"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

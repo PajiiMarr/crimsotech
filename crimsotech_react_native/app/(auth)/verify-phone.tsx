@@ -56,6 +56,7 @@ export default function VerifyPhoneScreen() {
       if (storedUserId) {
         setUserId(storedUserId);
 
+<<<<<<< HEAD
         // Use local flags first to avoid role flicker while remote fetch is in-flight.
         const localIsRider = await SecureStore.getItemAsync("is_rider");
         if (localIsRider === "true") {
@@ -71,6 +72,14 @@ export default function VerifyPhoneScreen() {
             }
           } catch (e) {
             console.warn("Failed parsing local user payload", e);
+=======
+        // Prefer locally stored role first so flow is resilient to slow API calls.
+        const userJson = await SecureStore.getItemAsync("user");
+        if (userJson) {
+          const localUser = JSON.parse(userJson);
+          if (typeof localUser?.is_rider === "boolean") {
+            setIsRider(localUser.is_rider);
+>>>>>>> 7a0eed5f44edb81d3d703b51b35d8315ba5c361a
           }
         }
 
@@ -79,11 +88,56 @@ export default function VerifyPhoneScreen() {
           headers: { "X-User-Id": storedUserId },
         });
 
+<<<<<<< HEAD
         setIsRider(Boolean(response.data?.is_rider));
+=======
+        if (typeof response.data?.is_rider === "boolean") {
+          setIsRider(response.data.is_rider);
+        }
+>>>>>>> 7a0eed5f44edb81d3d703b51b35d8315ba5c361a
       }
     } catch (error) {
       console.error("Error loading user data:", error);
     }
+  };
+
+  const resolveEffectiveIsRider = async (currentUserId: string) => {
+    // 1) Current state
+    if (isRider) return true;
+
+    // 2) Stored user object from previous registration steps
+    try {
+      const userJson = await SecureStore.getItemAsync("user");
+      if (userJson) {
+        const localUser = JSON.parse(userJson);
+        if (typeof localUser?.is_rider === "boolean") {
+          return localUser.is_rider;
+        }
+      }
+    } catch (e) {
+      console.warn("Unable to read local user role", e);
+    }
+
+    // 3) Explicit flag used in rider apply flow
+    try {
+      const riderFlag = await SecureStore.getItemAsync("is_rider");
+      if (riderFlag === "true") return true;
+      if (riderFlag === "false") return false;
+    } catch (e) {
+      console.warn("Unable to read is_rider flag", e);
+    }
+
+    // 4) Remote source of truth
+    try {
+      const response = await AxiosInstance.get("/get-registration/", {
+        headers: { "X-User-Id": currentUserId },
+      });
+      return Boolean(response.data?.is_rider);
+    } catch (e) {
+      console.warn("Unable to fetch role from registration endpoint", e);
+    }
+
+    return false;
   };
 
   const formatPhoneNumber = (text: string) => {
@@ -236,10 +290,12 @@ export default function VerifyPhoneScreen() {
 
       console.log("✅ OTP verified:", response.data);
 
+      const effectiveIsRider = await resolveEffectiveIsRider(userId);
+
       // UPDATED: Set registration_stage to 3 for customers (completed)
       // For riders: stage 3 → stage 4 (completed)
       // For customers: stage 2 → stage 3 (completed)
-      const newRegistrationStage = isRider ? 4 : 3;
+      const newRegistrationStage = effectiveIsRider ? 4 : 3;
 
       await AxiosInstance.put(
         "/profiling/",
@@ -258,9 +314,29 @@ export default function VerifyPhoneScreen() {
       if (userJson) {
         const user = JSON.parse(userJson);
         user.registration_stage = newRegistrationStage;
+<<<<<<< HEAD
         storedUsername = user?.username;
         storedEmail = user?.email;
+=======
+        user.is_rider = effectiveIsRider;
+>>>>>>> 7a0eed5f44edb81d3d703b51b35d8315ba5c361a
         await SecureStore.setItemAsync("user", JSON.stringify(user));
+      }
+
+      await SecureStore.setItemAsync("is_rider", effectiveIsRider ? "true" : "false");
+      await SecureStore.setItemAsync("registration_stage", String(newRegistrationStage));
+
+      try {
+        await setAuthData(
+          userId,
+          effectiveIsRider ? "rider" : "customer",
+          undefined,
+          undefined,
+          undefined,
+          newRegistrationStage,
+        );
+      } catch (e) {
+        console.warn("Failed to persist auth role before redirect", e);
       }
 
       // Update context registration stage
@@ -287,23 +363,31 @@ export default function VerifyPhoneScreen() {
       // Clear temporary storage
       await SecureStore.deleteItemAsync("temp_user_id");
 
-      Alert.alert("Success", "Phone number verified successfully!", [
+      const debugSummary = `role=${effectiveIsRider ? "rider" : "customer"}, stage=${newRegistrationStage}`;
+      console.log("🔎 OTP redirect debug:", debugSummary);
+
+      const successMessage = __DEV__
+        ? `Phone number verified successfully!\n\nDebug: ${debugSummary}`
+        : "Phone number verified successfully!";
+
+      Alert.alert("Success", successMessage, [
         {
           text: "Continue",
           onPress: () => {
-            // Navigate based on user role and stage; only go to home when stage === 4
-            if (isRider) {
-              if (newRegistrationStage === 4) {
+            // Navigate based on user role and completion stage.
+            // Rider completes at stage 4, customer completes at stage 3.
+            if (effectiveIsRider) {
+              if (newRegistrationStage >= 4) {
                 router.replace("/rider/home");
               } else {
                 // Stay on flow or redirect to login to continue later
                 router.replace("/(auth)/login");
               }
             } else {
-              if (newRegistrationStage === 4) {
+              if (newRegistrationStage >= 3) {
                 router.replace("/customer/home");
               } else {
-                // For customers, stage 3 is still not final; redirect to login for now
+                // If not complete, continue via auth flow
                 router.replace("/(auth)/login");
               }
             }
