@@ -98,15 +98,15 @@ export default function RiderSignupScreen() {
         is_rider: true,
       };
 
-      console.log('🚀 Sending rider signup request:', payload);
-      const response = await AxiosInstance.post('/register/', payload, {
+      console.log('🚀 Updating existing rider account credentials:', payload);
+      const response = await AxiosInstance.put('/register/', payload, {
         headers: { 'Content-Type': 'application/json', 'X-User-Id': userId },
       });
 
       const data = response.data;
       console.log('✅ Rider signup response:', data);
 
-      const returnedUserId = data.user_id || data.id;
+      const returnedUserId = data.user_id || data.id || userId;
 
       if (returnedUserId) {
         // Save user ID to SecureStore for next stages (like signup.tsx)
@@ -130,7 +130,7 @@ export default function RiderSignupScreen() {
 
         Alert.alert(
           'Success',
-          'Account created successfully! Please complete your profile.',
+          'Credentials saved successfully! Please complete your profile.',
           [
             {
               text: 'Continue',

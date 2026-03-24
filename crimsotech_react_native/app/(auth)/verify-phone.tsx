@@ -23,7 +23,7 @@ export default function VerifyPhoneScreen() {
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [isRider, setIsRider] = useState(false);
-  const { updateRegistrationStage } = useAuth();
+  const { updateRegistrationStage, setAuthData } = useAuth();
 
   // Phone verification state
   const [step, setStep] = useState<"enter-phone" | "enter-otp">("enter-phone");
@@ -56,14 +56,30 @@ export default function VerifyPhoneScreen() {
       if (storedUserId) {
         setUserId(storedUserId);
 
+        // Use local flags first to avoid role flicker while remote fetch is in-flight.
+        const localIsRider = await SecureStore.getItemAsync("is_rider");
+        if (localIsRider === "true") {
+          setIsRider(true);
+        }
+
+        const localUserJson = await SecureStore.getItemAsync("user");
+        if (localUserJson) {
+          try {
+            const parsedUser = JSON.parse(localUserJson);
+            if (parsedUser?.is_rider === true) {
+              setIsRider(true);
+            }
+          } catch (e) {
+            console.warn("Failed parsing local user payload", e);
+          }
+        }
+
         // Check if user is a rider
         const response = await AxiosInstance.get("/get-registration/", {
           headers: { "X-User-Id": storedUserId },
         });
 
-        if (response.data.is_rider) {
-          setIsRider(true);
-        }
+        setIsRider(Boolean(response.data?.is_rider));
       }
     } catch (error) {
       console.error("Error loading user data:", error);
@@ -236,10 +252,14 @@ export default function VerifyPhoneScreen() {
       );
 
       // Update user data in storage
+      let storedUsername: string | undefined;
+      let storedEmail: string | undefined;
       const userJson = await SecureStore.getItemAsync("user");
       if (userJson) {
         const user = JSON.parse(userJson);
         user.registration_stage = newRegistrationStage;
+        storedUsername = user?.username;
+        storedEmail = user?.email;
         await SecureStore.setItemAsync("user", JSON.stringify(user));
       }
 
@@ -248,6 +268,20 @@ export default function VerifyPhoneScreen() {
         updateRegistrationStage(newRegistrationStage);
       } catch (e) {
         console.warn("Failed to update registration stage in context", e);
+      }
+
+      // Set auth session role so guarded routes (e.g. rider tabs) allow direct navigation.
+      try {
+        await setAuthData(
+          userId,
+          isRider ? "rider" : "customer",
+          storedUsername,
+          storedEmail,
+          undefined,
+          newRegistrationStage,
+        );
+      } catch (e) {
+        console.warn("Failed to set auth data after OTP verification", e);
       }
 
       // Clear temporary storage
