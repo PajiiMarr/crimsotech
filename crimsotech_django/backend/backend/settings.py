@@ -39,6 +39,7 @@ ALLOWED_HOSTS = [
     "192.168.1.21",
     ".ondigitalocean.app",
     '192.168.254.102',
+    '192.168.254.104',
 ]
 
 # Application definition

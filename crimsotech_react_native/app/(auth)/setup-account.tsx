@@ -49,13 +49,19 @@ export default function SetupAccountScreen() {
   );
   const [showYearDropdown, setShowYearDropdown] = useState(false);
 
-  // Address fields
+  // Address fields — initialized with defaults so validation passes
+  // IMPORTANT: these string values must match exactly what AddressDropdowns
+  // emits via onChange for its default province/city selection.
+  // If AddressDropdowns passes codes (e.g. "0973") use those instead.
   const [address, setAddress] = useState({
-    province: "",
-    city: "",
+    province: "Zamboanga del Sur",
+    city: "City of Zamboanga",
     barangay: "",
     street: "",
   });
+
+  // Track whether AddressDropdowns has synced its defaults to parent yet
+  const [addressReady, setAddressReady] = useState(false);
 
   // Dropdown modals
   const [showGenderModal, setShowGenderModal] = useState(false);
@@ -72,11 +78,9 @@ export default function SetupAccountScreen() {
     calculateAge();
   }, [dateOfBirth]);
 
-  // Function to format date for display (June 01, 2025)
+  // Format date for display (June 01, 2025)
   const formatDate = (date: Date | null) => {
-    if (!date) {
-      return "";
-    }
+    if (!date) return "";
     return date.toLocaleDateString("en-US", {
       day: "2-digit",
       month: "long",
@@ -85,9 +89,7 @@ export default function SetupAccountScreen() {
   };
 
   const formatDateForAPI = (date: Date | null): string => {
-    if (!date) {
-      return "";
-    }
+    if (!date) return "";
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const day = String(date.getDate()).padStart(2, "0");
@@ -95,9 +97,7 @@ export default function SetupAccountScreen() {
   };
 
   const isValidDate = (date: Date | null) => {
-    if (!date) {
-      return false;
-    }
+    if (!date) return false;
     return !isNaN(date.getTime());
   };
 
@@ -106,21 +106,16 @@ export default function SetupAccountScreen() {
       setAge("");
       return;
     }
-
     const today = new Date();
     const birthDate = new Date(dateOfBirth);
-
     let calculatedAge = today.getFullYear() - birthDate.getFullYear();
     const monthDiff = today.getMonth() - birthDate.getMonth();
-
-    // Adjust age if birthday hasn't occurred this year yet
     if (
       monthDiff < 0 ||
       (monthDiff === 0 && today.getDate() < birthDate.getDate())
     ) {
       calculatedAge--;
     }
-
     setAge(calculatedAge.toString());
   };
 
@@ -130,21 +125,15 @@ export default function SetupAccountScreen() {
       if (userJson) {
         const user = JSON.parse(userJson);
         setUsername(user.username || "");
-
         const stage = user.registration_stage || 1;
         const isUserRider = user.is_rider || false;
         setIsRider(isUserRider);
 
-        console.log("📊 User stage check:", { stage, isUserRider });
-
-        // Stage logic with stage 3 as completed for customers
         if (isUserRider) {
-          // Rider flow
           if (stage === 1) {
             router.replace("/(auth)/signup");
             return;
           } else if (stage === 2) {
-            // Good - stay on profiling
             setUserId(user.user_id?.toString() || null);
           } else if (stage === 3) {
             router.replace("/(auth)/verify-phone");
@@ -154,24 +143,19 @@ export default function SetupAccountScreen() {
             return;
           }
         } else {
-          // Customer flow
           if (stage === 1) {
-            // Good - stay on profiling
             setUserId(user.user_id?.toString() || null);
           } else if (stage === 2) {
             router.replace("/(auth)/verify-phone");
             return;
           } else if (stage === 4) {
-            // Only allow navigation to home when registration is fully complete (stage 4)
             router.replace("/customer/home");
             return;
           }
         }
 
-        // Load user profiling data if available
         await loadUserProfilingData(user.user_id?.toString() || null);
       } else {
-        // No user found, redirect to login
         router.replace("/(auth)/login");
       }
     } catch (error) {
@@ -182,12 +166,10 @@ export default function SetupAccountScreen() {
 
   const loadUserProfilingData = async (userId: string | null) => {
     if (!userId) return;
-
     try {
       const response = await AxiosInstance.get("/profiling/", {
         headers: { "X-User-Id": userId },
       });
-
       if (response.data) {
         const data = response.data;
         setFirstName(data.first_name || "");
@@ -207,12 +189,13 @@ export default function SetupAccountScreen() {
           }
         }
 
-        setAddress({
-          province: data.province || "",
-          city: data.city || "",
-          barangay: data.barangay || "",
-          street: data.street || "",
-        });
+        // Only override address from API if values are actually present
+        setAddress((prev) => ({
+          province: data.province || prev.province,
+          city: data.city || prev.city,
+          barangay: data.barangay || prev.barangay,
+          street: data.street || prev.street,
+        }));
       }
     } catch (error) {
       console.error("Error loading profiling data:", error);
@@ -242,9 +225,10 @@ export default function SetupAccountScreen() {
       newErrors.age = "You must be at least 15 years old!";
     }
 
-    if (!address.province) newErrors.province = "Province is required";
-    if (!address.city) newErrors.city = "City is required";
-    if (!address.barangay) newErrors.barangay = "Barangay is required";
+    // Trim before checking so whitespace-only strings are caught
+    if (!address.province?.trim()) newErrors.province = "Province is required";
+    if (!address.city?.trim()) newErrors.city = "City is required";
+    if (!address.barangay?.trim()) newErrors.barangay = "Barangay is required";
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -252,20 +236,19 @@ export default function SetupAccountScreen() {
 
   const handleSubmit = async () => {
     console.log("🎯 Submit button clicked");
+    console.log("📍 Current address state:", address); // helpful for debugging
 
     if (!validateForm()) {
-      console.log("❌ Form validation failed");
+      console.log("❌ Form validation failed", errors);
       return;
     }
 
     if (!userId) {
-      console.log("❌ No user ID found");
       Alert.alert("Error", "User session expired. Please login again.");
       return;
     }
 
     setLoading(true);
-
     try {
       const apiDateOfBirth = formatDateForAPI(dateOfBirth);
       const registrationStage = isRider ? 3 : 2;
@@ -285,13 +268,7 @@ export default function SetupAccountScreen() {
         registration_stage: registrationStage,
       };
 
-      console.log("📤 Sending to API:", {
-        endpoint: "/api/profiling/",
-        headers: { "X-User-Id": userId },
-        payload,
-        isRider,
-        newStage: registrationStage,
-      });
+      console.log("📤 Sending to API:", payload);
 
       const response = await AxiosInstance.put("/profiling/", payload, {
         headers: { "X-User-Id": userId },
@@ -299,7 +276,6 @@ export default function SetupAccountScreen() {
 
       console.log("✅ API Response:", response.data);
 
-      // Update user data with new registration stage
       const userJson = await SecureStore.getItemAsync("user");
       if (userJson) {
         const user = JSON.parse(userJson);
@@ -307,25 +283,18 @@ export default function SetupAccountScreen() {
         await SecureStore.setItemAsync("user", JSON.stringify(user));
       }
 
-      // Save temp_user_id for next stage
       await SecureStore.setItemAsync("temp_user_id", userId);
-
-      // Navigate to phone verification
-      console.log("🚀 Navigating to verify-phone...");
       router.replace("/(auth)/verify-phone");
     } catch (error: any) {
       console.error("❌ ERROR DETAILS:", error.response?.data || error.message);
-
       let errorMessage = "Failed to save profile. Please try again.";
       if (error.response?.data?.error) {
         errorMessage = error.response.data.error;
       } else if (error.response?.data?.detail) {
         errorMessage = error.response.data.detail;
       }
-
       Alert.alert("Error", errorMessage);
     } finally {
-      console.log("🏁 Loading finished");
       setLoading(false);
     }
   };
@@ -353,7 +322,6 @@ export default function SetupAccountScreen() {
   const handleMonthChange = (change: number) => {
     let newMonth = selectedMonth + change;
     let newYear = selectedYear;
-
     if (newMonth < 0) {
       newMonth = 11;
       newYear--;
@@ -361,7 +329,6 @@ export default function SetupAccountScreen() {
       newMonth = 0;
       newYear++;
     }
-
     setSelectedMonth(newMonth);
     setSelectedYear(newYear);
   };
@@ -398,34 +365,21 @@ export default function SetupAccountScreen() {
     }
   };
 
-  // Generate years for dropdown (from current year to 1900)
   const currentYear = new Date().getFullYear();
   const years = Array.from(
     { length: currentYear - 1900 + 1 },
     (_, i) => currentYear - i,
   );
-
   const selectedYearIndex = Math.max(
     0,
     Math.min(years.length - 1, currentYear - selectedYear),
   );
 
   const monthNames = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
   ];
 
-  // Generate calendar days
   const daysInMonth = getDaysInMonth(selectedYear, selectedMonth);
   const firstDayOfMonth = getFirstDayOfMonth(selectedYear, selectedMonth);
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -468,9 +422,7 @@ export default function SetupAccountScreen() {
                 <View style={styles.labelContainer}>
                   <Text style={styles.label}>First Name</Text>
                   {errors.first_name && (
-                    <Text style={styles.fieldErrorText}>
-                      {errors.first_name}
-                    </Text>
+                    <Text style={styles.fieldErrorText}>{errors.first_name}</Text>
                   )}
                 </View>
                 <TextInput
@@ -481,14 +433,11 @@ export default function SetupAccountScreen() {
                   editable={!loading}
                 />
               </View>
-
               <View style={styles.inputGroup}>
                 <View style={styles.labelContainer}>
                   <Text style={styles.label}>Last Name</Text>
                   {errors.last_name && (
-                    <Text style={styles.fieldErrorText}>
-                      {errors.last_name}
-                    </Text>
+                    <Text style={styles.fieldErrorText}>{errors.last_name}</Text>
                   )}
                 </View>
                 <TextInput
@@ -504,11 +453,6 @@ export default function SetupAccountScreen() {
             <View style={styles.inputGroup}>
               <View style={styles.labelContainer}>
                 <Text style={styles.label}>Middle Name</Text>
-                {errors.middle_name && (
-                  <Text style={styles.fieldErrorText}>
-                    {errors.middle_name}
-                  </Text>
-                )}
               </View>
               <TextInput
                 style={styles.input}
@@ -546,28 +490,16 @@ export default function SetupAccountScreen() {
                   )}
                 </View>
                 <TouchableOpacity
-                  style={[
-                    styles.dropdownTrigger,
-                    errors.sex && styles.inputError,
-                  ]}
+                  style={[styles.dropdownTrigger, errors.sex && styles.inputError]}
                   onPress={() => setShowGenderModal(true)}
                   disabled={loading}
                 >
-                  <Text
-                    style={
-                      gender ? styles.dropdownText : styles.dropdownPlaceholder
-                    }
-                  >
+                  <Text style={gender ? styles.dropdownText : styles.dropdownPlaceholder}>
                     {getGenderDisplay()}
                   </Text>
-                  <MaterialIcons
-                    name="arrow-drop-down"
-                    size={24}
-                    color="#666"
-                  />
+                  <MaterialIcons name="arrow-drop-down" size={24} color="#666" />
                 </TouchableOpacity>
               </View>
-
               <View style={[styles.inputGroup, { flex: 1 }]}>
                 <View style={styles.labelContainer}>
                   <Text style={styles.label}>Age</Text>
@@ -584,27 +516,20 @@ export default function SetupAccountScreen() {
               </View>
             </View>
 
-            {/* Date of Birth Section */}
+            {/* Date of Birth */}
             <View style={styles.dateOfBirthContainer}>
               <View style={styles.labelContainer}>
                 <Text style={styles.label}>Date of Birth</Text>
                 {errors.date_of_birth && (
-                  <Text style={styles.fieldErrorText}>
-                    {errors.date_of_birth}
-                  </Text>
+                  <Text style={styles.fieldErrorText}>{errors.date_of_birth}</Text>
                 )}
               </View>
               <TouchableOpacity
-                style={[
-                  styles.dateInput,
-                  errors.date_of_birth && styles.inputError,
-                ]}
+                style={[styles.dateInput, errors.date_of_birth && styles.inputError]}
                 onPress={openCalendar}
                 disabled={loading}
               >
-                <Text
-                  style={dateOfBirth ? styles.dateText : styles.datePlaceholder}
-                >
+                <Text style={dateOfBirth ? styles.dateText : styles.datePlaceholder}>
                   {dateOfBirth ? formatDate(dateOfBirth) : "Select date"}
                 </Text>
                 <MaterialIcons name="calendar-today" size={20} color="#666" />
@@ -615,16 +540,17 @@ export default function SetupAccountScreen() {
           {/* Address Information */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Address</Text>
-
             <AddressDropdowns
               value={address}
-              onChange={(data) =>
+              onChange={(data) => {
+                // Log to verify what values AddressDropdowns actually emits
+                console.log("📍 AddressDropdowns onChange:", data);
                 setAddress((prev) => ({
                   ...prev,
                   ...data,
                   street: data.street ?? prev.street,
-                }))
-              }
+                }));
+              }}
               errors={{
                 province: errors.province,
                 city: errors.city,
@@ -634,7 +560,7 @@ export default function SetupAccountScreen() {
             />
           </View>
 
-          {/* Error display for backend errors */}
+          {/* Backend error display */}
           {errors.details && (
             <View style={styles.backendErrorContainer}>
               <Text style={styles.backendErrorText}>
@@ -677,33 +603,21 @@ export default function SetupAccountScreen() {
                 <MaterialIcons name="close" size={24} color="#333" />
               </TouchableOpacity>
             </View>
-
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => {
-                setGender("male");
-                setShowGenderModal(false);
-              }}
+              onPress={() => { setGender("male"); setShowGenderModal(false); }}
             >
               <Text style={styles.dropdownItemText}>Male</Text>
             </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => {
-                setGender("female");
-                setShowGenderModal(false);
-              }}
+              onPress={() => { setGender("female"); setShowGenderModal(false); }}
             >
               <Text style={styles.dropdownItemText}>Female</Text>
             </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.dropdownItem}
-              onPress={() => {
-                setGender("prefer_not_to_say");
-                setShowGenderModal(false);
-              }}
+              onPress={() => { setGender("prefer_not_to_say"); setShowGenderModal(false); }}
             >
               <Text style={styles.dropdownItemText}>Prefer not to say</Text>
             </TouchableOpacity>
@@ -735,13 +649,8 @@ export default function SetupAccountScreen() {
               >
                 <MaterialIcons name="chevron-left" size={24} color="#333" />
               </TouchableOpacity>
-
               <View style={styles.monthYearDisplay}>
-                <Text style={styles.monthText}>
-                  {monthNames[selectedMonth]}
-                </Text>
-
-                {/* Year Dropdown */}
+                <Text style={styles.monthText}>{monthNames[selectedMonth]}</Text>
                 <View style={styles.yearSelectorContainer}>
                   <TouchableOpacity
                     style={styles.yearButton}
@@ -749,16 +658,13 @@ export default function SetupAccountScreen() {
                   >
                     <Text style={styles.yearText}>{selectedYear}</Text>
                     <MaterialIcons
-                      name={
-                        showYearDropdown ? "arrow-drop-up" : "arrow-drop-down"
-                      }
+                      name={showYearDropdown ? "arrow-drop-up" : "arrow-drop-down"}
                       size={24}
                       color="#333"
                     />
                   </TouchableOpacity>
                 </View>
               </View>
-
               <TouchableOpacity
                 style={styles.monthNavButton}
                 onPress={() => handleMonthChange(1)}
@@ -770,20 +676,15 @@ export default function SetupAccountScreen() {
             {/* Day Headers */}
             <View style={styles.dayHeaders}>
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                <Text key={day} style={styles.dayHeaderText}>
-                  {day}
-                </Text>
+                <Text key={day} style={styles.dayHeaderText}>{day}</Text>
               ))}
             </View>
 
             {/* Calendar Grid */}
             <View style={styles.calendarGrid}>
-              {/* Empty days for the first week */}
               {emptyDays.map((_, index) => (
                 <View key={`empty-${index}`} style={styles.calendarDayEmpty} />
               ))}
-
-              {/* Days of the month */}
               {days.map((day) => {
                 const isSelected =
                   selectedDate.getDate() === day &&
@@ -793,7 +694,6 @@ export default function SetupAccountScreen() {
                   day === new Date().getDate() &&
                   selectedMonth === new Date().getMonth() &&
                   selectedYear === new Date().getFullYear();
-
                 return (
                   <TouchableOpacity
                     key={day}
@@ -835,7 +735,6 @@ export default function SetupAccountScreen() {
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.confirmButton}
                 onPress={confirmDate}
@@ -847,7 +746,7 @@ export default function SetupAccountScreen() {
         </View>
       </Modal>
 
-      {/* Year Picker Modal (inside Calendar) */}
+      {/* Year Picker Modal */}
       <Modal
         visible={showYearDropdown}
         transparent={true}
@@ -1040,10 +939,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 10,
     shadowColor: "#ff6d0b",
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 6,
     elevation: 4,
@@ -1105,7 +1001,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
   },
-  // Calendar Modal Styles
   calendarModalContent: {
     backgroundColor: "#fff",
     borderTopLeftRadius: 24,
