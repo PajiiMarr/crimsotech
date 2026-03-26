@@ -23,7 +23,7 @@ export default function VerifyPhoneScreen() {
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [isRider, setIsRider] = useState(false);
-  const { updateRegistrationStage, setAuthData } = useAuth();
+  const { updateRegistrationStage } = useAuth();
 
   // Phone verification state
   const [step, setStep] = useState<"enter-phone" | "enter-otp">("enter-phone");
@@ -57,6 +57,7 @@ export default function VerifyPhoneScreen() {
         setUserId(storedUserId);
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         // Use local flags first to avoid role flicker while remote fetch is in-flight.
         const localIsRider = await SecureStore.getItemAsync("is_rider");
         if (localIsRider === "true") {
@@ -83,11 +84,14 @@ export default function VerifyPhoneScreen() {
           }
         }
 
+=======
+>>>>>>> parent of 3069543 (bug fix on the applying rider)
         // Check if user is a rider
         const response = await AxiosInstance.get("/get-registration/", {
           headers: { "X-User-Id": storedUserId },
         });
 
+<<<<<<< HEAD
 <<<<<<< HEAD
         setIsRider(Boolean(response.data?.is_rider));
 =======
@@ -95,6 +99,11 @@ export default function VerifyPhoneScreen() {
           setIsRider(response.data.is_rider);
         }
 >>>>>>> 7a0eed5f44edb81d3d703b51b35d8315ba5c361a
+=======
+        if (response.data.is_rider) {
+          setIsRider(true);
+        }
+>>>>>>> parent of 3069543 (bug fix on the applying rider)
       }
     } catch (error) {
       console.error("Error loading user data:", error);
@@ -308,18 +317,19 @@ export default function VerifyPhoneScreen() {
       );
 
       // Update user data in storage
-      let storedUsername: string | undefined;
-      let storedEmail: string | undefined;
       const userJson = await SecureStore.getItemAsync("user");
       if (userJson) {
         const user = JSON.parse(userJson);
         user.registration_stage = newRegistrationStage;
+<<<<<<< HEAD
 <<<<<<< HEAD
         storedUsername = user?.username;
         storedEmail = user?.email;
 =======
         user.is_rider = effectiveIsRider;
 >>>>>>> 7a0eed5f44edb81d3d703b51b35d8315ba5c361a
+=======
+>>>>>>> parent of 3069543 (bug fix on the applying rider)
         await SecureStore.setItemAsync("user", JSON.stringify(user));
       }
 
@@ -344,20 +354,6 @@ export default function VerifyPhoneScreen() {
         updateRegistrationStage(newRegistrationStage);
       } catch (e) {
         console.warn("Failed to update registration stage in context", e);
-      }
-
-      // Set auth session role so guarded routes (e.g. rider tabs) allow direct navigation.
-      try {
-        await setAuthData(
-          userId,
-          isRider ? "rider" : "customer",
-          storedUsername,
-          storedEmail,
-          undefined,
-          newRegistrationStage,
-        );
-      } catch (e) {
-        console.warn("Failed to set auth data after OTP verification", e);
       }
 
       // Clear temporary storage
