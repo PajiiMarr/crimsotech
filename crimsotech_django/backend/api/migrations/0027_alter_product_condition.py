@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0028_convert_condition_to_int'),
+        ('api', '0026_riderremittance_riderremittanceitem_and_more'),
     ]
 
     operations = [
