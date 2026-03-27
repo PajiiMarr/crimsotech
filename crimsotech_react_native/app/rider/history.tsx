@@ -11,14 +11,15 @@ import {
   ActivityIndicator,
   Dimensions,
   FlatList,
-  Platform
+  Platform,
+  SafeAreaView,
+  StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '../../contexts/AuthContext';
 import { router } from 'expo-router';
 import AxiosInstance from '../../contexts/axios';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import RiderPageHeader from './includes/riderPageHeader';
 
 interface OrderHistoryData {
@@ -499,6 +500,7 @@ export default function OrderHistory() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <RiderPageHeader 
         title="Order History" 
         subtitle="Track your past deliveries and performance"
