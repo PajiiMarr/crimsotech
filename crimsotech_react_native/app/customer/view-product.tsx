@@ -339,6 +339,7 @@ const OwnershipInfoCard = ({
   variant: Variant;
   onProofImagePress: (url: string) => void;
 }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
   const proofUrl = resolveProofImageUrl(variant);
   if (!variant.original_price && !variant.purchase_date && !proofUrl)
     return null;
@@ -353,178 +354,208 @@ const OwnershipInfoCard = ({
       style={{
         backgroundColor: "#FFF7ED",
         borderRadius: 12,
-        padding: 14,
         marginBottom: 12,
         borderWidth: 1,
         borderColor: "#FED7AA",
+        overflow: "hidden",
       }}
     >
-      <View
+      <TouchableOpacity
+        onPress={() => setIsExpanded(!isExpanded)}
+        activeOpacity={0.7}
         style={{
           flexDirection: "row",
           alignItems: "center",
-          gap: 6,
-          marginBottom: 10,
+          justifyContent: "space-between",
+          padding: 14,
+          backgroundColor: isExpanded ? "#FFEDD5" : "#FFF7ED",
         }}
       >
-        <Ionicons name="time-outline" size={16} color="#EA580C" />
-        <Text style={{ fontSize: 14, fontWeight: "700", color: "#111827" }}>
-          Item History & Ownership
-        </Text>
-      </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Ionicons name="time-outline" size={16} color="#EA580C" />
+          <Text style={{ fontSize: 14, fontWeight: "700", color: "#111827" }}>
+            Item History & Ownership
+          </Text>
+        </View>
+        <Ionicons
+          name={isExpanded ? "chevron-up" : "chevron-down"}
+          size={20}
+          color="#EA580C"
+        />
+      </TouchableOpacity>
 
-      {variant.original_price && (
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
-          <Text style={{ fontSize: 13, color: "#6B7280" }}>Original Price</Text>
-          <Text
-            style={{
-              fontSize: 13,
-              color: "#374151",
-              textDecorationLine: "line-through",
-            }}
-          >
-            {formatCurrency(variant.original_price)}
-          </Text>
-        </View>
-      )}
-      {variant.price && (
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
-          <Text style={{ fontSize: 13, color: "#6B7280" }}>Current Price</Text>
-          <Text style={{ fontSize: 13, fontWeight: "700", color: "#EA580C" }}>
-            {formatCurrency(variant.price)}
-          </Text>
-        </View>
-      )}
-      {savings && savings > 0 && (
-        <View
-          style={{
-            backgroundColor: "#DCFCE7",
-            padding: 8,
-            borderRadius: 8,
-            marginBottom: 8,
-            flexDirection: "row",
-            justifyContent: "space-between",
-          }}
-        >
-          <Text style={{ fontSize: 12, color: "#059669", fontWeight: "600" }}>
-            You Save
-          </Text>
-          <Text style={{ fontSize: 12, color: "#059669", fontWeight: "700" }}>
-            {formatCurrency(savings)} (
-            {Math.round((savings / parseFloat(variant.original_price!)) * 100)}
-            %)
-          </Text>
-        </View>
-      )}
-      {variant.purchase_date && (
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
-          <Text style={{ fontSize: 13, color: "#6B7280" }}>Purchase Date</Text>
-          <Text style={{ fontSize: 13, color: "#374151" }}>
-            {formatDate(variant.purchase_date)}
-          </Text>
-        </View>
-      )}
-      {variant.usage_period && variant.usage_unit && (
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
-          <Text style={{ fontSize: 13, color: "#6B7280" }}>Usage Period</Text>
-          <Text style={{ fontSize: 13, color: "#374151" }}>
-            {variant.usage_period} {variant.usage_unit}
-          </Text>
-        </View>
-      )}
-      {variant.depreciation_rate && (
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
-          <Text style={{ fontSize: 13, color: "#6B7280" }}>
-            Depreciation Rate
-          </Text>
-          <Text style={{ fontSize: 13, color: "#374151" }}>
-            {variant.depreciation_rate}% / year
-          </Text>
-        </View>
-      )}
-      {proofUrl && (
-        <View style={{ marginTop: 10 }}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 4,
-              marginBottom: 8,
-            }}
-          >
-            <Ionicons
-              name="shield-checkmark-outline"
-              size={14}
-              color="#EA580C"
-            />
-            <Text style={{ fontSize: 13, color: "#6B7280" }}>
-              Proof of Ownership
-            </Text>
-          </View>
-          <TouchableOpacity
-            onPress={() => onProofImagePress(proofUrl)}
-            style={{
-              width: 90,
-              height: 90,
-              borderRadius: 8,
-              overflow: "hidden",
-              borderWidth: 2,
-              borderColor: "#34D399",
-            }}
-          >
-            <Image
-              source={{ uri: proofUrl }}
-              style={{ width: "100%", height: "100%" }}
-              resizeMode="cover"
-            />
+      {isExpanded && (
+        <View style={{ padding: 14, paddingTop: 4 }}>
+          {variant.original_price && (
             <View
               style={{
-                position: "absolute",
-                bottom: 0,
-                left: 0,
-                right: 0,
-                backgroundColor: "rgba(52,211,153,0.8)",
-                paddingVertical: 3,
-                alignItems: "center",
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 6,
+              }}
+            >
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                Original Price
+              </Text>
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: "#374151",
+                  textDecorationLine: "line-through",
+                }}
+              >
+                {formatCurrency(variant.original_price)}
+              </Text>
+            </View>
+          )}
+          {variant.price && (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 6,
+              }}
+            >
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                Current Price
+              </Text>
+              <Text
+                style={{ fontSize: 13, fontWeight: "700", color: "#EA580C" }}
+              >
+                {formatCurrency(variant.price)}
+              </Text>
+            </View>
+          )}
+          {savings && savings > 0 && (
+            <View
+              style={{
+                backgroundColor: "#DCFCE7",
+                padding: 8,
+                borderRadius: 8,
+                marginBottom: 8,
+                flexDirection: "row",
+                justifyContent: "space-between",
               }}
             >
               <Text
-                style={{ fontSize: 9, fontWeight: "700", color: "#FFFFFF" }}
+                style={{ fontSize: 12, color: "#059669", fontWeight: "600" }}
               >
-                Tap to view
+                You Save
+              </Text>
+              <Text
+                style={{ fontSize: 12, color: "#059669", fontWeight: "700" }}
+              >
+                {formatCurrency(savings)} (
+                {Math.round(
+                  (savings / parseFloat(variant.original_price!)) * 100,
+                )}
+                %)
               </Text>
             </View>
-          </TouchableOpacity>
+          )}
+          {variant.purchase_date && (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 6,
+              }}
+            >
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                Purchase Date
+              </Text>
+              <Text style={{ fontSize: 13, color: "#374151" }}>
+                {formatDate(variant.purchase_date)}
+              </Text>
+            </View>
+          )}
+          {variant.usage_period && variant.usage_unit && (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 6,
+              }}
+            >
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                Usage Period
+              </Text>
+              <Text style={{ fontSize: 13, color: "#374151" }}>
+                {variant.usage_period} {variant.usage_unit}
+              </Text>
+            </View>
+          )}
+          {variant.depreciation_rate && (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 6,
+              }}
+            >
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                Depreciation Rate
+              </Text>
+              <Text style={{ fontSize: 13, color: "#374151" }}>
+                {variant.depreciation_rate}% / year
+              </Text>
+            </View>
+          )}
+          {proofUrl && (
+            <View style={{ marginTop: 10 }}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 4,
+                  marginBottom: 8,
+                }}
+              >
+                <Ionicons
+                  name="shield-checkmark-outline"
+                  size={14}
+                  color="#EA580C"
+                />
+                <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                  Proof of Ownership
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => onProofImagePress(proofUrl)}
+                style={{
+                  width: 90,
+                  height: 90,
+                  borderRadius: 8,
+                  overflow: "hidden",
+                  borderWidth: 2,
+                  borderColor: "#34D399",
+                }}
+              >
+                <Image
+                  source={{ uri: proofUrl }}
+                  style={{ width: "100%", height: "100%" }}
+                  resizeMode="cover"
+                />
+                <View
+                  style={{
+                    position: "absolute",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    backgroundColor: "rgba(52,211,153,0.8)",
+                    paddingVertical: 3,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text
+                    style={{ fontSize: 9, fontWeight: "700", color: "#FFFFFF" }}
+                  >
+                    Tap to view
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       )}
     </View>
@@ -539,10 +570,24 @@ const SellerInfoCard = ({
   product: ProductDetail;
   onPress: () => void;
 }) => {
-  if (!product.seller_name) return null;
+  const displayName = product.shop?.name || product.seller_name;
+  if (!displayName) return null;
+
+  const displayAvatar = product.shop?.shop_picture || product.seller_avatar;
+
+  const getInitials = (name: string) => {
+    if (!name) return "";
+    return name
+      .split(" ")
+      .map((part) => part.charAt(0))
+      .join("")
+      .substring(0, 2)
+      .toUpperCase();
+  };
+
   return (
     <TouchableOpacity
-      onPress={onPress} // ← this line is missing
+      onPress={onPress}
       style={{
         backgroundColor: "#FFFFFF",
         borderRadius: 12,
@@ -559,24 +604,27 @@ const SellerInfoCard = ({
           width: 48,
           height: 48,
           borderRadius: 24,
-          backgroundColor: "#FFF7ED",
+          backgroundColor: "#EA580C",
           justifyContent: "center",
           alignItems: "center",
           marginRight: 12,
+          overflow: "hidden",
         }}
       >
-        {product.seller_avatar ? (
+        {displayAvatar ? (
           <Image
-            source={{ uri: product.seller_avatar }}
+            source={{ uri: displayAvatar }}
             style={{ width: 48, height: 48, borderRadius: 24 }}
           />
         ) : (
-          <Ionicons name="storefront-outline" size={24} color="#EA580C" />
+          <Text style={{ fontSize: 18, fontWeight: "700", color: "#FFFFFF" }}>
+            {getInitials(displayName)}
+          </Text>
         )}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 14, fontWeight: "700", color: "#111827" }}>
-          {product.seller_name}
+          {displayName}
         </Text>
         <View
           style={{
@@ -595,7 +643,11 @@ const SellerInfoCard = ({
             }}
           >
             <Text style={{ fontSize: 10, fontWeight: "600", color: "#EA580C" }}>
-              {product.listing_type === "shop" ? "Shop" : "Personal Seller"}
+              {product.shop
+                ? "Shop"
+                : product.listing_type === "shop"
+                  ? "Shop"
+                  : "Personal Seller"}
             </Text>
           </View>
           {product.shop?.verified && (
@@ -726,8 +778,16 @@ const ReviewsSection = ({
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function CustomerViewProductScreen() {
   const { userId } = useAuth();
-  const params = useLocalSearchParams<{ id: string }>();
-  const productId = params.id ? String(params.id) : "";
+  const params = useLocalSearchParams<{
+    id?: string | string[];
+    productId?: string | string[];
+  }>();
+  const rawProductId = params.id ?? params.productId;
+  const productId = Array.isArray(rawProductId)
+    ? String(rawProductId[0] ?? "")
+    : rawProductId
+      ? String(rawProductId)
+      : "";
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -1032,11 +1092,12 @@ export default function CustomerViewProductScreen() {
         <View
           style={{
             backgroundColor: "#FFFFFF",
-            borderRadius: 12,
-            borderWidth: 1,
+            borderBottomWidth: 1,
             borderColor: "#E5E7EB",
             overflow: "hidden",
             marginBottom: 12,
+            marginTop: -16,
+            marginHorizontal: -16,
           }}
         >
           {productImages.length > 0 ? (
@@ -1057,7 +1118,7 @@ export default function CustomerViewProductScreen() {
                   <TouchableOpacity
                     activeOpacity={0.92}
                     onPress={() => openGallery(index)}
-                    style={{ width: SCREEN_WIDTH - 2, height: 260 }}
+                    style={{ width: SCREEN_WIDTH, height: 300 }}
                   >
                     <Image
                       source={{ uri: item }}
@@ -1097,7 +1158,7 @@ export default function CustomerViewProductScreen() {
           ) : (
             <View
               style={{
-                height: 260,
+                height: 300,
                 backgroundColor: "#F3F4F6",
                 justifyContent: "center",
                 alignItems: "center",
@@ -1107,23 +1168,31 @@ export default function CustomerViewProductScreen() {
             </View>
           )}
 
-          <View style={{ padding: 14 }}>
+          <View style={{ padding: 16 }}>
             <View
               style={{
                 flexDirection: "row",
-                alignItems: "center",
+                alignItems: "flex-start",
                 gap: 8,
                 marginBottom: 6,
+                minWidth: 0,
               }}
             >
               <Text
-                style={{ fontSize: 20, fontWeight: "700", color: "#111827" }}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 20,
+                  fontWeight: "700",
+                  color: "#111827",
+                  lineHeight: 28,
+                }}
               >
                 {product.name}
               </Text>
               <TouchableOpacity
                 onPress={toggleFavorite}
-                style={{ padding: 8, marginRight: 4 }}
+                style={{ padding: 8, marginRight: 4, flexShrink: 0 }}
               >
                 <Ionicons
                   name={product.is_favorite ? "heart" : "heart-outline"}
@@ -1196,6 +1265,30 @@ export default function CustomerViewProductScreen() {
                 </View>
               )}
             </View>
+
+            {/* Description */}
+            <View
+              style={{
+                marginTop: 16,
+                paddingTop: 16,
+                borderTopWidth: 1,
+                borderTopColor: "#E5E7EB",
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontWeight: "700",
+                  color: "#111827",
+                  marginBottom: 8,
+                }}
+              >
+                Description
+              </Text>
+              <Text style={{ fontSize: 14, color: "#374151", lineHeight: 22 }}>
+                {product.description || "No description provided."}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -1222,32 +1315,6 @@ export default function CustomerViewProductScreen() {
             }
           }}
         />
-
-        {/* Description */}
-        <View
-          style={{
-            backgroundColor: "#FFFFFF",
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: "#E5E7EB",
-            padding: 14,
-            marginBottom: 12,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: 14,
-              fontWeight: "700",
-              color: "#111827",
-              marginBottom: 8,
-            }}
-          >
-            Description
-          </Text>
-          <Text style={{ fontSize: 14, color: "#374151", lineHeight: 22 }}>
-            {product.description || "No description provided."}
-          </Text>
-        </View>
 
         {/* Variant Selection */}
         {product.variants && product.variants.length > 0 && (
@@ -1299,6 +1366,8 @@ export default function CustomerViewProductScreen() {
                     flexDirection: "row",
                     alignItems: "center",
                     gap: 12,
+                    flex: 1,
+                    minWidth: 0,
                   }}
                 >
                   {resolveVariantImageUrl(variant) ? (
@@ -1320,12 +1389,15 @@ export default function CustomerViewProductScreen() {
                       <Ionicons name="cube-outline" size={20} color="#9CA3AF" />
                     </View>
                   )}
-                  <View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
                     <Text
+                      numberOfLines={2}
+                      ellipsizeMode="tail"
                       style={{
                         fontSize: 14,
                         fontWeight: "600",
                         color: "#111827",
+                        lineHeight: 18,
                       }}
                     >
                       {variant.title || variant.sku_code || "Variant"}
@@ -1371,29 +1443,41 @@ export default function CustomerViewProductScreen() {
                     </Text>
                   </View>
                 </View>
-                {selectedVariant?.id === variant.id && (
-                  <Ionicons name="checkmark-circle" size={24} color="#EA580C" />
-                )}
-                {!variant.in_stock && (
-                  <View
-                    style={{
-                      backgroundColor: "#FEE2E2",
-                      paddingHorizontal: 8,
-                      paddingVertical: 4,
-                      borderRadius: 4,
-                    }}
-                  >
-                    <Text
+                <View
+                  style={{
+                    marginLeft: 8,
+                    minWidth: 84,
+                    alignItems: "flex-end",
+                    justifyContent: "center",
+                  }}
+                >
+                  {!variant.in_stock ? (
+                    <View
                       style={{
-                        fontSize: 10,
-                        color: "#DC2626",
-                        fontWeight: "600",
+                        backgroundColor: "#FEE2E2",
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 4,
                       }}
                     >
-                      Out of Stock
-                    </Text>
-                  </View>
-                )}
+                      <Text
+                        style={{
+                          fontSize: 10,
+                          color: "#DC2626",
+                          fontWeight: "600",
+                        }}
+                      >
+                        Out of Stock
+                      </Text>
+                    </View>
+                  ) : selectedVariant?.id === variant.id ? (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={24}
+                      color="#EA580C"
+                    />
+                  ) : null}
+                </View>
               </TouchableOpacity>
             ))}
           </View>
