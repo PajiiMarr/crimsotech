@@ -6,8 +6,8 @@ from pathlib import Path
 import environ
 import dj_database_url
 from corsheaders.defaults import default_headers
-import redis  # Added for Redis connection pooling
-import base64  # <--- ADD THIS MISSING IMPORT
+import redis
+import base64
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -26,20 +26,22 @@ if local_env.exists():
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = env.str('SECRET_KEY', default='unsafe-dev-key')
 
-DEBUG = env.bool('DEBUG', default=False)  # ✅ Read from environment
+DEBUG = env.bool('DEBUG', default=False)
 
 ALLOWED_HOSTS = [
     "localhost",
-    "127.0.0.1",     # web
-    "0.0.0.0",        # technically optional, safe to include
-    "192.168.254.105",   # your PC LAN IP for mobile
+    "127.0.0.1",
+    "0.0.0.0",
+    "192.168.254.105",
     ".ngrok-free.app",
     "10.207.168.15",
     "10.55.244.79",
     "192.168.1.21",
     ".ondigitalocean.app",
+    '192.168.254.101',
     '192.168.254.102',
     '192.168.254.104',
+    'crimsotechreactnative',  # ✅ Add custom scheme host
 ]
 
 # Application definition
@@ -82,7 +84,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000", 
     "http://localhost:8000",
-    "https://crimsotech.vercel.app",  # 
+    "https://crimsotech.vercel.app",
 ]
 
 # WebSocket CORS settings
@@ -101,6 +103,32 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'X-User-Id',
     'x-shop-id',
 ]
+
+# ✅ Add CSRF trusted origins including custom scheme
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:3000',
+    'http://localhost:8000',
+    'https://crimsotech.vercel.app',
+    'crimsotechreactnative://',  # ✅ Add custom scheme for mobile
+    'crimsotechreactnative://localhost',  # ✅ Alternative format
+]
+
+# ✅ Override the default redirect class to allow custom schemes
+# This is the key fix for allowing redirects to custom URL schemes
+from django.http.response import HttpResponseRedirectBase
+
+class CustomHttpResponseRedirect(HttpResponseRedirectBase):
+    """
+    Custom redirect class that allows custom URL schemes like crimsotechreactnative://
+    """
+    allowed_schemes = ['http', 'https', 'crimsotechreactnative', 'crimsotechreactnative', 'crimsotech']
+
+# ✅ Replace the default redirect class with our custom one
+from django.http import HttpResponseRedirect
+HttpResponseRedirect.__bases__ = (CustomHttpResponseRedirect,)
 
 ROOT_URLCONF = 'backend.urls'
 
@@ -125,9 +153,7 @@ ASGI_APPLICATION = 'backend.asgi.application'
 # Database Configuration
 db_url = env.str("DATABASE_URL", default="")
 if db_url:
-    # Parse database URL with optimized connection age (reduced from 600 to 60)
-    db_config = dj_database_url.parse(db_url, conn_max_age=60)  # Reduced for better memory management
-    # Add SSL requirement if using Supabase or other cloud providers
+    db_config = dj_database_url.parse(db_url, conn_max_age=60)
     if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
         db_config["OPTIONS"] = {
             "sslmode": "require",
@@ -137,7 +163,6 @@ if db_url:
         "default": db_config,
     }
 else:
-    # Fallback to individual environment variables (for local development)
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -146,17 +171,15 @@ else:
             "PASSWORD": env.str("POSTGRES_PASSWORD", default=""),
             "HOST": env.str("POSTGRES_HOST", default="127.0.0.1"),
             "PORT": env.str("POSTGRES_PORT", default="5432"),
-            "CONN_MAX_AGE": 60,  # Reduced for better memory management
+            "CONN_MAX_AGE": 60,
             "OPTIONS": {
                 "connect_timeout": 10,
             },
         }
     }
 
-# Redis Configuration for Channels
+# Redis Configuration
 REDIS_URL = env.str("REDIS_URL", default="redis://localhost:6379")
-
-# Redis Connection Pooling Settings
 REDIS_POOL_SIZE = env.int("REDIS_POOL_SIZE", default=10)
 REDIS_CONNECTION_KWARGS = {
     "socket_keepalive": True,
@@ -166,7 +189,7 @@ REDIS_CONNECTION_KWARGS = {
     "max_connections": REDIS_POOL_SIZE,
 }
 
-# Channel Layers with optimized Redis connection pooling
+# Channel Layers
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
@@ -174,10 +197,10 @@ CHANNEL_LAYERS = {
             "hosts": [{
                 "address": REDIS_URL,
                 "ssl_cert_reqs": None,
-                **REDIS_CONNECTION_KWARGS  # Add connection pooling
+                **REDIS_CONNECTION_KWARGS
             }],
-            "capacity": 100,  # Reduced from 1500 to prevent memory buildup
-            "expiry": 30,  # Reduced from 60 seconds
+            "capacity": 100,
+            "expiry": 30,
             "symmetric_encryption_keys": [SECRET_KEY],
             "channel_capacity": {
                 "http.request": 200,
@@ -187,7 +210,6 @@ CHANNEL_LAYERS = {
     },
 }
 
-# For development, you can use in-memory layer (not for production!)
 if DEBUG and not REDIS_URL:
     CHANNEL_LAYERS = {
         "default": {
@@ -217,7 +239,7 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-# Static files (CSS, JavaScript, Images)
+# Static files
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
@@ -229,7 +251,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 TWILIO_ACCOUNT_SID = env.str('TWILIO_ACCOUNT_SID', default='')
 TWILIO_AUTH_TOKEN = env.str('TWILIO_AUTH_TOKEN', default='')
 TWILIO_SERVICE_ID = env.str('TWILIO_SERVICE_ID', default='')
-
 SMS_PH_API_KEY = env.str('SMS_PH_API_KEY', default='')
 
 # Logging
@@ -254,14 +275,14 @@ LOGGING = {
             "level": "DEBUG",
             "propagate": False,
         },
-        "channels": {  # Add Channels logging
+        "channels": {
             "handlers": ["console"],
             "level": "INFO",
             "propagate": False,
         },
-        "channels_redis": {  # Add Redis channel logging
+        "channels_redis": {
             "handlers": ["console"],
-            "level": "WARNING",  # Only log warnings to reduce noise
+            "level": "WARNING",
             "propagate": False,
         },
     },
@@ -280,7 +301,6 @@ STORAGES = {
             "addressing_style": "path",
             "default_acl": None,
             "querystring_auth": False,
-            # "max_pool_connections": 10,
         },
     },
     "staticfiles": {
@@ -304,7 +324,7 @@ gc.set_threshold(700, 10, 5)
 
 ENABLE_SANDBOX = env.bool('ENABLE_SANDBOX', default=False)
 
-# AFTER - uses django-environ like everything else in your settings
+# Maya Configuration
 MAYA_SANDBOX = {
     'BASE_URL': 'https://pg-sandbox.paymaya.com',
     'PUBLIC_KEY': env.str('MAYA_PUBLIC_KEY', default=''),

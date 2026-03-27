@@ -87,6 +87,17 @@ router.register(r'wallet', UserWalletViewSet, basename='wallet')
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/checkout-order/get_order_details/<uuid:order_id>/', CheckoutOrder.as_view({'get': 'get_order_details'}), name='get_order_details'),
+    
+    # ✅ ADD EXPLICIT URLS FOR MAYA ENDPOINTS (both with and without trailing slashes)
+    path('api/checkout-order/initiate_maya_payment', CheckoutOrder.as_view({'post': 'initiate_maya_payment'}), name='initiate-maya-payment'),
+    path('api/checkout-order/initiate_maya_payment/', CheckoutOrder.as_view({'post': 'initiate_maya_payment'}), name='initiate-maya-payment-slash'),
+    path('api/checkout-order/maya-success', CheckoutOrder.as_view({'get': 'maya_success'}), name='maya-success'),
+    path('api/checkout-order/maya-success/', CheckoutOrder.as_view({'get': 'maya_success'}), name='maya-success-slash'),
+    path('api/checkout-order/maya-failure', CheckoutOrder.as_view({'get': 'maya_failure'}), name='maya-failure'),
+    path('api/checkout-order/maya-failure/', CheckoutOrder.as_view({'get': 'maya_failure'}), name='maya-failure-slash'),
+    path('api/checkout-order/maya-cancel', CheckoutOrder.as_view({'get': 'maya_cancel'}), name='maya-cancel'),
+    path('api/checkout-order/maya-cancel/', CheckoutOrder.as_view({'get': 'maya_cancel'}), name='maya-cancel-slash'),
+    
     path('api/', include(router.urls)),
     path('', UserView.as_view(), name='user-list'),
     path('api/customer-shops/', CustomerShops.as_view(), name='customer-shops'),

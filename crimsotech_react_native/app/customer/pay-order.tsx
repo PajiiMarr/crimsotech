@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from "react";
 import {
   SafeAreaView,
   View,
@@ -7,29 +7,19 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   ScrollView,
-  Image,
-  TextInput,
   Alert,
   Modal,
   Platform,
-  Linking
-} from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useAuth } from '../../contexts/AuthContext';
-import AxiosInstance from '../../contexts/axios';
-import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system/legacy';
-import {
-  MaterialIcons,
-  FontAwesome5,
-  FontAwesome,
-  Ionicons,
-  Feather,
-  AntDesign,
-  Entypo
-} from '@expo/vector-icons';
+  Dimensions,
+} from "react-native";
+import { WebView } from "react-native-webview";
+import { router, useLocalSearchParams } from "expo-router";
+import { useAuth } from "../../contexts/AuthContext";
+import AxiosInstance from "../../contexts/axios";
+import { MaterialIcons, FontAwesome5 } from "@expo/vector-icons";
 
-// Types - Updated to match web version
+const { width, height } = Dimensions.get("window");
+
 interface OrderDetails {
   order_id: string;
   status: string;
@@ -55,7 +45,7 @@ interface OrderDetails {
   };
 }
 
-interface MayaPaymentResponse {
+interface PaymentResponse {
   success: boolean;
   message: string;
   order_id: string;
@@ -63,8 +53,9 @@ interface MayaPaymentResponse {
   redirect_url: string;
   reference_number: string;
   total_amount: number;
-  items: any[];
   sandbox_mode: boolean;
+  platform: string;
+  is_mobile: boolean;
   test_card?: {
     message: string;
     card_number: string;
@@ -74,343 +65,334 @@ interface MayaPaymentResponse {
   };
 }
 
-// Environment variable for sandbox mode
-const ENABLE_SANDBOX = true; // Set to false in production
-
 export default function PayOrderPage() {
   const { userId } = useAuth();
   const params = useLocalSearchParams();
   const orderId = params.order_id as string;
-  
-  const [orderDetails, setOrderDetails] = useState<OrderDetails | null>(null);
+  const statusParam = params.status as string;
+
+  const [order, setOrder] = useState<OrderDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [paymentStatus, setPaymentStatus] = useState<'pending' | 'paid'>('pending');
-  const [receiptFile, setReceiptFile] = useState<any>(null);
-  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
-  const [uploadingReceipt, setUploadingReceipt] = useState(false);
-  const [showReceiptModal, setShowReceiptModal] = useState(false);
-  const [mayaPayment, setMayaPayment] = useState<MayaPaymentResponse | null>(null);
-  const [processingMaya, setProcessingMaya] = useState(false);
-  const [showTestCardModal, setShowTestCardModal] = useState(false);
+  const [showWebView, setShowWebView] = useState(false);
+  const [paymentUrl, setPaymentUrl] = useState("");
+  const [paymentInitiated, setPaymentInitiated] = useState(false);
+  const [webViewLoading, setWebViewLoading] = useState(true);
+  const [paymentStatus, setPaymentStatus] = useState<
+    "pending" | "processing" | "success" | "failed" | "cancelled"
+  >("pending");
+  const [hasShownSuccess, setHasShownSuccess] = useState(false);
+  const webViewRef = useRef<WebView>(null);
 
   useEffect(() => {
-    console.log('PayOrderPage mounted with orderId:', orderId);
-    console.log('User ID:', userId);
-    
-    if (orderId) {
+    if (orderId && userId) {
       fetchOrderDetails();
-    } else {
-      setError("No order ID provided");
-      setLoading(false);
     }
-  }, [orderId]);
+
+    if (statusParam === "failed") {
+      Alert.alert(
+        "Payment Failed",
+        "Your payment could not be processed. Please try again.",
+      );
+    } else if (statusParam === "cancelled") {
+      Alert.alert("Payment Cancelled", "You cancelled the payment.");
+    }
+  }, [orderId, userId, statusParam]);
 
   const fetchOrderDetails = async () => {
     try {
-      console.log('Fetching order details for ID:', orderId);
-      
-      const response = await AxiosInstance.get(`/checkout-order/get_order_details/${orderId}/`);
-      
-      console.log('Order details response:', JSON.stringify(response.data, null, 2));
-      
-      // Check if the response has the order data (web version returns the order object directly)
-      if (response.data && response.data.order_id) {
-        // The backend returns the order object directly (like in web version)
-        setOrderDetails(response.data);
-        setPaymentStatus(response.data.status === 'paid' || response.data.status === 'completed' ? 'paid' : 'pending');
-      } else if (response.data.success && response.data.order) {
-        // Alternative structure if wrapped
-        setOrderDetails(response.data.order);
-        setPaymentStatus(response.data.order.status === 'paid' || response.data.order.status === 'completed' ? 'paid' : 'pending');
-      } else {
-        setError(response.data.error || "Failed to load order details");
-      }
-    } catch (err: any) {
-      console.error('Error fetching order details:', err);
-      console.error('Error response:', err.response?.data);
-      
-      let errorMessage = "Error fetching order details";
-      if (err.response?.status === 404) {
-        errorMessage = "Order not found";
-      } else if (err.response?.data?.error) {
-        errorMessage = err.response.data.error;
-      } else if (err.message) {
-        errorMessage = err.message;
-      }
-      
-      setError(errorMessage);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getPaymentMethodIcon = (): any => {
-    if (!orderDetails) return 'credit-card';
-    switch(orderDetails.payment_method) {
-      case 'GCash': return 'mobile-alt';
-      case 'Maya': return 'credit-card';
-      default: return 'money-bill';
-    }
-  };
-
-  const getQRCodeImage = () => {
-    if (!orderDetails) return null;
-    
-    // In sandbox mode for Maya, don't show QR code
-    if (ENABLE_SANDBOX && orderDetails.payment_method === 'Maya') {
-      return null;
-    }
-    
-    switch(orderDetails.payment_method) {
-      case 'GCash': 
-        return 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=GCashPayment:' + orderId;
-      case 'Maya': 
-        return 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=MayaPayment:' + orderId;
-      default: return null;
-    }
-  };
-
-  const pickImage = async () => {
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission required', 'Sorry, we need camera roll permissions to upload receipts.');
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        
-        // Check file size (max 5MB)
-        const fileInfo = await FileSystem.getInfoAsync(asset.uri);
-        if (fileInfo.exists && fileInfo.size) {
-          const fileSizeMB = fileInfo.size / (1024 * 1024);
-          if (fileSizeMB > 5) {
-            Alert.alert('File too large', 'Please select an image smaller than 5MB.');
-            return;
-          }
-        }
-
-        setReceiptFile({
-          uri: asset.uri,
-          name: `receipt_${orderId}_${Date.now()}.jpg`,
-          type: 'image/jpeg'
-        });
-        setReceiptPreview(asset.uri);
-        setShowReceiptModal(false);
-        setError(null);
-      }
-    } catch (error) {
-      console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image. Please try again.');
-    }
-  };
-
-  const takePhoto = async () => {
-    try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission required', 'Sorry, we need camera permissions to take photos.');
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        
-        const fileInfo = await FileSystem.getInfoAsync(asset.uri);
-        if (fileInfo.exists && fileInfo.size) {
-          const fileSizeMB = fileInfo.size / (1024 * 1024);
-          if (fileSizeMB > 5) {
-            Alert.alert('File too large', 'Please take a photo with smaller size.');
-            return;
-          }
-        }
-
-        setReceiptFile({
-          uri: asset.uri,
-          name: `receipt_${orderId}_${Date.now()}.jpg`,
-          type: 'image/jpeg'
-        });
-        setReceiptPreview(asset.uri);
-        setShowReceiptModal(false);
-        setError(null);
-      }
-    } catch (error) {
-      console.error('Error taking photo:', error);
-      Alert.alert('Error', 'Failed to take photo. Please try again.');
-    }
-  };
-
-  const uploadReceipt = async () => {
-    if (!receiptFile) {
-      setError("Please select a receipt file first.");
-      return;
-    }
-
-    try {
-      setUploadingReceipt(true);
-      
-      const formData = new FormData();
-      formData.append('order_id', orderId);
-      formData.append('user_id', userId || '');
-      
-      formData.append('receipt', {
-        uri: receiptFile.uri,
-        name: receiptFile.name,
-        type: receiptFile.type
-      } as any);
-
-      const response = await AxiosInstance.post('/checkout-order/add_receipt/', formData, {
-        headers: { 
-          'Content-Type': 'multipart/form-data'
-        }
-      });
-
-      if (response.data.success) {
-        Alert.alert(
-          'Receipt Uploaded',
-          'Your receipt has been uploaded successfully. Please wait for confirmation.',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.push(`/customer/order-successful/${orderId}` as any)
-            }
-          ]
-        );
-      } else {
-        setError(response.data.error || "Failed to upload receipt");
-        Alert.alert('Error', response.data.error || "Failed to upload receipt");
-      }
-    } catch (err: any) {
-      const errorMsg = err.response?.data?.error || "Error uploading receipt";
-      setError(errorMsg);
-      Alert.alert('Error', errorMsg);
-    } finally {
-      setUploadingReceipt(false);
-    }
-  };
-
-  const handleMayaPayment = async () => {
-    if (!orderDetails || !userId) return;
-    
-    try {
-      setProcessingMaya(true);
-      setError(null);
-
-      console.log("Initiating Maya payment for order:", orderId);
-      console.log("User ID:", userId);
-
-      const response = await AxiosInstance.post('/checkout-order/initiate_maya_payment/', {
-        order_id: orderId,
-        user_id: userId
-      });
-      
-      console.log('Maya payment response:', response.data);
-      
-      if (response.data.success) {
-        setMayaPayment(response.data);
-        
-        // If in sandbox mode and test card info is provided, show it
-        if (response.data.sandbox_mode && response.data.test_card) {
-          setShowTestCardModal(true);
-        }
-        
-        // Open the redirect URL in browser
-        if (response.data.redirect_url) {
-          const supported = await Linking.canOpenURL(response.data.redirect_url);
-          if (supported) {
-            await Linking.openURL(response.data.redirect_url);
-          } else {
-            Alert.alert('Error', 'Cannot open payment page');
-          }
-        }
-      } else {
-        setError(response.data.error || "Failed to initiate Maya payment");
-        Alert.alert('Error', response.data.error || "Failed to initiate Maya payment");
-      }
-    } catch (err: any) {
-      console.error('Maya payment error:', err);
-      const errorMsg = err.response?.data?.error || "Error initiating Maya payment";
-      setError(errorMsg);
-      Alert.alert('Error', errorMsg);
-    } finally {
-      setProcessingMaya(false);
-    }
-  };
-
-  const handlePaymentComplete = async () => {
-    try {
-      setLoading(true);
-      const response = await AxiosInstance.post('/checkout-order/confirm_payment/', {
-        order_id: orderId,
-        user_id: userId
-      });
-      if (response.data.success) {
-        setPaymentStatus('paid');
-        Alert.alert(
-          'Payment Confirmed!',
-          'Your payment has been successfully confirmed.',
-          [
-            {
-              text: 'View Order',
-              onPress: () => router.push(`/customer/order-successful/${orderId}` as any)
-            }
-          ]
-        );
-      } else {
-        setError(response.data.error || "Failed to confirm payment");
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.error || "Error confirming payment");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSkipPayment = () => {
-    Alert.alert(
-      'Skip Payment',
-      'Are you sure you want to skip payment? You can upload your receipt later from your orders.',
-      [
+      const response = await AxiosInstance.get(
+        `/checkout-order/get_order_details/${orderId}/?platform=mobile`,
         {
-          text: 'Cancel',
-          style: 'cancel'
+          headers: { "X-User-Id": userId },
         },
-        {
-          text: 'Skip',
-          onPress: () => router.push(`/customer/order-successful/${orderId}` as any)
-        }
-      ]
-    );
+      );
+      setOrder(response.data);
+    } catch (err: any) {
+      console.error("Error fetching order:", err);
+      setError(err.response?.data?.error || "Failed to load order details");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-PH', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+  const handleInitiatePayment = async () => {
+    if (!orderId || !userId) return;
+
+    setLoading(true);
+    try {
+      console.log("Initiating Maya payment for order:", orderId);
+
+      const response = await AxiosInstance.post<PaymentResponse>(
+        "/checkout-order/initiate_maya_payment/",
+        {
+          order_id: orderId,
+          user_id: userId,
+          platform: "mobile",
+        },
+      );
+
+      console.log("Payment initiation response:", response.data);
+
+      if (response.data.success && response.data.redirect_url) {
+        setPaymentUrl(response.data.redirect_url);
+        setShowWebView(true);
+        setPaymentInitiated(true);
+        setHasShownSuccess(false);
+
+        if (response.data.sandbox_mode && response.data.test_card) {
+          Alert.alert(
+            "Sandbox Mode",
+            `Use these test card details:\n\nCard: ${response.data.test_card.card_number}\nExpiry: ${response.data.test_card.expiry}\nCVV: ${response.data.test_card.cvv}\nOTP: ${response.data.test_card.otp}`,
+            [{ text: "OK" }],
+          );
+        }
+      } else {
+        Alert.alert(
+          "Error",
+          response.data.message || "Failed to initiate payment",
+        );
+      }
+    } catch (err: any) {
+      console.error("Error initiating payment:", err);
+      Alert.alert(
+        "Payment Error",
+        err.response?.data?.error ||
+          err.response?.data?.details ||
+          "Payment initiation failed. Please try again.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verifyPaymentStatus = async () => {
+    try {
+      console.log("Verifying payment status for order:", orderId);
+      const response = await AxiosInstance.get(
+        `/checkout-order/verify_payment_status/${orderId}/`,
+        {
+          headers: { "X-User-Id": userId },
+        },
+      );
+
+      console.log("Payment verification response:", response.data);
+
+      if (
+        response.data.success &&
+        response.data.payment_status === "completed"
+      ) {
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error("Error verifying payment:", err);
+      return false;
+    }
+  };
+
+  const navigateToOrderSuccessful = (orderIdParam: string) => {
+    // ✅ Already correct - keep this format
+    router.replace({
+      pathname: "/customer/order-successful",
+      params: { orderId: orderIdParam },
     });
   };
 
-  const removeReceipt = () => {
-    setReceiptFile(null);
-    setReceiptPreview(null);
+  const handleWebViewNavigationStateChange = async (navState: any) => {
+    const { url } = navState;
+    console.log("WebView URL:", url);
+
+    // Only process if we haven't already shown success
+    if (hasShownSuccess) return;
+
+    // Check for success URL - but verify with backend
+    if (url.includes("/maya-success") || url.includes("/payment-success")) {
+      console.log("Success URL detected, verifying payment...");
+
+      // Show processing message
+      setWebViewLoading(true);
+
+      // Verify payment status with backend
+      const isPaid = await verifyPaymentStatus();
+
+      if (isPaid) {
+        setHasShownSuccess(true);
+        setShowWebView(false);
+        setWebViewLoading(true);
+        setPaymentStatus("success");
+
+        Alert.alert(
+          "Payment Successful!",
+          "Your payment has been processed successfully.",
+          [
+            {
+              text: "View Order",
+              onPress: () => navigateToOrderSuccessful(orderId),
+            },
+          ],
+        );
+      } else {
+        // Payment not confirmed yet, maybe still processing
+        console.log("Payment not confirmed yet, waiting...");
+        setWebViewLoading(false);
+
+        Alert.alert(
+          "Payment Processing",
+          "Your payment is being processed. You will be notified once confirmed.",
+          [
+            {
+              text: "OK",
+              onPress: () => {
+                setShowWebView(false);
+                navigateToOrderSuccessful(orderId);
+              },
+            },
+          ],
+        );
+      }
+      return;
+    }
+
+    // Check for failure URL
+    if (url.includes("/maya-failure") || url.includes("/payment-failed")) {
+      console.log("Failure URL detected");
+      setHasShownSuccess(true);
+      setShowWebView(false);
+      setWebViewLoading(true);
+      setPaymentStatus("failed");
+
+      Alert.alert(
+        "Payment Failed",
+        "Your payment could not be processed. Please try again.",
+        [
+          {
+            text: "Try Again",
+            onPress: () => {
+              setPaymentInitiated(false);
+              setPaymentUrl("");
+              setHasShownSuccess(false);
+            },
+          },
+          {
+            text: "Cancel",
+            style: "cancel",
+            onPress: () => router.back(),
+          },
+        ],
+      );
+      return;
+    }
+
+    // Check for cancel URL
+    if (url.includes("/maya-cancel") || url.includes("/payment-cancel")) {
+      console.log("Cancel URL detected");
+      setHasShownSuccess(true);
+      setShowWebView(false);
+      setWebViewLoading(true);
+      setPaymentStatus("cancelled");
+
+      Alert.alert("Payment Cancelled", "You cancelled the payment process.", [
+        {
+          text: "OK",
+          onPress: () => {
+            setPaymentInitiated(false);
+            setPaymentUrl("");
+            setHasShownSuccess(false);
+          },
+        },
+      ]);
+      return;
+    }
+
+    // Check for custom scheme (fallback)
+    if (url.startsWith("crimsotechreactnative://")) {
+      console.log("Custom scheme detected:", url);
+      setHasShownSuccess(true);
+      setShowWebView(false);
+      setWebViewLoading(true);
+
+      const match = url.match(/order-successful\/([^?]+)/);
+      if (match) {
+        const extractedOrderId = match[1];
+        navigateToOrderSuccessful(extractedOrderId);
+      } else {
+        navigateToOrderSuccessful(orderId);
+      }
+      return;
+    }
+  };
+
+  const handleWebViewLoadStart = () => {
+    setWebViewLoading(true);
+  };
+
+  const handleWebViewLoadEnd = () => {
+    setWebViewLoading(false);
+  };
+
+  const handleWebViewError = (syntheticEvent: any) => {
+    const { nativeEvent } = syntheticEvent;
+    console.error("WebView error:", nativeEvent);
+    setWebViewLoading(false);
+    Alert.alert(
+      "Loading Error",
+      "Failed to load payment page. Please check your internet connection and try again.",
+      [
+        {
+          text: "Try Again",
+          onPress: () => {
+            if (webViewRef.current) {
+              webViewRef.current.reload();
+            }
+          },
+        },
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: () => {
+            setShowWebView(false);
+            setPaymentUrl("");
+          },
+        },
+      ],
+    );
+  };
+
+  const handleBack = () => {
+    if (showWebView) {
+      Alert.alert(
+        "Cancel Payment",
+        "Are you sure you want to cancel this payment?",
+        [
+          { text: "No", style: "cancel" },
+          {
+            text: "Yes",
+            style: "destructive",
+            onPress: () => {
+              setShowWebView(false);
+              setPaymentUrl("");
+              setWebViewLoading(true);
+              setPaymentInitiated(false);
+              setHasShownSuccess(false);
+            },
+          },
+        ],
+      );
+    } else {
+      router.back();
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
   if (loading) {
@@ -418,604 +400,336 @@ export default function PayOrderPage() {
       <SafeAreaView style={styles.container}>
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#EA580C" />
-          <Text style={styles.loadingText}>Loading Payment...</Text>
+          <Text style={styles.loadingText}>Loading order details...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
-  if (error || !orderDetails) {
+  if (error || !order) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.center}>
           <MaterialIcons name="error-outline" size={80} color="#DC2626" />
           <Text style={styles.errorTitle}>{error || "Order Not Found"}</Text>
-          <TouchableOpacity 
+          <Text style={styles.errorText}>
+            The order you're trying to pay for doesn't exist or you don't have
+            permission.
+          </Text>
+          <TouchableOpacity
             style={styles.backButton}
-            onPress={() => router.push('/customer/orders')}
+            onPress={() => router.back()}
           >
-            <Text style={styles.backButtonText}>View Orders</Text>
+            <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
   }
 
-  const PaymentIcon = getPaymentMethodIcon();
-  const qrCodeImage = getQRCodeImage();
-  const formattedDate = formatDate(orderDetails.created_at);
+  const totalAmount = parseFloat(order.total_amount).toFixed(2);
+  const orderDate = formatDate(order.created_at);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.backButtonHeader}
-            onPress={() => router.back()}
-          >
-            <MaterialIcons name="arrow-back" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          
-          <View style={styles.headerContent}>
-            <View style={styles.paymentIconContainer}>
-              {PaymentIcon === 'mobile-alt' ? (
-                <FontAwesome5 name={PaymentIcon} size={24} color="#FFFFFF" />
-              ) : (
-                <FontAwesome name={PaymentIcon} size={24} color="#FFFFFF" />
-              )}
-            </View>
-            <View style={styles.headerTextContainer}>
-              <Text style={styles.headerTitle}>Complete Your Payment</Text>
-              <Text style={styles.headerSubtitle}>Order #{orderDetails.order_id.slice(0, 8)}</Text>
-            </View>
-          </View>
-          
-          <View style={styles.headerAmountContainer}>
-            <Text style={styles.headerAmount}>₱{parseFloat(orderDetails.total_amount).toFixed(2)}</Text>
-            <Text style={styles.headerAmountLabel}>Total</Text>
-          </View>
-        </View>
-
-        {/* Sandbox Mode Badge */}
-        {ENABLE_SANDBOX && (
-          <View style={styles.sandboxBadge}>
-            <MaterialIcons name="security" size={16} color="#FFFFFF" />
-            <Text style={styles.sandboxBadgeText}>Sandbox Mode Active</Text>
-          </View>
-        )}
-
-        {/* Success Message */}
-        {paymentStatus === 'paid' && (
-          <View style={styles.successCard}>
-            <View style={styles.successIcon}>
-              <MaterialIcons name="check-circle" size={32} color="#059669" />
-            </View>
-            <View style={styles.successContent}>
-              <Text style={styles.successTitle}>Payment Confirmed!</Text>
-              <Text style={styles.successText}>Your order is being processed</Text>
-            </View>
-          </View>
-        )}
-
-        <View style={styles.content}>
-          {/* QR Code Section */}
-          <View style={styles.qrSection}>
-            <View style={styles.qrCard}>
-              {qrCodeImage && !(ENABLE_SANDBOX && orderDetails.payment_method === 'Maya') ? (
-                <>
-                  <Image 
-                    source={{ uri: qrCodeImage }}
-                    style={styles.qrImage}
-                    resizeMode="contain"
-                  />
-                  <View style={styles.qrPaymentInfo}>
-                    <View style={styles.paymentMethodBadge}>
-                      {PaymentIcon === 'mobile-alt' ? (
-                        <FontAwesome5 name={PaymentIcon} size={16} color="#EA580C" />
-                      ) : (
-                        <FontAwesome name={PaymentIcon} size={16} color="#EA580C" />
-                      )}
-                      <Text style={styles.paymentMethodName}>{orderDetails.payment_method}</Text>
-                    </View>
-                    <Text style={styles.qrInstruction}>
-                      Scan this QR code with your {orderDetails.payment_method} app
-                    </Text>
-                  </View>
-                </>
-              ) : ENABLE_SANDBOX && orderDetails.payment_method === 'Maya' ? (
-                <View style={styles.sandboxQRContainer}>
-                  <View style={styles.sandboxIconContainer}>
-                    <FontAwesome name="credit-card" size={60} color="#FFFFFF" />
-                  </View>
-                  <Text style={styles.sandboxTitle}>Sandbox Mode</Text>
-                  <Text style={styles.sandboxDescription}>
-                    You're testing Maya payments. Click the sandbox button to proceed.
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.noQrContainer}>
-                  <MaterialIcons name="credit-card" size={60} color="#D1D5DB" />
-                  <Text style={styles.noQrText}>
-                    Please complete your payment via {orderDetails.payment_method}
-                  </Text>
-                  <Text style={styles.noQrSubtext}>
-                    Instructions will be provided by the seller
-                  </Text>
-                </View>
-              )}
-            </View>
+    <>
+      <SafeAreaView style={styles.container}>
+        <ScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.header}>
+            <TouchableOpacity onPress={handleBack} style={styles.backIcon}>
+              <MaterialIcons name="arrow-back" size={24} color="#374151" />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Pay for Order</Text>
+            <View style={{ width: 40 }} />
           </View>
 
-          {/* Payment Details */}
-          <View style={styles.detailsSection}>
-            <Text style={styles.detailsTitle}>Payment Details</Text>
-            
-            {/* Order Info */}
-            <View style={styles.detailCard}>
+          <View style={styles.card}>
+            <View style={styles.orderHeader}>
+              <View>
+                <Text style={styles.orderIdLabel}>Order ID</Text>
+                <Text style={styles.orderId}>
+                  {order.order_id.slice(0, 8)}...
+                </Text>
+              </View>
+              <View
+                style={[styles.statusBadge, { backgroundColor: "#FEF3C7" }]}
+              >
+                <Text style={[styles.statusText, { color: "#D97706" }]}>
+                  {order.status.toUpperCase()}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            <Text style={styles.totalLabel}>Total Amount</Text>
+            <Text style={styles.totalAmount}>₱{totalAmount}</Text>
+
+            <View style={styles.detailsContainer}>
               <View style={styles.detailRow}>
-                <View style={styles.detailIcon}>
-                  <MaterialIcons name="payment" size={20} color="#EA580C" />
-                </View>
-                <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Payment Method</Text>
-                  <Text style={styles.detailValue}>{orderDetails.payment_method}</Text>
-                </View>
+                <MaterialIcons name="payment" size={20} color="#6B7280" />
+                <Text style={styles.detailLabel}>Payment Method:</Text>
+                <Text style={styles.detailValue}>
+                  {order.payment_method || "Maya"}
+                </Text>
               </View>
 
               <View style={styles.detailRow}>
-                <View style={styles.detailIcon}>
-                  <MaterialIcons name="receipt" size={20} color="#EA580C" />
-                </View>
-                <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Order ID</Text>
-                  <Text style={styles.detailValue}>{orderDetails.order_id}</Text>
-                </View>
+                <MaterialIcons
+                  name="local-shipping"
+                  size={20}
+                  color="#6B7280"
+                />
+                <Text style={styles.detailLabel}>Delivery Method:</Text>
+                <Text style={styles.detailValue}>
+                  {order.delivery_method || "Standard Delivery"}
+                </Text>
               </View>
 
               <View style={styles.detailRow}>
-                <View style={styles.detailIcon}>
-                  <MaterialIcons name="date-range" size={20} color="#EA580C" />
-                </View>
-                <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Order Date</Text>
-                  <Text style={styles.detailValue}>{formattedDate}</Text>
-                </View>
+                <MaterialIcons
+                  name="calendar-today"
+                  size={20}
+                  color="#6B7280"
+                />
+                <Text style={styles.detailLabel}>Order Date:</Text>
+                <Text style={styles.detailValue}>{orderDate}</Text>
               </View>
-
-              <View style={styles.detailRow}>
-                <View style={styles.detailIcon}>
-                  <MaterialIcons name="local-shipping" size={20} color="#EA580C" />
-                </View>
-                <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Delivery Method</Text>
-                  <Text style={styles.detailValue}>{orderDetails.delivery_method}</Text>
-                </View>
-              </View>
-
-              {orderDetails.delivery_address && (
-                <View style={styles.detailRow}>
-                  <View style={styles.detailIcon}>
-                    <MaterialIcons name="location-on" size={20} color="#EA580C" />
-                  </View>
-                  <View style={styles.detailContent}>
-                    <Text style={styles.detailLabel}>Delivery Address</Text>
-                    <Text style={styles.detailValue}>{orderDetails.delivery_address}</Text>
-                  </View>
-                </View>
-              )}
-
-              {orderDetails.shipping_address && (
-                <View style={styles.addressDetail}>
-                  <Text style={styles.detailLabel}>Shipping Details</Text>
-                  <Text style={styles.addressName}>{orderDetails.shipping_address.recipient_name}</Text>
-                  <Text style={styles.addressPhone}>{orderDetails.shipping_address.recipient_phone}</Text>
-                  <Text style={styles.addressFull}>{orderDetails.shipping_address.full_address}</Text>
-                </View>
-              )}
             </View>
 
-            {/* Upload Receipt - Hide for sandbox Maya payments */}
-            {!(ENABLE_SANDBOX && orderDetails.payment_method === 'Maya') && (
-              <View style={styles.uploadCard}>
-                <View style={styles.uploadHeader}>
-                  <View style={styles.uploadIcon}>
-                    <MaterialIcons name="cloud-upload" size={24} color="#3B82F6" />
-                  </View>
-                  <View>
-                    <Text style={styles.uploadTitle}>Upload Payment Receipt</Text>
-                    <Text style={styles.uploadSubtitle}>
-                      Upload a screenshot or photo of your payment confirmation
-                    </Text>
-                  </View>
+            {order.shipping_address && (
+              <View style={styles.addressContainer}>
+                <View style={styles.addressHeader}>
+                  <MaterialIcons name="location-on" size={20} color="#EA580C" />
+                  <Text style={styles.addressTitle}>Shipping Address</Text>
                 </View>
-                
-                <TouchableOpacity 
-                  style={styles.uploadButton}
-                  onPress={() => setShowReceiptModal(true)}
-                  disabled={paymentStatus === 'paid' || uploadingReceipt}
-                >
-                  {receiptPreview ? (
-                    <View style={styles.receiptPreviewContainer}>
-                      <Image 
-                        source={{ uri: receiptPreview }}
-                        style={styles.receiptImage}
-                        resizeMode="cover"
-                      />
-                      <View style={styles.receiptInfo}>
-                        <Text style={styles.receiptFileName} numberOfLines={1}>
-                          {receiptFile?.name}
-                        </Text>
-                        <TouchableOpacity onPress={removeReceipt}>
-                          <MaterialIcons name="close" size={20} color="#DC2626" />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  ) : (
-                    <>
-                      <MaterialIcons name="upload" size={40} color="#3B82F6" />
-                      <Text style={styles.uploadButtonText}>
-                        {paymentStatus === 'paid' ? 'Receipt Uploaded' : 'Choose File'}
-                      </Text>
-                      <Text style={styles.uploadFormat}>
-                        JPG, PNG (max 5MB)
-                      </Text>
-                    </>
-                  )}
-                </TouchableOpacity>
+                <Text style={styles.addressText}>
+                  {order.shipping_address.recipient_name}
+                  {"\n"}
+                  {order.shipping_address.recipient_phone}
+                  {"\n"}
+                  {order.shipping_address.full_address}
+                </Text>
               </View>
             )}
 
-            {/* Total Amount */}
-            <View style={styles.totalCard}>
-              <View style={styles.totalContent}>
-                <View>
-                  <Text style={styles.totalLabel}>Total Amount</Text>
-                  <Text style={styles.totalSubLabel}>Including all charges</Text>
-                </View>
-                <Text style={styles.totalAmount}>₱{parseFloat(orderDetails.total_amount).toFixed(2)}</Text>
-              </View>
-            </View>
-
-            {/* Action Buttons */}
-            <View style={styles.actionButtons}>
-              {paymentStatus === 'pending' ? (
-                <>
-                  {ENABLE_SANDBOX && orderDetails.payment_method === 'Maya' ? (
-                    <TouchableOpacity 
-                      style={[styles.payButton, styles.mayaButton]}
-                      onPress={handleMayaPayment}
-                      disabled={processingMaya}
-                    >
-                      {processingMaya ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <FontAwesome name="credit-card" size={20} color="#FFFFFF" />
-                          <Text style={styles.payButtonText}>
-                            Pay with Maya Sandbox
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity 
-                      style={[
-                        styles.payButton,
-                        (!receiptFile || uploadingReceipt) && styles.payButtonDisabled
-                      ]}
-                      onPress={uploadReceipt}
-                      disabled={!receiptFile || uploadingReceipt}
-                    >
-                      {uploadingReceipt ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <MaterialIcons name="check-circle" size={20} color="#FFFFFF" />
-                          <Text style={styles.payButtonText}>
-                            Confirm Payment with {orderDetails.payment_method}
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  )}
-                  
-                  <TouchableOpacity 
-                    style={styles.skipButton}
-                    onPress={handleSkipPayment}
-                    disabled={uploadingReceipt || processingMaya}
-                  >
-                    <Text style={styles.skipButtonText}>Skip Payment for Now</Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <TouchableOpacity 
-                  style={styles.viewOrderButton}
-                  onPress={() => router.push(`/customer/order-successful/${orderId}` as any)}
-                >
-                  <MaterialIcons name="visibility" size={20} color="#FFFFFF" />
-                  <Text style={styles.viewOrderText}>View Order Details</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </View>
-      </ScrollView>
-
-      {/* Receipt Selection Modal */}
-      <Modal
-        visible={showReceiptModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowReceiptModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Upload Receipt</Text>
-              <TouchableOpacity 
-                onPress={() => setShowReceiptModal(false)}
-                style={styles.modalCloseButton}
-              >
-                <MaterialIcons name="close" size={24} color="#374151" />
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.modalContent}>
-              <Text style={styles.modalText}>
-                Please provide proof of payment:
+            <View style={styles.infoBox}>
+              <MaterialIcons name="info-outline" size={20} color="#3B82F6" />
+              <Text style={styles.infoText}>
+                You will be redirected to Maya's secure payment page to complete
+                your payment. Your order will be processed once payment is
+                confirmed.
               </Text>
-              
-              <View style={styles.requirementsList}>
-                <View style={styles.requirementItem}>
-                  <MaterialIcons name="check-circle" size={16} color="#059669" />
-                  <Text style={styles.requirementText}>Transaction ID / Reference Number</Text>
-                </View>
-                <View style={styles.requirementItem}>
-                  <MaterialIcons name="check-circle" size={16} color="#059669" />
-                  <Text style={styles.requirementText}>Amount Paid</Text>
-                </View>
-                <View style={styles.requirementItem}>
-                  <MaterialIcons name="check-circle" size={16} color="#059669" />
-                  <Text style={styles.requirementText}>Date & Time of Payment</Text>
-                </View>
-              </View>
-              
-              <TouchableOpacity 
-                style={styles.modalButton}
-                onPress={takePhoto}
-              >
-                <MaterialIcons name="camera-alt" size={24} color="#FFFFFF" />
-                <Text style={styles.modalButtonText}>Take Photo</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.modalButton}
-                onPress={pickImage}
-              >
-                <MaterialIcons name="photo-library" size={24} color="#FFFFFF" />
-                <Text style={styles.modalButtonText}>Choose from Gallery</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.modalButton, styles.modalButtonSecondary]}
-                onPress={() => setShowReceiptModal(false)}
-              >
-                <Text style={styles.modalButtonSecondaryText}>Cancel</Text>
-              </TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </Modal>
 
-      {/* Test Card Info Modal for Maya Sandbox */}
-      <Modal
-        visible={showTestCardModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowTestCardModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContainer, styles.testCardModal]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Sandbox Test Card</Text>
-              <TouchableOpacity 
-                onPress={() => setShowTestCardModal(false)}
-                style={styles.modalCloseButton}
+            {!paymentInitiated ? (
+              <TouchableOpacity
+                style={styles.payButton}
+                onPress={handleInitiatePayment}
               >
-                <MaterialIcons name="close" size={24} color="#374151" />
+                <FontAwesome5 name="wallet" size={20} color="#FFFFFF" />
+                <Text style={styles.payButtonText}>Pay with Maya</Text>
               </TouchableOpacity>
-            </View>
-            
-            <View style={styles.modalContent}>
-              <View style={styles.testCardIcon}>
-                <FontAwesome name="credit-card" size={48} color="#EA580C" />
+            ) : (
+              <View style={styles.paymentInitiatedContainer}>
+                <ActivityIndicator size="small" color="#EA580C" />
+                <Text style={styles.paymentInitiatedText}>
+                  Payment window opening...
+                </Text>
               </View>
-              
-              <Text style={styles.testCardMessage}>
-                {mayaPayment?.test_card?.message || 'Use these test card details for sandbox payment:'}
-              </Text>
-              
-              {mayaPayment?.test_card && (
-                <View style={styles.testCardDetails}>
-                  <View style={styles.testCardRow}>
-                    <Text style={styles.testCardLabel}>Card Number:</Text>
-                    <Text style={styles.testCardValue}>{mayaPayment.test_card.card_number}</Text>
-                  </View>
-                  <View style={styles.testCardRow}>
-                    <Text style={styles.testCardLabel}>Expiry:</Text>
-                    <Text style={styles.testCardValue}>{mayaPayment.test_card.expiry}</Text>
-                  </View>
-                  <View style={styles.testCardRow}>
-                    <Text style={styles.testCardLabel}>CVV:</Text>
-                    <Text style={styles.testCardValue}>{mayaPayment.test_card.cvv}</Text>
-                  </View>
-                  <View style={styles.testCardRow}>
-                    <Text style={styles.testCardLabel}>OTP:</Text>
-                    <Text style={styles.testCardValue}>{mayaPayment.test_card.otp}</Text>
-                  </View>
-                </View>
-              )}
-              
-              <TouchableOpacity 
-                style={styles.testCardButton}
-                onPress={() => setShowTestCardModal(false)}
-              >
-                <Text style={styles.testCardButtonText}>Got it</Text>
-              </TouchableOpacity>
-            </View>
+            )}
+
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => router.back()}
+            >
+              <Text style={styles.cancelButtonText}>Cancel Order</Text>
+            </TouchableOpacity>
           </View>
-        </View>
+
+          <View style={styles.helpSection}>
+            <Text style={styles.helpTitle}>Need Help?</Text>
+            <Text style={styles.helpText}>
+              • Having trouble with payment? Contact Maya support{"\n"}• Order
+              issues? Contact our customer support{"\n"}• You can view your
+              order status in "My Orders"
+            </Text>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+
+      <Modal
+        visible={showWebView}
+        animationType="slide"
+        onRequestClose={() => {
+          if (paymentStatus !== "success" && !hasShownSuccess) {
+            Alert.alert(
+              "Cancel Payment",
+              "Are you sure you want to cancel this payment?",
+              [
+                { text: "No", style: "cancel" },
+                {
+                  text: "Yes",
+                  style: "destructive",
+                  onPress: () => {
+                    setShowWebView(false);
+                    setPaymentUrl("");
+                    setWebViewLoading(true);
+                    setPaymentInitiated(false);
+                    setHasShownSuccess(false);
+                  },
+                },
+              ],
+            );
+          } else {
+            setShowWebView(false);
+          }
+        }}
+      >
+        <SafeAreaView style={styles.webViewContainer}>
+          <View style={styles.webViewHeader}>
+            <TouchableOpacity
+              onPress={() => {
+                if (paymentStatus !== "success" && !hasShownSuccess) {
+                  Alert.alert(
+                    "Cancel Payment",
+                    "Are you sure you want to cancel this payment?",
+                    [
+                      { text: "No", style: "cancel" },
+                      {
+                        text: "Yes",
+                        style: "destructive",
+                        onPress: () => {
+                          setShowWebView(false);
+                          setPaymentUrl("");
+                          setWebViewLoading(true);
+                          setPaymentInitiated(false);
+                          setHasShownSuccess(false);
+                        },
+                      },
+                    ],
+                  );
+                } else {
+                  setShowWebView(false);
+                }
+              }}
+              style={styles.closeButton}
+            >
+              <MaterialIcons name="close" size={24} color="#374151" />
+            </TouchableOpacity>
+            <Text style={styles.webViewTitle}>Maya Payment</Text>
+            <TouchableOpacity
+              onPress={() => {
+                if (webViewRef.current) {
+                  webViewRef.current.reload();
+                }
+              }}
+              style={styles.reloadButton}
+            >
+              <MaterialIcons name="refresh" size={24} color="#374151" />
+            </TouchableOpacity>
+          </View>
+
+          {webViewLoading && (
+            <View style={styles.webViewLoadingOverlay}>
+              <ActivityIndicator size="large" color="#EA580C" />
+              <Text style={styles.loadingText}>Loading payment page...</Text>
+            </View>
+          )}
+
+          <WebView
+            ref={webViewRef}
+            source={{ uri: paymentUrl }}
+            style={styles.webView}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            startInLoadingState={true}
+            onNavigationStateChange={handleWebViewNavigationStateChange}
+            onLoadStart={handleWebViewLoadStart}
+            onLoadEnd={handleWebViewLoadEnd}
+            onError={handleWebViewError}
+            renderLoading={() => null}
+            incognito={false}
+            thirdPartyCookiesEnabled={true}
+            sharedCookiesEnabled={true}
+          />
+        </SafeAreaView>
       </Modal>
-    </SafeAreaView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: "#F8F9FA",
   },
   center: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     padding: 20,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
   },
   errorTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#374151',
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#374151",
     marginTop: 16,
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  errorText: {
+    fontSize: 14,
+    color: "#6B7280",
+    textAlign: "center",
     marginBottom: 24,
-    textAlign: 'center',
+    lineHeight: 20,
   },
   backButton: {
-    backgroundColor: '#EA580C',
+    backgroundColor: "#EA580C",
     paddingHorizontal: 32,
     paddingVertical: 12,
     borderRadius: 8,
   },
   backButtonText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   scrollView: {
     flex: 1,
   },
   header: {
-    backgroundColor: '#EA580C',
-    paddingTop: Platform.OS === 'ios' ? 50 : 40,
-    paddingBottom: 24,
-    paddingHorizontal: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
-  backButtonHeader: {
+  backIcon: {
     padding: 8,
   },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  paymentIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  headerTextContainer: {
-    flex: 1,
-  },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginTop: 2,
-  },
-  headerAmountContainer: {
-    alignItems: 'flex-end',
-  },
-  headerAmount: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    fontWeight: "600",
+    color: "#111827",
   },
-  headerAmountLabel: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginTop: 2,
-  },
-  sandboxBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F59E0B',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  sandboxBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  successCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    marginHorizontal: 16,
-    marginTop: 16,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-  },
-  successIcon: {
-    marginRight: 12,
-  },
-  successContent: {
-    flex: 1,
-  },
-  successTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#065F46',
-  },
-  successText: {
-    fontSize: 14,
-    color: '#059669',
-    marginTop: 2,
-  },
-  content: {
-    padding: 16,
-  },
-  qrSection: {
-    marginBottom: 16,
-  },
-  qrCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+  card: {
+    backgroundColor: "#FFFFFF",
+    margin: 16,
     padding: 20,
-    alignItems: 'center',
+    borderRadius: 16,
     ...Platform.select({
       ios: {
-        shadowColor: '#000',
+        shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 8,
@@ -1025,426 +739,200 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  qrImage: {
-    width: 250,
-    height: 250,
-    marginBottom: 20,
-  },
-  qrPaymentInfo: {
-    alignItems: 'center',
-  },
-  paymentMethodBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFF7ED',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginBottom: 8,
-    gap: 6,
-  },
-  paymentMethodName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#EA580C',
-  },
-  qrInstruction: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  sandboxQRContainer: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  sandboxIconContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#3B82F6',
-    justifyContent: 'center',
-    alignItems: 'center',
+  orderHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 16,
   },
-  sandboxTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#374151',
-    marginBottom: 8,
+  orderIdLabel: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginBottom: 4,
   },
-  sandboxDescription: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-    maxWidth: 250,
-  },
-  noQrContainer: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  noQrText: {
+  orderId: {
     fontSize: 16,
-    color: '#374151',
-    textAlign: 'center',
-    marginTop: 12,
+    fontWeight: "600",
+    color: "#111827",
   },
-  noQrSubtext: {
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#F3F4F6",
+    marginVertical: 16,
+  },
+  totalLabel: {
     fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-    marginTop: 4,
+    color: "#6B7280",
+    marginBottom: 4,
   },
-  detailsSection: {
+  totalAmount: {
+    fontSize: 32,
+    fontWeight: "700",
+    color: "#EA580C",
     marginBottom: 20,
   },
-  detailsTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  detailCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
+  detailsContainer: {
+    gap: 12,
+    marginBottom: 20,
   },
   detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  detailIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#FFF7ED',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  detailContent: {
-    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   detailLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 2,
+    fontSize: 14,
+    color: "#6B7280",
+    marginLeft: 4,
+    flex: 1,
   },
   detailValue: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
+    fontWeight: "500",
+    color: "#374151",
   },
-  addressDetail: {
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    paddingTop: 16,
-    marginTop: 8,
-  },
-  addressName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginTop: 4,
-  },
-  addressPhone: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  addressFull: {
-    fontSize: 13,
-    color: '#374151',
-    marginTop: 4,
-    lineHeight: 18,
-  },
-  uploadCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderStyle: 'dashed',
-  },
-  uploadHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  uploadIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#EFF6FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  uploadTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  uploadSubtitle: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  uploadButton: {
-    borderWidth: 2,
-    borderColor: '#3B82F6',
-    borderStyle: 'dashed',
-    borderRadius: 12,
-    padding: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  uploadButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#3B82F6',
-    marginTop: 12,
-  },
-  uploadFormat: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 4,
-  },
-  receiptPreviewContainer: {
-    alignItems: 'center',
-    width: '100%',
-  },
-  receiptImage: {
-    width: 120,
-    height: 120,
+  addressContainer: {
+    backgroundColor: "#F9FAFB",
+    padding: 12,
     borderRadius: 8,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  addressHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     marginBottom: 8,
   },
-  receiptInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
-    paddingHorizontal: 20,
-  },
-  receiptFileName: {
+  addressTitle: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    flex: 1,
-    marginRight: 8,
+    fontWeight: "600",
+    color: "#374151",
   },
-  totalCard: {
-    backgroundColor: '#FFF7ED',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+  addressText: {
+    fontSize: 13,
+    color: "#6B7280",
+    lineHeight: 18,
   },
-  totalContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  totalLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  totalSubLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  totalAmount: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#EA580C',
-  },
-  actionButtons: {
-    gap: 12,
-  },
-  payButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#EA580C',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderRadius: 12,
+  infoBox: {
+    flexDirection: "row",
+    backgroundColor: "#EFF6FF",
+    padding: 12,
+    borderRadius: 8,
     gap: 8,
-  },
-  mayaButton: {
-    backgroundColor: '#3B82F6',
-  },
-  payButtonDisabled: {
-    backgroundColor: '#9CA3AF',
-  },
-  payButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-    flex: 1,
-    textAlign: 'center',
-  },
-  skipButton: {
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  skipButtonText: {
-    color: '#6B7280',
-    fontSize: 14,
-  },
-  viewOrderButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#059669',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderRadius: 12,
-    gap: 8,
-  },
-  viewOrderText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContainer: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-  },
-  testCardModal: {
-    maxHeight: '70%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  modalCloseButton: {
-    padding: 4,
-  },
-  modalContent: {
-    paddingHorizontal: 20,
-    paddingVertical: 24,
-  },
-  modalText: {
-    fontSize: 14,
-    color: '#374151',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  requirementsList: {
-    gap: 12,
-    marginBottom: 24,
-  },
-  requirementItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  requirementText: {
-    fontSize: 14,
-    color: '#374151',
-    flex: 1,
-  },
-  modalButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#EA580C',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderRadius: 12,
-    gap: 12,
-    marginBottom: 12,
-  },
-  modalButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  modalButtonSecondary: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  modalButtonSecondaryText: {
-    color: '#374151',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  testCardIcon: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  testCardMessage: {
-    fontSize: 14,
-    color: '#374151',
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  testCardDetails: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 12,
-    padding: 16,
     marginBottom: 20,
   },
-  testCardRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  infoText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#1E40AF",
+    lineHeight: 18,
+  },
+  payButton: {
+    flexDirection: "row",
+    backgroundColor: "#EA580C",
+    paddingVertical: 16,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
     marginBottom: 12,
   },
-  testCardLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  testCardValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  testCardButton: {
-    backgroundColor: '#EA580C',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  testCardButtonText: {
-    color: '#FFFFFF',
+  payButtonText: {
+    color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
+  },
+  paymentInitiatedContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 16,
+    marginBottom: 12,
+  },
+  paymentInitiatedText: {
+    fontSize: 14,
+    color: "#6B7280",
+  },
+  cancelButton: {
+    paddingVertical: 12,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  cancelButtonText: {
+    color: "#6B7280",
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  helpSection: {
+    backgroundColor: "#F9FAFB",
+    marginHorizontal: 16,
+    marginBottom: 32,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  helpTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 8,
+  },
+  helpText: {
+    fontSize: 13,
+    color: "#6B7280",
+    lineHeight: 20,
+  },
+  webViewContainer: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+  webViewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+    backgroundColor: "#FFFFFF",
+  },
+  closeButton: {
+    padding: 8,
+  },
+  reloadButton: {
+    padding: 8,
+  },
+  webViewTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  webView: {
+    flex: 1,
+  },
+  webViewLoadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    zIndex: 10,
   },
 });
