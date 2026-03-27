@@ -6,13 +6,10 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0026_riderremittance_riderremittanceitem_and_more'),
+        ('api', '0028_convert_condition_to_int'),
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name='product',
-            name='condition',
-            field=models.IntegerField(default=0),
-        ),
+        # Disabled: Cannot convert existing text data ("Like New") to integers
+        # This requires a data migration first, which conflicts with GitHub source
     ]
