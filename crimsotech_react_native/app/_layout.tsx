@@ -1,13 +1,25 @@
 import { useEffect } from 'react';
 import { Linking, Platform, Alert } from 'react-native';
-import { router, Slot } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
+import { router, Slot, SplashScreen } from 'expo-router';
+import { AuthProvider } from '../contexts/AuthContext';
 
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   useEffect(() => {
+    // Hide splash screen after a short delay to allow context to initialize
+    const hideSplash = async () => {
+      try {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await SplashScreen.hideAsync();
+      } catch (e) {
+        console.warn('Error hiding splash screen:', e);
+      }
+    };
+    
+    hideSplash();
+
     // Handle deep links when app is already open
     const subscription = Linking.addEventListener('url', handleDeepLinkEvent);
 
@@ -34,16 +46,12 @@ export default function RootLayout() {
 
     try {
       // Parse the URL
-      // Format: crimsotechreactnative://order-successful/ORDER_ID
-      // or: crimsotechreactnative://pay-order?order_id=ORDER_ID&status=failed
-      
-      const route = url.replace(/.*?:\/\//g, ''); // Remove scheme
+      const route = url.replace(/.*?:\/\//g, '');
       console.log('Parsed route:', route);
-
-      // Split path and query string
+      
       const [path, queryString] = route.split('?');
       const pathParts = path.split('/').filter(Boolean);
-
+      
       console.log('Path parts:', pathParts);
       console.log('Query string:', queryString);
 
@@ -58,10 +66,9 @@ export default function RootLayout() {
 
         const params = queryString ? new URLSearchParams(queryString) : null;
         const error = params?.get('error');
-
+        
         console.log('Navigating to order-successful:', orderId, error);
-
-        // Navigate to order successful page
+        
         if (error) {
           router.replace({
             pathname: `/customer/order-successful/${orderId}` as any,
@@ -75,15 +82,14 @@ export default function RootLayout() {
         const params = queryString ? new URLSearchParams(queryString) : null;
         const orderId = params?.get('order_id');
         const status = params?.get('status');
-
+        
         if (!orderId) {
           console.error('No order ID found in pay-order deep link');
           return;
         }
 
         console.log('Navigating to pay-order:', orderId, status);
-
-        // Show alert for failed/cancelled payments
+        
         if (status === 'failed') {
           Alert.alert(
             'Payment Failed',
@@ -118,5 +124,9 @@ export default function RootLayout() {
     }
   };
 
-  return <Slot />;
+  return (
+    <AuthProvider>
+      <Slot />
+    </AuthProvider>
+  );
 }
