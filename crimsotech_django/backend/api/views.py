@@ -1,12 +1,13 @@
 from asyncio.log import logger
+from decimal import Decimal, ROUND_HALF_UP
 import csv
 from asgiref.sync import async_to_sync
 from email import parser
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 import re
 import time
 from django.utils.text import slugify
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.db.models import Prefetch, DecimalField, IntegerField
 from django.db.models.functions import TruncMonth, Coalesce
 from django.db import transaction
@@ -19800,6 +19801,7 @@ class AddToCartView(APIView):
             }, status=500)
 
 class CartListView(APIView):
+
     def get_item_total(self, cart_item):
         """Calculate total price for a cart item - ONLY from variant"""
         if not cart_item.variant:
@@ -20112,7 +20114,77 @@ class CartListView(APIView):
                 "error": "Failed to remove item", 
                 "details": str(e)
             }, status=500)
-            
+
+    def post(self, request):
+        user_id = request.data.get("user_id")
+        variant_id = request.data.get("variant_id")
+        quantity = request.data.get("quantity", 1)
+
+        if not user_id:
+            return Response({"error": "user_id is required"}, status=400)
+        if not variant_id:
+            return Response({"error": "variant_id is required"}, status=400)
+
+        try:
+            quantity = int(quantity)
+            if quantity < 1:
+                return Response({"error": "Quantity must be at least 1"}, status=400)
+        except (TypeError, ValueError):
+            return Response({"error": "Quantity must be an integer"}, status=400)
+
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+
+        try:
+            variant = Variants.objects.select_related("product").get(pk=variant_id)
+        except Variants.DoesNotExist:
+            return Response({"error": "Variant not found"}, status=404)
+
+        if not variant.is_active:
+            return Response({"error": "This variant is no longer available"}, status=400)
+
+        if variant.quantity < quantity:
+            return Response({
+                "error": f"Only {variant.quantity} items available in stock",
+                "available_quantity": variant.quantity
+            }, status=400)
+
+        if not variant.product:
+            return Response({"error": "Variant has no associated product"}, status=400)
+
+        # If item already in cart, increment quantity
+        cart_item, created = CartItem.objects.get_or_create(
+            user=user,
+            variant=variant,
+            is_ordered=False,
+            defaults={
+                "product": variant.product,
+                "quantity": quantity,
+            }
+        )
+
+        if not created:
+            new_quantity = cart_item.quantity + quantity
+            if new_quantity > variant.quantity:
+                return Response({
+                    "error": f"Only {variant.quantity} items available. You already have {cart_item.quantity} in your cart.",
+                    "available_quantity": variant.quantity,
+                    "current_quantity": cart_item.quantity
+                }, status=400)
+            cart_item.quantity = new_quantity
+            cart_item.save()
+
+        serializer = CartItemSerializer(cart_item, context={"request": request})
+
+        return Response({
+            "success": True,
+            "message": "Item added to cart",
+            "cart_item": serializer.data,
+            "created": created
+        }, status=201 if created else 200)
+
 class CartBulkUpdateView(APIView):
     """
     Handle bulk updates to cart (update multiple quantities at once)
@@ -22192,22 +22264,21 @@ class SellerOrderList(viewsets.ViewSet):
             return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)
 
 class CheckoutOrder(viewsets.ViewSet):
+    
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')
     def get_checkout_items(self, request):
         user_id = request.GET.get("user_id")
         selected_ids_str = request.GET.get("selected", "")
-        
+
         if not user_id:
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         if not selected_ids_str:
             return Response({"error": "No items selected for checkout"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
-            # Convert comma-separated string to list of UUIDs
             selected_ids = selected_ids_str.split(',')
-            
-            # Get cart items for this user and selected IDs
+
             cart_items = CartItem.objects.filter(
                 id__in=selected_ids,
                 user_id=user_id,
@@ -22219,37 +22290,34 @@ class CheckoutOrder(viewsets.ViewSet):
             ).prefetch_related(
                 'product__productmedia_set'
             )
-            
+
             if not cart_items.exists():
                 return Response(
-                    {"error": "No cart items found or items already ordered"}, 
+                    {"error": "No cart items found or items already ordered"},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            
-            # Check if any selected items are already ordered
+
             total_selected_count = len(selected_ids)
             found_count = cart_items.count()
-            
+
             if found_count != total_selected_count:
                 return Response(
                     {
-                        "error": f"Some items cannot be checked out",
+                        "error": "Some items cannot be checked out",
                         "details": f"Found {found_count} available items out of {total_selected_count} selected",
                         "available_items": found_count,
                         "selected_items": total_selected_count
-                    }, 
+                    },
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            # Validate that all products have variants selected
+
             for cart_item in cart_items:
                 if cart_item.product and not cart_item.variant:
-                    # Check if product has variants
                     has_variants = Variants.objects.filter(
                         product=cart_item.product,
                         is_active=True
                     ).exists()
-                    
+
                     if has_variants:
                         return Response(
                             {
@@ -22259,17 +22327,16 @@ class CheckoutOrder(viewsets.ViewSet):
                             },
                             status=status.HTTP_400_BAD_REQUEST
                         )
-            
-            # Prepare response data
+
             checkout_items = []
             shop_ids = set()
             shop_addresses = {}
-            
+
             for cart_item in cart_items:
                 product = cart_item.product
                 variant = cart_item.variant
                 shop = product.shop if product else None
-                
+
                 if shop:
                     shop_ids.add(shop.id)
                     if shop.id not in shop_addresses:
@@ -22283,18 +22350,17 @@ class CheckoutOrder(viewsets.ViewSet):
                             'shop_province': shop.province,
                             'shop_contact_number': shop.contact_number
                         }
-                
-                # Get price from variant if available, otherwise from product
+
                 resolved_price = 0.0
                 variant_data = None
-                
+
                 if variant:
                     try:
                         if variant.price is not None:
                             resolved_price = float(variant.price)
                     except Exception:
                         resolved_price = 0.0
-                    
+
                     variant_data = {
                         'id': str(variant.id),
                         'title': variant.title,
@@ -22306,9 +22372,8 @@ class CheckoutOrder(viewsets.ViewSet):
                         'option_map': variant.option_map
                     }
                 else:
-                    # Fallback to product price (for products without variants)
                     resolved_price = float(product.price) if product and product.price else 0.0
-                
+
                 item_data = {
                     "id": str(cart_item.id),
                     "product_id": str(product.id) if product else None,
@@ -22321,72 +22386,59 @@ class CheckoutOrder(viewsets.ViewSet):
                     "subtotal": resolved_price * cart_item.quantity,
                     "is_ordered": cart_item.is_ordered
                 }
-                
-                # Get image from variant first, then product media
+
                 if variant and variant.image and hasattr(variant.image, 'url'):
                     try:
-                        item_data['image'] = request.build_absolute_uri(variant.image.url)
+                        item_data['image'] = convert_s3_to_public_url(variant.image.url)
                     except Exception:
                         item_data['image'] = variant.image.url
                 elif product and product.productmedia_set.exists():
                     first_media = product.productmedia_set.first()
                     if first_media and first_media.file_data:
                         try:
-                            item_data["image"] = request.build_absolute_uri(first_media.file_data.url)
+                            item_data["image"] = convert_s3_to_public_url(first_media.file_data.url)
                         except Exception:
                             item_data["image"] = first_media.file_data.url
-                
+
                 if variant_data:
                     item_data['variant'] = variant_data
-                
+
                 checkout_items.append(item_data)
-            
-            # Calculate totals
+
             subtotal = sum(item["subtotal"] for item in checkout_items)
             delivery = 50.00
             total = subtotal + delivery
-            
-            # Get user's purchase history
+
             user_purchase_history = self._get_user_purchase_history(user_id)
-            
-            # Get available vouchers
+
             available_vouchers = self._get_simple_available_vouchers(
-                list(shop_ids), 
-                user_id, 
+                list(shop_ids),
+                user_id,
                 subtotal,
                 user_purchase_history
             )
-            
-            # Get user's shipping addresses
+
             shipping_addresses = list(
                 ShippingAddress.objects.filter(
                     user_id=user_id,
                     is_active=True
                 ).order_by('-is_default', '-created_at').values(
-                    'id',
-                    'recipient_name',
-                    'recipient_phone',
-                    'street',
-                    'barangay',
-                    'city',
-                    'province',
-                    'zip_code',
-                    'country',
-                    'is_default'
+                    'id', 'recipient_name', 'recipient_phone',
+                    'street', 'barangay', 'city', 'province',
+                    'zip_code', 'country', 'is_default'
                 )[:10]
             )
-            
-            # Format addresses
+
             formatted_addresses = []
             for addr in shipping_addresses:
                 addr['id'] = str(addr['id'])
                 parts = [addr['street'], addr['barangay'], addr['city'], addr['province']]
                 addr['full_address'] = ', '.join(filter(None, parts))
                 formatted_addresses.append(addr)
-            
+
             default_address = formatted_addresses[0] if formatted_addresses else None
             shop_addresses_list = list(shop_addresses.values())
-            
+
             response_data = {
                 "success": True,
                 "checkout_items": checkout_items,
@@ -22403,41 +22455,38 @@ class CheckoutOrder(viewsets.ViewSet):
                 "default_shipping_address": default_address,
                 "shop_addresses": shop_addresses_list
             }
-            
+
             return Response(response_data)
-            
+
         except Exception as e:
             logger.error(f"Error in get_checkout_items: {str(e)}")
             import traceback
             traceback.print_exc()
             return Response(
-                {"error": "Internal server error", "details": str(e)}, 
+                {"error": "Internal server error", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     def _get_user_purchase_history(self, user_id):
-        """
-        Get user's purchase history for personalized voucher recommendations
-        """
         try:
             completed_orders = Order.objects.filter(
                 user_id=user_id,
                 status__in=['delivered', 'completed']
             )
-            
+
             total_spent_result = completed_orders.aggregate(
                 total_spent=models.Sum('total_amount')
             )
             total_spent = total_spent_result['total_spent'] or 0
-            
+
             thirty_days_ago = timezone.now() - timedelta(days=30)
             recent_orders_count = completed_orders.filter(
                 created_at__gte=thirty_days_ago
             ).count()
-            
+
             order_count = completed_orders.count()
             avg_order_value = total_spent / order_count if order_count > 0 else 0
-            
+
             return {
                 "total_spent": float(total_spent),
                 "recent_orders_count": recent_orders_count,
@@ -22452,9 +22501,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 "average_order_value": 0,
                 "customer_tier": "new"
             }
-    
+
     def _determine_customer_tier(self, total_spent, recent_orders_count):
-        """Determine customer tier based on spending and order frequency"""
         if total_spent >= 10000 or recent_orders_count >= 10:
             return "platinum"
         elif total_spent >= 5000 or recent_orders_count >= 5:
@@ -22463,16 +22511,13 @@ class CheckoutOrder(viewsets.ViewSet):
             return "silver"
         else:
             return "new"
-    
+
     def _get_simple_available_vouchers(self, shop_ids, user_id, current_subtotal, user_purchase_history):
-        """
-        Get available vouchers for the shops
-        """
         if not shop_ids:
             return []
-        
+
         current_date = timezone.now().date()
-        
+
         try:
             vouchers = Voucher.objects.filter(
                 shop_id__in=shop_ids,
@@ -22481,16 +22526,14 @@ class CheckoutOrder(viewsets.ViewSet):
                 end_date__gte=current_date,
                 minimum_spend__lte=current_subtotal
             ).select_related('shop').only(
-                'id', 'name', 'code', 'discount_type', 'value', 
+                'id', 'name', 'code', 'discount_type', 'value',
                 'minimum_spend', 'shop__name', 'shop__id', 'voucher_type'
             ).order_by('-value')[:10]
-            
+
             voucher_list = []
             for voucher in vouchers:
                 potential_savings = self._calculate_discount(voucher, current_subtotal)
-                
-                customer_tier = "all"
-                
+
                 voucher_data = {
                     "id": str(voucher.id),
                     "code": voucher.code,
@@ -22499,76 +22542,55 @@ class CheckoutOrder(viewsets.ViewSet):
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
                     "shop_name": voucher.shop.name if voucher.shop else "Unknown Shop",
-                    "shop_id": str(voucher.shop.id) if voucher.shop else None,  # Add shop_id
+                    "shop_id": str(voucher.shop.id) if voucher.shop else None,
                     "description": self._get_voucher_description(voucher),
                     "potential_savings": float(potential_savings),
-                    "customer_tier": customer_tier,
+                    "customer_tier": "all",
                     "voucher_type": voucher.voucher_type,
                     "is_general": False
                 }
                 voucher_list.append(voucher_data)
-            
+
             if voucher_list:
-                return [{
-                    "category": "Available Vouchers",
-                    "vouchers": voucher_list
-                }]
+                return [{"category": "Available Vouchers", "vouchers": voucher_list}]
             return []
-            
+
         except Exception as e:
             logger.error(f"Error fetching vouchers: {str(e)}")
             return []
-    
-    
+
     def _get_voucher_description(self, voucher):
-        """Generate a user-friendly description for the voucher"""
         if voucher.discount_type == 'percentage':
             desc = f"{voucher.value}% off"
         else:
             desc = f"₱{voucher.value} off"
-        
+
         if voucher.minimum_spend > 0:
             desc += f" on orders over ₱{voucher.minimum_spend}"
-        
+
         return desc
-    
+
     @action(detail=False, methods=['GET'], url_path='get_shipping_addresses')
     def get_shipping_addresses(self, request):
-        """
-        Get user's shipping addresses.
-        URL: /api/checkout-order/get_shipping_addresses/?user_id=user_uuid
-        """
         user_id = request.GET.get("user_id")
-        
+
         if not user_id:
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             addresses = list(
                 ShippingAddress.objects.filter(
                     user_id=user_id,
                     is_active=True
                 ).order_by('-is_default', '-created_at').values(
-                    'id',
-                    'recipient_name',
-                    'recipient_phone',
-                    'street',
-                    'barangay',
-                    'city',
-                    'province',
-                    'zip_code',
-                    'country',
-                    'building_name',
-                    'floor_number',
-                    'unit_number',
-                    'landmark',
-                    'instructions',
-                    'address_type',
-                    'is_default',
-                    'created_at'
+                    'id', 'recipient_name', 'recipient_phone',
+                    'street', 'barangay', 'city', 'province',
+                    'zip_code', 'country', 'building_name',
+                    'floor_number', 'unit_number', 'landmark',
+                    'instructions', 'address_type', 'is_default', 'created_at'
                 )[:20]
             )
-            
+
             formatted_addresses = []
             for addr in addresses:
                 addr['id'] = str(addr['id'])
@@ -22584,61 +22606,56 @@ class CheckoutOrder(viewsets.ViewSet):
                     addr.get('country')
                 ]
                 addr['full_address'] = ', '.join(filter(None, parts))
-                
+
                 if addr.get('created_at'):
                     addr['created_at'] = addr['created_at'].isoformat()
-                
+
                 formatted_addresses.append(addr)
-            
+
             default_address = next(
-                (addr for addr in formatted_addresses if addr['is_default']), 
+                (addr for addr in formatted_addresses if addr['is_default']),
                 formatted_addresses[0] if formatted_addresses else None
             )
-            
+
             return Response({
                 "success": True,
                 "shipping_addresses": formatted_addresses or None,
                 "default_shipping_address": default_address,
                 "count": len(formatted_addresses)
             })
-            
+
         except Exception as e:
             logger.error(f"Error getting shipping addresses: {str(e)}")
             return Response(
-                {"error": "Failed to fetch shipping addresses", "details": str(e)}, 
+                {"error": "Failed to fetch shipping addresses", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     @action(detail=False, methods=['GET'], url_path='get_vouchers_by_amount')
     def get_vouchers_by_amount(self, request):
-        """
-        Get available vouchers based on purchase amount.
-        URL: /api/checkout-order/get_vouchers_by_amount/?user_id=user_uuid&amount=1500.00
-        """
         user_id = request.GET.get("user_id")
         amount = float(request.GET.get("amount", 0))
-        
+
         if not user_id:
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             user_cart_shop_ids = CartItem.objects.filter(
                 user_id=user_id,
                 is_ordered=False
             ).values_list('product__shop_id', flat=True).distinct()
-            
+
             user_purchase_history = self._get_user_purchase_history(user_id)
-            
+
             available_vouchers = self._get_simple_available_vouchers(
-                list(user_cart_shop_ids), 
-                user_id, 
+                list(user_cart_shop_ids),
+                user_id,
                 amount,
                 user_purchase_history
             )
-            
+
             current_date = timezone.now().date()
-            
-            # Get general vouchers (no shop)
+
             general_vouchers = Voucher.objects.filter(
                 shop__isnull=True,
                 is_active=True,
@@ -22646,7 +22663,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 end_date__gte=current_date,
                 minimum_spend__lte=amount
             ).order_by('-value')[:5]
-            
+
             general_list = []
             for voucher in general_vouchers:
                 potential_savings = self._calculate_discount(voucher, amount)
@@ -22658,59 +22675,49 @@ class CheckoutOrder(viewsets.ViewSet):
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
                     "shop_name": "All Shops",
-                    "shop_id": None,  # No shop for general vouchers
+                    "shop_id": None,
                     "description": self._get_voucher_description(voucher),
                     "potential_savings": float(potential_savings),
                     "is_general": True,
                     "customer_tier": "all"
                 })
-            
+
             if general_list:
                 available_vouchers.append({
                     "category": "General Vouchers",
                     "vouchers": general_list
                 })
-            
+
             return Response({
                 "success": True,
                 "available_vouchers": available_vouchers,
                 "user_stats": user_purchase_history,
                 "purchase_amount": amount
             })
-            
+
         except Exception as e:
             logger.error(f"Error in get_vouchers_by_amount: {str(e)}")
             return Response(
-                {"error": "Failed to fetch vouchers", "details": str(e)}, 
+                {"error": "Failed to fetch vouchers", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     @action(detail=False, methods=['POST'], url_path='validate_voucher')
     def validate_voucher(self, request):
-        """
-        Validate a voucher code for checkout.
-        Expected data: {
-            "voucher_code": "SUMMER2024",
-            "user_id": "user_uuid",
-            "subtotal": 1500.00,
-            "shop_id": "shop_uuid" (optional)
-        }
-        """
         voucher_code = request.data.get("voucher_code", "").strip().upper()
         user_id = request.data.get("user_id")
         subtotal = float(request.data.get("subtotal", 0))
-        shop_id = request.data.get("shop_id")  # This can be None for general vouchers
-        
+        shop_id = request.data.get("shop_id")
+
         if not voucher_code:
             return Response({"valid": False, "error": "Voucher code is required"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         if not user_id:
             return Response({"valid": False, "error": "User ID is required"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             current_date = timezone.now().date()
-            
-            # Start with base query
+
             voucher_query = Voucher.objects.filter(
                 code=voucher_code,
                 is_active=True,
@@ -22718,19 +22725,15 @@ class CheckoutOrder(viewsets.ViewSet):
                 end_date__gte=current_date,
                 minimum_spend__lte=subtotal
             )
-            
-            # Filter by shop_id if provided
+
             if shop_id:
-                # For shop-specific voucher
                 voucher_query = voucher_query.filter(shop_id=shop_id)
             else:
-                # For general vouchers (no shop) - only if no shop_id is provided
                 voucher_query = voucher_query.filter(shop__isnull=True)
-            
+
             voucher = voucher_query.first()
-            
+
             if not voucher:
-                # If not found with shop filter, try general vouchers
                 if not shop_id:
                     voucher_query = Voucher.objects.filter(
                         code=voucher_code,
@@ -22741,15 +22744,15 @@ class CheckoutOrder(viewsets.ViewSet):
                         shop__isnull=True
                     )
                     voucher = voucher_query.first()
-                
+
                 if not voucher:
                     return Response({
-                        "valid": False, 
+                        "valid": False,
                         "error": "Invalid voucher code or voucher not applicable"
                     }, status=status.HTTP_404_NOT_FOUND)
-            
+
             discount_amount = self._calculate_discount(voucher, subtotal)
-            
+
             return Response({
                 "valid": True,
                 "voucher": {
@@ -22765,47 +22768,29 @@ class CheckoutOrder(viewsets.ViewSet):
                     "is_general": voucher.shop is None
                 }
             })
-            
+
         except Exception as e:
             logger.error(f"Error validating voucher: {str(e)}")
             return Response(
-                {"valid": False, "error": "Failed to validate voucher"}, 
+                {"valid": False, "error": "Failed to validate voucher"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     def _calculate_discount(self, voucher, subtotal):
-        """Calculate discount amount based on voucher type"""
-        from decimal import Decimal, ROUND_HALF_UP
-        
-        # Convert to Decimal if it's a float
         if isinstance(subtotal, float):
             subtotal = Decimal(str(subtotal))
-        
+
         voucher_value = Decimal(str(voucher.value))
-        
+
         if voucher.discount_type == 'percentage':
             discount = subtotal * (voucher_value / Decimal('100'))
-            # Round to 2 decimal places
             return discount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         elif voucher.discount_type == 'fixed':
             return min(voucher_value, subtotal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         return Decimal('0')
-    
+
     @action(detail=False, methods=['POST'], url_path='create_order')
     def create_order(self, request):
-        """
-        Create an order from selected cart items.
-        Items are NOT marked as ordered and stock is NOT decreased until seller confirms.
-        Expected data: {
-            "user_id": "user_uuid",
-            "selected_ids": ["cart_item_id1", "cart_item_id2"],
-            "shipping_address_id": "address_uuid",  # Optional for pickup
-            "payment_method": "cod",
-            "shipping_method": "pickup",
-            "voucher_id": "voucher_uuid" (optional),
-            "remarks": "optional remarks" (optional)
-        }
-        """
         user_id = request.data.get("user_id")
         selected_ids = request.data.get("selected_ids", [])
         payment_method = request.data.get("payment_method", "cod")
@@ -22813,87 +22798,80 @@ class CheckoutOrder(viewsets.ViewSet):
         shipping_address_id = request.data.get("shipping_address_id")
         voucher_id = request.data.get("voucher_id")
         remarks = request.data.get("remarks")
-        
+
         if not user_id or not selected_ids:
             return Response(
-                {"error": "user_id and selected_ids are required"}, 
+                {"error": "user_id and selected_ids are required"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         try:
             user = get_object_or_404(User, id=user_id)
-            
-            # Handle shipping address based on shipping method
+
             shipping_address = None
             delivery_address_text = "Pickup from Store"
-            
+
             if shipping_method == "Standard Delivery":
                 if not shipping_address_id:
                     return Response(
-                        {"error": "Shipping address is required for delivery"}, 
+                        {"error": "Shipping address is required for delivery"},
                         status=status.HTTP_400_BAD_REQUEST
                     )
-                
+
                 shipping_address = get_object_or_404(
-                    ShippingAddress, 
+                    ShippingAddress,
                     id=shipping_address_id,
                     user=user
                 )
                 delivery_address_text = shipping_address.get_full_address()
-            
-            # Get cart items with variant
+
             cart_items = CartItem.objects.filter(
                 id__in=selected_ids,
                 user=user
             ).select_related(
-                "product", 
-                "product__shop", 
+                "product",
+                "product__shop",
                 "product__customer__customer",
                 "variant"
             )
-            
+
             if not cart_items.exists():
                 return Response(
-                    {"error": "No cart items found"}, 
+                    {"error": "No cart items found"},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            
-            # Check if any items are already ordered
+
             already_ordered = cart_items.filter(is_ordered=True).exists()
             if already_ordered:
                 return Response({
                     "error": "Some items have already been ordered",
                     "details": "Please refresh your cart"
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Validate variants and calculate subtotal
+
             subtotal = Decimal('0')
             stock_validation_errors = []
-            
+
             for cart_item in cart_items:
-                # Check if product has variants and variant is selected
                 has_variants = Variants.objects.filter(
                     product=cart_item.product,
                     is_active=True
                 ).exists()
-                
+
                 if has_variants and not cart_item.variant:
                     return Response({
                         "error": f"Please select a variant for product '{cart_item.product.name}' before placing your order.",
                         "cart_item_id": str(cart_item.id)
                     }, status=status.HTTP_400_BAD_REQUEST)
-                
-                # Get price from variant if available
+
                 price = Decimal('0')
                 if cart_item.variant and cart_item.variant.price is not None:
                     price = Decimal(str(cart_item.variant.price))
                 elif cart_item.product and cart_item.product.price is not None:
                     price = Decimal(str(cart_item.product.price))
-                
+
                 line_total = price * cart_item.quantity
                 subtotal += line_total
-                
-                # Check stock availability (but don't decrement yet)
+
                 if cart_item.variant:
                     if cart_item.quantity > cart_item.variant.quantity:
                         stock_validation_errors.append(
@@ -22904,19 +22882,17 @@ class CheckoutOrder(viewsets.ViewSet):
                         stock_validation_errors.append(
                             f"Insufficient stock for {cart_item.product.name}. Available: {cart_item.product.quantity}"
                         )
-            
-            # Return stock errors if any
+
             if stock_validation_errors:
                 return Response({
                     "error": "Some items are out of stock",
                     "details": stock_validation_errors
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Apply voucher discount if provided
+
             discount_amount = Decimal('0')
             voucher = None
             current_date = timezone.now().date()
-            
+
             if voucher_id:
                 try:
                     voucher = Voucher.objects.get(
@@ -22929,53 +22905,44 @@ class CheckoutOrder(viewsets.ViewSet):
                     discount_amount = self._calculate_discount(voucher, subtotal)
                 except Voucher.DoesNotExist:
                     return Response(
-                        {"error": "Invalid or expired voucher"}, 
+                        {"error": "Invalid or expired voucher"},
                         status=status.HTTP_400_BAD_REQUEST
                     )
-            
-            # Calculate final amount
+
             delivery_fee = Decimal('0') if shipping_method.lower() == "pickup" else Decimal('50.00')
             total_amount = subtotal + delivery_fee - discount_amount
-            
-            # Create Order
+
             order = Order.objects.create(
                 user=user,
                 shipping_address=shipping_address,
-                status='pending',  # Order starts as pending - waiting for seller confirmation
+                status='pending',
                 total_amount=total_amount,
                 payment_method=payment_method,
                 delivery_method=shipping_method,
                 delivery_address_text=delivery_address_text
             )
-            
+
             cart_item_ids = []
             checkout_items = []
-            
-            # Create Checkout entries - DON'T mark items as ordered or decrease stock
+
             for cart_item in cart_items:
-                # Get unit price
                 if cart_item.variant and cart_item.variant.price is not None:
                     unit_price = Decimal(str(cart_item.variant.price))
                 else:
                     unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
-                
+
                 checkout_total = unit_price * cart_item.quantity
-                
-                # Create checkout record
+
                 checkout_item = Checkout.objects.create(
                     order=order,
                     cart_item=cart_item,
                     voucher=voucher,
                     quantity=cart_item.quantity,
                     total_amount=checkout_total,
-                    status='pending',  # Checkout status is pending - waiting for seller confirmation
+                    status='pending',
                     remarks=remarks[:500] if remarks else None
                 )
-                
-                # IMPORTANT: Do NOT set is_ordered = True yet
-                # Do NOT decrease stock yet
-                # These will happen when seller confirms the order
-                
+
                 cart_item_ids.append(str(cart_item.id))
                 checkout_items.append({
                     "id": str(checkout_item.id),
@@ -22985,7 +22952,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     "total_amount": float(checkout_total),
                     "status": "pending"
                 })
-            
+
             return Response({
                 "success": True,
                 "message": "Order created successfully. Waiting for seller confirmation.",
@@ -22997,30 +22964,25 @@ class CheckoutOrder(viewsets.ViewSet):
                 "delivery_fee": float(delivery_fee),
                 "discount_applied": float(discount_amount),
                 "voucher_used": voucher.code if voucher else None,
-                "status": "pending",  # Order is pending seller confirmation
+                "status": "pending",
                 "payment_method": payment_method,
                 "shipping_method": shipping_method
             })
-            
+
         except Exception as e:
             logger.error(f"Error creating order: {str(e)}")
             import traceback
             traceback.print_exc()
             return Response(
-                {"error": "Failed to create order", "details": str(e)}, 
+                {"error": "Failed to create order", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     @action(detail=False, methods=['get'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
-        """
-        Get order details by order ID
-        """
         try:
-            # Try to find the order by its UUID
             order = get_object_or_404(Order, order=order_id)
-            
-            # You can customize what data you want to return
+
             order_data = {
                 'order_id': str(order.order),
                 'status': order.status,
@@ -23039,8 +23001,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     'last_name': order.user.last_name,
                 }
             }
-            
-            # If you want to include shipping address details
+
             if order.shipping_address:
                 order_data['shipping_address'] = {
                     'recipient_name': order.shipping_address.recipient_name,
@@ -23048,9 +23009,9 @@ class CheckoutOrder(viewsets.ViewSet):
                     'full_address': order.shipping_address.get_full_address(),
                     'address_type': order.shipping_address.address_type,
                 }
-            
+
             return Response(order_data, status=status.HTTP_200_OK)
-            
+
         except Order.DoesNotExist:
             return Response(
                 {'error': f'Order with ID {order_id} not found'},
@@ -23061,47 +23022,47 @@ class CheckoutOrder(viewsets.ViewSet):
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     @action(detail=False, methods=['POST'], url_path='add_receipt')
     def add_receipt(self, request):
         try:
             order_id = request.data.get('order_id')
             receipt_file = request.FILES.get('receipt')
-            
+
             if not all([order_id, receipt_file]):
                 return Response({
                     'success': False,
                     'error': 'order_id and receipt file are required'
                 }, status=400)
-            
+
             order = get_object_or_404(Order, order=order_id)
             order.receipt = receipt_file
             order.save()
-            
+
             return Response({
                 'success': True,
                 'message': 'Receipt uploaded successfully',
                 'order_id': str(order.order)
             })
-            
+
         except Exception as e:
             return Response({
                 'success': False,
                 'error': str(e)
             }, status=500)
-    
+
     @action(detail=False, methods=['POST'], url_path='confirm_payment')
     def confirm_payment(self, request):
         try:
             order_id = request.data.get('order_id')
             order = get_object_or_404(Order, order=order_id)
-            
+
             if not order.receipt:
                 return Response({
                     'success': False,
                     'error': 'No receipt uploaded yet'
                 }, status=400)
-            
+
             payment, created = Payment.objects.update_or_create(
                 order=order,
                 defaults={
@@ -23110,29 +23071,21 @@ class CheckoutOrder(viewsets.ViewSet):
                     'status': 'success'
                 }
             )
-            
+
             return Response({
                 'success': True,
                 'message': 'Payment confirmation submitted. Awaiting admin verification.',
                 'order_id': str(order.order)
             })
-            
+
         except Exception as e:
             return Response({
                 'success': False,
                 'error': str(e)
             }, status=500)
-    
+
     @action(detail=False, methods=['POST'], url_path='initiate_maya_payment')
     def initiate_maya_payment(self, request):
-        """
-        Initiate Maya payment for an order.
-        Only accessible when ENABLE_SANDBOX=True in .env
-        Expected data: {
-            "order_id": "order_uuid",
-            "user_id": "user_uuid"
-        }
-        """
         enable_sandbox = getattr(settings, 'ENABLE_SANDBOX', False)
         if not enable_sandbox:
             return Response({
@@ -23142,6 +23095,13 @@ class CheckoutOrder(viewsets.ViewSet):
 
         order_id = request.data.get('order_id')
         user_id = request.data.get('user_id')
+        
+        # Get platform parameter (mobile or web)
+        platform = request.data.get('platform', 'web')
+        is_mobile = platform == 'mobile'
+        
+        # Log the received value for debugging
+        logger.info(f"Initiate Maya payment - platform: {platform}, is_mobile: {is_mobile}")
 
         if not order_id or not user_id:
             return Response({
@@ -23174,7 +23134,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     'error': 'No checkout items found for this order'
                 }, status=status.HTTP_404_NOT_FOUND)
 
-            # Prepare items for Maya
             items = []
             for checkout_item in checkout_items:
                 cart_item = checkout_item.cart_item
@@ -23205,33 +23164,29 @@ class CheckoutOrder(viewsets.ViewSet):
 
             reference = str(uuid.uuid4())
 
-            checkout_data = {
-                "totalAmount": {
-                    "value": float(order.total_amount),
-                    "currency": "PHP"
-                },
-                "items": items,
-                "requestReferenceNumber": reference,
-                "redirectUrl": {
-                    "success": f"{request.build_absolute_uri('/')}api/checkout-order/maya-success?order_id={order_id}",
-                    "failure": f"{request.build_absolute_uri('/')}api/checkout-order/maya-failure?order_id={order_id}",
-                    "cancel": f"{request.build_absolute_uri('/')}api/checkout-order/maya-cancel?order_id={order_id}"
-                },
-                "metadata": {
-                    "order_id": str(order.order),
-                    "user_id": str(user_id)
-                }
-            }
+            base_url = request.build_absolute_uri('/')
+            
+            # Pass the platform as a query parameter
+            platform_param = platform  # 'mobile' or 'web'
 
-            # Store reference on order
-            order.metadata = order.metadata or {}
-            order.metadata['maya_reference'] = reference
-            order.save(update_fields=['metadata'])
-
-            # Call Maya PWM (Pay with Maya) wallet API
-            # PWM uses PUBLIC key with Basic Auth
-            maya_public_key = settings.MAYA_SANDBOX.get('PUBLIC_KEY', '')
-            credentials = base64.b64encode(f"{maya_public_key}:".encode()).decode()
+            # Build redirect URLs with trailing slashes and include the platform
+            success_url = (
+                f"{base_url}api/checkout-order/maya-success/"
+                f"?order_id={order_id}&platform={platform_param}"
+            )
+            failure_url = (
+                f"{base_url}api/checkout-order/maya-failure/"
+                f"?order_id={order_id}&platform={platform_param}"
+            )
+            cancel_url = (
+                f"{base_url}api/checkout-order/maya-cancel/"
+                f"?order_id={order_id}&platform={platform_param}"
+            )
+            
+            # Log the URLs for debugging
+            logger.info(f"Success URL: {success_url}")
+            logger.info(f"Failure URL: {failure_url}")
+            logger.info(f"Cancel URL: {cancel_url}")
 
             payment_data = {
                 "totalAmount": {
@@ -23240,11 +23195,20 @@ class CheckoutOrder(viewsets.ViewSet):
                 },
                 "requestReferenceNumber": reference,
                 "redirectUrl": {
-                    "success": f"{request.build_absolute_uri('/')}api/checkout-order/maya-success?order_id={order_id}",
-                    "failure": f"{request.build_absolute_uri('/')}api/checkout-order/maya-failure?order_id={order_id}",
-                    "cancel": f"{request.build_absolute_uri('/')}api/checkout-order/maya-cancel?order_id={order_id}"
+                    "success": success_url,
+                    "failure": failure_url,
+                    "cancel": cancel_url,
                 }
             }
+
+            # Persist the reference and the platform in order metadata
+            order.metadata = order.metadata or {}
+            order.metadata['maya_reference'] = reference
+            order.metadata['platform'] = platform
+            order.save(update_fields=['metadata'])
+
+            maya_public_key = settings.MAYA_SANDBOX.get('PUBLIC_KEY', '')
+            credentials = base64.b64encode(f"{maya_public_key}:".encode()).decode()
 
             import requests as http_requests
             maya_api_response = http_requests.post(
@@ -23277,6 +23241,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 'total_amount': float(order.total_amount),
                 'items': items,
                 'sandbox_mode': True,
+                'platform': platform,
+                'is_mobile': is_mobile,
                 'test_card': {
                     'message': 'For sandbox testing, use:',
                     'card_number': '5123450000000008',
@@ -23300,23 +23266,39 @@ class CheckoutOrder(viewsets.ViewSet):
                 'error': 'Failed to initiate Maya payment',
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+
     @action(detail=False, methods=['GET'], url_path='maya-success')
     def maya_success(self, request):
         order_id = request.GET.get('order_id')
-
+        platform = request.GET.get('platform', 'web')
+        is_mobile = platform == 'mobile'
+        
+        # Add debug logging
+        logger.info(f"Maya success callback - order_id: {order_id}, platform: {platform}, is_mobile: {is_mobile}")
+        
         if not order_id:
             return Response({
                 'success': False,
                 'error': 'Order ID not provided'
             }, status=status.HTTP_400_BAD_REQUEST)
-
+        
         try:
             order = get_object_or_404(Order, order=order_id)
-
-            order.status = 'pending'
+            
+            # Also check the stored metadata as a backup
+            stored_platform = order.metadata.get('platform', 'web') if order.metadata else 'web'
+            
+            # Use the parameter if present, otherwise fall back to stored value
+            final_platform = platform if platform != 'web' else stored_platform
+            final_is_mobile = final_platform == 'mobile'
+            
+            logger.info(f"Maya success - param platform: {platform}, stored platform: {stored_platform}, final: {final_platform}, is_mobile: {final_is_mobile}")
+            
+            # Update order status
+            order.status = 'processing'
             order.save(update_fields=['status'])
-
+            
+            # Create or update payment record
             payment, created = Payment.objects.get_or_create(
                 order=order,
                 defaults={
@@ -23325,27 +23307,198 @@ class CheckoutOrder(viewsets.ViewSet):
                     'status': 'success'
                 }
             )
-
+            
             if not created:
                 payment.status = 'success'
                 payment.save(update_fields=['status'])
-
+            
+            # Process seller payments
             self._process_seller_payments(order)
-
-            # Redirect to React frontend order success page
+            
+            # For mobile, return HTML page with JavaScript redirect
+            if final_is_mobile:
+                mobile_redirect_url = f"crimsotechreactnative://order-successful/{order_id}"
+                
+                # Create HTML page with JavaScript redirect
+                html_content = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Payment Successful - Redirecting...</title>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <style>
+                        body {{
+                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                            display: flex;
+                            justify-content: center;
+                            align-items: center;
+                            height: 100vh;
+                            margin: 0;
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            color: white;
+                        }}
+                        .container {{
+                            text-align: center;
+                            padding: 20px;
+                        }}
+                        .spinner {{
+                            border: 4px solid rgba(255, 255, 255, 0.3);
+                            border-radius: 50%;
+                            border-top: 4px solid white;
+                            width: 40px;
+                            height: 40px;
+                            animation: spin 1s linear infinite;
+                            margin: 20px auto;
+                        }}
+                        @keyframes spin {{
+                            0% {{ transform: rotate(0deg); }}
+                            100% {{ transform: rotate(360deg); }}
+                        }}
+                        .message {{
+                            font-size: 18px;
+                            margin-top: 20px;
+                        }}
+                        .button {{
+                            display: inline-block;
+                            margin-top: 20px;
+                            padding: 12px 24px;
+                            background-color: white;
+                            color: #667eea;
+                            text-decoration: none;
+                            border-radius: 8px;
+                            font-weight: bold;
+                            cursor: pointer;
+                            border: none;
+                            font-size: 16px;
+                        }}
+                        .button:hover {{
+                            background-color: #f0f0f0;
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="spinner"></div>
+                        <div class="message">Payment successful! Redirecting back to app...</div>
+                        <button class="button" onclick="redirectToApp()">Return to App</button>
+                    </div>
+                    
+                    <script>
+                        function redirectToApp() {{
+                            window.location.href = '{mobile_redirect_url}';
+                        }}
+                        
+                        setTimeout(function() {{
+                            redirectToApp();
+                        }}, 1000);
+                        
+                        if (window.ReactNativeWebView) {{
+                            window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
+                        }}
+                    </script>
+                </body>
+                </html>
+                """
+                
+                logger.info(f"Returning HTML page with redirect to: {mobile_redirect_url}")
+                return HttpResponse(html_content, content_type='text/html')
+            
+            # Regular web redirect
             frontend_url = getattr(settings, 'FRONTEND_URL')
-            from django.shortcuts import redirect
+            logger.info(f"Redirecting to web URL: {frontend_url}/order-successful/{order_id}")
             return redirect(f"{frontend_url}/order-successful/{order_id}")
-
+            
         except Exception as e:
             logger.error(f"Error in Maya success callback: {str(e)}")
+            
+            # ✅ FIX: Determine final_is_mobile here, inside the except block
+            try:
+                order = Order.objects.get(order=order_id)
+                stored_platform = order.metadata.get('platform', 'web') if order.metadata else 'web'
+                error_final_platform = platform if platform != 'web' else stored_platform
+                error_final_is_mobile = error_final_platform == 'mobile'
+            except:
+                # Fallback to the original platform parameter
+                error_final_is_mobile = platform == 'mobile'
+            
+            if error_final_is_mobile:
+                # Return HTML page with error redirect
+                mobile_redirect_url = f"crimsotechreactnative://order-successful/{order_id}?error=payment_failed"
+                html_content = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Payment Processing Error</title>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <style>
+                        body {{
+                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                            display: flex;
+                            justify-content: center;
+                            align-items: center;
+                            height: 100vh;
+                            margin: 0;
+                            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                            color: white;
+                        }}
+                        .container {{
+                            text-align: center;
+                            padding: 20px;
+                        }}
+                        .message {{
+                            font-size: 18px;
+                            margin: 20px 0;
+                        }}
+                        .button {{
+                            display: inline-block;
+                            margin-top: 20px;
+                            padding: 12px 24px;
+                            background-color: white;
+                            color: #f5576c;
+                            text-decoration: none;
+                            border-radius: 8px;
+                            font-weight: bold;
+                            cursor: pointer;
+                            border: none;
+                            font-size: 16px;
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="message">Payment processing error. Please return to app.</div>
+                        <button class="button" onclick="redirectToApp()">Return to App</button>
+                    </div>
+                    
+                    <script>
+                        function redirectToApp() {{
+                            window.location.href = '{mobile_redirect_url}';
+                        }}
+                        
+                        setTimeout(function() {{
+                            redirectToApp();
+                        }}, 2000);
+                        
+                        if (window.ReactNativeWebView) {{
+                            window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
+                        }}
+                    </script>
+                </body>
+                </html>
+                """
+                return HttpResponse(html_content, content_type='text/html')
+            
             frontend_url = getattr(settings, 'FRONTEND_URL')
-            from django.shortcuts import redirect
             return redirect(f"{frontend_url}/order-successful/{order_id}?error=payment_failed")
-        
+
     @action(detail=False, methods=['GET'], url_path='maya-failure')
     def maya_failure(self, request):
         order_id = request.GET.get('order_id')
+        platform = request.GET.get('platform', 'web')
+        is_mobile = platform == 'mobile'
+        
         if order_id:
             try:
                 order = Order.objects.get(order=order_id)
@@ -23353,36 +23506,202 @@ class CheckoutOrder(viewsets.ViewSet):
                 order.save(update_fields=['status'])
             except Order.DoesNotExist:
                 pass
+        
+        # ✅ For mobile, return HTML page with JavaScript redirect
+        if is_mobile:
+            mobile_redirect_url = f"crimsotechreactnative://pay-order?order_id={order_id}&status=failed"
+            
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Payment Failed</title>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body {{
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        height: 100vh;
+                        margin: 0;
+                        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                        color: white;
+                    }}
+                    .container {{
+                        text-align: center;
+                        padding: 20px;
+                    }}
+                    .message {{
+                        font-size: 18px;
+                        margin: 20px 0;
+                    }}
+                    .button {{
+                        display: inline-block;
+                        margin-top: 20px;
+                        padding: 12px 24px;
+                        background-color: white;
+                        color: #f5576c;
+                        text-decoration: none;
+                        border-radius: 8px;
+                        font-weight: bold;
+                        cursor: pointer;
+                        border: none;
+                        font-size: 16px;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="message">Payment failed. Please try again.</div>
+                    <button class="button" onclick="redirectToApp()">Return to App</button>
+                </div>
+                
+                <script>
+                    function redirectToApp() {{
+                        window.location.href = '{mobile_redirect_url}';
+                    }}
+                    
+                    setTimeout(function() {{
+                        redirectToApp();
+                    }}, 2000);
+                    
+                    if (window.ReactNativeWebView) {{
+                        window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
+                    }}
+                </script>
+            </body>
+            </html>
+            """
+            return HttpResponse(html_content, content_type='text/html')
+        
         frontend_url = getattr(settings, 'FRONTEND_URL')
-        from django.shortcuts import redirect
         return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=failed")
 
     @action(detail=False, methods=['GET'], url_path='maya-cancel')
     def maya_cancel(self, request):
         order_id = request.GET.get('order_id')
+        platform = request.GET.get('platform', 'web')
+        is_mobile = platform == 'mobile'
+        
+        # ✅ For mobile, return HTML page with JavaScript redirect
+        if is_mobile:
+            mobile_redirect_url = f"crimsotechreactnative://pay-order?order_id={order_id}&status=cancelled"
+            
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Payment Cancelled</title>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body {{
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        height: 100vh;
+                        margin: 0;
+                        background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+                        color: #333;
+                    }}
+                    .container {{
+                        text-align: center;
+                        padding: 20px;
+                    }}
+                    .message {{
+                        font-size: 18px;
+                        margin: 20px 0;
+                    }}
+                    .button {{
+                        display: inline-block;
+                        margin-top: 20px;
+                        padding: 12px 24px;
+                        background-color: #fcb69f;
+                        color: white;
+                        text-decoration: none;
+                        border-radius: 8px;
+                        font-weight: bold;
+                        cursor: pointer;
+                        border: none;
+                        font-size: 16px;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="message">Payment was cancelled.</div>
+                    <button class="button" onclick="redirectToApp()">Return to App</button>
+                </div>
+                
+                <script>
+                    function redirectToApp() {{
+                        window.location.href = '{mobile_redirect_url}';
+                    }}
+                    
+                    setTimeout(function() {{
+                        redirectToApp();
+                    }}, 2000);
+                    
+                    if (window.ReactNativeWebView) {{
+                        window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
+                    }}
+                </script>
+            </body>
+            </html>
+            """
+            return HttpResponse(html_content, content_type='text/html')
+        
         frontend_url = getattr(settings, 'FRONTEND_URL')
-        from django.shortcuts import redirect
         return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=cancelled")
 
+
+    @action(detail=False, methods=['GET'], url_path='verify_payment_status/(?P<order_id>[^/.]+)')
+    def verify_payment_status(self, request, order_id=None):
+        """Verify if payment was actually completed"""
+        try:
+            # Get the order
+            order = get_object_or_404(Order, order=order_id)
+            
+            # Determine payment status
+            payment_status = 'pending'
+            if hasattr(order, 'payment'):
+                payment_status = order.payment.status if order.payment else 'pending'
+            
+            return Response({
+                'success': True,
+                'payment_status': payment_status,
+                'order_status': order.status,
+                'order_id': str(order.order)
+            })
+        except Order.DoesNotExist:
+            return Response({
+                'success': False, 
+                'error': 'Order not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error verifying payment status: {str(e)}")
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
     def _process_seller_payments(self, order):
-        """
-        Process payments to sellers when order is paid
-        """
         try:
             checkout_items = Checkout.objects.filter(order=order).select_related(
                 'cart_item__product__shop__customer__customer'
             )
-            
+
             for checkout_item in checkout_items:
                 cart_item = checkout_item.cart_item
                 if cart_item and cart_item.product and cart_item.product.shop:
                     shop = cart_item.product.shop
-                    
-                    # Get shop owner (customer)
+
                     if shop.customer:
                         seller_user = shop.customer.customer
-                        
-                        # Get or create seller wallet
+
                         wallet, created = UserWallet.objects.get_or_create(
                             user=seller_user,
                             defaults={
@@ -23390,13 +23709,11 @@ class CheckoutOrder(viewsets.ViewSet):
                                 'pending_balance': Decimal('0')
                             }
                         )
-                        
-                        # Add to pending balance (will be available after delivery)
+
                         amount = checkout_item.total_amount
                         wallet.pending_balance += amount
                         wallet.save(update_fields=['pending_balance'])
-                        
-                        # Create transaction record
+
                         WalletTransaction.objects.create(
                             wallet=wallet,
                             amount=amount,
@@ -23407,12 +23724,12 @@ class CheckoutOrder(viewsets.ViewSet):
                             order=order,
                             user=seller_user
                         )
-                        
+
                         logger.info(f"Added ₱{amount} to pending balance for seller {seller_user.username}")
-                        
+
         except Exception as e:
             logger.error(f"Error processing seller payments: {str(e)}")
-
+            
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
     def get_shipping_addresses(self, request):
@@ -28380,7 +28697,7 @@ class RefundViewSet(viewsets.ViewSet):
                 return JsonResponse({'error': 'Invalid refund data format'}, status=400)
             
             # Validate required fields
-            required_fields = ['order_id', 'reason', 'preferred_refund_method', 'total_refund_amount']
+            required_fields = ['order_id', 'reason', 'preferred_refund_method', 'items']
             for field in required_fields:
                 if not refund_data.get(field):
                     return JsonResponse({'error': f'{field.replace("_", " ").title()} is required'}, status=400)
@@ -28391,28 +28708,26 @@ class RefundViewSet(viewsets.ViewSet):
             except Order.DoesNotExist:
                 return JsonResponse({'error': 'Order not found or does not belong to user'}, status=404)
             
-            # Check if refund already exists (item‑based)
-            selected_checkout_ids = []
-            for key, value in request.POST.items():
-                if key.startswith('selected_item_'):
-                    selected_checkout_ids.append(value)
-
-            if not selected_checkout_ids:
-                return JsonResponse({'error': 'No items selected for refund'}, status=400)
-
+            # Validate items structure
+            items_data = refund_data.get('items', [])
+            if not items_data:
+                return JsonResponse({'error': 'Refund items must be provided'}, status=400)
+            
+            # Check for existing refunds (to avoid duplicates) using the checkout IDs from the items
+            checkout_ids_in_request = [item['checkout_id'] for item in items_data if item.get('checkout_id')]
             active_statuses = ['pending', 'approved', 'negotiation', 'under_review', 'waiting', 'to_verify']
             existing_refunds = Refund.objects.filter(
                 order_id=order,
                 requested_by=user,
                 status__in=active_statuses
             )
-
+            
             already_refunded_checkouts = set()
             for refund in existing_refunds:
                 refunded_ids = refund.items.values_list('checkout', flat=True)
                 already_refunded_checkouts.update(refunded_ids)
-
-            already_refunded_selected = [cid for cid in selected_checkout_ids if cid in already_refunded_checkouts]
+            
+            already_refunded_selected = [cid for cid in checkout_ids_in_request if cid in already_refunded_checkouts]
             if already_refunded_selected:
                 return JsonResponse({
                     'error': 'Some selected items are already part of an active refund request',
@@ -28431,7 +28746,9 @@ class RefundViewSet(viewsets.ViewSet):
                     refund_type=refund_type,
                     customer_note=refund_data.get('customer_note', ''),
                     status='pending',
-                    total_refund_amount=Decimal(str(refund_data.get('total_refund_amount'))) if refund_data.get('total_refund_amount') is not None else None
+                    # total_refund_amount will be recomputed from items
+                    total_refund_amount=None,
+                    refund_fee=Decimal(str(refund_data.get('refund_fee'))) if refund_data.get('refund_fee') is not None else None
                 )
                 refund.save()
 
@@ -28461,16 +28778,33 @@ class RefundViewSet(viewsets.ViewSet):
                             return JsonResponse({'error': str(e)}, status=400)
                 # ========== End file validation ==========
 
-                # Create RefundItem for each selected checkout
+                # ========== Create Refund Items with quantity and amount ==========
+                total_refund_amount = Decimal('0.00')
                 created_items = []
-                for cid in selected_checkout_ids:
+                for item_data in items_data:
+                    checkout_id = item_data.get('checkout_id')
+                    quantity = item_data.get('quantity')
+                    amount = item_data.get('amount')
+                    if not checkout_id or quantity is None or amount is None:
+                        return JsonResponse({'error': 'Each refund item must have checkout_id, quantity, and amount'}, status=400)
                     try:
-                        checkout = Checkout.objects.get(id=cid, order=order)
-                        RefundItem.objects.create(refund=refund, checkout=checkout)
-                        created_items.append(str(checkout.id))
+                        checkout = Checkout.objects.get(id=checkout_id, order=order)
                     except Checkout.DoesNotExist:
-                        continue
+                        return JsonResponse({'error': f'Checkout {checkout_id} not found in this order'}, status=400)
+                    total_refund_amount += Decimal(str(amount))
+                    RefundItem.objects.create(
+                        refund=refund,
+                        checkout=checkout,
+                        quantity=quantity,
+                        amount=Decimal(str(amount))
+                    )
+                    created_items.append(str(checkout.id))
 
+                # Update refund total amount (overwrites any frontend-sent total)
+                refund.total_refund_amount = total_refund_amount
+                refund.save(update_fields=['total_refund_amount'])
+
+                # Append a note with the selected checkout IDs (optional)
                 if created_items:
                     refund.customer_note = (refund.customer_note or '') + f"\n\nSelected Checkout IDs: {', '.join(created_items)}"
                     refund.save(update_fields=['customer_note'])
@@ -30459,10 +30793,10 @@ class RefundViewSet(viewsets.ViewSet):
 
     def _get_product_image_url(self, product, request):
         try:
-            if hasattr(product, 'productmedia_set') and product.productmedia_set.exists():
+            if product.productmedia_set.exists():
                 media = product.productmedia_set.first()
                 if media and media.file_data:
-                    return request.build_absolute_uri(media.file_data.url)
+                    return get_media_url(media.file_data)   # use the helper
         except Exception:
             pass
         return None

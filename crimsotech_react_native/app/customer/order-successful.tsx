@@ -1,3 +1,4 @@
+// app/customer/order-successful.tsx
 import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
@@ -53,7 +54,12 @@ interface OrderItem {
 export default function OrderSuccessfulPage() {
   const { userId, userRole } = useAuth();
   const params = useLocalSearchParams();
+  
+  // Get orderId from query string
   const orderId = params.orderId as string;
+  
+  console.log('OrderSuccessfulPage received params:', params);
+  console.log('Order ID:', orderId);
   
   const [order, setOrder] = useState<OrderDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,19 +68,26 @@ export default function OrderSuccessfulPage() {
   useEffect(() => {
     if (orderId && userId) {
       fetchOrderDetails();
-    } else {
+    } else if (!orderId) {
       setError('No order ID provided');
+      setLoading(false);
+    } else if (!userId) {
+      setError('Please login to view order details');
       setLoading(false);
     }
   }, [orderId, userId]);
 
   const fetchOrderDetails = async () => {
     try {
-      const response = await AxiosInstance.get(`/orders/${orderId}/`, {
+      console.log('Fetching order details for:', orderId);
+      
+      const response = await AxiosInstance.get(`/checkout-order/get_order_details/${orderId}/`, {
         headers: {
           'X-User-Id': userId
         }
       });
+      
+      console.log('Order details response:', response.data);
       
       if (response.data) {
         setOrder(response.data);
@@ -84,22 +97,6 @@ export default function OrderSuccessfulPage() {
     } catch (err: any) {
       console.error('Error fetching order:', err);
       setError(err.response?.data?.error || 'Failed to load order details');
-      
-      // Fallback: Try the success endpoint
-      try {
-        const fallbackResponse = await AxiosInstance.get(`/order-sucessful/${orderId}/get_order_successful/`, {
-          headers: {
-            'X-User-Id': userId,
-          }
-        });
-        
-        if (fallbackResponse.data) {
-          setOrder(fallbackResponse.data);
-          setError(null);
-        }
-      } catch (fallbackErr: any) {
-        console.error('Fallback error:', fallbackErr);
-      }
     } finally {
       setLoading(false);
     }
@@ -159,14 +156,12 @@ export default function OrderSuccessfulPage() {
 
   const handleTrackOrder = () => {
     if (order?.tracking_number) {
-      // In a real app, you would link to your tracking page or carrier's website
       Alert.alert(
         'Track Order',
         `Tracking Number: ${order.tracking_number}`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Copy Number', onPress: () => {
-            // Copy to clipboard
             Alert.alert('Copied', 'Tracking number copied to clipboard');
           }},
         ]
@@ -219,14 +214,7 @@ export default function OrderSuccessfulPage() {
     );
   }
 
-  const nextStatus = getNextStatus(order.status);
   const orderDate = formatDate(order.created_at);
-
-  function getNextStatus(currentStatus: string): string {
-    const statusFlow = ['pending', 'processing', 'shipped', 'delivered'];
-    const currentIndex = statusFlow.indexOf(currentStatus);
-    return currentIndex < statusFlow.length - 1 ? statusFlow[currentIndex + 1] : '';
-  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -268,22 +256,6 @@ export default function OrderSuccessfulPage() {
                 </Text>
               </View>
             </View>
-
-            {nextStatus && (
-              <View style={styles.statusItem}>
-                <View style={styles.statusIconPending}>
-                  <MaterialIcons name="hourglass-empty" size={20} color="#F59E0B" />
-                </View>
-                <View style={styles.statusContent}>
-                  <Text style={styles.statusTitle}>{getOrderStatusText(nextStatus)}</Text>
-                  <Text style={styles.statusDescription}>
-                    {nextStatus === 'processing' && 'Preparing your items'}
-                    {nextStatus === 'shipped' && 'Items will be shipped soon'}
-                    {nextStatus === 'delivered' && 'Estimated delivery in 2-3 days'}
-                  </Text>
-                </View>
-              </View>
-            )}
           </View>
 
           {/* Order Summary */}
@@ -319,48 +291,8 @@ export default function OrderSuccessfulPage() {
                   <Text style={styles.summaryValue}>{order.tracking_number}</Text>
                 </View>
               )}
-              
-              {order.estimated_delivery && (
-                <View style={[styles.summaryItem, styles.summaryItemFull]}>
-                  <Text style={styles.summaryLabel}>Estimated Delivery</Text>
-                  <Text style={styles.summaryValue}>{order.estimated_delivery}</Text>
-                </View>
-              )}
             </View>
           </View>
-
-          {/* Items Summary */}
-          {order.items && order.items.length > 0 && (
-            <View style={styles.itemsSection}>
-              <Text style={styles.itemsTitle}>Items Ordered</Text>
-              <View style={styles.itemsList}>
-                {order.items.map((item, index) => (
-                  <View key={index} style={styles.itemRow}>
-                    <View style={styles.itemInfo}>
-                      {item.image_url ? (
-                        <Image 
-                          source={{ uri: item.image_url }} 
-                          style={styles.itemImage} 
-                        />
-                      ) : (
-                        <View style={[styles.itemImage, styles.itemImagePlaceholder]}>
-                          <MaterialIcons name="image" size={20} color="#9CA3AF" />
-                        </View>
-                      )}
-                      <View style={styles.itemDetails}>
-                        <Text style={styles.itemName} numberOfLines={2}>{item.product_name}</Text>
-                        <Text style={styles.itemShop}>{item.shop_name}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.itemRight}>
-                      <Text style={styles.itemQuantity}>{item.quantity} × ₱{item.price.toFixed(2)}</Text>
-                      <Text style={styles.itemSubtotal}>₱{item.subtotal.toFixed(2)}</Text>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            </View>
-          )}
         </View>
 
         {/* Action Buttons */}
@@ -371,7 +303,6 @@ export default function OrderSuccessfulPage() {
           >
             <MaterialIcons name="shopping-bag" size={20} color="#FFFFFF" />
             <Text style={styles.primaryButtonText}>View My Orders</Text>
-            <MaterialIcons name="arrow-forward" size={20} color="#FFFFFF" style={styles.buttonArrow} />
           </TouchableOpacity>
 
           <TouchableOpacity 
@@ -380,27 +311,6 @@ export default function OrderSuccessfulPage() {
           >
             <MaterialIcons name="home" size={20} color="#EA580C" />
             <Text style={styles.secondaryButtonText}>Continue Shopping</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Additional Actions */}
-        <View style={styles.additionalActions}>
-          {order.status === 'shipped' && (
-            <TouchableOpacity 
-              style={styles.trackButton}
-              onPress={handleTrackOrder}
-            >
-              <MaterialIcons name="local-shipping" size={20} color="#3B82F6" />
-              <Text style={styles.trackButtonText}>Track Order</Text>
-            </TouchableOpacity>
-          )}
-          
-          <TouchableOpacity 
-            style={styles.supportButton}
-            onPress={handleContactSupport}
-          >
-            <MaterialIcons name="headset-mic" size={20} color="#6B7280" />
-            <Text style={styles.supportButtonText}>Contact Support</Text>
           </TouchableOpacity>
         </View>
 
@@ -558,16 +468,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 12,
   },
-  statusIconPending: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: '#F59E0B',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
   statusContent: {
     flex: 1,
   },
@@ -613,66 +513,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#EA580C',
   },
-  itemsSection: {
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    paddingTop: 16,
-  },
-  itemsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 12,
-  },
-  itemsList: {
-    gap: 12,
-  },
-  itemRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  itemInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  itemImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-    marginRight: 12,
-  },
-  itemImagePlaceholder: {
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  itemDetails: {
-    flex: 1,
-  },
-  itemName: {
-    fontSize: 14,
-    color: '#374151',
-    marginBottom: 2,
-  },
-  itemShop: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  itemRight: {
-    alignItems: 'flex-end',
-  },
-  itemQuantity: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 2,
-  },
-  itemSubtotal: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-  },
   actionsSection: {
     gap: 12,
     marginHorizontal: 16,
@@ -693,9 +533,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  buttonArrow: {
-    marginLeft: 'auto',
-  },
   secondaryButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -711,44 +548,6 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     color: '#EA580C',
     fontSize: 16,
-    fontWeight: '600',
-  },
-  additionalActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginHorizontal: 16,
-    marginBottom: 20,
-  },
-  trackButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    gap: 8,
-  },
-  trackButtonText: {
-    color: '#3B82F6',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  supportButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F9FAFB',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    gap: 8,
-  },
-  supportButtonText: {
-    color: '#6B7280',
-    fontSize: 14,
     fontWeight: '600',
   },
   helpSection: {

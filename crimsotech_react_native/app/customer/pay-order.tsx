@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from "react";
 import {
   SafeAreaView,
   View,
@@ -11,15 +11,14 @@ import {
   Modal,
   Platform,
   Dimensions,
-} from 'react-native';
-import { WebView } from 'react-native-webview';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useAuth } from '../../contexts/AuthContext';
-import AxiosInstance from '../../contexts/axios';
-import { MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
-import * as Linking from 'expo-linking';
+} from "react-native";
+import { WebView } from "react-native-webview";
+import { router, useLocalSearchParams } from "expo-router";
+import { useAuth } from "../../contexts/AuthContext";
+import AxiosInstance from "../../contexts/axios";
+import { MaterialIcons, FontAwesome5 } from "@expo/vector-icons";
 
-const { width, height } = Dimensions.get('window');
+const { width, height } = Dimensions.get("window");
 
 interface OrderDetails {
   order_id: string;
@@ -69,31 +68,34 @@ interface PaymentResponse {
 export default function PayOrderPage() {
   const { userId } = useAuth();
   const params = useLocalSearchParams();
-  const orderId = params.orderId as string;
+  const orderId = params.order_id as string;
   const statusParam = params.status as string;
-  
+
   const [order, setOrder] = useState<OrderDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showWebView, setShowWebView] = useState(false);
-  const [paymentUrl, setPaymentUrl] = useState('');
+  const [paymentUrl, setPaymentUrl] = useState("");
   const [paymentInitiated, setPaymentInitiated] = useState(false);
   const [webViewLoading, setWebViewLoading] = useState(true);
-  const [paymentStatus, setPaymentStatus] = useState<'pending' | 'processing' | 'success' | 'failed' | 'cancelled'>('pending');
+  const [paymentStatus, setPaymentStatus] = useState<
+    "pending" | "processing" | "success" | "failed" | "cancelled"
+  >("pending");
+  const [hasShownSuccess, setHasShownSuccess] = useState(false);
   const webViewRef = useRef<WebView>(null);
 
   useEffect(() => {
     if (orderId && userId) {
       fetchOrderDetails();
     }
-    
-    // Check if we have a status from the callback
-    if (statusParam) {
-      if (statusParam === 'failed') {
-        Alert.alert('Payment Failed', 'Your payment could not be processed. Please try again.');
-      } else if (statusParam === 'cancelled') {
-        Alert.alert('Payment Cancelled', 'You cancelled the payment.');
-      }
+
+    if (statusParam === "failed") {
+      Alert.alert(
+        "Payment Failed",
+        "Your payment could not be processed. Please try again.",
+      );
+    } else if (statusParam === "cancelled") {
+      Alert.alert("Payment Cancelled", "You cancelled the payment.");
     }
   }, [orderId, userId, statusParam]);
 
@@ -102,13 +104,13 @@ export default function PayOrderPage() {
       const response = await AxiosInstance.get(
         `/checkout-order/get_order_details/${orderId}/?platform=mobile`,
         {
-          headers: { 'X-User-Id': userId }
-        }
+          headers: { "X-User-Id": userId },
+        },
       );
       setOrder(response.data);
     } catch (err: any) {
-      console.error('Error fetching order:', err);
-      setError(err.response?.data?.error || 'Failed to load order details');
+      console.error("Error fetching order:", err);
+      setError(err.response?.data?.error || "Failed to load order details");
     } finally {
       setLoading(false);
     }
@@ -116,132 +118,207 @@ export default function PayOrderPage() {
 
   const handleInitiatePayment = async () => {
     if (!orderId || !userId) return;
-    
+
     setLoading(true);
     try {
-      console.log('Initiating Maya payment for order:', orderId);
-      
-      const response = await AxiosInstance.post<PaymentResponse>('/checkout-order/initiate_maya_payment/', {
-        order_id: orderId,
-        user_id: userId,
-        platform: 'mobile' // Important: Send platform=mobile
-      });
-      
-      console.log('Payment initiation response:', response.data);
-      
+      console.log("Initiating Maya payment for order:", orderId);
+
+      const response = await AxiosInstance.post<PaymentResponse>(
+        "/checkout-order/initiate_maya_payment/",
+        {
+          order_id: orderId,
+          user_id: userId,
+          platform: "mobile",
+        },
+      );
+
+      console.log("Payment initiation response:", response.data);
+
       if (response.data.success && response.data.redirect_url) {
         setPaymentUrl(response.data.redirect_url);
         setShowWebView(true);
         setPaymentInitiated(true);
-        
-        // Show test card info if in sandbox mode
+        setHasShownSuccess(false);
+
         if (response.data.sandbox_mode && response.data.test_card) {
           Alert.alert(
-            'Sandbox Mode',
+            "Sandbox Mode",
             `Use these test card details:\n\nCard: ${response.data.test_card.card_number}\nExpiry: ${response.data.test_card.expiry}\nCVV: ${response.data.test_card.cvv}\nOTP: ${response.data.test_card.otp}`,
-            [{ text: 'OK', onPress: () => {} }]
+            [{ text: "OK" }],
           );
         }
       } else {
-        Alert.alert('Error', response.data.message || 'Failed to initiate payment');
+        Alert.alert(
+          "Error",
+          response.data.message || "Failed to initiate payment",
+        );
       }
     } catch (err: any) {
-      console.error('Error initiating payment:', err);
+      console.error("Error initiating payment:", err);
       Alert.alert(
-        'Payment Error',
-        err.response?.data?.error || err.response?.data?.details || 'Payment initiation failed. Please try again.'
+        "Payment Error",
+        err.response?.data?.error ||
+          err.response?.data?.details ||
+          "Payment initiation failed. Please try again.",
       );
     } finally {
       setLoading(false);
     }
   };
 
-  const handleWebViewNavigationStateChange = (navState: any) => {
-    const { url, loading } = navState;
-    console.log('WebView URL:', url);
-    
-    // Check if the URL contains our callback endpoints
-    if (url.includes('/maya-success') || url.includes('/maya-failure') || url.includes('/maya-cancel')) {
-      console.log('Maya callback detected:', url);
-      
-      // Parse the URL to get parameters
-      let isSuccess = url.includes('/maya-success');
-      let isFailure = url.includes('/maya-failure');
-      let isCancel = url.includes('/maya-cancel');
-      
-      // Close the WebView
-      setShowWebView(false);
+  const verifyPaymentStatus = async () => {
+    try {
+      console.log("Verifying payment status for order:", orderId);
+      const response = await AxiosInstance.get(
+        `/checkout-order/verify_payment_status/${orderId}/`,
+        {
+          headers: { "X-User-Id": userId },
+        },
+      );
+
+      console.log("Payment verification response:", response.data);
+
+      if (
+        response.data.success &&
+        response.data.payment_status === "completed"
+      ) {
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error("Error verifying payment:", err);
+      return false;
+    }
+  };
+
+  const navigateToOrderSuccessful = (orderIdParam: string) => {
+    // ✅ Already correct - keep this format
+    router.replace({
+      pathname: "/customer/order-successful",
+      params: { orderId: orderIdParam },
+    });
+  };
+
+  const handleWebViewNavigationStateChange = async (navState: any) => {
+    const { url } = navState;
+    console.log("WebView URL:", url);
+
+    // Only process if we haven't already shown success
+    if (hasShownSuccess) return;
+
+    // Check for success URL - but verify with backend
+    if (url.includes("/maya-success") || url.includes("/payment-success")) {
+      console.log("Success URL detected, verifying payment...");
+
+      // Show processing message
       setWebViewLoading(true);
-      
-      if (isSuccess) {
-        setPaymentStatus('success');
+
+      // Verify payment status with backend
+      const isPaid = await verifyPaymentStatus();
+
+      if (isPaid) {
+        setHasShownSuccess(true);
+        setShowWebView(false);
+        setWebViewLoading(true);
+        setPaymentStatus("success");
+
         Alert.alert(
-          'Payment Successful!',
-          'Your payment has been processed successfully.',
+          "Payment Successful!",
+          "Your payment has been processed successfully.",
           [
             {
-              text: 'View Order',
-              onPress: () => {
-                router.push(`/customer/order-successful?orderId=${orderId}`);
-              }
-            }
-          ]
-        );
-      } else if (isFailure) {
-        setPaymentStatus('failed');
-        Alert.alert(
-          'Payment Failed',
-          'Your payment could not be processed. Please try again.',
-          [
-            {
-              text: 'Try Again',
-              onPress: () => {
-                setPaymentInitiated(false);
-                setPaymentUrl('');
-              }
+              text: "View Order",
+              onPress: () => navigateToOrderSuccessful(orderId),
             },
-            {
-              text: 'Cancel',
-              style: 'cancel',
-              onPress: () => router.back()
-            }
-          ]
+          ],
         );
-      } else if (isCancel) {
-        setPaymentStatus('cancelled');
+      } else {
+        // Payment not confirmed yet, maybe still processing
+        console.log("Payment not confirmed yet, waiting...");
+        setWebViewLoading(false);
+
         Alert.alert(
-          'Payment Cancelled',
-          'You cancelled the payment process.',
+          "Payment Processing",
+          "Your payment is being processed. You will be notified once confirmed.",
           [
             {
-              text: 'OK',
+              text: "OK",
               onPress: () => {
-                setPaymentInitiated(false);
-                setPaymentUrl('');
-              }
-            }
-          ]
+                setShowWebView(false);
+                navigateToOrderSuccessful(orderId);
+              },
+            },
+          ],
         );
       }
-      
       return;
     }
-    
-    // Check if the URL is our custom scheme (fallback)
-    if (url.startsWith('crimsotechreactnative://')) {
-      console.log('Custom scheme detected:', url);
+
+    // Check for failure URL
+    if (url.includes("/maya-failure") || url.includes("/payment-failed")) {
+      console.log("Failure URL detected");
+      setHasShownSuccess(true);
       setShowWebView(false);
       setWebViewLoading(true);
-      
-      // Extract order_id from URL
+      setPaymentStatus("failed");
+
+      Alert.alert(
+        "Payment Failed",
+        "Your payment could not be processed. Please try again.",
+        [
+          {
+            text: "Try Again",
+            onPress: () => {
+              setPaymentInitiated(false);
+              setPaymentUrl("");
+              setHasShownSuccess(false);
+            },
+          },
+          {
+            text: "Cancel",
+            style: "cancel",
+            onPress: () => router.back(),
+          },
+        ],
+      );
+      return;
+    }
+
+    // Check for cancel URL
+    if (url.includes("/maya-cancel") || url.includes("/payment-cancel")) {
+      console.log("Cancel URL detected");
+      setHasShownSuccess(true);
+      setShowWebView(false);
+      setWebViewLoading(true);
+      setPaymentStatus("cancelled");
+
+      Alert.alert("Payment Cancelled", "You cancelled the payment process.", [
+        {
+          text: "OK",
+          onPress: () => {
+            setPaymentInitiated(false);
+            setPaymentUrl("");
+            setHasShownSuccess(false);
+          },
+        },
+      ]);
+      return;
+    }
+
+    // Check for custom scheme (fallback)
+    if (url.startsWith("crimsotechreactnative://")) {
+      console.log("Custom scheme detected:", url);
+      setHasShownSuccess(true);
+      setShowWebView(false);
+      setWebViewLoading(true);
+
       const match = url.match(/order-successful\/([^?]+)/);
       if (match) {
         const extractedOrderId = match[1];
-        router.push(`/customer/order-successful?orderId=${extractedOrderId}`);
+        navigateToOrderSuccessful(extractedOrderId);
       } else {
-        router.push(`/customer/order-successful?orderId=${orderId}`);
+        navigateToOrderSuccessful(orderId);
       }
-      
       return;
     }
   };
@@ -256,49 +333,51 @@ export default function PayOrderPage() {
 
   const handleWebViewError = (syntheticEvent: any) => {
     const { nativeEvent } = syntheticEvent;
-    console.error('WebView error:', nativeEvent);
+    console.error("WebView error:", nativeEvent);
     setWebViewLoading(false);
     Alert.alert(
-      'Loading Error',
-      'Failed to load payment page. Please check your internet connection and try again.',
+      "Loading Error",
+      "Failed to load payment page. Please check your internet connection and try again.",
       [
         {
-          text: 'Try Again',
+          text: "Try Again",
           onPress: () => {
             if (webViewRef.current) {
               webViewRef.current.reload();
             }
-          }
+          },
         },
         {
-          text: 'Cancel',
-          style: 'cancel',
+          text: "Cancel",
+          style: "cancel",
           onPress: () => {
             setShowWebView(false);
-            setPaymentUrl('');
-          }
-        }
-      ]
+            setPaymentUrl("");
+          },
+        },
+      ],
     );
   };
 
   const handleBack = () => {
     if (showWebView) {
       Alert.alert(
-        'Cancel Payment',
-        'Are you sure you want to cancel this payment?',
+        "Cancel Payment",
+        "Are you sure you want to cancel this payment?",
         [
-          { text: 'No', style: 'cancel' },
-          { 
-            text: 'Yes', 
-            style: 'destructive',
+          { text: "No", style: "cancel" },
+          {
+            text: "Yes",
+            style: "destructive",
             onPress: () => {
               setShowWebView(false);
-              setPaymentUrl('');
+              setPaymentUrl("");
               setWebViewLoading(true);
-            }
-          }
-        ]
+              setPaymentInitiated(false);
+              setHasShownSuccess(false);
+            },
+          },
+        ],
       );
     } else {
       router.back();
@@ -307,12 +386,12 @@ export default function PayOrderPage() {
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+    return date.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   };
 
@@ -332,11 +411,15 @@ export default function PayOrderPage() {
       <SafeAreaView style={styles.container}>
         <View style={styles.center}>
           <MaterialIcons name="error-outline" size={80} color="#DC2626" />
-          <Text style={styles.errorTitle}>{error || 'Order Not Found'}</Text>
+          <Text style={styles.errorTitle}>{error || "Order Not Found"}</Text>
           <Text style={styles.errorText}>
-            The order you're trying to pay for doesn't exist or you don't have permission.
+            The order you're trying to pay for doesn't exist or you don't have
+            permission.
           </Text>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.back()}
+          >
             <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
         </View>
@@ -350,8 +433,10 @@ export default function PayOrderPage() {
   return (
     <>
       <SafeAreaView style={styles.container}>
-        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-          {/* Header */}
+        <ScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.header}>
             <TouchableOpacity onPress={handleBack} style={styles.backIcon}>
               <MaterialIcons name="arrow-back" size={24} color="#374151" />
@@ -360,15 +445,18 @@ export default function PayOrderPage() {
             <View style={{ width: 40 }} />
           </View>
 
-          {/* Order Summary Card */}
           <View style={styles.card}>
             <View style={styles.orderHeader}>
               <View>
                 <Text style={styles.orderIdLabel}>Order ID</Text>
-                <Text style={styles.orderId}>{order.order_id.slice(0, 8)}...</Text>
+                <Text style={styles.orderId}>
+                  {order.order_id.slice(0, 8)}...
+                </Text>
               </View>
-              <View style={[styles.statusBadge, { backgroundColor: '#FEF3C7' }]}>
-                <Text style={[styles.statusText, { color: '#D97706' }]}>
+              <View
+                style={[styles.statusBadge, { backgroundColor: "#FEF3C7" }]}
+              >
+                <Text style={[styles.statusText, { color: "#D97706" }]}>
                   {order.status.toUpperCase()}
                 </Text>
               </View>
@@ -383,17 +471,29 @@ export default function PayOrderPage() {
               <View style={styles.detailRow}>
                 <MaterialIcons name="payment" size={20} color="#6B7280" />
                 <Text style={styles.detailLabel}>Payment Method:</Text>
-                <Text style={styles.detailValue}>{order.payment_method || 'Maya'}</Text>
+                <Text style={styles.detailValue}>
+                  {order.payment_method || "Maya"}
+                </Text>
               </View>
-              
+
               <View style={styles.detailRow}>
-                <MaterialIcons name="local-shipping" size={20} color="#6B7280" />
+                <MaterialIcons
+                  name="local-shipping"
+                  size={20}
+                  color="#6B7280"
+                />
                 <Text style={styles.detailLabel}>Delivery Method:</Text>
-                <Text style={styles.detailValue}>{order.delivery_method || 'Standard Delivery'}</Text>
+                <Text style={styles.detailValue}>
+                  {order.delivery_method || "Standard Delivery"}
+                </Text>
               </View>
-              
+
               <View style={styles.detailRow}>
-                <MaterialIcons name="calendar-today" size={20} color="#6B7280" />
+                <MaterialIcons
+                  name="calendar-today"
+                  size={20}
+                  color="#6B7280"
+                />
                 <Text style={styles.detailLabel}>Order Date:</Text>
                 <Text style={styles.detailValue}>{orderDate}</Text>
               </View>
@@ -407,9 +507,9 @@ export default function PayOrderPage() {
                 </View>
                 <Text style={styles.addressText}>
                   {order.shipping_address.recipient_name}
-                  {'\n'}
+                  {"\n"}
                   {order.shipping_address.recipient_phone}
-                  {'\n'}
+                  {"\n"}
                   {order.shipping_address.full_address}
                 </Text>
               </View>
@@ -418,13 +518,14 @@ export default function PayOrderPage() {
             <View style={styles.infoBox}>
               <MaterialIcons name="info-outline" size={20} color="#3B82F6" />
               <Text style={styles.infoText}>
-                You will be redirected to Maya's secure payment page to complete your payment. 
-                Your order will be processed once payment is confirmed.
+                You will be redirected to Maya's secure payment page to complete
+                your payment. Your order will be processed once payment is
+                confirmed.
               </Text>
             </View>
 
             {!paymentInitiated ? (
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.payButton}
                 onPress={handleInitiatePayment}
               >
@@ -434,11 +535,13 @@ export default function PayOrderPage() {
             ) : (
               <View style={styles.paymentInitiatedContainer}>
                 <ActivityIndicator size="small" color="#EA580C" />
-                <Text style={styles.paymentInitiatedText}>Payment window opening...</Text>
+                <Text style={styles.paymentInitiatedText}>
+                  Payment window opening...
+                </Text>
               </View>
             )}
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.cancelButton}
               onPress={() => router.back()}
             >
@@ -446,40 +549,39 @@ export default function PayOrderPage() {
             </TouchableOpacity>
           </View>
 
-          {/* Help Section */}
           <View style={styles.helpSection}>
             <Text style={styles.helpTitle}>Need Help?</Text>
             <Text style={styles.helpText}>
-              • Having trouble with payment? Contact Maya support{'\n'}
-              • Order issues? Contact our customer support{'\n'}
-              • You can view your order status in "My Orders"
+              • Having trouble with payment? Contact Maya support{"\n"}• Order
+              issues? Contact our customer support{"\n"}• You can view your
+              order status in "My Orders"
             </Text>
           </View>
         </ScrollView>
       </SafeAreaView>
 
-      {/* WebView Modal for Maya Payment */}
       <Modal
         visible={showWebView}
         animationType="slide"
         onRequestClose={() => {
-          if (paymentStatus !== 'success') {
+          if (paymentStatus !== "success" && !hasShownSuccess) {
             Alert.alert(
-              'Cancel Payment',
-              'Are you sure you want to cancel this payment?',
+              "Cancel Payment",
+              "Are you sure you want to cancel this payment?",
               [
-                { text: 'No', style: 'cancel' },
-                { 
-                  text: 'Yes', 
-                  style: 'destructive',
+                { text: "No", style: "cancel" },
+                {
+                  text: "Yes",
+                  style: "destructive",
                   onPress: () => {
                     setShowWebView(false);
-                    setPaymentUrl('');
+                    setPaymentUrl("");
                     setWebViewLoading(true);
                     setPaymentInitiated(false);
-                  }
-                }
-              ]
+                    setHasShownSuccess(false);
+                  },
+                },
+              ],
             );
           } else {
             setShowWebView(false);
@@ -488,51 +590,55 @@ export default function PayOrderPage() {
       >
         <SafeAreaView style={styles.webViewContainer}>
           <View style={styles.webViewHeader}>
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => {
-                if (paymentStatus !== 'success') {
+                if (paymentStatus !== "success" && !hasShownSuccess) {
                   Alert.alert(
-                    'Cancel Payment',
-                    'Are you sure you want to cancel this payment?',
+                    "Cancel Payment",
+                    "Are you sure you want to cancel this payment?",
                     [
-                      { text: 'No', style: 'cancel' },
-                      { 
-                        text: 'Yes', 
-                        style: 'destructive',
+                      { text: "No", style: "cancel" },
+                      {
+                        text: "Yes",
+                        style: "destructive",
                         onPress: () => {
                           setShowWebView(false);
-                          setPaymentUrl('');
+                          setPaymentUrl("");
                           setWebViewLoading(true);
                           setPaymentInitiated(false);
-                        }
-                      }
-                    ]
+                          setHasShownSuccess(false);
+                        },
+                      },
+                    ],
                   );
                 } else {
                   setShowWebView(false);
                 }
-              }} 
+              }}
               style={styles.closeButton}
             >
               <MaterialIcons name="close" size={24} color="#374151" />
             </TouchableOpacity>
             <Text style={styles.webViewTitle}>Maya Payment</Text>
-            <TouchableOpacity onPress={() => {
-              if (webViewRef.current) {
-                webViewRef.current.reload();
-              }
-            }} style={styles.reloadButton}>
+            <TouchableOpacity
+              onPress={() => {
+                if (webViewRef.current) {
+                  webViewRef.current.reload();
+                }
+              }}
+              style={styles.reloadButton}
+            >
               <MaterialIcons name="refresh" size={24} color="#374151" />
             </TouchableOpacity>
           </View>
-          
+
           {webViewLoading && (
             <View style={styles.webViewLoadingOverlay}>
               <ActivityIndicator size="large" color="#EA580C" />
               <Text style={styles.loadingText}>Loading payment page...</Text>
             </View>
           )}
-          
+
           <WebView
             ref={webViewRef}
             source={{ uri: paymentUrl }}
@@ -558,52 +664,52 @@ export default function PayOrderPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: "#F8F9FA",
   },
   center: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     padding: 20,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
   },
   errorTitle: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#374151',
+    fontWeight: "700",
+    color: "#374151",
     marginTop: 16,
     marginBottom: 8,
-    textAlign: 'center',
+    textAlign: "center",
   },
   errorText: {
     fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
+    color: "#6B7280",
+    textAlign: "center",
     marginBottom: 24,
     lineHeight: 20,
   },
   backButton: {
-    backgroundColor: '#EA580C',
+    backgroundColor: "#EA580C",
     paddingHorizontal: 32,
     paddingVertical: 12,
     borderRadius: 8,
   },
   backButtonText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   scrollView: {
     flex: 1,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 8,
@@ -613,17 +719,17 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
   },
   card: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     margin: 16,
     padding: 20,
     borderRadius: 16,
     ...Platform.select({
       ios: {
-        shadowColor: '#000',
+        shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 8,
@@ -634,20 +740,20 @@ const styles = StyleSheet.create({
     }),
   },
   orderHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 16,
   },
   orderIdLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: "#6B7280",
     marginBottom: 4,
   },
   orderId: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
   },
   statusBadge: {
     paddingHorizontal: 12,
@@ -656,22 +762,22 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   divider: {
     height: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: "#F3F4F6",
     marginVertical: 16,
   },
   totalLabel: {
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
     marginBottom: 4,
   },
   totalAmount: {
     fontSize: 32,
-    fontWeight: '700',
-    color: '#EA580C',
+    fontWeight: "700",
+    color: "#EA580C",
     marginBottom: 20,
   },
   detailsContainer: {
@@ -679,48 +785,48 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
   detailLabel: {
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
     marginLeft: 4,
     flex: 1,
   },
   detailValue: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
+    fontWeight: "500",
+    color: "#374151",
   },
   addressContainer: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: "#F9FAFB",
     padding: 12,
     borderRadius: 8,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: "#E5E7EB",
   },
   addressHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
     marginBottom: 8,
   },
   addressTitle: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
+    fontWeight: "600",
+    color: "#374151",
   },
   addressText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: "#6B7280",
     lineHeight: 18,
   },
   infoBox: {
-    flexDirection: 'row',
-    backgroundColor: '#EFF6FF',
+    flexDirection: "row",
+    backgroundColor: "#EFF6FF",
     padding: 12,
     borderRadius: 8,
     gap: 8,
@@ -729,80 +835,80 @@ const styles = StyleSheet.create({
   infoText: {
     flex: 1,
     fontSize: 13,
-    color: '#1E40AF',
+    color: "#1E40AF",
     lineHeight: 18,
   },
   payButton: {
-    flexDirection: 'row',
-    backgroundColor: '#EA580C',
+    flexDirection: "row",
+    backgroundColor: "#EA580C",
     paddingVertical: 16,
     borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     gap: 8,
     marginBottom: 12,
   },
   payButtonText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   paymentInitiatedContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: 8,
     paddingVertical: 16,
     marginBottom: 12,
   },
   paymentInitiatedText: {
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
   },
   cancelButton: {
     paddingVertical: 12,
     borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   cancelButtonText: {
-    color: '#6B7280',
+    color: "#6B7280",
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: "500",
   },
   helpSection: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: "#F9FAFB",
     marginHorizontal: 16,
     marginBottom: 32,
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: "#E5E7EB",
   },
   helpTitle: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
+    fontWeight: "600",
+    color: "#374151",
     marginBottom: 8,
   },
   helpText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: "#6B7280",
     lineHeight: 20,
   },
   webViewContainer: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
   },
   webViewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
+    borderBottomColor: "#E5E7EB",
+    backgroundColor: "#FFFFFF",
   },
   closeButton: {
     padding: 8,
@@ -812,21 +918,21 @@ const styles = StyleSheet.create({
   },
   webViewTitle: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
   },
   webView: {
     flex: 1,
   },
   webViewLoadingOverlay: {
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
     zIndex: 10,
   },
 });
