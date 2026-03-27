@@ -532,11 +532,17 @@ const OwnershipInfoCard = ({
 };
 
 // Make sure this is what you have at the top of SellerInfoCard:
-const SellerInfoCard = ({ product, onPress }: { product: ProductDetail; onPress: () => void }) => {
+const SellerInfoCard = ({
+  product,
+  onPress,
+}: {
+  product: ProductDetail;
+  onPress: () => void;
+}) => {
   if (!product.seller_name) return null;
   return (
     <TouchableOpacity
-      onPress={onPress}   // ← this line is missing
+      onPress={onPress} // ← this line is missing
       style={{
         backgroundColor: "#FFFFFF",
         borderRadius: 12,
@@ -870,7 +876,7 @@ export default function CustomerViewProductScreen() {
     }
   };
 
-  const buyNow = () => {
+  const buyNow = async () => {
     if (!userId) {
       Alert.alert("Sign In Required", "Please sign in to purchase");
       return;
@@ -883,18 +889,39 @@ export default function CustomerViewProductScreen() {
       Alert.alert("Out of Stock", "This variant is currently out of stock");
       return;
     }
-    // Navigate to checkout with this item pre-selected
-    // The checkout page expects selected cart item IDs;
-    // for Buy Now we pass the variant directly as a query param
-    router.push({
-      pathname: "/customer/checkout",
-      params: {
-        buyNow: "true",
-        variantId: selectedVariant.id,
-        productId: product?.id,
-        quantity: quantity.toString(),
-      },
-    });
+
+    setAddingToCart(true);
+    try {
+      // Silently add to cart (or use existing cart item)
+      const response = await AxiosInstance.post("/view-cart/", {
+        user_id: userId,
+        variant_id: selectedVariant.id,
+        quantity,
+      });
+
+      const cartItemId = response.data.cart_item?.id;
+
+      if (!cartItemId) {
+        Alert.alert("Error", "Could not prepare item for checkout.");
+        return;
+      }
+
+      // Go directly to checkout with the cart item ID
+      router.push({
+        pathname: "/customer/checkout",
+        params: {
+          selected: cartItemId,
+        },
+      });
+    } catch (err: any) {
+      const msg =
+        err.response?.data?.error ??
+        err.response?.data?.detail ??
+        "Failed to proceed to checkout.";
+      Alert.alert("Error", msg);
+    } finally {
+      setAddingToCart(false);
+    }
   };
 
   // ── Loading / error states ─────────────────────────────────────────────────
@@ -1177,23 +1204,23 @@ export default function CustomerViewProductScreen() {
         {/* Seller Info */}
         <SellerInfoCard
           product={product}
-onPress={() => {
-  console.log('shop:', product.shop);
-  console.log('seller_id:', product.seller_id);
-  console.log('seller_name:', product.seller_name);
-  
-  const shopId = product.shop?.id ?? product.seller_id;
-  console.log('shopId resolved:', shopId);
-  
-  if (shopId) {
-    router.push({
-      pathname: '/customer/view-shop',
-      params: { shopId },
-    });
-  } else {
-    Alert.alert('Error', 'Shop not found');
-  }
-}}
+          onPress={() => {
+            console.log("shop:", product.shop);
+            console.log("seller_id:", product.seller_id);
+            console.log("seller_name:", product.seller_name);
+
+            const shopId = product.shop?.id ?? product.seller_id;
+            console.log("shopId resolved:", shopId);
+
+            if (shopId) {
+              router.push({
+                pathname: "/customer/view-shop",
+                params: { shopId },
+              });
+            } else {
+              Alert.alert("Error", "Shop not found");
+            }
+          }}
         />
 
         {/* Description */}
@@ -1458,116 +1485,6 @@ onPress={() => {
           </View>
         )}
 
-        {/* Variant Details (collapsible) */}
-        {product.variants && product.variants.length > 0 && (
-          <View
-            style={{
-              backgroundColor: "#FFFFFF",
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: "#E5E7EB",
-              padding: 14,
-              marginBottom: 12,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 14,
-                fontWeight: "700",
-                color: "#111827",
-                marginBottom: 8,
-              }}
-            >
-              All Variant Details ({product.variants.length})
-            </Text>
-            {product.variants.map((variant) => (
-              <View key={variant.id} style={{ marginBottom: 8 }}>
-                <TouchableOpacity
-                  onPress={() => toggleVariantExpand(variant.id)}
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    backgroundColor: "#F9FAFB",
-                    padding: 10,
-                    borderRadius: 8,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      fontWeight: "600",
-                      color: "#111827",
-                    }}
-                  >
-                    {variant.title || variant.sku_code || "Variant"}
-                  </Text>
-                  <Ionicons
-                    name={
-                      expandedVariants[variant.id]
-                        ? "chevron-up"
-                        : "chevron-down"
-                    }
-                    size={18}
-                    color="#6B7280"
-                  />
-                </TouchableOpacity>
-                {expandedVariants[variant.id] && (
-                  <View style={{ padding: 10, gap: 4 }}>
-                    {variant.sku_code && (
-                      <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                        SKU: {variant.sku_code}
-                      </Text>
-                    )}
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        color: variant.in_stock ? "#16A34A" : "#DC2626",
-                      }}
-                    >
-                      {variant.in_stock
-                        ? `In Stock (${variant.available_quantity ?? 0} available)`
-                        : "Out of Stock"}
-                    </Text>
-                    {variant.original_price && (
-                      <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                        Original Price: {formatCurrency(variant.original_price)}
-                      </Text>
-                    )}
-                    {variant.purchase_date && (
-                      <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                        Purchased: {formatDate(variant.purchase_date)}
-                      </Text>
-                    )}
-                    {(variant.length || variant.width || variant.height) && (
-                      <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                        Dimensions: {variant.length ?? "?"} ×{" "}
-                        {variant.width ?? "?"} × {variant.height ?? "?"}{" "}
-                        {variant.dimension_unit ?? "cm"}
-                      </Text>
-                    )}
-                    {variant.weight && (
-                      <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                        Weight: {variant.weight} {variant.weight_unit ?? "g"}
-                      </Text>
-                    )}
-                    {variant.is_refundable && (
-                      <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                        Refundable ({variant.refund_days ?? 0} days)
-                      </Text>
-                    )}
-                    {variant.allow_swap && (
-                      <Text style={{ fontSize: 12, color: "#1E40AF" }}>
-                        Swap available: {variant.swap_type}
-                      </Text>
-                    )}
-                  </View>
-                )}
-              </View>
-            ))}
-          </View>
-        )}
-
         {/* Reviews */}
         <ReviewsSection
           reviews={product.reviews}
@@ -1628,21 +1545,31 @@ onPress={() => {
           {/* Buy Now */}
           <TouchableOpacity
             onPress={buyNow}
+            disabled={addingToCart}
             style={{
               flex: 1,
-              backgroundColor: "#EA580C",
+              backgroundColor: addingToCart ? "#F97316" : "#EA580C",
               borderRadius: 10,
               paddingVertical: 14,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
               gap: 8,
+              opacity: addingToCart ? 0.7 : 1,
             }}
           >
-            <Ionicons name="flash-outline" size={20} color="#FFFFFF" />
-            <Text style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}>
-              Buy Now
-            </Text>
+            {addingToCart ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Ionicons name="flash-outline" size={20} color="#FFFFFF" />
+                <Text
+                  style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}
+                >
+                  Buy Now
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       ) : (
