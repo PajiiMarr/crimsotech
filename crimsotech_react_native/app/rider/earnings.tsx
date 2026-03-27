@@ -103,7 +103,9 @@ export default function Earnings() {
     const today = new Date().toISOString().split('T')[0];
     const dateParams =
       activeTab === 'today' ? `&start_date=${today}&end_date=${today}` : '';
-    const url = `${base}/rider-history/export_history/?format=csv&user_id=${userId}${dateParams}`;
+    // Normalize to host root first, then force a single /api prefix.
+    const rootBase = String(base).replace(/\/api\/?$/, '');
+    const url = `${rootBase}/api/rider-history/export_history/?format=csv&user_id=${userId}${dateParams}`;
     await Linking.openURL(url);
   };
 

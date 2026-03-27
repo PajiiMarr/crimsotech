@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../../contexts/AuthContext';
 import { router, useLocalSearchParams } from 'expo-router';
 import AxiosInstance from '../../../contexts/axios';
+import AddressDropdowns from 'app/components/address/AddressDropdowns';
 
 interface AddressFormData {
   recipient_name: string;
@@ -59,21 +60,23 @@ export default function AddAddressPage() {
     address_type: 'home',
     is_default: false,
   });
+  const [errors, setErrors] = useState({
+    province: '',
+    city: '',
+    barangay: '',
+  });
 
   useEffect(() => {
     const initializeForm = async () => {
       setLoading(true);
       
-      // Check if we're in edit mode
       if (mode === 'edit' && address) {
         setIsEditMode(true);
         
         try {
-          // Parse the address data passed from previous screen
           const parsedAddress = JSON.parse(address as string);
           setAddressId(parsedAddress.id);
           
-          // Set form data from parsed address
           setFormData({
             recipient_name: parsedAddress.recipient_name || '',
             recipient_phone: parsedAddress.recipient_phone || '',
@@ -110,23 +113,72 @@ export default function AddAddressPage() {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  const handleAddressChange = (addressData: {
+    province: string;
+    city: string;
+    barangay: string;
+    street?: string;
+  }) => {
+    setFormData(prev => ({
+      ...prev,
+      province: addressData.province,
+      city: addressData.city,
+      barangay: addressData.barangay,
+      street: addressData.street || prev.street,
+    }));
+    setErrors({
+      province: addressData.province ? '' : errors.province,
+      city: addressData.city ? '' : errors.city,
+      barangay: addressData.barangay ? '' : errors.barangay,
+    });
+  };
+
+  const validateForm = (): boolean => {
+    const newErrors = {
+      province: '',
+      city: '',
+      barangay: '',
+    };
+    let isValid = true;
+
+    if (!formData.province) {
+      newErrors.province = 'Province is required';
+      isValid = false;
+    }
+    if (!formData.city) {
+      newErrors.city = 'City is required';
+      isValid = false;
+    }
+    if (!formData.barangay) {
+      newErrors.barangay = 'Barangay is required';
+      isValid = false;
+    }
+    if (!formData.recipient_name) {
+      isValid = false;
+    }
+    if (!formData.recipient_phone) {
+      isValid = false;
+    }
+    if (!formData.street) {
+      isValid = false;
+    }
+    if (!formData.zip_code) {
+      isValid = false;
+    }
+
+    setErrors(newErrors);
+    return isValid;
+  };
+
   const handleAddAddress = async () => {
     if (!user?.id) {
       Alert.alert('Error', 'User not found');
       return;
     }
 
-    // Validate required fields
-    const requiredFields = [
-      'recipient_name', 'recipient_phone', 'street', 
-      'barangay', 'city', 'province', 'zip_code'
-    ];
-    
-    for (const field of requiredFields) {
-      if (!formData[field as keyof AddressFormData]) {
-        Alert.alert('Error', `${field.replace('_', ' ')} is required`);
-        return;
-      }
+    if (!validateForm()) {
+      Alert.alert('Error', 'Please fill in all required fields');
+      return;
     }
 
     try {
@@ -161,17 +213,9 @@ export default function AddAddressPage() {
       return;
     }
 
-    // Validate required fields
-    const requiredFields = [
-      'recipient_name', 'recipient_phone', 'street', 
-      'barangay', 'city', 'province', 'zip_code'
-    ];
-    
-    for (const field of requiredFields) {
-      if (!formData[field as keyof AddressFormData]) {
-        Alert.alert('Error', `${field.replace('_', ' ')} is required`);
-        return;
-      }
+    if (!validateForm()) {
+      Alert.alert('Error', 'Please fill in all required fields');
+      return;
     }
 
     try {
@@ -265,7 +309,6 @@ export default function AddAddressPage() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
       <SafeAreaView style={styles.headerSafeArea}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -287,7 +330,6 @@ export default function AddAddressPage() {
       </SafeAreaView>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Contact Information */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Contact Information</Text>
           
@@ -313,7 +355,6 @@ export default function AddAddressPage() {
           </View>
         </View>
 
-        {/* Address Details */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Address Details</Text>
           
@@ -359,62 +400,39 @@ export default function AddAddressPage() {
             />
           </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Barangay *</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.barangay}
-              onChangeText={(text) => handleInputChange('barangay', text)}
-              placeholder="Enter barangay"
-            />
-          </View>
-
-          <View style={styles.row}>
-            <View style={[styles.inputGroup, { flex: 2, marginRight: 8 }]}>
-              <Text style={styles.label}>City *</Text>
-              <TextInput
-                style={styles.input}
-                value={formData.city}
-                onChangeText={(text) => handleInputChange('city', text)}
-                placeholder="Enter city"
-              />
-            </View>
-
-            <View style={[styles.inputGroup, { flex: 1 }]}>
-              <Text style={styles.label}>Zip Code *</Text>
-              <TextInput
-                style={styles.input}
-                value={formData.zip_code}
-                onChangeText={(text) => handleInputChange('zip_code', text)}
-                placeholder="Zip code"
-                keyboardType="number-pad"
-              />
-            </View>
-          </View>
+          <AddressDropdowns
+            value={{
+              province: formData.province,
+              city: formData.city,
+              barangay: formData.barangay,
+              street: formData.street,
+            }}
+            onChange={handleAddressChange}
+            errors={errors}
+          />
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Province *</Text>
+            <Text style={styles.label}>Zip Code *</Text>
             <TextInput
               style={styles.input}
-              value={formData.province}
-              onChangeText={(text) => handleInputChange('province', text)}
-              placeholder="Enter province"
+              value={formData.zip_code}
+              onChangeText={(text) => handleInputChange('zip_code', text)}
+              placeholder="Zip code"
+              keyboardType="number-pad"
             />
           </View>
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Country</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, styles.disabledInput]}
               value={formData.country}
-              onChangeText={(text) => handleInputChange('country', text)}
-              placeholder="Enter country"
+              placeholder="Philippines"
               editable={false}
             />
           </View>
         </View>
 
-        {/* Additional Information */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Additional Information</Text>
           
@@ -481,7 +499,6 @@ export default function AddAddressPage() {
           </TouchableOpacity>
         </View>
 
-        {/* Submit Button */}
         <TouchableOpacity
           style={styles.submitButton}
           onPress={handleSubmit}
@@ -548,6 +565,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 16,
     backgroundColor: '#FFFFFF',
+  },
+  disabledInput: {
+    backgroundColor: '#F3F4F6',
+    color: '#6B7280',
   },
   textArea: {
     height: 80,
