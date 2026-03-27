@@ -142,10 +142,10 @@ const formatNumber = (value: number | null | undefined) => {
 const formatDate = (dateString?: string) => {
   if (!dateString) return "";
   const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
   });
 };
 
@@ -164,11 +164,13 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
   // Get price from variants if available, otherwise use product.price
   const getProductPrice = () => {
     if (product.variants && product.variants.length > 0) {
-      const activeVariants = product.variants.filter(v => v.is_active !== false);
+      const activeVariants = product.variants.filter(
+        (v) => v.is_active !== false,
+      );
       if (activeVariants.length > 0) {
         const prices = activeVariants
-          .map(v => Number(v.price || 0))
-          .filter(p => p > 0);
+          .map((v) => Number(v.price || 0))
+          .filter((p) => p > 0);
         if (prices.length > 0) {
           const minPrice = Math.min(...prices);
           const maxPrice = Math.max(...prices);
@@ -184,11 +186,13 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
   // Get compare price from variants if available
   const getComparePrice = () => {
     if (product.variants && product.variants.length > 0) {
-      const activeVariants = product.variants.filter(v => v.is_active !== false);
+      const activeVariants = product.variants.filter(
+        (v) => v.is_active !== false,
+      );
       if (activeVariants.length > 0) {
         const comparePrices = activeVariants
-          .map(v => Number(v.compare_price || 0))
-          .filter(p => p > 0);
+          .map((v) => Number(v.compare_price || 0))
+          .filter((p) => p > 0);
         if (comparePrices.length > 0) {
           return Math.min(...comparePrices);
         }
@@ -206,18 +210,18 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
     if (Array.isArray(product?.media_files) && product.media_files.length > 0) {
       return ensureAbsoluteUrl(
         product.media_files[0].file_data ||
-        product.media_files[0].file_url ||
-        null,
+          product.media_files[0].file_url ||
+          null,
       );
     }
 
     // Try to get image from first variant
     if (product.variants && product.variants.length > 0) {
-      const variantWithImage = product.variants.find(v => v.image);
+      const variantWithImage = product.variants.find((v) => v.image);
       if (variantWithImage?.image) {
         return ensureAbsoluteUrl(variantWithImage.image);
       }
-      const variantWithProofImage = product.variants.find(v => v.proof_image);
+      const variantWithProofImage = product.variants.find((v) => v.proof_image);
       if (variantWithProofImage?.proof_image) {
         return ensureAbsoluteUrl(variantWithProofImage.proof_image);
       }
@@ -243,11 +247,11 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
       onPress={() =>
         router.push({
           pathname: "/customer/view-product",
-          params: { productId: product.id }
+          params: { id: product.id },
         })
       }
     >
-      {product.open_for_swap || product.variants?.some(v => v.allow_swap) ? (
+      {product.open_for_swap || product.variants?.some((v) => v.allow_swap) ? (
         <View style={styles.swapBadge}>
           <MaterialCommunityIcons
             name="swap-horizontal"
@@ -293,9 +297,13 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
         </View>
 
         {/* Stock indicator if low */}
-        {product.total_stock !== undefined && product.total_stock < 10 && product.total_stock > 0 && (
-          <Text style={styles.lowStockText}>Only {product.total_stock} left</Text>
-        )}
+        {product.total_stock !== undefined &&
+          product.total_stock < 10 &&
+          product.total_stock > 0 && (
+            <Text style={styles.lowStockText}>
+              Only {product.total_stock} left
+            </Text>
+          )}
       </View>
     </TouchableOpacity>
   );
@@ -500,7 +508,7 @@ export default function ViewShopPage() {
   useEffect(() => {
     const fetchReviews = async () => {
       if (!shopId || activeTab !== "reviews") return;
-      
+
       setReviewsLoading(true);
       setReviewsError(null);
 
@@ -509,13 +517,13 @@ export default function ViewShopPage() {
           params: {
             page: reviewsPage,
             page_size: 10,
-          }
+          },
         });
-        
+
         // Handle different response formats
         let newReviews = [];
         let total = 0;
-        
+
         if (res.data.results) {
           newReviews = res.data.results;
           total = res.data.count || 0;
@@ -530,7 +538,7 @@ export default function ViewShopPage() {
         if (reviewsPage === 1) {
           setReviews(newReviews);
         } else {
-          setReviews(prev => [...prev, ...newReviews]);
+          setReviews((prev) => [...prev, ...newReviews]);
         }
 
         setHasMoreReviews(reviews.length + newReviews.length < total);
@@ -552,7 +560,7 @@ export default function ViewShopPage() {
 
   const handleLoadMoreReviews = () => {
     if (!reviewsLoading && hasMoreReviews) {
-      setReviewsPage(prev => prev + 1);
+      setReviewsPage((prev) => prev + 1);
     }
   };
 
@@ -570,7 +578,9 @@ export default function ViewShopPage() {
       const matchesMin = min === null || (!Number.isNaN(min) && p >= min);
       const matchesMax = max === null || (!Number.isNaN(max) && p <= max);
 
-      const productCondition = product.condition ? String(product.condition) : "";
+      const productCondition = product.condition
+        ? String(product.condition)
+        : "";
       const matchesCondition =
         selectedCondition === "" ||
         productCondition.toLowerCase() === selectedCondition.toLowerCase();
@@ -1127,14 +1137,18 @@ export default function ViewShopPage() {
               {shopInfo.total_customers ? (
                 <View style={styles.statsRow}>
                   <Text style={styles.statsLabel}>Total Customers:</Text>
-                  <Text style={styles.statsValue}>{shopInfo.total_customers}</Text>
+                  <Text style={styles.statsValue}>
+                    {shopInfo.total_customers}
+                  </Text>
                 </View>
               ) : null}
 
               {shopInfo.repeated_customers ? (
                 <View style={styles.statsRow}>
                   <Text style={styles.statsLabel}>Repeat Customers:</Text>
-                  <Text style={styles.statsValue}>{shopInfo.repeated_customers}</Text>
+                  <Text style={styles.statsValue}>
+                    {shopInfo.repeated_customers}
+                  </Text>
                 </View>
               ) : null}
             </View>
@@ -1152,7 +1166,10 @@ export default function ViewShopPage() {
               </View>
 
               {reviewsLoading && reviewsPage === 1 ? (
-                <ActivityIndicator color="#EA580C" style={styles.reviewsLoader} />
+                <ActivityIndicator
+                  color="#EA580C"
+                  style={styles.reviewsLoader}
+                />
               ) : reviewsError ? (
                 <Text style={styles.errorText}>{reviewsError}</Text>
               ) : reviews.length === 0 ? (
@@ -1162,7 +1179,7 @@ export default function ViewShopPage() {
                   {reviews.map((review) => (
                     <ReviewCard key={review.id} review={review} />
                   ))}
-                  
+
                   {hasMoreReviews && (
                     <TouchableOpacity
                       style={styles.loadMoreButton}
@@ -1172,7 +1189,9 @@ export default function ViewShopPage() {
                       {reviewsLoading ? (
                         <ActivityIndicator size="small" color="#EA580C" />
                       ) : (
-                        <Text style={styles.loadMoreText}>Load More Reviews</Text>
+                        <Text style={styles.loadMoreText}>
+                          Load More Reviews
+                        </Text>
                       )}
                     </TouchableOpacity>
                   )}
