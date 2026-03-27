@@ -56,7 +56,6 @@ export default function VerifyPhoneScreen() {
       if (storedUserId) {
         setUserId(storedUserId);
 
-<<<<<<< HEAD
         // Use local flags first to avoid role flicker while remote fetch is in-flight.
         const localIsRider = await SecureStore.getItemAsync("is_rider");
         if (localIsRider === "true") {
@@ -72,14 +71,6 @@ export default function VerifyPhoneScreen() {
             }
           } catch (e) {
             console.warn("Failed parsing local user payload", e);
-=======
-        // Prefer locally stored role first so flow is resilient to slow API calls.
-        const userJson = await SecureStore.getItemAsync("user");
-        if (userJson) {
-          const localUser = JSON.parse(userJson);
-          if (typeof localUser?.is_rider === "boolean") {
-            setIsRider(localUser.is_rider);
->>>>>>> 7a0eed5f44edb81d3d703b51b35d8315ba5c361a
           }
         }
 
@@ -88,13 +79,7 @@ export default function VerifyPhoneScreen() {
           headers: { "X-User-Id": storedUserId },
         });
 
-<<<<<<< HEAD
         setIsRider(Boolean(response.data?.is_rider));
-=======
-        if (typeof response.data?.is_rider === "boolean") {
-          setIsRider(response.data.is_rider);
-        }
->>>>>>> 7a0eed5f44edb81d3d703b51b35d8315ba5c361a
       }
     } catch (error) {
       console.error("Error loading user data:", error);
@@ -314,12 +299,8 @@ export default function VerifyPhoneScreen() {
       if (userJson) {
         const user = JSON.parse(userJson);
         user.registration_stage = newRegistrationStage;
-<<<<<<< HEAD
         storedUsername = user?.username;
         storedEmail = user?.email;
-=======
-        user.is_rider = effectiveIsRider;
->>>>>>> 7a0eed5f44edb81d3d703b51b35d8315ba5c361a
         await SecureStore.setItemAsync("user", JSON.stringify(user));
       }
 
