@@ -16,19 +16,20 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { 
-  ArrowLeft, Copy, Truck, CheckCircle2, XCircle, Clock, 
-  RotateCcw, Box, Hourglass, MessageSquare, Search, PackageCheck, 
+import { Video, ResizeMode } from 'expo-av';
+import {
+  ArrowLeft, Copy, Truck, CheckCircle2, XCircle, Clock,
+  RotateCcw, Box, Hourglass, MessageSquare, Search, PackageCheck,
   PackageX, Wallet, Home, Gavel, ShieldCheck, MapPin, ChevronRight,
-  MoreHorizontal, AlertTriangle, Ban, ThumbsUp, ThumbsDown, 
+  MoreHorizontal, AlertTriangle, Ban, ThumbsUp, ThumbsDown,
   FileText, Upload, ShoppingBag, Store, ExternalLink, Calendar,
-  Printer, Eye, ArrowUpRight, ChevronDown, ChevronUp
+  Printer, Eye, ArrowUpRight, ChevronDown, ChevronUp, Play
 } from 'lucide-react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import AxiosInstance from '../../contexts/axios';
 
-// ========== STATUS CONFIGURATION ==========
+// ========== STATUS CONDITION HELPERS ==========
 export const STATUS_CONDITIONS = {
   showPendingStatus: (status: string) => status === 'PENDING',
   showNegotiationStatus: (status: string) => status === 'NEGOTIATION' || status === 'NEGOTIATING',
@@ -47,12 +48,8 @@ export const STATUS_CONDITIONS = {
   showCancelledStatus: (status: string) => status === 'CANCELLED',
 };
 
-// ========== STATUS UI COMPONENTS ==========
-// (Keep all existing status components – they are unchanged from your original file)
-// I'm including them here for completeness. In your actual file, they are already present.
-
-// --- PENDING STATUS ---
-const PendingStatusUI = ({ refund }: { refund?: any }) => {
+// ========== 1. PENDING STATUS ==========
+const PendingStatus = ({ refund }: { refund: any }) => {
   const refLabel = refund?.refund_id || refund?.refund || refund?.id || 'this request';
   return (
     <View style={styles.statusSection}>
@@ -61,8 +58,8 @@ const PendingStatusUI = ({ refund }: { refund?: any }) => {
         <View style={styles.statusTextContainer}>
           <Text style={styles.statusTitle}>Refund Pending</Text>
           <Text style={styles.statusSubtitle}>
-            Your refund request <Text style={styles.boldText}>{refLabel}</Text> is pending review by the seller. 
-            Seller has 48 hours to respond. If the seller does not respond, the moderation team 
+            Your refund request <Text style={styles.boldText}>{refLabel}</Text> is pending review by the seller.
+            Seller has 48 hours to respond. If the seller does not respond, the moderation team
             will automatically approve and process the refund within 3 days.
           </Text>
         </View>
@@ -71,8 +68,8 @@ const PendingStatusUI = ({ refund }: { refund?: any }) => {
   );
 };
 
-// --- NEGOTIATION STATUS ---
-const NegotiationStatusUI = ({ refund, formatCurrency }: { refund: any, formatCurrency: (amount: string | number) => string }) => {
+// ========== 2. NEGOTIATION STATUS ==========
+const NegotiationStatus = ({ refund, formatCurrency }: { refund: any; formatCurrency: (amount: string | number) => string }) => {
   const getSellerSuggestionLabel = () => {
     if (!refund) return null;
     const method = (refund.seller_suggested_method || '').toString().toLowerCase().trim();
@@ -100,6 +97,11 @@ const NegotiationStatusUI = ({ refund, formatCurrency }: { refund: any, formatCu
     return fallback[m] || method;
   };
 
+  const localFriendly = (s?: string) => {
+    if (s === undefined || s === null) return 'N/A';
+    return String(s).replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  };
+
   return (
     <View style={styles.statusSection}>
       <View style={styles.statusRow}>
@@ -113,10 +115,6 @@ const NegotiationStatusUI = ({ refund, formatCurrency }: { refund: any, formatCu
               const counterType = latestCounter?.counter_refund_type || refund.seller_suggested_type;
               const counterMethod = latestCounter?.counter_refund_method || refund.seller_suggested_method;
               const counterAmount = latestCounter?.counter_refund_amount || refund.seller_suggested_amount;
-              const localFriendly = (s?: string) => {
-                if (s === undefined || s === null) return 'N/A';
-                return String(s).replace(/_/g, ' ').split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-              };
               return (
                 <>
                   <View style={styles.negotiationRow}>
@@ -141,8 +139,8 @@ const NegotiationStatusUI = ({ refund, formatCurrency }: { refund: any, formatCu
   );
 };
 
-// --- REJECTED STATUS ---
-const RejectedStatusUI = ({ onDispute, refund, formatCurrency }: { onDispute?: () => void, refund: any, formatCurrency: (amount: string | number) => string }) => {
+// ========== 3. REJECTED STATUS ==========
+const RejectedStatus = ({ refund, formatCurrency, onDispute }: { refund: any; formatCurrency: (amount: string | number) => string; onDispute?: () => void }) => {
   const latestCounter = refund?.counter_requests?.[0];
   if (latestCounter && latestCounter.status === 'rejected') {
     const amt = latestCounter.counter_refund_amount;
@@ -179,8 +177,8 @@ const RejectedStatusUI = ({ onDispute, refund, formatCurrency }: { onDispute?: (
   );
 };
 
-// --- APPROVED STATUS ---
-const ApprovedStatusUI = ({ refund, onOpenTrackingDialog, formatCurrency, formatDate }: { refund: any, onOpenTrackingDialog?: () => void, formatCurrency: (amount: string | number) => string, formatDate: (dateString: string) => string }) => {
+// ========== 4. APPROVED STATUS ==========
+const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDate }: { refund: any; onOpenTrackingDialog?: () => void; formatCurrency: (amount: string | number) => string; formatDate: (dateString: string) => string }) => {
   const isReturnItem = refund.refund_type === 'return';
   const rr = refund.return_request || {};
   const rrStatus = String(rr?.status || '').toLowerCase();
@@ -196,9 +194,9 @@ const ApprovedStatusUI = ({ refund, onOpenTrackingDialog, formatCurrency, format
   const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
   const returnDeadline = refund.processed_at ? new Date(new Date(refund.processed_at).getTime() + 7 * 24 * 60 * 60 * 1000) : null;
 
-  if (isProcessing) return <ProcessingStatusUI refund={refund} formatCurrency={formatCurrency} />;
+  if (isProcessing) return <ProcessingStatus refund={refund} formatCurrency={formatCurrency} />;
   if ((payStatus === 'completed' && refund.status?.toLowerCase() === 'approved') || refund.status?.toLowerCase() === 'completed') {
-    return <PaymentCompletedUI refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
+    return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
   }
 
   return (
@@ -211,7 +209,11 @@ const ApprovedStatusUI = ({ refund, onOpenTrackingDialog, formatCurrency, format
             <Text style={styles.statusSubtitle}>Your refund will be processed soon</Text>
           ) : (
             isReturnAcceptedWaitingModeration ? (
-              <ReturnAcceptedModerationUI refund={refund} formatDate={formatDate} />
+              <View style={styles.moderationCard}>
+                <Text style={styles.moderationTitle}>Return Accepted</Text>
+                <Text style={styles.moderationText}>Seller accepted your return request. Waiting for the moderation team to process the refund.</Text>
+                {refund.return_request?.return_deadline && <Text style={styles.moderationDeadline}>Return Deadline: {formatDate(refund.return_request.return_deadline)}</Text>}
+              </View>
             ) : !hasShippingInfo ? (
               <Text style={styles.statusSubtitle}>Please return the item to complete your refund</Text>
             ) : null
@@ -279,8 +281,8 @@ const ApprovedStatusUI = ({ refund, onOpenTrackingDialog, formatCurrency, format
   );
 };
 
-// --- WAITING STATUS ---
-const WaitingStatusUI = ({ refund, onOpenTrackingDialog, formatDate }: { refund: any, onOpenTrackingDialog?: () => void, formatDate: (dateString: string) => string }) => {
+// ========== 5. WAITING STATUS ==========
+const WaitingStatus = ({ refund, onOpenTrackingDialog, formatDate }: { refund: any; onOpenTrackingDialog?: () => void; formatDate: (dateString: string) => string }) => {
   const rr = refund.return_request || {};
   const deadline = rr.return_deadline || refund.return_deadline;
   const deadlineDate = deadline ? new Date(deadline) : null;
@@ -342,56 +344,74 @@ const WaitingStatusUI = ({ refund, onOpenTrackingDialog, formatDate }: { refund:
   );
 };
 
-// --- RETURN ACCEPTED MODERATION UI ---
-const ReturnAcceptedModerationUI = ({ refund, formatDate }: { refund: any, formatDate: (dateString: string) => string }) => (
-  <View style={styles.moderationCard}>
-    <Text style={styles.moderationTitle}>Return Accepted</Text>
-    <Text style={styles.moderationText}>Seller accepted your return request. Waiting for the moderation team to process the refund.</Text>
-    {refund.return_request?.return_deadline && <Text style={styles.moderationDeadline}>Return Deadline: {formatDate(refund.return_request.return_deadline)}</Text>}
-  </View>
-);
-
-// --- PROCESSING STATUS ---
-const ProcessingStatusUI = ({ refund, formatCurrency }: { refund: any, formatCurrency: (amount: string | number) => string }) => (
+// ========== 6. TO VERIFY STATUS ==========
+const ToVerifyStatus = () => (
   <View style={styles.statusSection}>
     <View style={styles.statusRow}>
-      <RotateCcw size={24} color="#3B82F6" fill="#DBEAFE" />
+      <Search size={24} color="#3B82F6" fill="#DBEAFE" />
       <View style={styles.statusTextContainer}>
-        <Text style={styles.statusTitle}>Refund Processing</Text>
-        <Text style={styles.statusSubtitle}>Your refund is being processed</Text>
-        <View style={styles.processingDetails}>
-          <Text style={styles.processingDetail}>Amount: <Text style={styles.amountText}>{formatCurrency(refund.total_refund_amount || 0)}</Text></Text>
-          <Text style={styles.processingDetail}>Method: <Text style={styles.methodText}>{refund.final_refund_method || refund.buyer_preferred_refund_method}</Text></Text>
-        </View>
+        <Text style={styles.statusTitle}>Item Verification in Progress</Text>
+        <Text style={styles.statusSubtitle}>Seller is checking the returned item's condition. This usually takes 1-3 business days.</Text>
       </View>
     </View>
   </View>
 );
 
-// --- PAYMENT COMPLETED UI ---
-const PaymentCompletedUI = ({ refund, formatCurrency, formatDate }: { refund: any, formatCurrency: (amount: string | number) => string, formatDate: (dateString: string) => string }) => {
-  const processedAt = refund.processed_at || refund.processedAt;
-  const method = refund.final_refund_method || refund.buyer_preferred_refund_method || '—';
-  return (
-    <View style={styles.statusSection}>
-      <View style={styles.statusRow}>
-        <ShieldCheck size={24} color="#10B981" fill="#D1FAE5" />
-        <View style={styles.statusTextContainer}>
-          <Text style={styles.statusTitle}>Refund Payment Completed</Text>
-          <Text style={styles.statusSubtitle}>Your refund payment has been completed. The amount has been sent via the selected method.</Text>
-          <View style={styles.completedDetails}>
-            <View style={styles.completedDetail}><Text style={styles.completedLabel}>Amount:</Text><Text style={styles.completedValue}>{formatCurrency(refund.total_refund_amount || 0)}</Text></View>
-            <View style={styles.completedDetail}><Text style={styles.completedLabel}>Method:</Text><Text style={styles.completedValue}>{method}</Text></View>
-            {processedAt && <View style={styles.completedDetail}><Text style={styles.completedLabel}>Completed At:</Text><Text style={styles.completedValue}>{formatDate(processedAt)}</Text></View>}
-          </View>
-        </View>
+// ========== 7. RETURN ACCEPTED STATUS ==========
+const ReturnAcceptedStatus = () => (
+  <View style={styles.statusSection}>
+    <View style={styles.statusRow}>
+      <PackageCheck size={24} color="#10B981" fill="#D1FAE5" />
+      <View style={styles.statusTextContainer}>
+        <Text style={styles.statusTitle}>Return Accepted</Text>
+        <Text style={styles.statusSubtitle}>Please ship the item back now.</Text>
       </View>
     </View>
-  );
-};
+  </View>
+);
 
-// --- DISPUTE STATUS ---
-const DisputeStatusUI = ({ refund, formatCurrency, formatDate, onAcknowledgeDispute }: { refund: any, formatCurrency: (amount: string | number) => string, formatDate: (dateString: string) => string, onAcknowledgeDispute?: () => void }) => {
+// ========== 8. RETURN REJECTED STATUS ==========
+const ReturnRejectedStatus = ({ onDispute }: { onDispute?: () => void }) => (
+  <View style={styles.statusSection}>
+    <View style={styles.statusRow}>
+      <PackageX size={24} color="#EF4444" fill="#FEE2E2" />
+      <View style={styles.statusTextContainer}>
+        <Text style={styles.statusTitle}>Return Rejected</Text>
+        <Text style={styles.statusSubtitle}>Item did not pass quality check.</Text>
+      </View>
+    </View>
+    {onDispute && <TouchableOpacity style={styles.disputeBtn} onPress={onDispute}><Text style={styles.disputeBtnText}>Dispute Decision</Text></TouchableOpacity>}
+  </View>
+);
+
+// ========== 9. SHIPPED STATUS ==========
+const ShippedStatus = () => (
+  <View style={styles.statusSection}>
+    <View style={styles.statusRow}>
+      <Truck size={24} color="#3B82F6" fill="#DBEAFE" />
+      <View style={styles.statusTextContainer}>
+        <Text style={styles.statusTitle}>Item Shipped</Text>
+        <Text style={styles.statusSubtitle}>The item is on its way to warehouse.</Text>
+      </View>
+    </View>
+  </View>
+);
+
+// ========== 10. RECEIVED STATUS ==========
+const ReceivedStatus = () => (
+  <View style={styles.statusSection}>
+    <View style={styles.statusRow}>
+      <Home size={24} color="#3B82F6" fill="#DBEAFE" />
+      <View style={styles.statusTextContainer}>
+        <Text style={styles.statusTitle}>Item Received</Text>
+        <Text style={styles.statusSubtitle}>Seller has received your package. Seller will inspect the item</Text>
+      </View>
+    </View>
+  </View>
+);
+
+// ========== 11. DISPUTE STATUS ==========
+const DisputeStatus = ({ refund, formatCurrency, formatDate, onAcknowledgeDispute }: { refund: any; formatCurrency: (amount: string | number) => string; formatDate: (dateString: string) => string; onAcknowledgeDispute?: () => void }) => {
   const dr = refund.dispute || refund.dispute_request || null;
   if (dr && dr.status?.toLowerCase() === 'approved' && refund.return_request?.status?.toLowerCase() === 'rejected') {
     return (
@@ -449,7 +469,7 @@ const DisputeStatusUI = ({ refund, formatCurrency, formatDate, onAcknowledgeDisp
               <Text style={styles.statusTitle}>Dispute Approved</Text>
               <Text style={styles.statusSubtitle}>Your dispute has been approved by the administrator. The admin will process the refund.</Text>
               {dr.resolved_at && <Text style={styles.disputeDate}>Approved at: {formatDate(dr.resolved_at)}</Text>}
-              <View style={styles.processingDetails}><ProcessingStatusUI refund={refund} formatCurrency={formatCurrency} /></View>
+              <View style={styles.processingDetails}><ProcessingStatus refund={refund} formatCurrency={formatCurrency} /></View>
             </View>
           </View>
         </View>
@@ -495,10 +515,10 @@ const DisputeStatusUI = ({ refund, formatCurrency, formatDate, onAcknowledgeDisp
   );
 };
 
-// --- COMPLETED STATUS ---
+// ========== 12. COMPLETED STATUS ==========
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-const CompletedStatusUI = ({ refund, formatCurrency, formatDate }: { refund: any, formatCurrency: (amount: string | number) => string, formatDate: (dateString: string) => string }) => {
+const CompletedStatus = ({ refund, formatCurrency, formatDate }: { refund: any; formatCurrency: (amount: string | number) => string; formatDate: (dateString: string) => string }) => {
   const dr = refund.dispute || refund.dispute_request || null;
   const isResolved = dr && dr.status?.toLowerCase() === 'resolved';
   const [proofModalVisible, setProofModalVisible] = useState(false);
@@ -575,100 +595,25 @@ const CompletedStatusUI = ({ refund, formatCurrency, formatDate }: { refund: any
   );
 };
 
-// --- TO VERIFY STATUS ---
-const ToVerifyStatusUI = () => (
+// ========== 13. PROCESSING STATUS ==========
+const ProcessingStatus = ({ refund, formatCurrency }: { refund: any; formatCurrency: (amount: string | number) => string }) => (
   <View style={styles.statusSection}>
     <View style={styles.statusRow}>
-      <Search size={24} color="#3B82F6" fill="#DBEAFE" />
+      <RotateCcw size={24} color="#3B82F6" fill="#DBEAFE" />
       <View style={styles.statusTextContainer}>
-        <Text style={styles.statusTitle}>Item Verification in Progress</Text>
-        <Text style={styles.statusSubtitle}>Seller is checking the returned item's condition. This usually takes 1-3 business days.</Text>
+        <Text style={styles.statusTitle}>Refund Processing</Text>
+        <Text style={styles.statusSubtitle}>Your refund is being processed</Text>
+        <View style={styles.processingDetails}>
+          <Text style={styles.processingDetail}>Amount: <Text style={styles.amountText}>{formatCurrency(refund.total_refund_amount || 0)}</Text></Text>
+          <Text style={styles.processingDetail}>Method: <Text style={styles.methodText}>{refund.final_refund_method || refund.buyer_preferred_refund_method}</Text></Text>
+        </View>
       </View>
     </View>
   </View>
 );
 
-// --- RETURN ACCEPTED STATUS ---
-const ReturnAcceptedUI = () => (
-  <View style={styles.statusSection}>
-    <View style={styles.statusRow}>
-      <PackageCheck size={24} color="#10B981" fill="#D1FAE5" />
-      <View style={styles.statusTextContainer}>
-        <Text style={styles.statusTitle}>Return Accepted</Text>
-        <Text style={styles.statusSubtitle}>Please ship the item back now.</Text>
-      </View>
-    </View>
-  </View>
-);
-
-// --- RETURN REJECTED STATUS ---
-const ReturnRejectedUI = ({ onDispute }: { onDispute?: () => void }) => (
-  <View style={styles.statusSection}>
-    <View style={styles.statusRow}>
-      <PackageX size={24} color="#EF4444" fill="#FEE2E2" />
-      <View style={styles.statusTextContainer}>
-        <Text style={styles.statusTitle}>Return Rejected</Text>
-        <Text style={styles.statusSubtitle}>Item did not pass quality check.</Text>
-      </View>
-    </View>
-    {onDispute && <TouchableOpacity style={styles.disputeBtn} onPress={onDispute}><Text style={styles.disputeBtnText}>Dispute Decision</Text></TouchableOpacity>}
-  </View>
-);
-
-// --- SHIPPED STATUS ---
-const ShippedStatusUI = () => (
-  <View style={styles.statusSection}>
-    <View style={styles.statusRow}>
-      <Truck size={24} color="#3B82F6" fill="#DBEAFE" />
-      <View style={styles.statusTextContainer}>
-        <Text style={styles.statusTitle}>Item Shipped</Text>
-        <Text style={styles.statusSubtitle}>The item is on its way to warehouse.</Text>
-      </View>
-    </View>
-  </View>
-);
-
-// --- INSPECTED STATUS ---
-const InspectedStatusUI = () => (
-  <View style={styles.statusSection}>
-    <View style={styles.statusRow}>
-      <Eye size={24} color="#3B82F6" fill="#DBEAFE" />
-      <View style={styles.statusTextContainer}>
-        <Text style={styles.statusTitle}>Item Inspected</Text>
-        <Text style={styles.statusSubtitle}>Seller inspected the item. The seller will decide to accept or reject the return request</Text>
-      </View>
-    </View>
-  </View>
-);
-
-// --- RECEIVED STATUS ---
-const ReceivedStatusUI = () => (
-  <View style={styles.statusSection}>
-    <View style={styles.statusRow}>
-      <Home size={24} color="#3B82F6" fill="#DBEAFE" />
-      <View style={styles.statusTextContainer}>
-        <Text style={styles.statusTitle}>Item Received</Text>
-        <Text style={styles.statusSubtitle}>Seller has received your package. Seller will inspect the item</Text>
-      </View>
-    </View>
-  </View>
-);
-
-// --- CANCELLED STATUS ---
-const CancelledStatusUI = () => (
-  <View style={styles.statusSection}>
-    <View style={styles.statusRow}>
-      <Ban size={24} color="#6B7280" fill="#F3F4F6" />
-      <View style={styles.statusTextContainer}>
-        <Text style={styles.statusTitle}>Request Cancelled</Text>
-        <Text style={styles.statusSubtitle}>This refund request is no longer active</Text>
-      </View>
-    </View>
-  </View>
-);
-
-// --- RETURN SHIP STATUS ---
-const ReturnShipStatusUI = () => (
+// ========== 14. RETURN SHIP STATUS ==========
+const ReturnShipStatus = () => (
   <View style={styles.statusSection}>
     <View style={styles.statusRow}>
       <Box size={24} color="#3B82F6" fill="#DBEAFE" />
@@ -680,8 +625,21 @@ const ReturnShipStatusUI = () => (
   </View>
 );
 
-// --- APPROVED PICKUP STATUS (for cash pickup returns) ---
-const ApprovedPickupStatusUI = () => (
+// ========== 15. CANCELLED STATUS ==========
+const CancelledStatus = () => (
+  <View style={styles.statusSection}>
+    <View style={styles.statusRow}>
+      <Ban size={24} color="#6B7280" fill="#F3F4F6" />
+      <View style={styles.statusTextContainer}>
+        <Text style={styles.statusTitle}>Request Cancelled</Text>
+        <Text style={styles.statusSubtitle}>This refund request is no longer active</Text>
+      </View>
+    </View>
+  </View>
+);
+
+// ========== 16. APPROVED PICKUP STATUS (for cash pickup returns) ==========
+const ApprovedPickupStatus = () => (
   <View style={styles.statusSection}>
     <View style={styles.statusRow}>
       <CheckCircle2 size={24} color="#10B981" fill="#D1FAE5" />
@@ -694,12 +652,13 @@ const ApprovedPickupStatusUI = () => (
 );
 
 // ========== ACTION BUTTONS COMPONENTS ==========
-const PendingActions = ({ onCancel, loading }: { onCancel: () => void, loading: boolean }) => (
+const PendingActions = ({ onCancel, loading }: { onCancel: () => void; loading: boolean }) => (
   <TouchableOpacity style={[styles.secondaryButton, loading && styles.disabledButton]} onPress={onCancel} disabled={loading}>
     <Ban size={16} color="#374151" /><Text style={styles.secondaryButtonText}>Cancel Request</Text>
   </TouchableOpacity>
 );
-const NegotiationActions = ({ onAccept, onReject, loading, isAccepting }: { onAccept: () => void, onReject: () => void, loading: boolean, isAccepting: boolean }) => (
+
+const NegotiationActions = ({ onAccept, onReject, loading, isAccepting }: { onAccept: () => void; onReject: () => void; loading: boolean; isAccepting: boolean }) => (
   <>
     <TouchableOpacity style={[styles.primaryButton, (loading || isAccepting) && styles.disabledButton]} onPress={onAccept} disabled={loading || isAccepting}>
       <ThumbsUp size={16} color="#FFF" /><Text style={styles.primaryButtonText}>Accept Offer</Text>
@@ -709,7 +668,8 @@ const NegotiationActions = ({ onAccept, onReject, loading, isAccepting }: { onAc
     </TouchableOpacity>
   </>
 );
-const ReturnActions = ({ onAddTracking, onWalkIn, loading }: { onAddTracking: () => void, onWalkIn?: () => void, loading: boolean }) => (
+
+const ReturnActions = ({ onAddTracking, onWalkIn, loading }: { onAddTracking: () => void; onWalkIn?: () => void; loading: boolean }) => (
   <>
     <TouchableOpacity style={[styles.primaryButton, loading && styles.disabledButton]} onPress={onAddTracking} disabled={loading}>
       <Upload size={16} color="#FFF" /><Text style={styles.primaryButtonText}>Provide Shipping Info</Text>
@@ -719,23 +679,26 @@ const ReturnActions = ({ onAddTracking, onWalkIn, loading }: { onAddTracking: ()
     </TouchableOpacity>
   </>
 );
-const RejectedActions = ({ onFileDispute, loading }: { onFileDispute: () => void, loading: boolean }) => (
+
+const RejectedActions = ({ onFileDispute, loading }: { onFileDispute: () => void; loading: boolean }) => (
   <TouchableOpacity style={[styles.primaryButton, loading && styles.disabledButton]} onPress={onFileDispute} disabled={loading}>
     <AlertTriangle size={16} color="#FFF" /><Text style={styles.primaryButtonText}>File a Dispute</Text>
   </TouchableOpacity>
 );
-const DisputeActions = ({ onAcknowledge, loading, acknowledged }: { onAcknowledge: () => void, loading: boolean, acknowledged: boolean }) => (
+
+const DisputeActions = ({ onAcknowledge, loading, acknowledged }: { onAcknowledge: () => void; loading: boolean; acknowledged: boolean }) => (
   <TouchableOpacity style={[styles.primaryButton, (loading || acknowledged) && styles.disabledButton]} onPress={onAcknowledge} disabled={loading || acknowledged}>
     <Text style={styles.primaryButtonText}>{loading ? 'Confirming...' : acknowledged ? 'Acknowledged' : 'Confirm Decision'}</Text>
   </TouchableOpacity>
 );
+
 const DefaultActions = ({ onBack }: { onBack: () => void }) => (
   <TouchableOpacity style={styles.secondaryButton} onPress={onBack}>
     <ArrowLeft size={16} color="#374151" /><Text style={styles.secondaryButtonText}>Back to Requests</Text>
   </TouchableOpacity>
 );
 
-// ========== MAIN COMPONENT ==========
+// ========== MAIN PAGE ==========
 export default function ViewRefundPage() {
   const { user } = useAuth();
   const { refundId } = useLocalSearchParams();
@@ -747,10 +710,14 @@ export default function ViewRefundPage() {
   const [acknowledged, setAcknowledged] = useState(false);
   const [shippingAddress, setShippingAddress] = useState<any | null>(null);
   const [loadingShippingAddress, setLoadingShippingAddress] = useState(false);
-  // Proof viewer state
+  const [showTrackingForm, setShowTrackingForm] = useState(false);
+  const [trackingForm, setTrackingForm] = useState({ logistic_service: '', tracking_number: '', shipped_at: '', notes: '' });
+  const [showWalkInConfirm, setShowWalkInConfirm] = useState(false);
   const [proofModalVisible, setProofModalVisible] = useState(false);
   const [proofUrls, setProofUrls] = useState<string[]>([]);
   const [proofIndex, setProofIndex] = useState(0);
+  const [videoModalVisible, setVideoModalVisible] = useState(false);
+  const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     fetchRefund();
@@ -788,7 +755,6 @@ export default function ViewRefundPage() {
     }
   };
 
-  // Fetch default shipping address if missing
   useEffect(() => {
     if (!refund) return;
     const hasShipping = !!((refund.shipping_info && (refund.shipping_info.recipient_name || refund.shipping_info.full_address)) || (refund.order && refund.order.shipping_address));
@@ -810,7 +776,7 @@ export default function ViewRefundPage() {
     return () => { mounted = false; };
   }, [refund, user?.id]);
 
-  // Action handlers (unchanged from original)
+  // Action handlers
   const handleDispute = () => {
     Alert.alert('File a Dispute', 'Explain why you believe the seller\'s decision was incorrect.', [
       { text: 'Cancel', style: 'cancel' },
@@ -883,12 +849,6 @@ export default function ViewRefundPage() {
       ]);
     }
   };
-
-  // Tracking form state
-  const [showTrackingForm, setShowTrackingForm] = useState(false);
-  const [trackingForm, setTrackingForm] = useState({ logistic_service: '', tracking_number: '', shipped_at: '', notes: '' });
-  const [showWalkInConfirm, setShowWalkInConfirm] = useState(false);
-
   const handleOpenTrackingForm = () => { setTrackingForm({ logistic_service: '', tracking_number: '', shipped_at: '', notes: '' }); setShowTrackingForm(true); };
   const handleAddTracking = () => handleOpenTrackingForm();
   const handleOpenWalkInConfirm = () => setShowWalkInConfirm(true);
@@ -928,7 +888,6 @@ export default function ViewRefundPage() {
     } catch (err: any) { Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to submit tracking info'); }
     finally { setActionLoading(false); }
   };
-
   const handleAcknowledgeDispute = async () => {
     const dr = refund?.dispute || refund?.dispute_request;
     if (!dr?.id) return;
@@ -943,7 +902,6 @@ export default function ViewRefundPage() {
     } catch (err: any) { Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to acknowledge dispute'); }
     finally { setActionLoading(false); }
   };
-
   const copyToClipboard = (text: string) => { console.log('Copy to clipboard:', text); };
   const formatDate = (dateString: string) => {
     if (!dateString) return 'N/A';
@@ -967,10 +925,9 @@ export default function ViewRefundPage() {
     return deduped.join(', ');
   };
 
-  // Helper: combine order_items with refund items to get refund quantity and amount
   const buildRefundItems = () => {
     const orderItems = refund.order_items || [];
-    const refundItems = refund.items || []; // each has checkout_id, quantity, amount
+    const refundItems = refund.items || [];
     const refundMap = new Map();
     refundItems.forEach((ri: any) => refundMap.set(ri.checkout_id, ri));
     return orderItems.map((oi: any) => {
@@ -981,6 +938,19 @@ export default function ViewRefundPage() {
         refundAmount: ri ? ri.amount : 0,
       };
     });
+  };
+
+  // Helper to check if media is video
+  const isVideoMedia = (media: any) => {
+    const url = media.file_url;
+    if (!url) return false;
+    const ext = url.split('.').pop()?.toLowerCase();
+    return ['mp4', 'mov', 'm4v', '3gp', 'mkv', 'webm'].includes(ext || '');
+  };
+
+  const openVideoViewer = (url: string) => {
+    setCurrentVideoUrl(url);
+    setVideoModalVisible(true);
   };
 
   const renderRefundStatus = (status: string) => {
@@ -998,14 +968,10 @@ export default function ViewRefundPage() {
     };
     const returnItemsLog = getReturnItemsLog();
     const itemStatusesLog = Array.isArray(returnItemsLog) ? returnItemsLog.map((it: any) => String(it?.status || it?.item_status || it?.return_status || it?.status_display || it?.state || '').toLowerCase()) : [];
-    const logAndReturn = (name: string, jsx: any) => {
-      console.debug('renderRefundStatus: UI selected', { name, refundId: refund.refund_id || refund.id, statusUpper, refundTypeLog, payStatusLog, rrStatus: rrLog.status, itemStatusesLog });
-      return jsx;
-    };
 
-    if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) return logAndReturn('PendingStatusUI', <PendingStatusUI refund={refund} />);
-    if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) return logAndReturn('NegotiationStatusUI', <NegotiationStatusUI refund={refund} formatCurrency={formatCurrency} />);
-    if (STATUS_CONDITIONS.showRejectedStatus(statusUpper)) return logAndReturn('RejectedStatusUI', <RejectedStatusUI onDispute={handleDispute} refund={refund} formatCurrency={formatCurrency} />);
+    if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) return <PendingStatus refund={refund} />;
+    if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) return <NegotiationStatus refund={refund} formatCurrency={formatCurrency} />;
+    if (STATUS_CONDITIONS.showRejectedStatus(statusUpper)) return <RejectedStatus refund={refund} formatCurrency={formatCurrency} onDispute={handleDispute} />;
     // early inspection/received checks
     {
       const payStatusEarly = String(refund.refund_payment_status || '').toLowerCase();
@@ -1028,59 +994,39 @@ export default function ViewRefundPage() {
       const rrStatusEarlyLower = String(rrEarly.status || rrEarly.state || '').toLowerCase();
       const anyInspected = itemStatusesEarly.some(s => inspectedVariantsEarly.includes(s)) || rrStatusEarlyLower === 'inspected' || rrStatusEarlyLower.includes('inspect');
       const anyStrictReceived = itemStatusesEarly.some(s => receivedVariantsEarly.includes(s)) || rrStatusEarlyLower === 'received' || rrStatusEarlyLower === 'item_received' || rrStatusEarlyLower.includes('received');
-      console.debug('renderRefundStatus debug', { refundId: refund.refund_id || refund.id, refund_status: refund.status, statusUpper, refundTypeEarly, payStatusEarly, rrStatus: rrEarly.status, rrStatusEarlyLower, itemStatusesEarly, anyInspected, anyStrictReceived });
       if (statusUpper === 'APPROVED' && (refundTypeEarly === 'return' || refundTypeEarly === 'return_item') && payStatusEarly === 'pending' && anyInspected) {
-        return logAndReturn('InspectedStatusUI', <InspectedStatusUI />);
+        return <ToVerifyStatus />;
       }
       if (statusUpper === 'APPROVED' && (refundTypeEarly === 'return' || refundTypeEarly === 'return_item') && payStatusEarly === 'pending' && anyStrictReceived) {
-        return logAndReturn('ReceivedStatusUI', <ReceivedStatusUI />);
+        return <ReceivedStatus />;
       }
     }
-    if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return logAndReturn('ApprovedStatusUI', <ApprovedStatusUI refund={refund} onOpenTrackingDialog={handleAddTracking} formatCurrency={formatCurrency} formatDate={formatDate} />);
-    if (STATUS_CONDITIONS.showWaitingStatus(statusUpper)) return logAndReturn('WaitingStatusUI', <WaitingStatusUI refund={refund} onOpenTrackingDialog={handleAddTracking} formatDate={formatDate} />);
-    if (STATUS_CONDITIONS.showToVerifyStatus(statusUpper)) return logAndReturn('ToVerifyStatusUI', <ToVerifyStatusUI />);
-    if (STATUS_CONDITIONS.showReturnAcceptedStatus(statusUpper)) return logAndReturn('ReturnAcceptedUI', <ReturnAcceptedUI />);
-    if (STATUS_CONDITIONS.showReturnRejectedStatus(statusUpper)) return logAndReturn('ReturnRejectedUI', <ReturnRejectedUI onDispute={handleDispute} />);
-    if (STATUS_CONDITIONS.showShippedStatus(statusUpper)) return logAndReturn('ShippedStatusUI', <ShippedStatusUI />);
-
-    const payStatus = String(refund.refund_payment_status || '').toLowerCase();
-    const refundTypeLower = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
-    const rr = refund.return_request || {};
-    const getReturnItems = () => {
-      if (Array.isArray(rr.items)) return rr.items;
-      if (Array.isArray(refund.return_request_items)) return refund.return_request_items;
-      if (Array.isArray(refund.return_items)) return refund.return_items;
-      if (Array.isArray(rr.return_items)) return rr.return_items;
-      return [];
-    };
-    const returnItems = getReturnItems();
-    const normalizeItemStatus = (it: any) => String(it?.status || it?.item_status || it?.return_status || it?.status_display || it?.state || '').toLowerCase();
-    const itemStatuses = Array.isArray(returnItems) ? returnItems.map((it: any) => normalizeItemStatus(it)) : [];
-    const receivedVariants = ['received', 'item_received', 'received_by_seller', 'seller_received', 'received_by_warehouse'];
-    const anyReceived = itemStatuses.some(s => receivedVariants.includes(s));
-    if (statusUpper === 'APPROVED' && (refundTypeLower === 'return' || refundTypeLower === 'return_item') && payStatus === 'pending' && anyReceived) {
-      return logAndReturn('ReceivedStatusUI', <ReceivedStatusUI />);
-    }
-    if (STATUS_CONDITIONS.showReceivedStatus(statusUpper)) return logAndReturn('ReceivedStatusUI (status)', <ReceivedStatusUI />);
+    if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus refund={refund} onOpenTrackingDialog={handleAddTracking} formatCurrency={formatCurrency} formatDate={formatDate} />;
+    if (STATUS_CONDITIONS.showWaitingStatus(statusUpper)) return <WaitingStatus refund={refund} onOpenTrackingDialog={handleAddTracking} formatDate={formatDate} />;
+    if (STATUS_CONDITIONS.showToVerifyStatus(statusUpper)) return <ToVerifyStatus />;
+    if (STATUS_CONDITIONS.showReturnAcceptedStatus(statusUpper)) return <ReturnAcceptedStatus />;
+    if (STATUS_CONDITIONS.showReturnRejectedStatus(statusUpper)) return <ReturnRejectedStatus onDispute={handleDispute} />;
+    if (STATUS_CONDITIONS.showShippedStatus(statusUpper)) return <ShippedStatus />;
+    if (STATUS_CONDITIONS.showReceivedStatus(statusUpper)) return <ReceivedStatus />;
     const drCheck = refund.dispute || refund.dispute_request || null;
     if (statusUpper === 'DISPUTE' && drCheck && drCheck.status?.toLowerCase() === 'resolved' && String(refund.refund_payment_status || '').toLowerCase() === 'completed') {
-      return logAndReturn('CompletedStatusUI (dispute-resolved)', <CompletedStatusUI refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />);
+      return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
     }
-    if (STATUS_CONDITIONS.showDisputeStatus(statusUpper)) return logAndReturn('DisputeStatusUI', <DisputeStatusUI refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} onAcknowledgeDispute={handleAcknowledgeDispute} />);
-    if (STATUS_CONDITIONS.showCompletedStatus(statusUpper)) return logAndReturn('CompletedStatusUI', <CompletedStatusUI refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />);
-    if (STATUS_CONDITIONS.showProcessingStatus(statusUpper)) return logAndReturn('ProcessingStatusUI', <ProcessingStatusUI refund={refund} formatCurrency={formatCurrency} />);
-    if (STATUS_CONDITIONS.showReturnShipStatus(statusUpper)) return logAndReturn('ReturnShipStatusUI', <ReturnShipStatusUI />);
-    if (STATUS_CONDITIONS.showCancelledStatus(statusUpper)) return logAndReturn('CancelledStatusUI', <CancelledStatusUI />);
+    if (STATUS_CONDITIONS.showDisputeStatus(statusUpper)) return <DisputeStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} onAcknowledgeDispute={handleAcknowledgeDispute} />;
+    if (STATUS_CONDITIONS.showCompletedStatus(statusUpper)) return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
+    if (STATUS_CONDITIONS.showProcessingStatus(statusUpper)) return <ProcessingStatus refund={refund} formatCurrency={formatCurrency} />;
+    if (STATUS_CONDITIONS.showReturnShipStatus(statusUpper)) return <ReturnShipStatus />;
+    if (STATUS_CONDITIONS.showCancelledStatus(statusUpper)) return <CancelledStatus />;
     const orderInfo = refund.order_info || {};
     const orderStatus = String(orderInfo.status || orderInfo.status_display || orderInfo.current_status || refund.order?.status || '').toLowerCase();
     const paymentMethod = String(orderInfo.payment_method || refund.order?.payment_method || '').toLowerCase();
     const deliveryMethod = String(orderInfo.delivery_method || refund.order?.delivery_method || '').toLowerCase();
     const isPickupCashCompleted = orderStatus.includes('completed') && paymentMethod.includes('cash') && deliveryMethod.includes('pickup');
-    const isReturnType = refundTypeLower === 'return' || refundTypeLower === 'return_item';
+    const isReturnType = refundTypeLog === 'return' || refundTypeLog === 'return_item';
     if ((statusUpper === 'APPROVED' || STATUS_CONDITIONS.showWaitingStatus(statusUpper)) && isReturnType && isPickupCashCompleted) {
-      return logAndReturn('ApprovedPickupStatusUI', <ApprovedPickupStatusUI />);
+      return <ApprovedPickupStatus />;
     }
-    return logAndReturn('PendingStatusUI (fallback)', <PendingStatusUI refund={refund} />);
+    return <PendingStatus refund={refund} />;
   };
 
   const renderActionButtons = () => {
@@ -1283,9 +1229,27 @@ export default function ViewRefundPage() {
             <Text style={styles.sectionTitle}>Evidence</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.evidenceScroll}>
               {medias.map((media, idx) => (
-                <TouchableOpacity key={media.id || idx} onPress={() => openProofViewer(idx)} style={styles.evidenceThumb}>
-                  <Image source={{ uri: media.file_url }} style={styles.evidenceImage} />
-                  <Text style={styles.evidenceDate}>{formatDate(media.uploaded_at)}</Text>
+                <TouchableOpacity
+                  key={media.id || idx}
+                  onPress={() => isVideoMedia(media) ? openVideoViewer(media.file_url) : openProofViewer(idx)}
+                  style={styles.evidenceThumb}
+                >
+                  {isVideoMedia(media) ? (
+                    <>
+                      <View style={styles.videoThumbContainer}>
+                        <Image source={{ uri: media.file_url }} style={styles.evidenceImage} />
+                        <View style={styles.playOverlay}>
+                          <Play size={30} color="#FFF" />
+                        </View>
+                      </View>
+                      <Text style={styles.evidenceDate}>Video</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Image source={{ uri: media.file_url }} style={styles.evidenceImage} />
+                      <Text style={styles.evidenceDate}>{formatDate(media.uploaded_at)}</Text>
+                    </>
+                  )}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -1359,7 +1323,7 @@ export default function ViewRefundPage() {
           </View>
         )}
 
-        {/* Proof viewer modal for evidence thumbnails */}
+        {/* Image proof modal */}
         <Modal animationType="fade" transparent={true} visible={proofModalVisible} onRequestClose={() => setProofModalVisible(false)}>
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContainer, { width: '95%', padding: 0, backgroundColor: '#000' }]}>
@@ -1382,6 +1346,29 @@ export default function ViewRefundPage() {
               />
               <View style={styles.modalFooter}>
                 <Text style={styles.modalImageCounter}>{proofIndex + 1} / {proofUrls.length}</Text>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Video modal */}
+        <Modal animationType="fade" transparent={true} visible={videoModalVisible} onRequestClose={() => setVideoModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContainer, { width: '95%', padding: 0, backgroundColor: '#000' }]}>
+              <View style={styles.modalHeader}>
+                <TouchableOpacity onPress={() => setVideoModalVisible(false)} style={styles.closeButton}><Ionicons name="close" size={28} color="#FFF" /></TouchableOpacity>
+              </View>
+              {currentVideoUrl && (
+                <Video
+                  source={{ uri: currentVideoUrl }}
+                  style={{ width: '100%', height: 300 }}
+                  useNativeControls
+                  resizeMode={ResizeMode.CONTAIN}
+                  isLooping={false}
+                />
+              )}
+              <View style={styles.modalFooter}>
+                <Text style={styles.modalImageCounter}>Video Evidence</Text>
               </View>
             </View>
           </View>
@@ -1488,6 +1475,8 @@ const styles = StyleSheet.create({
   evidenceThumb: { marginRight: 12, alignItems: 'center' },
   evidenceImage: { width: 80, height: 80, borderRadius: 8, backgroundColor: '#F3F4F6' },
   evidenceDate: { fontSize: 10, color: '#9CA3AF', marginTop: 4 },
+  videoThumbContainer: { position: 'relative', width: 80, height: 80 },
+  playOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', borderRadius: 8 },
   metaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   metaLabel: { fontSize: 13, color: '#999', flexShrink: 0 },
   metaRightSide: { flex: 1, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginLeft: 20 },
@@ -1517,4 +1506,4 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 16, color: '#9CA3AF', marginBottom: 16 },
   backButton: { backgroundColor: '#F97316', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
   backButtonText: { color: '#FFF', fontSize: 14, fontWeight: '600' },
-}); 
+});

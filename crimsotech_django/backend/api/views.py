@@ -28515,147 +28515,147 @@ class RefundViewSet(viewsets.ViewSet):
                 "error": "Internal server error",
                 "detail": str(e)  # Only in development; remove in production
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    @action(detail=False, methods=['post'])
-    def create_refund_request(self, request):
-        """
-        BUYER VIEW: Create a new refund request
-        """
-        try:
-            user_id = request.headers.get('X-User-Id')
-            if not user_id:
-                return Response({"error": "User ID required"}, 
-                                status=status.HTTP_400_BAD_REQUEST)
+    # @action(detail=False, methods=['post'])
+    # def create_refund_request(self, request):
+    #     """
+    #     BUYER VIEW: Create a new refund request
+    #     """
+    #     try:
+    #         user_id = request.headers.get('X-User-Id')
+    #         if not user_id:
+    #             return Response({"error": "User ID required"}, 
+    #                             status=status.HTTP_400_BAD_REQUEST)
             
-            user = User.objects.get(id=user_id)
+    #         user = User.objects.get(id=user_id)
             
-            # Validate required fields
-            required_fields = ['order_id', 'reason', 'refund_type', 'buyer_preferred_refund_method']
-            for field in required_fields:
-                if field not in request.data:
-                    return Response({"error": f"{field.replace('_', ' ').title()} is required"}, 
-                                    status=status.HTTP_400_BAD_REQUEST)
+    #         # Validate required fields
+    #         required_fields = ['order_id', 'reason', 'refund_type', 'buyer_preferred_refund_method']
+    #         for field in required_fields:
+    #             if field not in request.data:
+    #                 return Response({"error": f"{field.replace('_', ' ').title()} is required"}, 
+    #                                 status=status.HTTP_400_BAD_REQUEST)
             
-            # Get order
-            try:
-                order = Order.objects.get(order=request.data['order_id'], user=user)
-            except Order.DoesNotExist:
-                return Response({"error": "Order not found or does not belong to user"}, 
-                                status=status.HTTP_404_NOT_FOUND)
+    #         # Get order
+    #         try:
+    #             order = Order.objects.get(order=request.data['order_id'], user=user)
+    #         except Order.DoesNotExist:
+    #             return Response({"error": "Order not found or does not belong to user"}, 
+    #                             status=status.HTTP_404_NOT_FOUND)
             
-            # Check if refund already exists for this order
-            existing_refund = Refund.objects.filter(
-                order_id=order, 
-                requested_by=user,
-                status__in=['pending', 'approved', 'negotiation', 'dispute']
-            ).first()
+    #         # Check if refund already exists for this order
+    #         existing_refund = Refund.objects.filter(
+    #             order_id=order, 
+    #             requested_by=user,
+    #             status__in=['pending', 'approved', 'negotiation', 'dispute']
+    #         ).first()
             
-            if existing_refund:
-                return Response({
-                    "error": "A refund request for this order is already in progress",
-                    "refund_id": str(existing_refund.refund_id),
-                }, status=status.HTTP_400_BAD_REQUEST)
+    #         if existing_refund:
+    #             return Response({
+    #                 "error": "A refund request for this order is already in progress",
+    #                 "refund_id": str(existing_refund.refund_id),
+    #             }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Create refund
-            refund_data = {
-                'order_id': order,
-                'requested_by': user,
-                'reason': request.data['reason'],
-                'detailed_reason': request.data.get('detailed_reason', ''),
-                'refund_type': request.data['refund_type'],
-                'buyer_preferred_refund_method': request.data['buyer_preferred_refund_method'],
-                'customer_note': request.data.get('customer_note', ''),
-                'status': 'pending'
-            }
+    #         # Create refund
+    #         refund_data = {
+    #             'order_id': order,
+    #             'requested_by': user,
+    #             'reason': request.data['reason'],
+    #             'detailed_reason': request.data.get('detailed_reason', ''),
+    #             'refund_type': request.data['refund_type'],
+    #             'buyer_preferred_refund_method': request.data['buyer_preferred_refund_method'],
+    #             'customer_note': request.data.get('customer_note', ''),
+    #             'status': 'pending'
+    #         }
 
-            # Optional: accept total_refund_amount (from frontend) and convert to Decimal
-            try:
-                if request.data.get('total_refund_amount') is not None:
-                    refund_data['total_refund_amount'] = Decimal(str(request.data.get('total_refund_amount')))
-            except Exception:
-                # ignore parse errors here and leave field unset
-                pass
+    #         # Optional: accept total_refund_amount (from frontend) and convert to Decimal
+    #         try:
+    #             if request.data.get('total_refund_amount') is not None:
+    #                 refund_data['total_refund_amount'] = Decimal(str(request.data.get('total_refund_amount')))
+    #         except Exception:
+    #             # ignore parse errors here and leave field unset
+    #             pass
             
-            refund = Refund.objects.create(**refund_data)
+    #         refund = Refund.objects.create(**refund_data)
             
-            # Handle payment method details based on buyer's preferred method
-            refund_method = request.data['buyer_preferred_refund_method']
+    #         # Handle payment method details based on buyer's preferred method
+    #         refund_method = request.data['buyer_preferred_refund_method']
             
-            if refund_method == 'wallet':
-                wallet_data = request.data.get('wallet_details')
-                if wallet_data:
-                    RefundWallet.objects.create(
-                        refund_id=refund,
-                        provider=wallet_data.get('provider', ''),
-                        account_name=wallet_data.get('account_name', ''),
-                        account_number=wallet_data.get('account_number', ''),
-                        contact_number=wallet_data.get('contact_number', '')
-                    )
+    #         if refund_method == 'wallet':
+    #             wallet_data = request.data.get('wallet_details')
+    #             if wallet_data:
+    #                 RefundWallet.objects.create(
+    #                     refund_id=refund,
+    #                     provider=wallet_data.get('provider', ''),
+    #                     account_name=wallet_data.get('account_name', ''),
+    #                     account_number=wallet_data.get('account_number', ''),
+    #                     contact_number=wallet_data.get('contact_number', '')
+    #                 )
             
-            elif refund_method == 'bank':
-                bank_data = request.data.get('bank_details')
-                if bank_data:
-                    RefundBank.objects.create(
-                        refund_id=refund,
-                        bank_name=bank_data.get('bank_name', ''),
-                        account_name=bank_data.get('account_name', ''),
-                        account_number=bank_data.get('account_number', ''),
-                        account_type=bank_data.get('account_type', ''),
-                        branch=bank_data.get('branch', '')
-                    )
+    #         elif refund_method == 'bank':
+    #             bank_data = request.data.get('bank_details')
+    #             if bank_data:
+    #                 RefundBank.objects.create(
+    #                     refund_id=refund,
+    #                     bank_name=bank_data.get('bank_name', ''),
+    #                     account_name=bank_data.get('account_name', ''),
+    #                     account_number=bank_data.get('account_number', ''),
+    #                     account_type=bank_data.get('account_type', ''),
+    #                     branch=bank_data.get('branch', '')
+    #                 )
             
-            elif refund_method == 'remittance':
-                remittance_data = request.data.get('remittance_details')
-                if remittance_data:
-                    RefundRemittance.objects.create(
-                        refund_id=refund,
-                        provider=remittance_data.get('provider', ''),
-                        first_name=remittance_data.get('first_name', ''),
-                        middle_name=remittance_data.get('middle_name', ''),
-                        last_name=remittance_data.get('last_name', ''),
-                        contact_number=remittance_data.get('contact_number', ''),
-                        country=remittance_data.get('country', ''),
-                        city=remittance_data.get('city', ''),
-                        province=remittance_data.get('province', ''),
-                        zip_code=remittance_data.get('zip_code', ''),
-                        barangay=remittance_data.get('barangay', ''),
-                        street=remittance_data.get('street', ''),
-                        valid_id_type=remittance_data.get('valid_id_type', ''),
-                        valid_id_number=remittance_data.get('valid_id_number', '')
-                    )
+    #         elif refund_method == 'remittance':
+    #             remittance_data = request.data.get('remittance_details')
+    #             if remittance_data:
+    #                 RefundRemittance.objects.create(
+    #                     refund_id=refund,
+    #                     provider=remittance_data.get('provider', ''),
+    #                     first_name=remittance_data.get('first_name', ''),
+    #                     middle_name=remittance_data.get('middle_name', ''),
+    #                     last_name=remittance_data.get('last_name', ''),
+    #                     contact_number=remittance_data.get('contact_number', ''),
+    #                     country=remittance_data.get('country', ''),
+    #                     city=remittance_data.get('city', ''),
+    #                     province=remittance_data.get('province', ''),
+    #                     zip_code=remittance_data.get('zip_code', ''),
+    #                     barangay=remittance_data.get('barangay', ''),
+    #                     street=remittance_data.get('street', ''),
+    #                     valid_id_type=remittance_data.get('valid_id_type', ''),
+    #                     valid_id_number=remittance_data.get('valid_id_number', '')
+    #                 )
             
-            # Handle evidence files
-            files = request.FILES.getlist('evidence_files')
-            for file in files:
-                file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
-                RefundMedia.objects.create(
-                    refund_id=refund,
-                    file_data=file,
-                    file_type=file_type,
-                    uploaded_by=user
-                )
+    #         # Handle evidence files
+    #         files = request.FILES.getlist('evidence_files')
+    #         for file in files:
+    #             file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
+    #             RefundMedia.objects.create(
+    #                 refund_id=refund,
+    #                 file_data=file,
+    #                 file_type=file_type,
+    #                 uploaded_by=user
+    #             )
             
-            # If refund_type is 'return', create a return request
-            if request.data['refund_type'] == 'return':
-                ReturnRequestItem.objects.create(
-                    refund_id=refund,
-                    return_method=request.data.get('return_method', 'courier'),
-                    logistic_service=request.data.get('logistic_service', ''),
-                    tracking_number=request.data.get('tracking_number', ''),
-                    return_deadline=timezone.now() + timedelta(days=7)  # 7 days return deadline
-                )
+    #         # If refund_type is 'return', create a return request
+    #         if request.data['refund_type'] == 'return':
+    #             ReturnRequestItem.objects.create(
+    #                 refund_id=refund,
+    #                 return_method=request.data.get('return_method', 'courier'),
+    #                 logistic_service=request.data.get('logistic_service', ''),
+    #                 tracking_number=request.data.get('tracking_number', ''),
+    #                 return_deadline=timezone.now() + timedelta(days=7)  # 7 days return deadline
+    #             )
             
-            serializer = RefundSerializer(refund, context={'request': request})
-            return Response({
-                "message": "Refund request created successfully",
-                "refund": serializer.data
-            }, status=status.HTTP_201_CREATED)
+    #         serializer = RefundSerializer(refund, context={'request': request})
+    #         return Response({
+    #             "message": "Refund request created successfully",
+    #             "refund": serializer.data
+    #         }, status=status.HTTP_201_CREATED)
             
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, 
-                            status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({"error": f"Failed to create refund: {str(e)}"}, 
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    #     except User.DoesNotExist:
+    #         return Response({"error": "User not found"}, 
+    #                         status=status.HTTP_404_NOT_FOUND)
+    #     except Exception as e:
+    #         return Response({"error": f"Failed to create refund: {str(e)}"}, 
+    #                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['post'])
     def create_refund(self, request):
@@ -28975,22 +28975,22 @@ class RefundViewSet(viewsets.ViewSet):
         if not user_id:
             return Response({"error": "User ID required"}, 
                             status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             user = User.objects.get(id=user_id)
-            
+
             # Get refund
             try:
                 refund = Refund.objects.get(refund_id=pk)
             except Refund.DoesNotExist:
                 return Response({"error": "Refund not found"}, 
                                 status=status.HTTP_404_NOT_FOUND)
-            
+
             # Authorization check - seller must own the shop
             shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
             if err:
                 return err
-            
+
             # Get refund data with seller-specific details
             data = self._get_refund_details_data(refund, request, user)
             if not isinstance(data, dict) or data is None:
@@ -29003,13 +29003,13 @@ class RefundViewSet(viewsets.ViewSet):
                 "name": shop.name,
                 "is_suspended": shop.is_suspended
             }
-            
+
             # Add counter refund requests
             counter_requests = CounterRefundRequest.objects.filter(
                 refund_id=refund,
                 shop_id=shop
             ).order_by('-requested_at')
-            
+
             data['counter_requests'] = [
                 {
                     "counter_id": str(cr.counter_id),
@@ -29022,12 +29022,13 @@ class RefundViewSet(viewsets.ViewSet):
                 }
                 for cr in counter_requests
             ]
-            
+
             return Response(data)
-            
+
         except User.DoesNotExist:
             return Response({"error": "User not found"}, 
                             status=status.HTTP_404_NOT_FOUND)
+
 
     # allow multipart and JSON payloads so seller can send reason/files
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser, JSONParser])
@@ -30449,7 +30450,7 @@ class RefundViewSet(viewsets.ViewSet):
             except Exception:
                 data['total_refund_amount'] = None
 
-        # ========== NEW: Payment details from payment_detail ==========
+        # Payment details from payment_detail
         payment_details = {}
         if refund.payment_detail:
             pd = refund.payment_detail
@@ -30462,7 +30463,6 @@ class RefundViewSet(viewsets.ViewSet):
                 "is_default": pd.is_default,
             }
         data['payment_details'] = payment_details
-        # ========== End payment details ==========
 
         # Add evidence/media files
         media_files = RefundMedia.objects.filter(refund_id=refund)
@@ -30494,7 +30494,7 @@ class RefundViewSet(viewsets.ViewSet):
             for p in proofs_qs
         ]
 
-        # Seller delivery proofs
+        # Seller delivery proofs (if any)
         try:
             from .models import Delivery, Proof
             delivery = Delivery.objects.filter(order=refund.order_id).first()
@@ -30690,6 +30690,7 @@ class RefundViewSet(viewsets.ViewSet):
             pass
 
         return data
+    
     @action(detail=True, methods=['post'])
     def add_refund_payment_detail(self, request, pk=None):
         """Allow buyer to provide refund-specific account details for this refund (wallet/bank/remittance).
