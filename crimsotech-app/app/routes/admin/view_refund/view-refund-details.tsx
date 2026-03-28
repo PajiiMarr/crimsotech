@@ -43,14 +43,13 @@ import { Checkbox } from '~/components/ui/checkbox';
 import { Label } from '~/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '~/components/ui/dialog';
 import { Alert, AlertTitle, AlertDescription } from '~/components/ui/alert';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/components/ui/tabs';
 import { useToast } from '~/hooks/use-toast';
 import AxiosInstance from '~/components/axios/Axios';
 import {
   ArrowLeft, CheckCircle, XCircle, Eye, AlertTriangle, Package,
   PackageCheck, Truck, Clock, MessageCircle, User, Wallet,
   Calendar, RefreshCw, CheckSquare, ShieldAlert, Ban,
-  FileText, ShoppingBag, CreditCard, DollarSign, Shield, Camera, Upload,
+  FileText, ShoppingBag, CreditCard, DollarSign, Shield, Camera,
   Scale, Gavel, Search, Loader2, Send, AlertCircle, Info,
   MapPin, Phone, Mail, Store, Bike, Package as PackageIcon,
   Image as ImageIcon, File as FileIcon, Download, ExternalLink
@@ -363,67 +362,65 @@ function ProcessingUI({
   const [uploadingProofs, setUploadingProofs] = useState(false);
   const [adminNotes, setAdminNotes] = useState('');
 
-  const getMethodIcon = (method: string) => {
-    switch (method?.toLowerCase()) {
-      case 'wallet': return <Wallet className="h-4 w-4 text-blue-500" />;
-      case 'bank': return <DollarSign className="h-4 w-4 text-green-500" />;
-      case 'gcash': return <Send className="h-4 w-4 text-blue-500" />;
-      case 'remittance': return <Send className="h-4 w-4 text-orange-500" />;
-      default: return <CreditCard className="h-4 w-4 text-gray-500" />;
-    }
-  };
+  // Debug: log payment details
+  console.log('refund.payment_detail:', refund.payment_detail);
 
-  const renderPaymentDetails = () => {
-    const details = refund.refund_method_details;
-    if (!details) return <p className="text-xs text-muted-foreground italic">No payment details available.</p>;
+  // Helper to get the payment detail
+  const getPaymentDetail = () => refund.payment_detail;
 
-    if (details.type === 'wallet') return (
-      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-        <div><span className="text-muted-foreground text-[10px]">Provider</span><p className="font-medium">{details.provider || 'N/A'}</p></div>
-        <div><span className="text-muted-foreground text-[10px]">Account Name</span><p className="font-medium">{details.account_name || 'N/A'}</p></div>
-        <div><span className="text-muted-foreground text-[10px]">Account Number</span><p className="font-medium">{details.account_number || 'N/A'}</p></div>
-        <div><span className="text-muted-foreground text-[10px]">Contact</span><p className="font-medium">{details.contact_number || 'N/A'}</p></div>
-      </div>
-    );
+  // Render selected payment details (if any)
+  const renderSelectedPaymentDetails = () => {
+    const pd = getPaymentDetail();
+    if (!pd) return null;
 
-    if (details.type === 'bank') return (
-      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-        <div><span className="text-muted-foreground text-[10px]">Bank</span><p className="font-medium">{details.bank_name || 'N/A'}</p></div>
-        <div><span className="text-muted-foreground text-[10px]">Account Name</span><p className="font-medium">{details.account_name || 'N/A'}</p></div>
-        <div><span className="text-muted-foreground text-[10px]">Account Number</span><p className="font-medium">{details.account_number || 'N/A'}</p></div>
-        <div><span className="text-muted-foreground text-[10px]">Account Type</span><p className="font-medium capitalize">{details.account_type || 'N/A'}</p></div>
-        <div className="col-span-2"><span className="text-muted-foreground text-[10px]">Branch</span><p className="font-medium">{details.branch || 'N/A'}</p></div>
-      </div>
-    );
-
-    if (details.type === 'remittance') {
-      const fullName = [details.first_name, details.middle_name, details.last_name].filter(Boolean).join(' ');
-      const addr = details.address;
-      const fullAddress = addr ? [addr.street, addr.barangay, addr.city, addr.province, addr.country].filter(Boolean).join(', ') : '';
-      return (
-        <div className="space-y-3 text-xs">
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-            <div><span className="text-muted-foreground text-[10px]">Provider</span><p className="font-medium">{details.provider || 'N/A'}</p></div>
-            <div><span className="text-muted-foreground text-[10px]">Full Name</span><p className="font-medium">{fullName || 'N/A'}</p></div>
-            <div className="col-span-2"><span className="text-muted-foreground text-[10px]">Contact</span><p className="font-medium">{details.contact_number || 'N/A'}</p></div>
+    return (
+      <div className="bg-blue-50/50 rounded-md p-3 border border-blue-100 space-y-2">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+          <div>
+            <span className="text-muted-foreground text-[10px]">Payment Method</span>
+            <p className="font-medium capitalize">{pd.payment_method || 'N/A'}</p>
           </div>
-          {fullAddress && (
-            <div className="border-t pt-2">
-              <span className="text-muted-foreground text-[10px]">Address</span>
-              <p className="font-medium">{fullAddress}</p>
+          <div>
+            <span className="text-muted-foreground text-[10px]">Account Name</span>
+            <p className="font-medium">{pd.account_name || 'N/A'}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground text-[10px]">Account Number</span>
+            <p className="font-medium">{pd.account_number || 'N/A'}</p>
+          </div>
+          {pd.bank_name && (
+            <div>
+              <span className="text-muted-foreground text-[10px]">Bank Name</span>
+              <p className="font-medium">{pd.bank_name}</p>
             </div>
           )}
-          {(details.valid_id?.type || details.valid_id?.number) && (
-            <div className="border-t pt-2 grid grid-cols-2 gap-2">
-              <div><span className="text-muted-foreground text-[10px]">ID Type</span><p className="font-medium">{details.valid_id.type || 'N/A'}</p></div>
-              <div><span className="text-muted-foreground text-[10px]">ID Number</span><p className="font-medium">{details.valid_id.number || 'N/A'}</p></div>
+          {pd.is_default !== undefined && (
+            <div>
+              <span className="text-muted-foreground text-[10px]">Default</span>
+              <p className="font-medium">{pd.is_default ? 'Yes' : 'No'}</p>
+            </div>
+          )}
+          {pd.verified_by && (
+            <div>
+              <span className="text-muted-foreground text-[10px]">Verified By</span>
+              <p className="font-medium">{pd.verified_by.username || 'N/A'}</p>
+            </div>
+          )}
+          {pd.created_at && (
+            <div>
+              <span className="text-muted-foreground text-[10px]">Created At</span>
+              <p className="font-medium">{new Date(pd.created_at).toLocaleDateString()}</p>
+            </div>
+          )}
+          {pd.updated_at && (
+            <div>
+              <span className="text-muted-foreground text-[10px]">Last Updated</span>
+              <p className="font-medium">{new Date(pd.updated_at).toLocaleDateString()}</p>
             </div>
           )}
         </div>
-      );
-    }
-
-    return <p className="text-xs text-muted-foreground italic">No additional details for this payment method.</p>;
+      </div>
+    );
   };
 
   const hasProofs = () => (refund?.proofs || []).length > 0 || selectedProofFiles.length > 0;
@@ -516,19 +513,25 @@ function ProcessingUI({
             <div>
               <span className="text-xs text-muted-foreground block">Refund Method</span>
               <div className="flex items-center gap-2">
-                {getMethodIcon(refundMethod)}
-                <p className="font-medium capitalize">{refundMethod}</p>
+                <span className="font-medium capitalize">{refundMethod}</span>
               </div>
             </div>
           </div>
+        </CardContent>
+      </Card>
 
-          {refund.refund_method_details && (
-            <div className="border-t pt-2">
-              <span className="text-xs text-muted-foreground block mb-2">Payment Details</span>
-              <div className="bg-blue-50/50 rounded-md p-3 border border-blue-100">
-                {renderPaymentDetails()}
-              </div>
-            </div>
+      {/* Selected Payment Details (from buyer's saved payment method) */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2 text-blue-700">
+            <CreditCard className="h-4 w-4" /> Selected Payment Method
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {getPaymentDetail() ? (
+            renderSelectedPaymentDetails()
+          ) : (
+            <p className="text-xs text-muted-foreground italic">No saved payment method selected for this refund.</p>
           )}
         </CardContent>
       </Card>
@@ -735,27 +738,43 @@ export default function AdminViewRefundDetails() {
   const getCustomSplitTotal = () => Object.values(customSplits).reduce((s, v) => s + (Number(v) || 0), 0);
 
   const handleProcessRefund = async () => {
-    setProcessing(true);
-    try {
-      const response = await AxiosInstance.post(
-        `/admin-refunds/${encodeURIComponent(String(refund.refund))}/admin_process_refund/`,
-        { status: 'processing' },
-        { headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' } }
-      );
-      if (response.data.success) {
-        toast({ title: 'Success', description: 'Refund payment status set to processing.' });
-        setRefund(prev => ({ ...prev, refund_payment_status: 'processing' }));
-        try {
-          const refreshRes = await AxiosInstance.get(`/admin-refunds/${encodeURIComponent(String(refund.refund))}/get_admin_refund_details/`, { headers: { 'X-User-Id': String(user?.id || '') } });
-          if (refreshRes.data) setRefund(prev => ({ ...prev, ...refreshRes.data }));
-        } catch { }
-      } else {
-        toast({ title: 'Error', description: response.data.error || 'Failed to set refund to processing', variant: 'destructive' });
-      }
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.response?.data?.error || err.response?.data?.message || 'Failed to set refund to processing', variant: 'destructive' });
-    } finally { setProcessing(false); }
-  };
+  const id = refund?.refund || refund?.refund_id;
+  if (!id) {
+    toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' });
+    setProcessing(false);
+    return;
+  }
+
+  setProcessing(true);
+  try {
+    const response = await AxiosInstance.post(
+      `/admin-refunds/${encodeURIComponent(String(id))}/admin_process_refund/`,
+      { set_status: 'processing' },
+      { headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' } }
+    );
+    if (response.data.success) {
+      toast({ title: 'Success', description: 'Refund payment status set to processing.' });
+      setRefund(prev => ({ ...prev, refund_payment_status: 'processing' }));
+      try {
+        const refreshRes = await AxiosInstance.get(
+          `/admin-refunds/${encodeURIComponent(String(id))}/get_admin_refund_details/`,
+          { headers: { 'X-User-Id': String(user?.id || '') } }
+        );
+        if (refreshRes.data) {
+          setRefund(prev => ({
+            ...prev,
+            ...refreshRes.data,
+            refund: prev.refund || refreshRes.data.refund_id,
+          }));
+        }
+      } catch { }
+    } else {
+      toast({ title: 'Error', description: response.data.error || 'Failed to set refund to processing', variant: 'destructive' });
+    }
+  } catch (err: any) {
+    toast({ title: 'Error', description: err.response?.data?.error || err.response?.data?.message || 'Failed to set refund to processing', variant: 'destructive' });
+  } finally { setProcessing(false); }
+};
 
   const handleCompleteRefund = () => {
     setRefund(prev => ({ ...prev, status: 'completed', refund_payment_status: 'completed', processed_at: new Date().toISOString() }));
