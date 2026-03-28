@@ -8082,6 +8082,8 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
+
+
 class AdminRefunds(viewsets.ViewSet):
 
     # ------------------------------------------------------------------
@@ -8093,188 +8095,407 @@ class AdminRefunds(viewsets.ViewSet):
         return (
             Refund.objects
             .select_related(
-                'order',
+                'order_id',          # field name is order_id
                 'requested_by',
                 'processed_by',
                 'return_request',
-                # payment-detail one-to-ones
                 'wallet',
                 'bank',
                 'remittance',
+                'payment_detail',
             )
             .prefetch_related(
-                'proofs',
-                'order__payment_set',
+                'proofs',            # RefundProof objects (seller proofs)
+                'medias',            # buyer evidence (RefundMedia)
+                'items__checkout__cart_item__product__productmedia_set',
+                'items__checkout__cart_item__product__shop',
                 Prefetch(
                     'return_request__medias',
                     queryset=ReturnRequestMedia.objects.all(),
                     to_attr='prefetched_medias',
                 ),
+                Prefetch(
+                    'order_id__delivery_set',
+                    # ✅ correct: select_related to get rider, then prefetch proof_set (not proofs)
+                    queryset=Delivery.objects.select_related('rider__rider').prefetch_related('proof_set'),
+                    to_attr='prefetched_deliveries'
+                ),
+                Prefetch(
+                    'dispute',
+                    queryset=DisputeRequest.objects.prefetch_related(
+                        Prefetch('evidences', queryset=DisputeEvidence.objects.all(), to_attr='prefetched_evidence')
+                    ),
+                    to_attr='prefetched_disputes'
+                ),
             )
         )
 
-    def _serialize_refund(self, refund, request):
-        """Return a plain dict for a single Refund instance."""
-        order = refund.order
+    def _get_order_details(self, order, request):
+        """Return full order details including customer, shipping address, delivery, and order items."""
+        if not order:
+            return None
 
-        # amounts
-        order_total = float(order.total_amount) if order else 0.0
-        approved_amt = float(refund.approved_refund_amount) if refund.approved_refund_amount is not None else None
-        refund_fee = round(order_total * 0.05, 2) if order else None
-        total_refund = round(order_total - refund_fee, 2) if refund_fee is not None else None
+        # Get the first delivery (if any) from prefetched list
+        deliveries = getattr(order, 'prefetched_deliveries', None)
+        if deliveries:
+            delivery = deliveries[0] if deliveries else None
+        else:
+            delivery = order.delivery_set.first() if hasattr(order, 'delivery_set') else None
 
-        data = {
-            'refund': str(refund.refund_id),
-            'order_id': str(order.order) if order else 'N/A',
-            'order_total_amount': order_total,
-            'status': refund.status or 'pending',
-            'reason': refund.reason or 'No reason provided',
-            'requested_at': refund.requested_at.isoformat() if refund.requested_at else None,
-            'processed_at': refund.processed_at.isoformat() if refund.processed_at else None,
+        delivery_data = None
+        if delivery:
+            rider = delivery.rider
+            rider_user = rider.rider if rider else None   # correct: rider.rider gives User
+            # Use proof_set.all() because reverse relation name is proof_set
+            proofs = delivery.proof_set.all()
+            delivery_data = {
+                'id': str(delivery.id),
+                'status': delivery.status,
+                'tracking_number': delivery.tracking_number,
+                'delivery_fee': float(delivery.delivery_fee) if delivery.delivery_fee else 0,
+                'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
+                'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                'created_at': delivery.created_at.isoformat() if delivery.created_at else None,
+                'rider': {
+                    'id': str(rider.id) if rider else None,
+                    'user': {
+                        'id': str(rider_user.id) if rider_user else None,
+                        'first_name': rider_user.first_name if rider_user else None,
+                        'last_name': rider_user.last_name if rider_user else None,
+                        'contact_number': rider_user.contact_number if rider_user else None,
+                    } if rider_user else None,
+                    'vehicle_type': rider.vehicle_type if rider else None,
+                    'vehicle_brand': rider.vehicle_brand if rider else None,
+                    'vehicle_model': rider.vehicle_model if rider else None,
+                    'plate_number': rider.plate_number if rider else None,
+                } if rider else None,
+                'proofs': [
+                    {
+                        'id': str(p.id),
+                        'file_url': request.build_absolute_uri(p.file_data.url) if p.file_data else None,
+                        'file_type': p.file_type,
+                    }
+                    for p in proofs
+                ] if proofs else [],
+            }
 
-            # user info
-            'requested_by_username': refund.requested_by.username if refund.requested_by else 'Unknown',
-            'requested_by_email': refund.requested_by.email if refund.requested_by else 'N/A',
-            'processed_by_username': refund.processed_by.username if refund.processed_by else None,
-            'processed_by_email': refund.processed_by.email if refund.processed_by else None,
+        # Build shipping address
+        shipping_address = None
+        if hasattr(order, 'shipping_address') and order.shipping_address:
+            addr = order.shipping_address
+            shipping_address = {
+                'recipient_name': addr.recipient_name,
+                'recipient_phone': addr.recipient_phone,
+                'full_address': addr.get_full_address(),
+                'street': addr.street,
+                'barangay': addr.barangay,
+                'city': addr.city,
+                'province': addr.province,
+                'zip_code': addr.zip_code,
+                'country': addr.country,
+            }
+        elif order.delivery_address_text:
+            shipping_address = {'full_address': order.delivery_address_text}
 
-            # amounts
-            'requested_refund_amount': order_total,
-            'refund_fee': refund_fee,
-            'total_refund_amount': total_refund,
-            'approved_refund_amount': approved_amt,
+        # Build order items (all items in the order, not just refunded)
+        order_items = []
+        checkouts = Checkout.objects.filter(order=order).select_related(
+            'cart_item__product__shop',
+            'cart_item__variant',
+        ).prefetch_related('cart_item__product__productmedia_set')
 
-            # logistics
-            'logistic_service': getattr(refund, 'logistic_service', None),
-            'tracking_number': getattr(refund, 'tracking_number', None),
+        for checkout in checkouts:
+            cart_item = checkout.cart_item
+            if not cart_item or not cart_item.product:
+                continue
+            product = cart_item.product
+            variant = cart_item.variant
+            price = variant.price if variant else (product.min_price or product.price if hasattr(product, 'price') else None)
+            product_image = None
+            try:
+                if product.productmedia_set.exists():
+                    media = product.productmedia_set.first()
+                    if media and media.file_data:
+                        product_image = request.build_absolute_uri(media.file_data.url)
+            except Exception:
+                pass
+            order_items.append({
+                'id': str(checkout.id),
+                'product_name': product.name,
+                'product_id': str(product.id),
+                'product_image': product_image,
+                'quantity': checkout.quantity,
+                'price': str(price) if price else '0',
+                'total_amount': str(checkout.total_amount),
+                'variant': {
+                    'id': str(variant.id) if variant else None,
+                    'title': variant.title if variant else None,
+                    'sku_code': variant.sku_code if variant else None,
+                } if variant else None,
+                'shop': {
+                    'id': str(product.shop.id) if product.shop else None,
+                    'name': product.shop.name if product.shop else None,
+                } if product.shop else None,
+            })
 
-            # type / payment-status fields
-            'final_refund_type': getattr(refund, 'final_refund_type', None),
-            'refund_type': getattr(refund, 'refund_type', None),
-            'refund_payment_status': getattr(refund, 'refund_payment_status', None),
-
-            # refund method
-            'buyer_preferred_refund_method': getattr(refund, 'buyer_preferred_refund_method', None),
-            'preferred_refund_method': getattr(refund, 'preferred_refund_method', None),
-            'final_refund_method': getattr(refund, 'final_refund_method', None),
-
-            # payment-detail objects
-            'wallet': self._serialize_wallet(refund.wallet if hasattr(refund, 'wallet') else None),
-            'bank': self._serialize_bank(refund.bank if hasattr(refund, 'bank') else None),
-            'remittance': self._serialize_remittance(refund.remittance if hasattr(refund, 'remittance') else None),
-
-            # proofs
-            'proofs': self._serialize_proofs(refund, request),
-            'has_media': refund.refundmedia_set.exists() if hasattr(refund, 'refundmedia_set') else False,
-            'media_count': refund.refundmedia_set.count() if hasattr(refund, 'refundmedia_set') else 0,
-
-            # return request
-            'return_request': None,
-            'has_return_request': refund.return_request is not None,
-            'return_request_status': refund.return_request.status if refund.return_request else None,
-            'return_deadline': (
-                refund.return_request.return_deadline.isoformat()
-                if refund.return_request and refund.return_request.return_deadline
-                else None
-            ),
+        return {
+            'order_id': str(order.order),
+            'total_amount': float(order.total_amount) if order.total_amount else 0,
+            'delivery_fee': float(order.delivery_fee) if hasattr(order, 'delivery_fee') and order.delivery_fee else 0,
+            'status': order.status,
+            'created_at': order.created_at.isoformat() if order.created_at else None,
+            'customer_username': order.user.username if order.user else None,
+            'customer_email': order.user.email if order.user else None,
+            'shipping_address': shipping_address,
+            'delivery': delivery_data,
+            'items': order_items,
         }
 
-        if refund.return_request:
-            data['return_request'] = self._serialize_return_request(refund.return_request, request)
+    def _get_order_items_for_refund(self, refund, request):
+        """Return detailed items being refunded (RefundItem enriched with product details)."""
+        if not refund.order_id:
+            return []
+
+        refund_items = refund.items.select_related(
+            'checkout__cart_item__product__shop',
+            'checkout__cart_item__variant',
+        ).prefetch_related('checkout__cart_item__product__productmedia_set')
+
+        items_data = []
+        for ri in refund_items:
+            checkout = ri.checkout
+            cart_item = checkout.cart_item
+            if not cart_item or not cart_item.product:
+                continue
+            product = cart_item.product
+            variant = cart_item.variant
+            price = variant.price if variant else (product.min_price or product.price if hasattr(product, 'price') else None)
+            product_image = None
+            try:
+                if product.productmedia_set.exists():
+                    media = product.productmedia_set.first()
+                    if media and media.file_data:
+                        product_image = request.build_absolute_uri(media.file_data.url)
+            except Exception:
+                pass
+            items_data.append({
+                'checkout_id': str(checkout.id),
+                'product_name': product.name,
+                'product_id': str(product.id),
+                'product_image': product_image,
+                'quantity': ri.quantity,
+                'amount': float(ri.amount) if ri.amount else None,
+                'price': str(price) if price else '0',
+                'variant': {
+                    'id': str(variant.id) if variant else None,
+                    'title': variant.title if variant else None,
+                    'sku_code': variant.sku_code if variant else None,
+                } if variant else None,
+                'shop': {
+                    'id': str(product.shop.id) if product.shop else None,
+                    'name': product.shop.name if product.shop else None,
+                } if product.shop else None,
+            })
+        return items_data
+
+    def _get_seller_delivery_proofs(self, refund, request):
+        """Fetch seller-uploaded delivery proofs (Proof model) for the order's delivery."""
+        if not refund.order_id:
+            return []
+        delivery = Delivery.objects.filter(order=refund.order_id).first()
+        if not delivery:
+            return []
+        # Use proof_set.all() because the reverse relation is proof_set
+        proofs = delivery.proof_set.filter(proof_type='seller')
+        return [
+            {
+                'id': str(p.id),
+                'file_url': request.build_absolute_uri(p.file_data.url) if p.file_data else None,
+                'file_type': p.file_type,
+                'uploaded_at': p.uploaded_at.isoformat() if p.uploaded_at else None,
+            }
+            for p in proofs
+        ]
+
+    def _get_timeline(self, refund):
+        """Generate timeline events for the refund."""
+        timeline = []
+
+        # Refund requested
+        timeline.append({
+            'event': 'refund_requested',
+            'timestamp': refund.requested_at.isoformat(),
+            'user': str(refund.requested_by.id),
+            'details': f'Refund requested: {refund.reason}',
+        })
+
+        # Status changes
+        if refund.processed_at:
+            timeline.append({
+                'event': 'status_changed',
+                'timestamp': refund.processed_at.isoformat(),
+                'user': str(refund.processed_by.id) if refund.processed_by else None,
+                'details': f'Status changed to {refund.status}',
+            })
+
+        # Buyer notified
+        if refund.buyer_notified_at:
+            timeline.append({
+                'event': 'buyer_notified',
+                'timestamp': refund.buyer_notified_at.isoformat(),
+                'details': 'Buyer notified about refund approval',
+            })
+
+        # Counter requests
+        for cr in CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at'):
+            timeline.append({
+                'event': 'counter_request',
+                'timestamp': cr.requested_at.isoformat(),
+                'user': str(cr.seller_id.id) if cr.seller_id else None,
+                'details': f'Counter offer: {cr.counter_refund_method} - Status: {cr.status}',
+            })
+
+        # Return request activities
+        rr = getattr(refund, 'return_request', None)
+        if rr:
+            if rr.shipped_at:
+                timeline.append({
+                    'event': 'item_shipped',
+                    'timestamp': rr.shipped_at.isoformat(),
+                    'user': str(rr.shipped_by.id) if rr.shipped_by else None,
+                    'details': f'Item shipped via {rr.logistic_service}',
+                })
+            if rr.received_at:
+                timeline.append({
+                    'event': 'item_received',
+                    'timestamp': rr.received_at.isoformat(),
+                    'details': 'Item received by seller',
+                })
+            if rr.updated_at and rr.updated_by:
+                timeline.append({
+                    'event': 'return_updated',
+                    'timestamp': rr.updated_at.isoformat(),
+                    'user': str(rr.updated_by.id),
+                    'details': f'Return status updated to {rr.status}',
+                })
+
+        # Dispute activities
+        dispute = getattr(refund, 'dispute', None)
+        if dispute and dispute.resolved_at:
+            timeline.append({
+                'event': 'dispute_resolved',
+                'timestamp': dispute.resolved_at.isoformat(),
+                'user': str(dispute.processed_by.id) if dispute.processed_by else None,
+                'details': f'Dispute resolved: {dispute.status}',
+            })
+
+        timeline.sort(key=lambda x: x['timestamp'], reverse=True)
+        return timeline
+
+    def _serialize_refund_list(self, refund, request):
+        """Lightweight serialization for refund list (admin table)."""
+        user = refund.requested_by
+        if user:
+            # Build full address from user fields
+            address_parts = []
+            for field in ['street', 'barangay', 'city', 'province', 'zip_code']:
+                val = getattr(user, field, '')
+                if val:
+                    address_parts.append(str(val))
+            address = ', '.join(address_parts) if address_parts else ''
+            contact = user.contact_number or ''
+            username = user.username
+            email = user.email
+        else:
+            username = 'Unknown'
+            email = 'N/A'
+            contact = ''
+            address = ''
+
+        return {
+            "refund_id": str(refund.refund_id),
+            "order_id": str(refund.order_id.order) if refund.order_id else 'N/A',
+            "order_total_amount": float(refund.order_id.total_amount) if refund.order_id else 0,
+            "requested_by_username": username,
+            "requested_by_email": email,
+            "requested_by_contact": contact,
+            "requested_by_address": address,
+            "reason": refund.reason,
+            "status": refund.status,
+            "requested_at": refund.requested_at.isoformat(),
+            "total_refund_amount": float(refund.total_refund_amount) if refund.total_refund_amount else None,
+            "approved_refund_amount": float(refund.approved_refund_amount) if refund.approved_refund_amount else None,
+            "final_refund_method": refund.final_refund_method,
+            "refund_payment_status": refund.refund_payment_status,
+            "has_media": refund.medias.exists(),
+            "media_count": refund.medias.count(),
+        }
+    
+    def _enrich_refund_details(self, refund, request):
+        """Full enriched data for a single refund (admin detail view)."""
+        # Start with base serializer data
+        data = RefundSerializer(refund, context={'request': request}).data
+
+        # Add order details
+        data['order'] = self._get_order_details(refund.order_id, request)
+
+        # Add order_items (refund-specific items with product details)
+        data['order_items'] = self._get_order_items_for_refund(refund, request)
+
+        # Add seller delivery proofs
+        data['seller_delivery_proofs'] = self._get_seller_delivery_proofs(refund, request)
+
+        # Add timeline
+        data['timeline'] = self._get_timeline(refund)
+
+        # Ensure evidence is present (already in data as 'medias')
+        if 'medias' in data:
+            data['evidence'] = data['medias']
+
+        # Ensure proofs are present (already in data as 'proofs')
+
+        # Add dispute_request alias for consistency with frontend
+        if data.get('dispute'):
+            data['dispute_request'] = data['dispute']
+
+        # Add wallet, bank, remittance details if they exist
+        data['wallet_details'] = None
+        data['bank_details'] = None
+        data['remittance_details'] = None
+        if hasattr(refund, 'wallet') and refund.wallet:
+            data['wallet_details'] = {
+                'provider': refund.wallet.provider,
+                'account_name': refund.wallet.account_name,
+                'account_number': refund.wallet.account_number,
+                'contact_number': refund.wallet.contact_number,
+            }
+        if hasattr(refund, 'bank') and refund.bank:
+            data['bank_details'] = {
+                'bank_name': refund.bank.bank_name,
+                'account_name': refund.bank.account_name,
+                'account_number': refund.bank.account_number,
+                'account_type': refund.bank.account_type,
+                'branch': refund.bank.branch,
+            }
+        if hasattr(refund, 'remittance') and refund.remittance:
+            data['remittance_details'] = {
+                'provider': refund.remittance.provider,
+                'first_name': refund.remittance.first_name,
+                'last_name': refund.remittance.last_name,
+                'contact_number': refund.remittance.contact_number,
+                'country': refund.remittance.country,
+                'city': refund.remittance.city,
+                'province': refund.remittance.province,
+                'barangay': refund.remittance.barangay,
+                'street': refund.remittance.street,
+                'zip_code': refund.remittance.zip_code,
+                'valid_id_type': refund.remittance.valid_id_type,
+                'valid_id_number': refund.remittance.valid_id_number,
+            }
+
+        # Add payment_detail from serializer already present
 
         return data
-
-    # ---------- tiny serializer helpers ----------
-
-    def _serialize_wallet(self, obj):
-        if not obj:
-            return None
-        return {
-            'provider': getattr(obj, 'provider', None),
-            'account_name': getattr(obj, 'account_name', None),
-            'account_number': getattr(obj, 'account_number', None),
-            'contact_number': getattr(obj, 'contact_number', None),
-        }
-
-    def _serialize_bank(self, obj):
-        if not obj:
-            return None
-        return {
-            'bank_name': getattr(obj, 'bank_name', None),
-            'account_name': getattr(obj, 'account_name', None),
-            'account_number': getattr(obj, 'account_number', None),
-            'account_type': getattr(obj, 'account_type', None),
-            'branch': getattr(obj, 'branch', None),
-        }
-
-    def _serialize_remittance(self, obj):
-        if not obj:
-            return None
-        return {
-            'provider': getattr(obj, 'provider', None),
-            'first_name': getattr(obj, 'first_name', None),
-            'middle_name': getattr(obj, 'middle_name', None),
-            'last_name': getattr(obj, 'last_name', None),
-            'contact_number': getattr(obj, 'contact_number', None),
-            'country': getattr(obj, 'country', None),
-            'city': getattr(obj, 'city', None),
-            'province': getattr(obj, 'province', None),
-            'barangay': getattr(obj, 'barangay', None),
-            'street': getattr(obj, 'street', None),
-            'zip_code': getattr(obj, 'zip_code', None),
-        }
-
-    def _serialize_proofs(self, refund, request):
-        result = []
-        try:
-            for p in refund.proofs.all():
-                file_url = None
-                if getattr(p, 'file_data', None):
-                    try:
-                        file_url = request.build_absolute_uri(p.file_data.url)
-                    except Exception:
-                        pass
-                result.append({
-                    'id': str(p.id),
-                    'file_url': file_url,
-                    'file_type': getattr(p, 'file_type', None),
-                    'notes': getattr(p, 'notes', None),
-                })
-        except Exception:
-            pass
-        return result
-
-    def _serialize_return_request(self, rr, request):
-        medias = []
-        try:
-            media_qs = getattr(rr, 'prefetched_medias', None) or rr.medias.all()
-            for m in media_qs:
-                file_url = None
-                if getattr(m, 'file_data', None):
-                    try:
-                        file_url = request.build_absolute_uri(m.file_data.url)
-                    except Exception:
-                        pass
-                medias.append({
-                    'id': str(getattr(m, 'id', '')),
-                    'file_url': file_url,
-                    'file_type': getattr(m, 'file_type', None),
-                    'notes': getattr(m, 'notes', None),
-                })
-        except Exception:
-            pass
-
-        return {
-            'id': str(rr.id),
-            'status': getattr(rr, 'status', None),
-            'tracking_number': getattr(rr, 'tracking_number', None),
-            'tracking_url': getattr(rr, 'tracking_url', None),
-            'shipped_at': rr.shipped_at.isoformat() if getattr(rr, 'shipped_at', None) else None,
-            'received_at': rr.received_at.isoformat() if getattr(rr, 'received_at', None) else None,
-            'logistic_service': getattr(rr, 'logistic_service', None),
-            'notes': getattr(rr, 'notes', None),
-            'medias': medias,
-        }
 
     # ------------------------------------------------------------------
     # Actions
@@ -8442,13 +8663,11 @@ class AdminRefunds(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'])
     def refund_list(self, request):
-        """Get all refund requests for the admin / moderation team."""
+        """Get all refund requests for the admin table (lightweight)."""
         try:
             refunds = self._base_queryset().order_by('-requested_at')
-            return Response(
-                [self._serialize_refund(r, request) for r in refunds],
-                status=status.HTTP_200_OK,
-            )
+            data = [self._serialize_refund_list(r, request) for r in refunds]
+            return Response(data, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Refund list error: {e}", exc_info=True)
             return Response(
@@ -8456,29 +8675,523 @@ class AdminRefunds(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    @action(detail=True, methods=['post'])
-    def admin_process_refund(self, request, pk=None):
-        """Set refund_payment_status to 'processing'."""
+    
+    @action(detail=True, methods=['get'])
+    def get_admin_refund_details(self, request, pk=None):
+        """
+        ADMIN VIEW: Get detailed refund information for admin.
+        This is the single handler for all refund details.
+        """
+        # 1. Authentication & Admin Check
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            refund = Refund.objects.get(refund_id=pk)
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not user.is_admin:
+            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+
+        # 2. Fetch the refund with all related data
+        try:
+            refund = Refund.objects.select_related(
+                'order_id', 'requested_by', 'processed_by', 'payment_detail',
+                'wallet', 'bank', 'remittance', 'return_address',
+                'dispute'
+            ).prefetch_related(
+                Prefetch(
+                    'items',
+                    queryset=RefundItem.objects.select_related(
+                        'checkout__cart_item__product__shop',
+                        'checkout__cart_item__variant'
+                    ).prefetch_related(
+                        'checkout__cart_item__product__productmedia_set'
+                    )
+                ),
+                Prefetch(
+                    'proofs',
+                    queryset=RefundProof.objects.select_related('uploaded_by')
+                ),
+                Prefetch(
+                    'medias',
+                    queryset=RefundMedia.objects.select_related('uploaded_by')
+                ),
+                Prefetch(
+                    'counter_requests',
+                    queryset=CounterRefundRequest.objects.select_related('seller_id', 'shop_id')
+                ),
+                Prefetch(
+                    'return_request',
+                    queryset=ReturnRequestItem.objects.prefetch_related(
+                        Prefetch('medias', queryset=ReturnRequestMedia.objects.all())
+                    )
+                ),
+                Prefetch(
+                    'dispute',
+                ),
+            ).get(refund_id=pk)
         except Refund.DoesNotExist:
-            return Response({'error': 'Refund not found'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        status_value = request.data.get('status')
-        if status_value != 'processing':
-            return Response(
-                {'error': f'Invalid status. Expected "processing", got: {status_value}'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # 3. Base data from the RefundSerializer (simple fields)
+        data = RefundSerializer(refund, context={'request': request}).data
 
-        refund.refund_payment_status = 'processing'
-        refund.save(update_fields=['refund_payment_status'])
-        return Response({
-            'success': True,
-            'message': 'Refund payment status set to processing',
-            'refund_payment_status': refund.refund_payment_status,
-        }, status=status.HTTP_200_OK)
+        # --- 4. Customer (requested_by) ---
+        customer_user = refund.requested_by
+        customer_data = {
+            "id": str(customer_user.id),
+            "username": customer_user.username,
+            "email": customer_user.email,
+            "first_name": customer_user.first_name,
+            "last_name": customer_user.last_name,
+            "contact_number": customer_user.contact_number,
+            "address": {
+                "street": customer_user.street,
+                "barangay": customer_user.barangay,
+                "city": customer_user.city,
+                "province": customer_user.province,
+                "zip_code": customer_user.zip_code,
+            }
+        }
+        data['requested_by'] = customer_data
+        data['requested_by_username'] = customer_user.username
+        data['requested_by_email'] = customer_user.email
+        data['customer'] = customer_data  # alias
 
+        # --- Fetch buyer's default shipping address ---
+        default_shipping_address = ShippingAddress.objects.filter(user=customer_user, is_default=True).first()
+        if default_shipping_address:
+            default_shipping_address_data = {
+                "id": str(default_shipping_address.id),
+                "recipient_name": default_shipping_address.recipient_name,
+                "recipient_phone": default_shipping_address.recipient_phone,
+                "street": default_shipping_address.street,
+                "barangay": default_shipping_address.barangay,
+                "city": default_shipping_address.city,
+                "province": default_shipping_address.province,
+                "zip_code": default_shipping_address.zip_code,
+                "country": default_shipping_address.country,
+                "full_address": default_shipping_address.get_full_address(),
+            }
+        else:
+            default_shipping_address_data = None
+        data['default_shipping_address'] = default_shipping_address_data
+
+        # --- 5. Refund Type (ensure it's present) ---
+        data['refund_type'] = refund.refund_type
+
+        # --- 6. Order Details (including shipping address and delivery) ---
+        order = refund.order_id
+
+        # Fetch shipping address (if exists)
+        shipping_address = order.shipping_address
+        shipping_address_data = None
+        if shipping_address:
+            shipping_address_data = {
+                "id": str(shipping_address.id),
+                "recipient_name": shipping_address.recipient_name,
+                "recipient_phone": shipping_address.recipient_phone,
+                "street": shipping_address.street,
+                "barangay": shipping_address.barangay,
+                "city": shipping_address.city,
+                "province": shipping_address.province,
+                "zip_code": shipping_address.zip_code,
+                "country": shipping_address.country,
+                "full_address": shipping_address.get_full_address(),
+            }
+
+        # Fetch delivery (if exists)
+        delivery = None
+        if hasattr(order, 'delivery'):
+            delivery = order.delivery
+            if delivery:
+                delivery_data = {
+                    "id": str(delivery.id),
+                    "status": delivery.status,
+                    "delivery_fee": float(delivery.delivery_fee) if delivery.delivery_fee else None,
+                    "tracking_number": delivery.tracking_number,
+                    "picked_at": delivery.picked_at.isoformat() if delivery.picked_at else None,
+                    "delivered_at": delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                    "created_at": delivery.created_at.isoformat(),
+                    "rider": None,
+                    "proofs": []
+                }
+                # Rider info
+                if delivery.rider:
+                    rider = delivery.rider
+                    rider_user = rider.rider
+                    delivery_data["rider"] = {
+                        "id": str(rider.id),
+                        "vehicle_type": rider.vehicle_type,
+                        "plate_number": rider.plate_number,
+                        "user": {
+                            "id": str(rider_user.id),
+                            "username": rider_user.username,
+                            "first_name": rider_user.first_name,
+                            "last_name": rider_user.last_name,
+                            "contact_number": rider_user.contact_number,
+                        } if rider_user else None
+                    }
+                # Proofs
+                proofs = Proof.objects.filter(delivery=delivery)
+                for proof in proofs:
+                    delivery_data["proofs"].append({
+                        "id": str(proof.id),
+                        "file_url": get_media_url(proof.file_data),
+                        "file_type": proof.file_type,
+                    })
+                delivery = delivery_data
+
+        order_info = {
+            "order_id": str(order.order),
+            "total_amount": float(order.total_amount),
+            "payment_method": order.payment_method,
+            "status": order.status,
+            "created_at": order.created_at.isoformat(),
+            "delivery_address": order.delivery_address_text,
+            "receipt_url": get_media_url(order.receipt) if order.receipt else None,
+            "customer": customer_data,
+            "shipping_address": shipping_address_data,
+            "delivery": delivery,
+        }
+        data['order'] = order_info
+
+        # --- 7. Seller & Shop (from refund items) ---
+        shop_info = None
+        seller_info = None
+        products = []
+
+        for refund_item in refund.items.all():
+            cart_item = refund_item.checkout.cart_item
+            if not cart_item or not cart_item.product:
+                continue
+            product = cart_item.product
+            variant = cart_item.variant
+            shop = product.shop
+
+            # Capture shop info from the first item (assume all items belong to same shop)
+            if shop and not shop_info:
+                shop_info = {
+                    "id": str(shop.id),
+                    "name": shop.name,
+                    "description": shop.description,
+                    "contact_number": shop.contact_number,
+                    "address": {
+                        "street": shop.street,
+                        "barangay": shop.barangay,
+                        "city": shop.city,
+                        "province": shop.province,
+                        "zip_code": shop.zip_code,
+                    }
+                }
+                # Seller is the user who owns the shop (Customer -> User)
+                owner_user = shop.customer.customer if shop.customer else None
+                if owner_user:
+                    seller_info = {
+                        "id": str(owner_user.id),
+                        "username": owner_user.username,
+                        "email": owner_user.email,
+                        "contact_number": owner_user.contact_number,
+                    }
+
+            # Product image (prefer variant image, then product media)
+            product_image = None
+            if variant and variant.image:
+                product_image = get_media_url(variant.image)
+            elif product.productmedia_set.exists():
+                product_image = get_media_url(product.productmedia_set.first().file_data)
+
+            products.append({
+                "id": str(product.id),
+                "product_name": product.name,
+                "product_image": product_image,
+                "variant_id": str(variant.id) if variant else None,
+                "variant_title": variant.title if variant else None,
+                "sku_code": variant.sku_code if variant else None,
+                "quantity": refund_item.quantity,
+                "price": float(refund_item.amount / refund_item.quantity) if refund_item.amount and refund_item.quantity else None,
+                "total_amount": float(refund_item.amount) if refund_item.amount else None,
+                "shop": shop_info,   # attach shop to each product
+            })
+
+        data['shop'] = shop_info
+        data['seller'] = seller_info
+        data['products'] = products
+        data['order_items'] = products   # alias
+
+        # --- 8. Payment Details (from UserPaymentDetail) ---
+        if refund.payment_detail:
+            data['payment_detail'] = {
+                "payment_id": str(refund.payment_detail.payment_id),
+                "payment_method": refund.payment_detail.payment_method,
+                "bank_name": refund.payment_detail.bank_name,
+                "account_name": refund.payment_detail.account_name,
+                "account_number": refund.payment_detail.account_number,
+                "is_default": refund.payment_detail.is_default,
+                "verified_by": {
+                    "id": str(refund.payment_detail.verified_by.id) if refund.payment_detail.verified_by else None,
+                    "username": refund.payment_detail.verified_by.username if refund.payment_detail.verified_by else None,
+                } if refund.payment_detail.verified_by else None,
+            }
+        else:
+            data['payment_detail'] = None
+
+        # --- 9. Refund method details (wallet/bank/remittance) ---
+        if refund.final_refund_method == 'wallet' and hasattr(refund, 'wallet') and refund.wallet:
+            data['refund_method_details'] = {
+                "type": "wallet",
+                "provider": refund.wallet.provider,
+                "account_name": refund.wallet.account_name,
+                "account_number": refund.wallet.account_number,
+                "contact_number": refund.wallet.contact_number,
+            }
+        elif refund.final_refund_method == 'bank' and hasattr(refund, 'bank') and refund.bank:
+            data['refund_method_details'] = {
+                "type": "bank",
+                "bank_name": refund.bank.bank_name,
+                "account_name": refund.bank.account_name,
+                "account_number": refund.bank.account_number,
+                "account_type": refund.bank.account_type,
+                "branch": refund.bank.branch,
+            }
+        elif refund.final_refund_method == 'remittance' and hasattr(refund, 'remittance') and refund.remittance:
+            data['refund_method_details'] = {
+                "type": "remittance",
+                "provider": refund.remittance.provider,
+                "first_name": refund.remittance.first_name,
+                "last_name": refund.remittance.last_name,
+                "contact_number": refund.remittance.contact_number,
+                "address": {
+                    "street": refund.remittance.street,
+                    "barangay": refund.remittance.barangay,
+                    "city": refund.remittance.city,
+                    "province": refund.remittance.province,
+                    "zip_code": refund.remittance.zip_code,
+                    "country": refund.remittance.country,
+                },
+                "valid_id": {
+                    "type": refund.remittance.valid_id_type,
+                    "number": refund.remittance.valid_id_number,
+                }
+            }
+        else:
+            data['refund_method_details'] = None
+
+        # --- 10. Return address (if return request exists) ---
+        if hasattr(refund, 'return_address') and refund.return_address:
+            addr = refund.return_address
+            data['return_address'] = {
+                "recipient_name": addr.recipient_name,
+                "contact_number": addr.contact_number,
+                "address": f"{addr.street}, {addr.barangay}, {addr.city}, {addr.province} {addr.zip_code}, {addr.country}",
+                "notes": addr.notes,
+            }
+        else:
+            data['return_address'] = None
+
+        # --- 11. Admin notes ---
+        admin_notes = getattr(refund, 'admin_notes', None)
+        if not admin_notes and hasattr(refund, 'dispute') and refund.dispute:
+            admin_notes = refund.dispute.admin_notes
+        data['admin_notes'] = admin_notes
+
+        # --- 12. Processed by ---
+        if refund.processed_by:
+            data['processed_by'] = {
+                "id": str(refund.processed_by.id),
+                "username": refund.processed_by.username,
+                "email": refund.processed_by.email,
+            }
+        else:
+            data['processed_by'] = None
+
+        # --- 13. Proofs (RefundProof) ---
+        proofs_data = []
+        for proof in refund.proofs.all():
+            proofs_data.append({
+                "id": str(proof.id),
+                "file_url": get_media_url(proof.file_data),
+                "file_type": proof.file_type,
+                "notes": proof.notes,
+                "uploaded_by": {
+                    "id": str(proof.uploaded_by.id),
+                    "username": proof.uploaded_by.username,
+                },
+                "created_at": proof.created_at.isoformat(),
+            })
+        data['proofs'] = proofs_data
+
+        # --- 14. Disputes (list) and active dispute object ---
+        disputes = DisputeRequest.objects.filter(refund_id=refund).order_by('-created_at')
+        data['disputes'] = []
+        active_dispute = None
+        for d in disputes:
+            dispute_data = {
+                "id": str(d.id),
+                "requested_by": {
+                    "id": str(d.requested_by.id),
+                    "username": d.requested_by.username,
+                    "email": d.requested_by.email,
+                },
+                "reason": d.reason,
+                "status": d.status,
+                "admin_notes": d.admin_notes,
+                "case_category": d.case_category,
+                "created_at": d.created_at.isoformat(),
+                "resolved_at": d.resolved_at.isoformat() if d.resolved_at else None,
+            }
+            data['disputes'].append(dispute_data)
+            if active_dispute is None:
+                active_dispute = d
+
+        if active_dispute:
+            # Provide a convenient alias for the frontend
+            data['dispute_request'] = {
+                "id": str(active_dispute.id),
+                "reason": active_dispute.reason,
+                "status": active_dispute.status,
+                "admin_notes": active_dispute.admin_notes,
+                "case_category": active_dispute.case_category,
+                "requested_by": {
+                    "id": str(active_dispute.requested_by.id),
+                    "username": active_dispute.requested_by.username,
+                    "email": active_dispute.requested_by.email,
+                },
+                "created_at": active_dispute.created_at.isoformat(),
+                "resolved_at": active_dispute.resolved_at.isoformat() if active_dispute.resolved_at else None,
+            }
+            data['dispute'] = data['dispute_request']  # alternative key
+
+        # --- 15. Counter requests ---
+        counter_requests_data = []
+        for cr in refund.counter_requests.all():
+            counter_requests_data.append({
+                "counter_id": str(cr.counter_id),
+                "requested_by": cr.requested_by,
+                "seller": {
+                    "id": str(cr.seller_id.id),
+                    "username": cr.seller_id.username,
+                    "email": cr.seller_id.email,
+                },
+                "shop": {
+                    "id": str(cr.shop_id.id),
+                    "name": cr.shop_id.name,
+                },
+                "counter_refund_method": cr.counter_refund_method,
+                "counter_refund_type": cr.counter_refund_type,
+                "counter_refund_amount": float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
+                "notes": cr.notes,
+                "status": cr.status,
+                "requested_at": cr.requested_at.isoformat(),
+            })
+        data['counter_requests'] = counter_requests_data
+
+        # --- 16. Return request (tracking info) ---
+        if hasattr(refund, 'return_request') and refund.return_request:
+            ret = refund.return_request
+            data['return_request'] = {
+                "return_id": str(ret.return_id),
+                "return_method": ret.return_method,
+                "logistic_service": ret.logistic_service,
+                "tracking_number": ret.tracking_number,
+                "status": ret.status,
+                "shipped_at": ret.shipped_at.isoformat() if ret.shipped_at else None,
+                "received_at": ret.received_at.isoformat() if ret.received_at else None,
+                "notes": ret.notes,
+                "medias": [
+                    {
+                        "id": str(media.id),
+                        "file_url": get_media_url(media.file_data),
+                        "file_type": media.file_type,
+                        "uploaded_at": media.uploaded_at.isoformat(),
+                    }
+                    for media in ret.medias.all()
+                ]
+            }
+        else:
+            data['return_request'] = None
+
+        # --- 17. Timeline ---
+        timeline = []
+
+        # Refund requested
+        timeline.append({
+            'event': 'refund_requested',
+            'timestamp': refund.requested_at.isoformat(),
+            'user': str(refund.requested_by.id),
+            'details': f'Refund requested: {refund.reason}',
+        })
+
+        # Status changes (if processed_at exists)
+        if refund.processed_at:
+            timeline.append({
+                'event': 'status_changed',
+                'timestamp': refund.processed_at.isoformat(),
+                'user': str(refund.processed_by.id) if refund.processed_by else None,
+                'details': f'Status changed to {refund.status}',
+            })
+
+        # Buyer notified
+        if refund.buyer_notified_at:
+            timeline.append({
+                'event': 'buyer_notified',
+                'timestamp': refund.buyer_notified_at.isoformat(),
+                'details': 'Buyer notified about refund approval',
+            })
+
+        # Counter requests
+        for cr in refund.counter_requests.all():
+            timeline.append({
+                'event': 'counter_request',
+                'timestamp': cr.requested_at.isoformat(),
+                'user': str(cr.seller_id.id) if cr.seller_id else None,
+                'details': f'Counter offer: {cr.counter_refund_method} - Status: {cr.status}',
+            })
+
+        # Return request activities
+        rr = getattr(refund, 'return_request', None)
+        if rr:
+            if rr.shipped_at:
+                timeline.append({
+                    'event': 'item_shipped',
+                    'timestamp': rr.shipped_at.isoformat(),
+                    'user': str(rr.shipped_by.id) if rr.shipped_by else None,
+                    'details': f'Item shipped via {rr.logistic_service}',
+                })
+            if rr.received_at:
+                timeline.append({
+                    'event': 'item_received',
+                    'timestamp': rr.received_at.isoformat(),
+                    'details': 'Item received by seller',
+                })
+            if rr.updated_at and rr.updated_by:
+                timeline.append({
+                    'event': 'return_updated',
+                    'timestamp': rr.updated_at.isoformat(),
+                    'user': str(rr.updated_by.id),
+                    'details': f'Return status updated to {rr.status}',
+                })
+
+        # Dispute activities
+        if active_dispute and active_dispute.resolved_at:
+            timeline.append({
+                'event': 'dispute_resolved',
+                'timestamp': active_dispute.resolved_at.isoformat(),
+                'user': str(active_dispute.processed_by.id) if active_dispute.processed_by else None,
+                'details': f'Dispute resolved: {active_dispute.status}',
+            })
+
+        timeline.sort(key=lambda x: x['timestamp'], reverse=True)
+        data['timeline'] = timeline
+
+        # --- 18. Additional fields that might be used by frontend ---
+        data.setdefault('dispute_reason', active_dispute.reason if active_dispute else None)
+
+        # 19. Return final response
+        return Response(data)
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def add_proof(self, request, pk=None):
         """Upload proof files for a refund (seller or admin)."""
@@ -8497,7 +9210,9 @@ class AdminRefunds(viewsets.ViewSet):
             return Response({'error': 'Refund not found'}, status=status.HTTP_404_NOT_FOUND)
 
         if not (user.is_admin or user.is_moderator):
-            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            # Seller upload is allowed but must own the shop
+            from .views import RefundViewSet
+            shop, err = RefundViewSet._resolve_seller_shop_for_refund(request, user, refund)
             if err:
                 return err
 
@@ -8531,17 +9246,15 @@ class AdminRefunds(viewsets.ViewSet):
             except Exception as e:
                 logger.warning(f'Failed to save refund proof: {e}')
 
+        # Refresh and return updated refund data
         refund.refresh_from_db()
-        data = self._serialize_refund(
-            self._base_queryset().get(refund_id=refund.refund_id),
-            request,
-        )
+        data = self._enrich_refund_details(refund, request)
         return Response({'message': 'Proof(s) uploaded', 'created': created, 'refund': data},
                         status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=['get'])
-    def get_admin_refund_details(self, request, pk=None):
-        """Get detailed refund information for admin."""
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def admin_process_refund(self, request, pk=None):
+        """Admin sets refund payment status (processing, completed, failed) and optionally uploads proofs."""
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -8551,82 +9264,77 @@ class AdminRefunds(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        if not user.is_admin:
+        if not (user.is_admin or user.is_moderator):
             return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
-            refund = self._base_queryset().get(refund_id=pk)
+            refund = Refund.objects.get(refund_id=pk)
         except Refund.DoesNotExist:
             return Response({'error': 'Refund not found'}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({'error': f'Invalid refund ID: {e}'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            data = self._serialize_refund(refund, request)
-        except Exception as e:
-            logger.error(f'Error serializing refund {pk}: {e}', exc_info=True)
-            return Response({'error': f'Failed to serialize refund: {e}'},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # Handle uploaded proof files if any
+        files = request.FILES.getlist('file_data') or []
+        if not files:
+            single = request.FILES.get('file')
+            if single:
+                files = [single]
 
-        # Admin-only extras
-        data['admin_notes'] = refund.customer_note
-        data['processed_by'] = (
-            {
-                'id': str(refund.processed_by.id),
-                'username': refund.processed_by.username,
-                'email': refund.processed_by.email,
-            }
-            if refund.processed_by else None
-        )
+        if files:
+            existing_count = RefundProof.objects.filter(refund=refund).count()
+            remaining = 4 - existing_count
+            if len(files) > remaining:
+                return Response(
+                    {'error': f'Cannot upload: only {remaining} proof(s) remaining'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            for f in files:
+                try:
+                    RefundProof.objects.create(
+                        refund=refund,
+                        uploaded_by=user,
+                        file_type=request.data.get('file_type') or f.content_type or '',
+                        file_data=f,
+                        notes=request.data.get('notes', ''),
+                    )
+                except Exception as e:
+                    logger.warning(f'Failed to save refund proof: {e}')
 
-        # Disputes
-        try:
-            disputes = DisputeRequest.objects.filter(refund_id=refund).order_by('-created_at')
-            data['disputes'] = [
-                {
-                    'id': str(d.id),
-                    'requested_by': {
-                        'id': str(d.requested_by.id),
-                        'username': d.requested_by.username,
-                        'email': d.requested_by.email,
-                    },
-                    'reason': d.reason,
-                    'status': d.status,
-                    'case_category': d.case_category,
-                    'admin_notes': d.admin_notes,
-                    'created_at': d.created_at.isoformat() if d.created_at else None,
-                    'resolved_at': d.resolved_at.isoformat() if d.resolved_at else None,
-                }
-                for d in disputes
-            ]
-        except Exception as e:
-            logger.error(f'Error fetching disputes: {e}', exc_info=True)
-            data['disputes'] = []
+        # Update refund status
+        set_status = request.data.get('set_status')
+        final_method = request.data.get('final_refund_method')
+        notes = request.data.get('customer_note', '')
 
-        # Counter requests
-        try:
-            counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
-            data['counter_requests'] = [
-                {
-                    'counter_id': str(cr.counter_id),
-                    'requested_by': cr.requested_by,
-                    'seller': {'id': str(cr.seller_id.id), 'username': cr.seller_id.username},
-                    'shop': {'id': str(cr.shop_id.id), 'name': cr.shop_id.name},
-                    'counter_refund_method': cr.counter_refund_method,
-                    'counter_refund_type': cr.counter_refund_type,
-                    'counter_refund_amount': float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
-                    'notes': cr.notes,
-                    'status': cr.status,
-                    'requested_at': cr.requested_at.isoformat(),
-                }
-                for cr in counter_requests
-            ]
-        except Exception as e:
-            logger.error(f'Error fetching counter requests: {e}', exc_info=True)
-            data['counter_requests'] = []
+        if set_status:
+            if set_status not in ['processing', 'completed', 'failed']:
+                return Response({'error': 'Invalid payment status'}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(data)
+            if set_status == 'completed':
+                if not RefundProof.objects.filter(refund=refund).exists():
+                    return Response({'error': 'Proof required before completing refund'}, status=status.HTTP_400_BAD_REQUEST)
 
+            refund.refund_payment_status = set_status
+            if set_status == 'completed':
+                refund.processed_at = timezone.now()
+                refund.processed_by = user
+            refund.save(update_fields=['refund_payment_status', 'processed_at', 'processed_by'])
+
+        if final_method:
+            refund.final_refund_method = final_method
+            refund.save(update_fields=['final_refund_method'])
+
+        if notes:
+            refund.customer_note = f"{refund.customer_note or ''}\n{notes}"
+            refund.save(update_fields=['customer_note'])
+
+        # Return enriched data
+        data = self._enrich_refund_details(refund, request)
+        return Response({
+            'success': True,
+            'message': 'Refund payment updated',
+            'refund': data,
+            'refund_payment_status': refund.refund_payment_status,
+        }, status=status.HTTP_200_OK)
+    
 class AdminUsers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
@@ -30105,84 +30813,291 @@ class RefundViewSet(viewsets.ViewSet):
         """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({"error": "User ID required"}, 
-                            status=status.HTTP_400_BAD_REQUEST)
-        
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             user = User.objects.get(id=user_id)
-            
-            # Check if user is admin
-            if not user.is_admin:
-                return Response({"error": "Admin access required"}, 
-                                status=status.HTTP_403_FORBIDDEN)
-            
-            # Get refund
-            try:
-                refund = Refund.objects.get(refund_id=pk)
-            except Refund.DoesNotExist:
-                return Response({"error": "Refund not found"}, 
-                                status=status.HTTP_404_NOT_FOUND)
-            
-            # Get comprehensive refund data
-            data = self._get_refund_details_data(refund, request, user)
-            
-            # Add admin-specific information
-            data['admin_notes'] = refund.customer_note
-            data['processed_by'] = {
-                "id": str(refund.processed_by.id) if refund.processed_by else None,
-                "username": refund.processed_by.username if refund.processed_by else None,
-                "email": refund.processed_by.email if refund.processed_by else None
-            } if refund.processed_by else None
-            
-            # Add all related disputes
-            disputes = DisputeRequest.objects.filter(refund_id=refund).order_by('-created_at')
-            data['disputes'] = [
-                {
-                    "id": str(d.id),
-                    "requested_by": {
-                        "id": str(d.requested_by.id),
-                        "username": d.requested_by.username,
-                        "email": d.requested_by.email
-                    },
-                    "reason": d.reason,
-                    "status": d.status,
-                    "admin_notes": d.admin_notes,
-                    "created_at": d.created_at.isoformat(),
-                    "resolved_at": d.resolved_at.isoformat() if d.resolved_at else None
-                }
-                for d in disputes
-            ]
-            
-            # Add all counter requests
-            counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
-            data['counter_requests'] = [
-                {
-                    "counter_id": str(cr.counter_id),
-                    "requested_by": cr.requested_by,
-                    "seller": {
-                        "id": str(cr.seller_id.id),
-                        "username": cr.seller_id.username
-                    },
-                    "shop": {
-                        "id": str(cr.shop_id.id),
-                        "name": cr.shop_id.name
-                    },
-                    "counter_refund_method": cr.counter_refund_method,
-                    "counter_refund_type": cr.counter_refund_type,
-                    "counter_refund_amount": float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
-                    "notes": cr.notes,
-                    "status": cr.status,
-                    "requested_at": cr.requested_at.isoformat()
-                }
-                for cr in counter_requests
-            ]
-            
-            return Response(data)
-            
         except User.DoesNotExist:
-            return Response({"error": "User not found"}, 
-                            status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        if not user.is_admin:
+            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            refund = Refund.objects.select_related(
+                'order_id', 'requested_by', 'processed_by', 'payment_detail'
+            ).prefetch_related(
+                'items__checkout__cart_item__product__shop',
+                'items__checkout__cart_item__variant',
+                'medias',
+                'proofs',
+                'counter_requests',
+                'dispute',
+                'return_request__medias'
+            ).get(refund_id=pk)
+        except Refund.DoesNotExist:
+            return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Base refund details (implement this method to return basic refund fields)
+        data = self._get_refund_details_data(refund, request, user)
+
+        # ========== Add missing core information ==========
+
+        # --- Order information ---
+        order = refund.order_id
+        data['order'] = {
+            "order_id": str(order.order),
+            "total_amount": float(order.total_amount),
+            "payment_method": order.payment_method,
+            "status": order.status,
+            "created_at": order.created_at.isoformat(),
+            "delivery_address": order.delivery_address_text,
+            "receipt_url": get_media_url(order.receipt) if order.receipt else None,
+        }
+
+        # --- Customer information ---
+        customer_user = refund.requested_by
+        data['customer'] = {
+            "id": str(customer_user.id),
+            "username": customer_user.username,
+            "email": customer_user.email,
+            "first_name": customer_user.first_name,
+            "last_name": customer_user.last_name,
+            "contact_number": customer_user.contact_number,
+            "address": {
+                "street": customer_user.street,
+                "barangay": customer_user.barangay,
+                "city": customer_user.city,
+                "province": customer_user.province,
+                "zip_code": customer_user.zip_code,
+            }
+        }
+
+        # --- Seller & Shop information (derived from order items) ---
+        seller_info = None
+        shop_info = None
+        products = []
+
+        for refund_item in refund.items.select_related('checkout__cart_item__product__shop__customer').all():
+            cart_item = refund_item.checkout.cart_item
+            product = cart_item.product
+            variant = cart_item.variant
+            shop = product.shop
+            seller = shop.customer if shop else None
+
+            # Capture seller and shop (use the first item as representative)
+            if seller and not seller_info:
+                seller_info = {
+                    "id": str(seller.customer.id),
+                    "username": seller.customer.username,
+                    "email": seller.customer.email,
+                    "contact_number": seller.customer.contact_number,
+                }
+            if shop and not shop_info:
+                shop_info = {
+                    "id": str(shop.id),
+                    "name": shop.name,
+                    "description": shop.description,
+                    "contact_number": shop.contact_number,
+                    "address": {
+                        "street": shop.street,
+                        "barangay": shop.barangay,
+                        "city": shop.city,
+                        "province": shop.province,
+                        "zip_code": shop.zip_code,
+                    }
+                }
+
+            # Collect product details for each refund item
+            products.append({
+                "product_id": str(product.id),
+                "product_name": product.name,
+                "variant_id": str(variant.id) if variant else None,
+                "variant_title": variant.title if variant else None,
+                "sku_code": variant.sku_code if variant else None,
+                "quantity": refund_item.quantity,
+                "price_per_unit": float(refund_item.amount / refund_item.quantity) if refund_item.amount and refund_item.quantity else None,
+                "total_amount": float(refund_item.amount) if refund_item.amount else None,
+                "image_url": get_media_url(variant.image) if variant and variant.image else get_media_url(product.productmedia_set.first().file_data if product.productmedia_set.exists() else None),
+            })
+
+        data['seller'] = seller_info
+        data['shop'] = shop_info
+        data['products'] = products
+
+        # --- Payment Details (from UserPaymentDetail) ---
+        if refund.payment_detail:
+            data['payment_detail'] = {
+                "payment_id": str(refund.payment_detail.payment_id),
+                "payment_method": refund.payment_detail.payment_method,
+                "bank_name": refund.payment_detail.bank_name,
+                "account_name": refund.payment_detail.account_name,
+                "account_number": refund.payment_detail.account_number,  # consider masking
+                "is_default": refund.payment_detail.is_default,
+                "verified_by": {
+                    "id": str(refund.payment_detail.verified_by.id) if refund.payment_detail.verified_by else None,
+                    "username": refund.payment_detail.verified_by.username if refund.payment_detail.verified_by else None,
+                } if refund.payment_detail.verified_by else None,
+            }
+        else:
+            data['payment_detail'] = None
+
+        # --- Refund method details (wallet/bank/remittance) ---
+        if refund.final_refund_method == 'wallet' and hasattr(refund, 'wallet'):
+            data['refund_method_details'] = {
+                "type": "wallet",
+                "provider": refund.wallet.provider,
+                "account_name": refund.wallet.account_name,
+                "account_number": refund.wallet.account_number,
+                "contact_number": refund.wallet.contact_number,
+            }
+        elif refund.final_refund_method == 'bank' and hasattr(refund, 'bank'):
+            data['refund_method_details'] = {
+                "type": "bank",
+                "bank_name": refund.bank.bank_name,
+                "account_name": refund.bank.account_name,
+                "account_number": refund.bank.account_number,
+                "account_type": refund.bank.account_type,
+                "branch": refund.bank.branch,
+            }
+        elif refund.final_refund_method == 'remittance' and hasattr(refund, 'remittance'):
+            data['refund_method_details'] = {
+                "type": "remittance",
+                "provider": refund.remittance.provider,
+                "first_name": refund.remittance.first_name,
+                "last_name": refund.remittance.last_name,
+                "contact_number": refund.remittance.contact_number,
+                "address": {
+                    "street": refund.remittance.street,
+                    "barangay": refund.remittance.barangay,
+                    "city": refund.remittance.city,
+                    "province": refund.remittance.province,
+                    "zip_code": refund.remittance.zip_code,
+                    "country": refund.remittance.country,
+                },
+                "valid_id": {
+                    "type": refund.remittance.valid_id_type,
+                    "number": refund.remittance.valid_id_number,
+                }
+            }
+        else:
+            data['refund_method_details'] = None
+
+        # --- Return address (if return request exists) ---
+        if hasattr(refund, 'return_request') and refund.return_request:
+            return_addr = getattr(refund, 'return_address', None)
+            if return_addr:
+                data['return_address'] = {
+                    "recipient_name": return_addr.recipient_name,
+                    "contact_number": return_addr.contact_number,
+                    "address": f"{return_addr.street}, {return_addr.barangay}, {return_addr.city}, {return_addr.province} {return_addr.zip_code}, {return_addr.country}",
+                    "notes": return_addr.notes,
+                }
+            else:
+                data['return_address'] = None
+        else:
+            data['return_address'] = None
+
+        # --- Admin notes ---
+        admin_notes = getattr(refund, 'admin_notes', None)
+        if not admin_notes and hasattr(refund, 'dispute') and refund.dispute:
+            admin_notes = refund.dispute.admin_notes
+        data['admin_notes'] = admin_notes
+
+        # --- Processed by ---
+        if refund.processed_by:
+            data['processed_by'] = {
+                "id": str(refund.processed_by.id),
+                "username": refund.processed_by.username,
+                "email": refund.processed_by.email,
+            }
+        else:
+            data['processed_by'] = None
+
+        # --- Proofs ---
+        data['proofs'] = []
+        for proof in refund.proofs.all():
+            data['proofs'].append({
+                "id": str(proof.id),
+                "file_url": get_media_url(proof.file_data),
+                "file_type": proof.file_type,
+                "notes": proof.notes,
+                "uploaded_by": {
+                    "id": str(proof.uploaded_by.id),
+                    "username": proof.uploaded_by.username,
+                },
+                "created_at": proof.created_at.isoformat(),
+            })
+
+        # --- Disputes ---
+        disputes = DisputeRequest.objects.filter(refund_id=refund).order_by('-created_at')
+        data['disputes'] = []
+        for d in disputes:
+            data['disputes'].append({
+                "id": str(d.id),
+                "requested_by": {
+                    "id": str(d.requested_by.id),
+                    "username": d.requested_by.username,
+                    "email": d.requested_by.email,
+                },
+                "reason": d.reason,
+                "status": d.status,
+                "admin_notes": d.admin_notes,
+                "case_category": d.case_category,
+                "created_at": d.created_at.isoformat(),
+                "resolved_at": d.resolved_at.isoformat() if d.resolved_at else None,
+            })
+
+        # --- Counter requests ---
+        counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
+        data['counter_requests'] = []
+        for cr in counter_requests:
+            data['counter_requests'].append({
+                "counter_id": str(cr.counter_id),
+                "requested_by": cr.requested_by,
+                "seller": {
+                    "id": str(cr.seller_id.id),
+                    "username": cr.seller_id.username,
+                    "email": cr.seller_id.email,
+                },
+                "shop": {
+                    "id": str(cr.shop_id.id),
+                    "name": cr.shop_id.name,
+                },
+                "counter_refund_method": cr.counter_refund_method,
+                "counter_refund_type": cr.counter_refund_type,
+                "counter_refund_amount": float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
+                "notes": cr.notes,
+                "status": cr.status,
+                "requested_at": cr.requested_at.isoformat(),
+            })
+
+        # --- Return request (including tracking number) ---
+        if hasattr(refund, 'return_request') and refund.return_request:
+            ret = refund.return_request
+            data['return_request'] = {
+                "return_id": str(ret.return_id),
+                "return_method": ret.return_method,
+                "logistic_service": ret.logistic_service,
+                "tracking_number": ret.tracking_number,   # <-- correct field
+                "status": ret.status,
+                "shipped_at": ret.shipped_at.isoformat() if ret.shipped_at else None,
+                "received_at": ret.received_at.isoformat() if ret.received_at else None,
+                "notes": ret.notes,
+                "medias": [
+                    {
+                        "id": str(media.id),
+                        "file_url": get_media_url(media.file_data),
+                        "file_type": media.file_type,
+                        "uploaded_at": media.uploaded_at.isoformat(),
+                    }
+                    for media in ret.medias.all()
+                ]
+            }
+        else:
+            data['return_request'] = None
+
+        return Response(data)
     @action(detail=True, methods=['post'])
     def admin_update_refund(self, request, pk=None):
         """

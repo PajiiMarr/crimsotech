@@ -14,7 +14,6 @@ import {
   Image,
   Dimensions,
   Platform,
-  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
@@ -39,6 +38,17 @@ const STATUS_COLORS: Record<string, string> = {
   rejected: '#DC2626',
   cancelled: '#9CA3AF',
 };
+
+// ========== REASON CODES ==========
+const REASON_CODES = [
+  { id: 'invalid_request', label: 'Invalid request' },
+  { id: 'insufficient_evidence', label: 'Insufficient evidence' },
+  { id: 'buyer_fault', label: 'Buyer at fault' },
+  { id: 'good_condition_handed', label: 'Item was in good condition when handed to rider' },
+  { id: 'order_handed_to_rider', label: 'Properly handed the order to the rider' },
+  { id: 'fraud', label: 'Suspicious or fraudulent' },
+  { id: 'other', label: 'Other' },
+];
 
 // ========== HELPERS ==========
 const formatCurrency = (value: any): string => {
@@ -67,6 +77,25 @@ const getAbsoluteUrl = (url: string) => {
   return `${cleanBase}${url.startsWith('/') ? url : `/${url}`}`;
 };
 
+// Helper to compute fee based on refund method (same as backend)
+const serviceFeeForMethod = (method?: string | null) => {
+  const m = String(method || '').toLowerCase().trim();
+  if (!m) return 10;
+  if (m.includes('wallet')) return 10;
+  if (m.includes('remittance')) return 50;
+  if (m.includes('bank')) return 20;
+  if (m.includes('voucher')) return 0;
+  return 10;
+};
+
+// Compute return amount (full refund minus fee)
+const computeReturnAmount = (refund: any) => {
+  const total = parseFloat(refund.total_refund_amount) || 0;
+  const method = refund.buyer_preferred_refund_method || 'wallet';
+  const fee = serviceFeeForMethod(method);
+  return Math.max(0, total - fee);
+};
+
 export default function ViewRefundDetails() {
   const { refundId, shopId: paramShopId } = useLocalSearchParams<{ refundId: string; shopId: string }>();
   const { userId, shopId: authShopId } = useAuth();
@@ -82,40 +111,47 @@ export default function ViewRefundDetails() {
   const [selectedMedia, setSelectedMedia] = useState<{ url: string; type: string } | null>(null);
   const videoRef = useRef<Video>(null);
 
-  // Modal states for actions (unchanged)
-  const [showApproveModal, setShowApproveModal] = useState(false);
-  const [approveAmount, setApproveAmount] = useState('');
-  const [approveNote, setApproveNote] = useState('');
+  // Approve confirmation modal
+  const [showApproveConfirm, setShowApproveConfirm] = useState(false);
 
+  // Reject modal
   const [showRejectModal, setShowRejectModal] = useState(false);
-  const [rejectReason, setRejectReason] = useState('');
-  const [rejectCode, setRejectCode] = useState('');
+  const [rejectReasonCode, setRejectReasonCode] = useState('');
+  const [rejectReasonDetail, setRejectReasonDetail] = useState('');
+  const [rejectFiles, setRejectFiles] = useState<any[]>([]);
+  const [rejectFilePreviews, setRejectFilePreviews] = useState<string[]>([]);
+  const [showReasonPicker, setShowReasonPicker] = useState(false);
 
+  // Negotiate modal
   const [showNegotiateModal, setShowNegotiateModal] = useState(false);
-  const [counterMethod, setCounterMethod] = useState('');
-  const [counterType, setCounterType] = useState('');
-  const [counterAmount, setCounterAmount] = useState('');
+  const [counterType, setCounterType] = useState<'return' | 'replace'>('return');
   const [counterNotes, setCounterNotes] = useState('');
+  const [counterAmount, setCounterAmount] = useState(0);
 
+  // Process payment modal (unchanged)
   const [showProcessModal, setShowProcessModal] = useState(false);
   const [processFinalMethod, setProcessFinalMethod] = useState('');
   const [processStatus, setProcessStatus] = useState('');
   const [processProofs, setProcessProofs] = useState<any[]>([]);
 
+  // Return status modal
   const [showReturnStatusModal, setShowReturnStatusModal] = useState(false);
   const [returnAction, setReturnAction] = useState('');
   const [returnNotes, setReturnNotes] = useState('');
 
+  // Verify item modal
   const [showVerifyModal, setShowVerifyModal] = useState(false);
   const [verifyResult, setVerifyResult] = useState('');
   const [verifyNotes, setVerifyNotes] = useState('');
 
+  // Provide tracking modal
   const [showTrackingModal, setShowTrackingModal] = useState(false);
   const [trackingService, setTrackingService] = useState('');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [shippedAt, setShippedAt] = useState('');
   const [trackingMedia, setTrackingMedia] = useState<any[]>([]);
 
+  // Upload proofs modal (seller proof uploads)
   const [showProofModal, setShowProofModal] = useState(false);
   const [proofFiles, setProofFiles] = useState<any[]>([]);
   const [proofNotes, setProofNotes] = useState('');
@@ -146,21 +182,18 @@ export default function ViewRefundDetails() {
     }
   };
 
-  // ========== API ACTIONS (unchanged) ==========
+  // ========== API ACTIONS ==========
   const handleApprove = async () => {
     try {
       setActionLoading(true);
-      const payload: any = { action: 'approve', notes: approveNote };
-      if (approveAmount && !isNaN(parseFloat(approveAmount))) {
-        payload.approved_refund_amount = parseFloat(approveAmount);
-      }
-      await AxiosInstance.post(`/return-refund/${refundId}/seller_respond_to_refund/`, payload, {
+      await AxiosInstance.post(`/return-refund/${refundId}/seller_respond_to_refund/`, {
+        action: 'approve',
+        notes: '',
+      }, {
         headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
       });
       Alert.alert('Success', 'Refund approved successfully');
-      setShowApproveModal(false);
-      setApproveAmount('');
-      setApproveNote('');
+      setShowApproveConfirm(false);
       fetchDetail();
     } catch (err: any) {
       Alert.alert('Error', err?.response?.data?.error || 'Failed to approve refund');
@@ -170,23 +203,30 @@ export default function ViewRefundDetails() {
   };
 
   const handleReject = async () => {
-    if (!rejectReason.trim()) {
-      Alert.alert('Required', 'Please provide a reason for rejection');
+    if (!rejectReasonCode || !rejectReasonDetail.trim()) {
+      Alert.alert('Required', 'Please select a reason and provide details');
       return;
     }
     try {
       setActionLoading(true);
-      await AxiosInstance.post(`/return-refund/${refundId}/seller_respond_to_refund/`, {
-        action: 'reject',
-        notes: rejectReason,
-        reason_code: rejectCode,
-      }, {
-        headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
+      const formData = new FormData();
+      formData.append('action', 'reject');
+      formData.append('reason_code', rejectReasonCode);
+      formData.append('notes', rejectReasonDetail);
+      if (rejectFiles.length) {
+        rejectFiles.forEach((file) => {
+          formData.append('file_data', file);
+        });
+      }
+      await AxiosInstance.post(`/return-refund/${refundId}/seller_respond_to_refund/`, formData, {
+        headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '', 'Content-Type': 'multipart/form-data' },
       });
       Alert.alert('Success', 'Refund rejected');
       setShowRejectModal(false);
-      setRejectReason('');
-      setRejectCode('');
+      setRejectReasonCode('');
+      setRejectReasonDetail('');
+      setRejectFiles([]);
+      setRejectFilePreviews([]);
       fetchDetail();
     } catch (err: any) {
       Alert.alert('Error', err?.response?.data?.error || 'Failed to reject refund');
@@ -196,34 +236,25 @@ export default function ViewRefundDetails() {
   };
 
   const handleNegotiate = async () => {
-    if (!counterMethod) {
-      Alert.alert('Required', 'Please select a refund method');
-      return;
-    }
-    if (!counterType) {
-      Alert.alert('Required', 'Please select a refund type (keep/return)');
-      return;
-    }
-    if (counterType !== 'keep' && !counterAmount) {
-      Alert.alert('Required', 'Counter amount is required');
-      return;
+    // Map 'replace' to 'return' for now until backend supports 'replace'
+    const typeToSend = counterType === 'replace' ? 'return' : counterType;
+    let amount = undefined;
+    if (typeToSend === 'return') {
+      amount = computeReturnAmount(refund);
     }
     try {
       setActionLoading(true);
       await AxiosInstance.post(`/return-refund/${refundId}/seller_respond_to_refund/`, {
         action: 'negotiate',
-        counter_refund_method: counterMethod,
-        counter_refund_type: counterType,
-        counter_refund_amount: parseFloat(counterAmount),
+        counter_refund_type: typeToSend,
+        counter_refund_amount: amount,
         counter_notes: counterNotes,
       }, {
         headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
       });
       Alert.alert('Success', 'Counter offer sent');
       setShowNegotiateModal(false);
-      setCounterMethod('');
-      setCounterType('');
-      setCounterAmount('');
+      setCounterType('return');
       setCounterNotes('');
       fetchDetail();
     } catch (err: any) {
@@ -387,7 +418,7 @@ export default function ViewRefundDetails() {
     }
   };
 
-  const pickDocument = async (setter: Function) => {
+  const pickDocument = async (setter: Function, setPreviews?: Function) => {
     const result = await DocumentPicker.getDocumentAsync({
       type: ['image/*', 'video/*'],
       copyToCacheDirectory: true,
@@ -400,6 +431,10 @@ export default function ViewRefundDetails() {
         name: asset.name,
       }));
       setter((prev: any[]) => [...prev, ...files]);
+      if (setPreviews) {
+        const previews = files.map(f => f.uri);
+        setPreviews((prev: string[]) => [...prev, ...previews]);
+      }
     }
   };
 
@@ -456,8 +491,10 @@ export default function ViewRefundDetails() {
       case 'negotiation':
         return `You have sent a counter‑offer. Waiting for the buyer to accept or reject.`;
       case 'approved':
-        if (refund.refund_type === 'return') return `Return approved. Please wait for the buyer to ship the item back.`;
-        return `Refund approved. You can now process the payment.`;
+        if (refund.refund_type === 'return') {
+          return `Waiting for buyer to ship the item back. Once the item is shipped, you will be notified.`;
+        }
+        return `Refund approved. The refund will be processed by the admin team. You don't need to take any further action.`;
       case 'dispute':
         return `A dispute has been opened. Please check the details and respond.`;
       case 'rejected':
@@ -469,18 +506,19 @@ export default function ViewRefundDetails() {
     }
   };
 
-  // ========== ACTION BUTTONS (same as before) ==========
+  // ========== ACTION BUTTONS ==========
   const renderActionButtons = () => {
     if (!refund) return null;
     const status = refund.status?.toLowerCase();
     const returnStatus = refund.return_request?.status?.toLowerCase();
     const isReturn = refund.refund_type === 'return';
+    const refundType = refund.refund_type; // 'keep' or 'return'
 
     let buttons: React.ReactNode[] = [];
 
     if (status === 'pending') {
       buttons = [
-        <TouchableOpacity key="approve" style={[styles.actionBtn, styles.approveBtn]} onPress={() => setShowApproveModal(true)} disabled={actionLoading}>
+        <TouchableOpacity key="approve" style={[styles.actionBtn, styles.approveBtn]} onPress={() => setShowApproveConfirm(true)} disabled={actionLoading}>
           <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
           <Text style={styles.actionBtnText}>Approve</Text>
         </TouchableOpacity>,
@@ -488,20 +526,29 @@ export default function ViewRefundDetails() {
           <Ionicons name="close-circle-outline" size={16} color="#fff" />
           <Text style={styles.actionBtnText}>Reject</Text>
         </TouchableOpacity>,
-        <TouchableOpacity key="negotiate" style={[styles.actionBtn, styles.negotiateBtn]} onPress={() => setShowNegotiateModal(true)} disabled={actionLoading}>
+        <TouchableOpacity key="negotiate" style={[styles.actionBtn, styles.negotiateBtn]} onPress={() => {
+          // Pre‑select appropriate default option based on refund type
+          if (refundType === 'keep') {
+            setCounterType('return'); // default to return
+          } else if (refundType === 'return') {
+            setCounterType('replace'); // only option
+          }
+          setCounterAmount(computeReturnAmount(refund));
+          setShowNegotiateModal(true);
+        }} disabled={actionLoading}>
           <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
           <Text style={styles.actionBtnText}>Negotiate</Text>
         </TouchableOpacity>,
       ];
     } else {
-      if (status === 'approved' && !isReturn) {
-        buttons.push(
-          <TouchableOpacity key="process" style={[styles.actionBtn, styles.processBtn]} onPress={() => setShowProcessModal(true)} disabled={actionLoading}>
-            <Ionicons name="cash-outline" size={16} color="#fff" />
-            <Text style={styles.actionBtnText}>Process Payment</Text>
-          </TouchableOpacity>
-        );
-      }
+      // if (status === 'approved' && !isReturn) {
+      //   buttons.push(
+      //     <TouchableOpacity key="process" style={[styles.actionBtn, styles.processBtn]} onPress={() => setShowProcessModal(true)} disabled={actionLoading}>
+      //       <Ionicons name="cash-outline" size={16} color="#fff" />
+      //       <Text style={styles.actionBtnText}>Process Payment</Text>
+      //     </TouchableOpacity>
+      //   );
+      // }
 
       if (isReturn && status === 'approved') {
         if (['pending', 'approved'].includes(returnStatus || '')) {
@@ -541,7 +588,9 @@ export default function ViewRefundDetails() {
         }
       }
 
-      if (status !== 'pending') {
+      // Only show Upload Proofs for non-pending and non-approved statuses
+      const shouldShowProofs = status !== 'pending' && status !== 'approved';
+      if (shouldShowProofs) {
         buttons.push(
           <TouchableOpacity key="proofs" style={[styles.actionBtn, styles.proofBtn]} onPress={() => setShowProofModal(true)} disabled={uploadingProofs}>
             <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
@@ -564,35 +613,35 @@ export default function ViewRefundDetails() {
     );
   };
 
-  // ========== MODALS (unchanged) ==========
+  // ========== MODAL RENDERING ==========
   const renderModals = () => (
     <>
-      {/* Approve Modal */}
-      <Modal visible={showApproveModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Approve Refund</Text>
-            <Text style={styles.modalSubtitle}>You may optionally set an approved amount (default full amount).</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Approved amount (optional)"
-              keyboardType="decimal-pad"
-              value={approveAmount}
-              onChangeText={setApproveAmount}
-            />
-            <TextInput
-              style={styles.textArea}
-              placeholder="Note (optional)"
-              multiline
-              value={approveNote}
-              onChangeText={setApproveNote}
-            />
+      {/* Approve Confirmation Modal */}
+      <Modal visible={showApproveConfirm} transparent={true} animationType="none" onRequestClose={() => setShowApproveConfirm(false)}>
+        <View style={styles.centeredModalOverlay}>
+          <View style={styles.centeredModalBox}>
+            <Text style={styles.modalTitle}>Confirm Approval</Text>
+            <Text style={styles.modalSubtitle}>You are about to approve this refund request. Please review the details:</Text>
+            <View style={styles.approveDetails}>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Refund Amount:</Text>
+                <Text style={styles.detailValue}>{formatCurrency(refund?.total_refund_amount)}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Refund Type:</Text>
+                <Text style={styles.detailValue}>{refund?.refund_type === 'return' ? 'Return Item' : 'Keep Item'}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Preferred Method:</Text>
+                <Text style={styles.detailValue}>{refund?.buyer_preferred_refund_method || 'N/A'}</Text>
+              </View>
+            </View>
             <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.modalCancel} onPress={() => setShowApproveModal(false)}>
+              <TouchableOpacity style={styles.modalCancel} onPress={() => setShowApproveConfirm(false)}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.modalConfirm} onPress={handleApprove} disabled={actionLoading}>
-                {actionLoading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalConfirmText}>Approve</Text>}
+                {actionLoading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalConfirmText}>Confirm</Text>}
               </TouchableOpacity>
             </View>
           </View>
@@ -600,23 +649,44 @@ export default function ViewRefundDetails() {
       </Modal>
 
       {/* Reject Modal */}
-      <Modal visible={showRejectModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
+      <Modal visible={showRejectModal} transparent={true} animationType="none" onRequestClose={() => setShowRejectModal(false)}>
+        <View style={styles.centeredModalOverlay}>
+          <View style={styles.centeredModalBox}>
             <Text style={styles.modalTitle}>Reject Refund</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Reason code (optional)"
-              value={rejectCode}
-              onChangeText={setRejectCode}
-            />
+            <TouchableOpacity onPress={() => setShowReasonPicker(true)} style={styles.input}>
+              <Text style={rejectReasonCode ? styles.inputText : styles.placeholderText}>
+                {REASON_CODES.find(r => r.id === rejectReasonCode)?.label || 'Select reason'}
+              </Text>
+            </TouchableOpacity>
             <TextInput
               style={styles.textArea}
-              placeholder="Reason details"
+              placeholder="Detailed reason"
               multiline
-              value={rejectReason}
-              onChangeText={setRejectReason}
+              numberOfLines={3}
+              value={rejectReasonDetail}
+              onChangeText={setRejectReasonDetail}
             />
+            <Text style={styles.label}>Evidence (optional, up to 4 files)</Text>
+            <TouchableOpacity style={styles.uploadBtn} onPress={() => pickDocument(setRejectFiles, setRejectFilePreviews)}>
+              <Ionicons name="cloud-upload-outline" size={20} color="#EE4D2D" />
+              <Text style={styles.uploadText}>Select files</Text>
+            </TouchableOpacity>
+            {rejectFiles.length > 0 && (
+              <ScrollView horizontal style={styles.previewScroll}>
+                {rejectFilePreviews.map((uri, idx) => (
+                  <View key={idx} style={styles.previewItem}>
+                    <Image source={{ uri }} style={styles.previewImage} />
+                    <TouchableOpacity onPress={() => {
+                      const newFiles = rejectFiles.filter((_, i) => i !== idx);
+                      setRejectFiles(newFiles);
+                      setRejectFilePreviews(newFiles.map(f => f.uri));
+                    }} style={styles.removePreview}>
+                      <Ionicons name="close-circle" size={20} color="#EF4444" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
             <View style={styles.modalBtns}>
               <TouchableOpacity style={styles.modalCancel} onPress={() => setShowRejectModal(false)}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
@@ -629,49 +699,75 @@ export default function ViewRefundDetails() {
         </View>
       </Modal>
 
+      {/* Reason Picker Modal */}
+      <Modal visible={showReasonPicker} transparent={true} animationType="none" onRequestClose={() => setShowReasonPicker(false)}>
+        <View style={styles.centeredModalOverlay}>
+          <View style={styles.centeredModalBox}>
+            <Text style={styles.modalTitle}>Select Rejection Reason</Text>
+            {REASON_CODES.map(reason => (
+              <TouchableOpacity
+                key={reason.id}
+                style={styles.optionItem}
+                onPress={() => {
+                  setRejectReasonCode(reason.id);
+                  setShowReasonPicker(false);
+                }}
+              >
+                <Text style={styles.optionText}>{reason.label}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.modalCancel} onPress={() => setShowReasonPicker(false)}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* Negotiate Modal */}
-      <Modal visible={showNegotiateModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Counter Offer</Text>
-            <View style={styles.row}>
-              <View style={styles.flex1}>
-                <Text style={styles.label}>Refund Type</Text>
-                <View style={styles.radioGroup}>
-                  {['keep', 'return'].map(type => (
-                    <TouchableOpacity key={type} style={styles.radio} onPress={() => setCounterType(type)}>
-                      <Ionicons name={counterType === type ? 'radio-button-on' : 'radio-button-off'} size={20} color="#EE4D2D" />
-                      <Text style={styles.radioText}>{type === 'keep' ? 'Keep Item' : 'Return Item'}</Text>
+      <Modal visible={showNegotiateModal} transparent={true} animationType="none" onRequestClose={() => setShowNegotiateModal(false)}>
+        <View style={styles.centeredModalOverlay}>
+          <View style={styles.centeredModalBox}>
+            <Text style={styles.modalTitle}>Negotiate</Text>
+            <Text style={styles.modalSubtitle}>Propose a new solution to the buyer.</Text>
+            {(() => {
+              const refundType = refund?.refund_type;
+              if (refundType === 'keep') {
+                return (
+                  <View style={styles.radioGroup}>
+                    <TouchableOpacity style={styles.radio} onPress={() => setCounterType('return')}>
+                      <Ionicons name={counterType === 'return' ? 'radio-button-on' : 'radio-button-off'} size={20} color="#EE4D2D" />
+                      <Text style={styles.radioText}>Return Item (Full Refund)</Text>
                     </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-              <View style={styles.flex1}>
-                <Text style={styles.label}>Refund Method</Text>
-                <View style={styles.radioGroup}>
-                  {['wallet', 'bank', 'remittance', 'voucher'].map(method => (
-                    <TouchableOpacity key={method} style={styles.radio} onPress={() => setCounterMethod(method)}>
-                      <Ionicons name={counterMethod === method ? 'radio-button-on' : 'radio-button-off'} size={20} color="#EE4D2D" />
-                      <Text style={styles.radioText}>{method}</Text>
+                    <TouchableOpacity style={styles.radio} onPress={() => setCounterType('replace')}>
+                      <Ionicons name={counterType === 'replace' ? 'radio-button-on' : 'radio-button-off'} size={20} color="#EE4D2D" />
+                      <Text style={styles.radioText}>Replace Item</Text>
                     </TouchableOpacity>
-                  ))}
-                </View>
+                  </View>
+                );
+              } else if (refundType === 'return') {
+                return (
+                  <View style={styles.radioGroup}>
+                    <TouchableOpacity style={styles.radio} onPress={() => setCounterType('replace')}>
+                      <Ionicons name={counterType === 'replace' ? 'radio-button-on' : 'radio-button-off'} size={20} color="#EE4D2D" />
+                      <Text style={styles.radioText}>Replace Item</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              }
+              return null;
+            })()}
+            {counterType === 'return' && (
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Refund Amount:</Text>
+                <Text style={[styles.detailValue, { color: '#10B981' }]}>{formatCurrency(computeReturnAmount(refund))}</Text>
               </View>
-            </View>
-            <TextInput
-              style={styles.input}
-              placeholder="Counter amount (required if type is keep/return)"
-              keyboardType="decimal-pad"
-              value={counterAmount}
-              onChangeText={setCounterAmount}
-            />
-            <TextInput
-              style={styles.textArea}
-              placeholder="Notes (optional)"
-              multiline
-              value={counterNotes}
-              onChangeText={setCounterNotes}
-            />
+            )}
+            {counterType === 'replace' && (
+              <View style={styles.infoNote}>
+                <Text style={styles.infoNoteText}>The buyer will receive a replacement item. Please coordinate with the buyer for the replacement details.</Text>
+              </View>
+            )}
+           
             <View style={styles.modalBtns}>
               <TouchableOpacity style={styles.modalCancel} onPress={() => setShowNegotiateModal(false)}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
@@ -684,10 +780,10 @@ export default function ViewRefundDetails() {
         </View>
       </Modal>
 
-      {/* Process Payment Modal */}
-      <Modal visible={showProcessModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
+      {/* Process Payment Modal (unchanged) */}
+      <Modal visible={showProcessModal} transparent={true} animationType="none" onRequestClose={() => setShowProcessModal(false)}>
+        <View style={styles.centeredModalOverlay}>
+          <View style={styles.centeredModalBox}>
             <Text style={styles.modalTitle}>Process Refund Payment</Text>
             <Text style={styles.label}>Final Refund Method</Text>
             <View style={styles.radioGroupRow}>
@@ -726,9 +822,9 @@ export default function ViewRefundDetails() {
       </Modal>
 
       {/* Update Return Status Modal */}
-      <Modal visible={showReturnStatusModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
+      <Modal visible={showReturnStatusModal} transparent={true} animationType="none" onRequestClose={() => setShowReturnStatusModal(false)}>
+        <View style={styles.centeredModalOverlay}>
+          <View style={styles.centeredModalBox}>
             <Text style={styles.modalTitle}>Update Return Status</Text>
             <Text style={styles.label}>Action</Text>
             <View style={styles.radioGroupRow}>
@@ -771,9 +867,9 @@ export default function ViewRefundDetails() {
       </Modal>
 
       {/* Verify Item Modal */}
-      <Modal visible={showVerifyModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
+      <Modal visible={showVerifyModal} transparent={true} animationType="none" onRequestClose={() => setShowVerifyModal(false)}>
+        <View style={styles.centeredModalOverlay}>
+          <View style={styles.centeredModalBox}>
             <Text style={styles.modalTitle}>Verify Returned Item</Text>
             <View style={styles.radioGroupRow}>
               <TouchableOpacity style={styles.radio} onPress={() => setVerifyResult('approved')}>
@@ -805,9 +901,9 @@ export default function ViewRefundDetails() {
       </Modal>
 
       {/* Provide Tracking Modal */}
-      <Modal visible={showTrackingModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
+      <Modal visible={showTrackingModal} transparent={true} animationType="none" onRequestClose={() => setShowTrackingModal(false)}>
+        <View style={styles.centeredModalOverlay}>
+          <View style={styles.centeredModalBox}>
             <Text style={styles.modalTitle}>Provide Tracking Info</Text>
             <TextInput
               style={styles.input}
@@ -846,9 +942,9 @@ export default function ViewRefundDetails() {
       </Modal>
 
       {/* Upload Proofs Modal */}
-      <Modal visible={showProofModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
+      <Modal visible={showProofModal} transparent={true} animationType="none" onRequestClose={() => setShowProofModal(false)}>
+        <View style={styles.centeredModalOverlay}>
+          <View style={styles.centeredModalBox}>
             <Text style={styles.modalTitle}>Upload Proofs</Text>
             <TouchableOpacity style={styles.uploadBtn} onPress={() => pickDocument(setProofFiles)}>
               <Ionicons name="cloud-upload-outline" size={20} color="#EE4D2D" />
@@ -875,7 +971,7 @@ export default function ViewRefundDetails() {
       </Modal>
 
       {/* Media Viewer Modal */}
-      <Modal visible={mediaModalVisible} transparent animationType="fade" onRequestClose={() => setMediaModalVisible(false)}>
+      <Modal visible={mediaModalVisible} transparent animationType="none" onRequestClose={() => setMediaModalVisible(false)}>
         <View style={styles.mediaModalOverlay}>
           <TouchableOpacity style={styles.mediaCloseButton} onPress={() => setMediaModalVisible(false)}>
             <Ionicons name="close" size={28} color="#fff" />
@@ -941,7 +1037,7 @@ export default function ViewRefundDetails() {
 
   // Build refund items: merge order_items with refund.items
   const orderItems = refund.order_items || [];
-  const refundItems = refund.items || []; // refund.items from API (RefundItem objects)
+  const refundItems = refund.items || [];
   const refundMap = new Map();
   refundItems.forEach((ri: any) => refundMap.set(ri.checkout_id, ri));
 
@@ -953,6 +1049,13 @@ export default function ViewRefundDetails() {
       refundAmount: ri ? ri.amount : 0,
     };
   });
+
+  // Determine if we have payment details to show
+  const showPaymentDetails = paymentDetails.payment_method && (
+    (paymentDetails.payment_method === 'bank' && (paymentDetails.bank_name || paymentDetails.account_number)) ||
+    (paymentDetails.payment_method === 'wallet' && (paymentDetails.provider || paymentDetails.account_number)) ||
+    (paymentDetails.payment_method === 'remittance' && (paymentDetails.provider || paymentDetails.full_name))
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1000,7 +1103,7 @@ export default function ViewRefundDetails() {
           <InfoRow label="Address" value={deliveryFullAddress} multiline />
         </View>
 
-        {/* Items to Refund (with refund quantities and amounts) */}
+        {/* Items to Refund */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Items to Refund</Text>
           {mergedItems.length > 0 ? (
@@ -1065,16 +1168,17 @@ export default function ViewRefundDetails() {
           {paymentDetails.payment_method === 'voucher' && (
             <InfoRow label="Details" value="Store Voucher will be issued" />
           )}
-          {Object.keys(paymentDetails).length === 0 && !refund.buyer_preferred_refund_method && (
+          {!showPaymentDetails && !refund.buyer_preferred_refund_method && (
             <Text style={styles.noPaymentText}>No payment details provided</Text>
           )}
         </View>
 
-        {/* Refund Info (existing) */}
+        {/* Refund Info */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Refund Information</Text>
           <InfoRow label="Reason" value={refund.reason || 'N/A'} />
           <InfoRow label="Total Amount" value={formatCurrency(refund.total_refund_amount)} />
+          <InfoRow label="Refund Type" value={refund.refund_type === 'return' ? 'Return Item' : 'Keep Item'} />
           {refund.approved_refund_amount != null && (
             <InfoRow label="Approved Amount" value={formatCurrency(refund.approved_refund_amount)} />
           )}
@@ -1132,7 +1236,7 @@ export default function ViewRefundDetails() {
               <View key={idx} style={styles.counterItem}>
                 <Text style={styles.counterDate}>{formatDate(cr.requested_at)}</Text>
                 <Text style={styles.counterDetail}>
-                  {cr.counter_refund_type === 'keep' ? 'Keep Item' : 'Return Item'} - {cr.counter_refund_method}
+                  {cr.counter_refund_type === 'keep' ? 'Keep Item' : cr.counter_refund_type === 'return' ? 'Return Item' : 'Replace Item'} - {cr.counter_refund_method}
                   {cr.counter_refund_amount != null && ` - ${formatCurrency(cr.counter_refund_amount)}`}
                 </Text>
                 {cr.notes && <Text style={styles.counterNote}>{cr.notes}</Text>}
@@ -1265,6 +1369,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 8,
     gap: 6,
+    marginBottom: 20,
   },
   actionBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   approveBtn: { backgroundColor: '#10B981' },
@@ -1275,24 +1380,41 @@ const styles = StyleSheet.create({
   returnStatusBtn: { backgroundColor: '#F97316' },
   verifyBtn: { backgroundColor: '#8B5CF6' },
   proofBtn: { backgroundColor: '#6B7280' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalBox: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, paddingBottom: 40 },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: '#1F2937', marginBottom: 4 },
-  modalSubtitle: { fontSize: 13, color: '#6B7280', marginBottom: 14 },
+  centeredModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  centeredModalBox: {
+    width: SCREEN_WIDTH - 32,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    maxHeight: '80%',
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#1F2937', marginBottom: 4 },
+  modalSubtitle: { fontSize: 13, color: '#6B7280', marginBottom: 16 },
+  approveDetails: { marginBottom: 16 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  detailLabel: { fontSize: 14, color: '#6B7280' },
+  detailValue: { fontSize: 14, fontWeight: '500', color: '#1F2937' },
   input: {
     borderWidth: 1,
     borderColor: '#D1D5DB',
-    borderRadius: 10,
-    padding: 12,
+    borderRadius: 8,
+    padding: 10,
     fontSize: 14,
     color: '#1F2937',
     marginBottom: 12,
   },
+  inputText: { fontSize: 14, color: '#1F2937' },
+  placeholderText: { fontSize: 14, color: '#9CA3AF' },
   textArea: {
     borderWidth: 1,
     borderColor: '#D1D5DB',
-    borderRadius: 10,
-    padding: 12,
+    borderRadius: 8,
+    padding: 10,
     fontSize: 14,
     color: '#1F2937',
     height: 80,
@@ -1300,20 +1422,26 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   label: { fontSize: 13, fontWeight: '500', color: '#374151', marginBottom: 6 },
-  radioGroup: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 },
+  radioGroup: { marginBottom: 16 },
   radioGroupRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 },
   radio: { flexDirection: 'row', alignItems: 'center', marginRight: 16, marginBottom: 8 },
   radioText: { marginLeft: 6, fontSize: 13, color: '#1F2937' },
-  row: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-  flex1: { flex: 1 },
   uploadBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#EE4D2D', borderRadius: 8, padding: 10, marginBottom: 8 },
   uploadText: { marginLeft: 8, color: '#EE4D2D', fontSize: 14 },
   fileCount: { fontSize: 12, color: '#6B7280', textAlign: 'center', marginBottom: 12 },
+  previewScroll: { flexDirection: 'row', marginBottom: 12 },
+  previewItem: { marginRight: 8, position: 'relative' },
+  previewImage: { width: 60, height: 60, borderRadius: 8 },
+  removePreview: { position: 'absolute', top: -6, right: -6, backgroundColor: '#fff', borderRadius: 12 },
   modalBtns: { flexDirection: 'row', gap: 10, marginTop: 8 },
-  modalCancel: { flex: 1, backgroundColor: '#F3F4F6', paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
+  modalCancel: { flex: 1, backgroundColor: '#F3F4F6', paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
   modalCancelText: { fontSize: 14, fontWeight: '600', color: '#374151' },
-  modalConfirm: { flex: 1, backgroundColor: '#EE4D2D', paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
+  modalConfirm: { flex: 1, backgroundColor: '#EE4D2D', paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
   modalConfirmText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  optionItem: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  optionText: { fontSize: 14, color: '#1F2937' },
+  infoNote: { backgroundColor: '#EFF6FF', padding: 12, borderRadius: 8, marginBottom: 12 },
+  infoNoteText: { fontSize: 12, color: '#1E40AF', lineHeight: 16 },
   mediaModalOverlay: {
     flex: 1,
     backgroundColor: '#000',

@@ -58,7 +58,7 @@ export function meta(): Route.MetaDescriptors {
 
 // Updated interface to match your flattened data structure
 interface Refund {
-  refund: string;
+  refund: string;          // refund ID (from backend's refund_id)
   order_id: string;
   order_total_amount: number;
   requested_by_username: string;
@@ -66,11 +66,10 @@ interface Refund {
   processed_by_username?: string;
   processed_by_email?: string;
   reason: string;
-  // Amounts (optional - provided by recent changes)
   requested_refund_amount?: number;
   refund_fee?: number;
   total_refund_amount?: number;
-  status: 'pending' | 'approved' | 'rejected' | 'waiting' | 'to process' | 'completed';
+  status: 'pending' | 'approved' | 'rejected' | 'waiting' | 'to_process' | 'completed';
   requested_at: string;
   logistic_service?: string;
   tracking_number?: string;
@@ -79,7 +78,6 @@ interface Refund {
   processed_at?: string;
   has_media?: boolean;
   media_count?: number;
-  // Negotiation/return fields
   final_refund_type?: string | null;
   refund_type?: string | null;
   refund_payment_status?: string | null;
@@ -131,8 +129,6 @@ interface LoaderData {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
-
-
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
 
@@ -178,6 +174,18 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 
     if (rawRefunds.length) {
       refundsList = rawRefunds.map((refund: any) => {
+        // Extract customer info from either flat fields or nested object
+        let customerUsername = refund.requested_by_username;
+        let customerEmail = refund.requested_by_email;
+        
+        // If flat fields are missing, try to get from nested requested_by object
+        if (!customerUsername && refund.requested_by) {
+          customerUsername = refund.requested_by.username || 
+                             (refund.requested_by.email ? refund.requested_by.email.split('@')[0] : null) ||
+                             'Unknown';
+          customerEmail = refund.requested_by.email || '';
+        }
+        
         // Derive displayed status: prefer under_review when dispute is under review
         const baseStatus = (refund.status || 'pending').toString().toLowerCase();
         const disputeStatus = (
@@ -192,15 +200,15 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
         const displayedStatus = shouldForceUnderReview ? 'under_review' : baseStatus;
 
         return {
-          refund: refund.refund,
+          // ✅ Use refund_id directly
+          refund: refund.refund_id,
           order_id: refund.order_id || 'N/A',
           order_total_amount: refund.order_total_amount || 0,
-          requested_by_username: refund.requested_by_username || 'Unknown',
-          requested_by_email: refund.requested_by_email || 'N/A',
+          requested_by_username: customerUsername || 'Unknown',
+          requested_by_email: customerEmail || 'N/A',
           processed_by_username: refund.processed_by_username,
           processed_by_email: refund.processed_by_email,
           reason: refund.reason || 'No reason provided',
-          // Amounts (may be missing)
           requested_refund_amount: refund.requested_refund_amount != null ? refund.requested_refund_amount : null,
           refund_fee: refund.refund_fee != null ? refund.refund_fee : null,
           total_refund_amount: refund.total_refund_amount != null ? refund.total_refund_amount : null,
@@ -209,7 +217,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
           requested_at: refund.requested_at,
           logistic_service: refund.logistic_service,
           tracking_number: refund.tracking_number,
-          // New fields for return/negotiation handling
           final_refund_type: refund.final_refund_type || null,
           refund_type: refund.refund_type || null,
           refund_payment_status: refund.refund_payment_status || null,
@@ -301,10 +308,12 @@ export default function Refunds({ loaderData }: { loaderData: LoaderData }) {
     avg_refund_amount: 0
   };
 
+  // Build filter config with default value for status
   const refundFilterConfig = {
     status: {
       options: Array.from(new Set(safeRefunds.map(refund => refund.status))),
-      placeholder: 'Status'
+      placeholder: 'Status',
+      defaultValue: 'approved'
     }
   };
 
@@ -383,8 +392,6 @@ export default function Refunds({ loaderData }: { loaderData: LoaderData }) {
             </Card>
           </div>
 
-
-
           {/* Refunds Table */}
           <Card>
             <CardHeader className="pb-3">
@@ -428,21 +435,27 @@ const columns: ColumnDef<Refund>[] = [
         </Button>
       )
     },
-    cell: ({ row }: { row: any}) => (
-      <div className="font-medium text-xs sm:text-sm font-mono">
-        {row.getValue("refund").slice(0, 8)}...
-      </div>
-    ),
+    cell: ({ row }: { row: any}) => {
+      const refundId = row.getValue("refund");
+      return (
+        <div className="font-medium text-xs sm:text-sm font-mono">
+          {refundId ? String(refundId).slice(0, 8) : '...'}...
+        </div>
+      );
+    },
   },
   {
     accessorKey: "order_id",
     header: "Order ID",
-    cell: ({ row }: { row: any}) => (
-      <div className="flex items-center gap-1 text-xs sm:text-sm font-mono">
-        <Package className="w-3 h-3 text-muted-foreground" />
-        {row.getValue("order_id").slice(0, 8)}...
-      </div>
-    ),
+    cell: ({ row }: { row: any}) => {
+      const orderId = row.getValue("order_id");
+      return (
+        <div className="flex items-center gap-1 text-xs sm:text-sm font-mono">
+          <Package className="w-3 h-3 text-muted-foreground" />
+          {orderId ? String(orderId).slice(0, 8) : 'N/A'}...
+        </div>
+      );
+    },
   },
   {
     accessorKey: "requested_by_username",
@@ -458,45 +471,41 @@ const columns: ColumnDef<Refund>[] = [
     ),
   },
   {
-  accessorKey: "status",
-  header: "Status",
-  cell: ({ row }: { row: any}) => {
-    // Simply use row.original.status directly since it's already flattened
-    const rawStatus = row.original?.status ?? row.getValue("status");
-    
-    // Normalize possible variants: e.g. 'to_process', 'to-process', 'To Process'
-    const status = String(rawStatus || 'pending').toLowerCase().replace(/[_-]/g, ' ').trim();
+    accessorKey: "status",
+    header: "Status",
+    cell: ({ row }: { row: any}) => {
+      const rawStatus = row.original?.status ?? row.getValue("status");
+      const status = String(rawStatus || 'pending').toLowerCase().replace(/[_-]/g, ' ').trim();
 
-    const getStatusConfig = (s: string) => {
-      const configs = {
-        pending: { color: '#f59e0b', icon: Clock, label: 'Pending' },
-        approved: { color: '#10b981', icon: CheckCircle, label: 'Approved' },
-        rejected: { color: '#ef4444', icon: XCircle, label: 'Rejected' },
-        waiting: { color: '#3b82f6', icon: Clock, label: 'Waiting' },
-        'to process': { color: '#8b5cf6', icon: RefreshCw, label: 'To Process' },
-        completed: { color: '#06b6d4', icon: CheckCircle, label: 'Completed' },
-        dispute: { color: '#dc2626', icon: AlertTriangle, label: 'Dispute' }, // Add dispute if needed
-        'under review': { color: '#7c3aed', icon: Scale, label: 'Under Review' }
+      const getStatusConfig = (s: string) => {
+        const configs = {
+          pending: { color: '#f59e0b', icon: Clock, label: 'Pending' },
+          approved: { color: '#10b981', icon: CheckCircle, label: 'Approved' },
+          rejected: { color: '#ef4444', icon: XCircle, label: 'Rejected' },
+          waiting: { color: '#3b82f6', icon: Clock, label: 'Waiting' },
+          'to process': { color: '#8b5cf6', icon: RefreshCw, label: 'To Process' },
+          completed: { color: '#06b6d4', icon: CheckCircle, label: 'Completed' },
+          dispute: { color: '#dc2626', icon: AlertTriangle, label: 'Dispute' },
+          'under review': { color: '#7c3aed', icon: Scale, label: 'Under Review' }
+        };
+        return configs[s as keyof typeof configs] || configs.pending;
       };
 
-      return configs[s as keyof typeof configs] || configs.pending;
-    };
+      const config = getStatusConfig(status);
+      const IconComponent = config.icon;
 
-    const config = getStatusConfig(status);
-    const IconComponent = config.icon;
-
-    return (
-      <Badge 
-        variant="secondary"
-        className="text-xs capitalize flex items-center gap-1"
-        style={{ backgroundColor: `${config.color}20`, color: config.color }}
-      >
-        <IconComponent className="w-3 h-3" />
-        {config.label}
-      </Badge>
-    );
+      return (
+        <Badge 
+          variant="secondary"
+          className="text-xs capitalize flex items-center gap-1"
+          style={{ backgroundColor: `${config.color}20`, color: config.color }}
+        >
+          <IconComponent className="w-3 h-3" />
+          {config.label}
+        </Badge>
+      );
+    },
   },
-},
   {
     id: 'request',
     header: 'Request',
@@ -540,7 +549,6 @@ const columns: ColumnDef<Refund>[] = [
         day: 'numeric',
         year: 'numeric'
       });
-      
       return (
         <div className="flex items-center gap-1 text-xs sm:text-sm">
           <Calendar className="w-3 h-3 text-muted-foreground" />
@@ -570,7 +578,6 @@ const columns: ColumnDef<Refund>[] = [
       </div>
     ),
   },
-  
   {
     id: 'actions',
     header: 'Actions',
