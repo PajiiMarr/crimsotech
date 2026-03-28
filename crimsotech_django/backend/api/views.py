@@ -22933,7 +22933,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 )
                 delivery_address_text = shipping_address.get_full_address()
 
-            # Variables to store product and variant for direct checkout
+            # Variables for direct checkout
             direct_product = None
             direct_variant = None
             direct_quantity = 1
@@ -23111,9 +23111,21 @@ class CheckoutOrder(viewsets.ViewSet):
 
             # Process items based on checkout type
             if is_direct_checkout:
-                # Direct product checkout - create checkout record without cart_item
+                # Direct product checkout - create checkout record with product info snapshot
                 unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
                 checkout_total = unit_price * direct_quantity
+                
+                # Get product image URL
+                product_image_url = None
+                if direct_product.productmedia_set.exists():
+                    first_media = direct_product.productmedia_set.first()
+                    if first_media and first_media.file_data:
+                        product_image_url = convert_s3_to_public_url(first_media.file_data.url)
+                
+                # Get variant image URL
+                variant_image_url = None
+                if direct_variant.image:
+                    variant_image_url = convert_s3_to_public_url(direct_variant.image.url)
 
                 checkout_item = Checkout.objects.create(
                     order=order,
@@ -23122,7 +23134,15 @@ class CheckoutOrder(viewsets.ViewSet):
                     quantity=direct_quantity,
                     total_amount=checkout_total,
                     status='pending',
-                    remarks=remarks[:500] if remarks else None
+                    remarks=remarks[:500] if remarks else None,
+                    # Store product snapshot data
+                    direct_product_id=direct_product.id,
+                    direct_variant_id=direct_variant.id,
+                    direct_product_name=direct_product.name,
+                    direct_product_price=unit_price,
+                    direct_product_image=variant_image_url or product_image_url,
+                    direct_shop_id=direct_product.shop.id if direct_product.shop else None,
+                    direct_shop_name=direct_product.shop.name if direct_product.shop else None
                 )
 
                 cart_item_ids.append(f"direct_{direct_product.id}_{direct_variant.id}")
@@ -23130,9 +23150,17 @@ class CheckoutOrder(viewsets.ViewSet):
                     "id": str(checkout_item.id),
                     "cart_item_id": f"direct_{direct_product.id}",
                     "product_name": direct_product.name,
+                    "product_id": str(direct_product.id),
+                    "variant_id": str(direct_variant.id),
+                    "variant_title": direct_variant.title,
+                    "shop_id": str(direct_product.shop.id) if direct_product.shop else None,
+                    "shop_name": direct_product.shop.name if direct_product.shop else None,
                     "quantity": direct_quantity,
+                    "price": float(unit_price),
                     "total_amount": float(checkout_total),
-                    "status": "pending"
+                    "status": "pending",
+                    "product_image": variant_image_url or product_image_url,
+                    "is_refundable": direct_variant.is_refundable or getattr(direct_product, 'is_refundable', False)
                 })
 
                 # Update stock
@@ -23166,9 +23194,16 @@ class CheckoutOrder(viewsets.ViewSet):
                         "id": str(checkout_item.id),
                         "cart_item_id": str(cart_item.id),
                         "product_name": cart_item.product.name if cart_item.product else "Unknown",
+                        "product_id": str(cart_item.product.id) if cart_item.product else None,
+                        "variant_id": str(cart_item.variant.id) if cart_item.variant else None,
+                        "variant_title": cart_item.variant.title if cart_item.variant else None,
+                        "shop_id": str(cart_item.product.shop.id) if cart_item.product and cart_item.product.shop else None,
+                        "shop_name": cart_item.product.shop.name if cart_item.product and cart_item.product.shop else None,
                         "quantity": cart_item.quantity,
+                        "price": float(unit_price),
                         "total_amount": float(checkout_total),
-                        "status": "pending"
+                        "status": "pending",
+                        "is_refundable": cart_item.variant.is_refundable if cart_item.variant else getattr(cart_item.product, 'is_refundable', False)
                     })
 
                     # Update stock
@@ -23207,7 +23242,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+    
     @action(detail=False, methods=['get'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
         try:
@@ -24340,8 +24375,7 @@ class PurchasesBuyer(viewsets.ViewSet):
         return False
 
     
-
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='user-purchases')
     def user_purchases(self, request):
         user_id = request.headers.get('X-User-Id')
         
@@ -24365,14 +24399,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 Prefetch(
                     'checkout_set',
                     queryset=Checkout.objects.select_related(
-                        'cart_item__product__shop',
-                        'cart_item__product__customer__customer',
                         'voucher'
-                    ).prefetch_related(
-                        Prefetch(
-                            'cart_item__product__productmedia_set',
-                            queryset=ProductMedia.objects.only('id', 'file_data', 'file_type')
-                        )
                     ).order_by('created_at')
                 ),
                 'shipping_address'
@@ -24390,6 +24417,65 @@ class PurchasesBuyer(viewsets.ViewSet):
             # Create lookup dictionaries
             payment_dict = {str(payment.order_id): payment for payment in payments}
             delivery_dict = {str(delivery.order_id): delivery for delivery in deliveries}
+            
+            # Collect all product IDs from checkouts to fetch in bulk
+            product_ids = set()
+            variant_ids = set()
+            shop_ids = set()
+            
+            for order in orders:
+                for checkout in order.checkout_set.all():
+                    # Check if checkout has direct product info (from Buy Now)
+                    if hasattr(checkout, 'direct_product_id') and checkout.direct_product_id:
+                        product_ids.add(checkout.direct_product_id)
+                        if hasattr(checkout, 'direct_variant_id') and checkout.direct_variant_id:
+                            variant_ids.add(checkout.direct_variant_id)
+                        if hasattr(checkout, 'direct_shop_id') and checkout.direct_shop_id:
+                            shop_ids.add(checkout.direct_shop_id)
+                    # Check if checkout has cart_item
+                    elif checkout.cart_item_id:
+                        # We'll get the cart_item separately
+                        pass
+            
+            # Fetch all products, variants, and shops in bulk
+            products_dict = {}
+            variants_dict = {}
+            shops_dict = {}
+            
+            if product_ids:
+                products = Product.objects.filter(id__in=product_ids).select_related('shop', 'customer__customer')
+                products_dict = {str(p.id): p for p in products}
+                
+                # Get product media in bulk
+                product_media_dict = {}
+                all_product_media = ProductMedia.objects.filter(product_id__in=product_ids)
+                for media in all_product_media:
+                    product_id = str(media.product_id)
+                    if product_id not in product_media_dict:
+                        product_media_dict[product_id] = []
+                    product_media_dict[product_id].append(media)
+            
+            if variant_ids:
+                variants = Variants.objects.filter(id__in=variant_ids)
+                variants_dict = {str(v.id): v for v in variants}
+            
+            if shop_ids:
+                shops = Shop.objects.filter(id__in=shop_ids)
+                shops_dict = {str(s.id): s for s in shops}
+            
+            # Get cart_items in bulk for regular checkout items
+            cart_item_ids = []
+            for order in orders:
+                for checkout in order.checkout_set.all():
+                    if checkout.cart_item_id:
+                        cart_item_ids.append(checkout.cart_item_id)
+            
+            cart_items_dict = {}
+            if cart_item_ids:
+                cart_items = CartItem.objects.filter(id__in=cart_item_ids).select_related(
+                    'product', 'variant', 'product__shop', 'product__customer__customer'
+                ).prefetch_related('product__productmedia_set')
+                cart_items_dict = {str(ci.id): ci for ci in cart_items}
             
             # Prepare response data
             purchases = []
@@ -24433,83 +24519,100 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'payment_status': payment.status if payment else None,
                     'delivery_status': delivery.status if delivery else None,
                     'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+                    'pickup_date': order.pickup_date.isoformat() if hasattr(order, 'pickup_date') and order.pickup_date else None,
                     'items': []
                 }
                 
                 # Process all checkouts for this order
-                # Process all checkouts for this order
-                # In your user_purchases method, when processing items
                 for checkout in order.checkout_set.all():
-                    if checkout.cart_item and checkout.cart_item.product:
-                        product = checkout.cart_item.product
+                    # Try to get product data from direct checkout first
+                    if hasattr(checkout, 'direct_product_id') and checkout.direct_product_id and checkout.direct_product_name:
+                        # Use snapshot data from direct checkout
+                        product = products_dict.get(str(checkout.direct_product_id))
+                        variant = variants_dict.get(str(checkout.direct_variant_id)) if hasattr(checkout, 'direct_variant_id') and checkout.direct_variant_id else None
                         
-                        # Use the ProductSerializer to get the image data
-                        product_serializer = ProductSerializer(product, context={'request': request})
-                        product_data = product_serializer.data
+                        # Get product images from product if available, otherwise use snapshot
+                        product_images = []
+                        primary_image = None
                         
-                        # Get variant information if available
-                        variant = checkout.cart_item.variant
+                        if product and product.id:
+                            # Product still exists - fetch fresh data
+                            product_media = product_media_dict.get(str(product.id), [])
+                            for media in product_media:
+                                if media.file_data:
+                                    image_url = get_media_url(media.file_data)
+                                    if image_url:
+                                        product_images.append({
+                                            'id': str(media.id),
+                                            'url': image_url,
+                                            'file_type': media.file_type
+                                        })
+                        elif hasattr(checkout, 'direct_product_image') and checkout.direct_product_image:
+                            # Use snapshot image
+                            product_images.append({
+                                'id': None,
+                                'url': checkout.direct_product_image,
+                                'file_type': 'image'
+                            })
+                        
+                        if product_images:
+                            primary_image = {
+                                'url': product_images[0]['url'],
+                                'file_type': product_images[0]['file_type']
+                            }
+                        
+                        # Get price
+                        price = str(checkout.direct_product_price) if hasattr(checkout, 'direct_product_price') and checkout.direct_product_price else '0.00'
+                        
+                        # Get shop name
+                        shop_name = checkout.direct_shop_name if hasattr(checkout, 'direct_shop_name') and checkout.direct_shop_name else 'Unknown Shop'
+                        shop_id = str(checkout.direct_shop_id) if hasattr(checkout, 'direct_shop_id') and checkout.direct_shop_id else None
+                        
+                        # Get variant title
                         variant_title = variant.title if variant else None
-                        product_price = getattr(product, 'price', 0)
-                        variant_price_value = variant.price if variant and variant.price is not None else product_price
-                        variant_price = str(variant_price_value)
-                        variant_sku = variant.sku_code if variant else None
-                        
-                        # Get product images from serializer
-                        product_images = product_data.get('media_files', [])
-                        primary_image = product_data.get('primary_image')
                         
                         # Check if user has reviewed this product
                         has_reviewed = False
-                        try:
-                            customer_profile = Customer.objects.get(customer=user)
-                            has_reviewed = Review.objects.filter(
-                                customer=customer_profile,
-                                product=product
-                            ).exists()
-                        except Customer.DoesNotExist:
-                            has_reviewed = False
-                        
-                        # Get shop picture
-                        shop_picture_url = None
-                        if product.shop and product.shop.shop_picture:
+                        if product and product.id:
                             try:
-                                shop_picture_url = product.shop.shop_picture.url
-                                if request:
-                                    shop_picture_url = request.build_absolute_uri(shop_picture_url)
-                            except Exception:
-                                shop_picture_url = None
+                                customer_profile = Customer.objects.get(customer=user)
+                                has_reviewed = Review.objects.filter(
+                                    customer=customer_profile,
+                                    product=product
+                                ).exists()
+                            except Customer.DoesNotExist:
+                                has_reviewed = False
                         
-                        # Check if item is refundable from variant or product
+                        # Check if item is refundable
                         is_refundable = False
                         if variant and hasattr(variant, 'is_refundable'):
                             is_refundable = variant.is_refundable
-                        else:
-                            is_refundable = getattr(product, 'is_refundable', False)
+                        elif product and hasattr(product, 'is_refundable'):
+                            is_refundable = product.is_refundable
                         
                         item_data = {
                             'checkout_id': str(checkout.id),
-                            'cart_item_id': str(checkout.cart_item.id) if checkout.cart_item else None,
-                            'product_id': str(product.id),
-                            'product_name': product.name,
-                            'product_description': product.description,
-                            'product_condition': product.condition,
-                            'product_status': product.status,
-                            'variant_id': str(variant.id) if variant else None,
+                            'cart_item_id': None,
+                            'product_id': str(checkout.direct_product_id),
+                            'product_name': checkout.direct_product_name,
+                            'product_description': product.description if product else '',
+                            'product_condition': product.condition if product else 0,
+                            'product_status': product.status if product else '',
+                            'variant_id': str(checkout.direct_variant_id) if hasattr(checkout, 'direct_variant_id') and checkout.direct_variant_id else None,
                             'variant_title': variant_title,
-                            'variant_sku': variant_sku,
-                            'shop_id': str(product.shop.id) if product.shop else None,
-                            'shop_name': product.shop.name if product.shop else None,
-                            'shop_picture': shop_picture_url,
-                            'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
+                            'variant_sku': variant.sku_code if variant else None,
+                            'shop_id': shop_id,
+                            'shop_name': shop_name,
+                            'shop_picture': get_media_url(product.shop.shop_picture) if product and product.shop and product.shop.shop_picture else None,
+                            'seller_username': product.customer.customer.username if product and product.customer and product.customer.customer else None,
                             'quantity': checkout.quantity,
-                            'price': variant_price,
+                            'price': price,
                             'subtotal': str(checkout.total_amount),
                             'status': order.status,
                             'remarks': checkout.remarks,
-                            'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
+                            'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
                             'product_images': product_images,
-                            'primary_image': primary_image,  # Now this will be properly populated
+                            'primary_image': primary_image,
                             'voucher_applied': {
                                 'id': str(checkout.voucher.id),
                                 'name': checkout.voucher.name,
@@ -24519,8 +24622,129 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'is_refundable': is_refundable
                         }
                         order_data['items'].append(item_data)
+                        
+                    elif checkout.cart_item_id:
+                        # Regular cart-based checkout
+                        cart_item = cart_items_dict.get(str(checkout.cart_item_id))
+                        
+                        if cart_item and cart_item.product:
+                            product = cart_item.product
+                            variant = cart_item.variant
+                            
+                            # Get product images
+                            product_images = []
+                            for media in product.productmedia_set.all():
+                                if media.file_data:
+                                    image_url = get_media_url(media.file_data)
+                                    if image_url:
+                                        product_images.append({
+                                            'id': str(media.id),
+                                            'url': image_url,
+                                            'file_type': media.file_type
+                                        })
+                            
+                            # Get primary image
+                            primary_image = None
+                            if product_images:
+                                primary_image = {
+                                    'url': product_images[0]['url'],
+                                    'file_type': product_images[0]['file_type']
+                                }
+                            
+                            # Get variant price
+                            product_price = getattr(product, 'price', 0)
+                            variant_price_value = variant.price if variant and variant.price is not None else product_price
+                            variant_price = str(variant_price_value)
+                            variant_title = variant.title if variant else None
+                            variant_sku = variant.sku_code if variant else None
+                            
+                            # Check if user has reviewed this product
+                            has_reviewed = False
+                            try:
+                                customer_profile = Customer.objects.get(customer=user)
+                                has_reviewed = Review.objects.filter(
+                                    customer=customer_profile,
+                                    product=product
+                                ).exists()
+                            except Customer.DoesNotExist:
+                                has_reviewed = False
+                            
+                            # Get shop picture
+                            shop_picture_url = None
+                            if product.shop and product.shop.shop_picture:
+                                shop_picture_url = get_media_url(product.shop.shop_picture)
+                            
+                            # Check if item is refundable
+                            is_refundable = False
+                            if variant and hasattr(variant, 'is_refundable'):
+                                is_refundable = variant.is_refundable
+                            else:
+                                is_refundable = getattr(product, 'is_refundable', False)
+                            
+                            item_data = {
+                                'checkout_id': str(checkout.id),
+                                'cart_item_id': str(checkout.cart_item_id),
+                                'product_id': str(product.id),
+                                'product_name': product.name,
+                                'product_description': product.description,
+                                'product_condition': product.condition,
+                                'product_status': product.status,
+                                'variant_id': str(variant.id) if variant else None,
+                                'variant_title': variant_title,
+                                'variant_sku': variant_sku,
+                                'shop_id': str(product.shop.id) if product.shop else None,
+                                'shop_name': product.shop.name if product.shop else None,
+                                'shop_picture': shop_picture_url,
+                                'seller_username': product.customer.customer.username if product.customer and product.customer.customer else None,
+                                'quantity': checkout.quantity,
+                                'price': variant_price,
+                                'subtotal': str(checkout.total_amount),
+                                'status': order.status,
+                                'remarks': checkout.remarks,
+                                'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
+                                'product_images': product_images,
+                                'primary_image': primary_image,
+                                'voucher_applied': {
+                                    'id': str(checkout.voucher.id),
+                                    'name': checkout.voucher.name,
+                                    'code': checkout.voucher.code
+                                } if checkout.voucher else None,
+                                'can_review': not has_reviewed and order.status == 'delivered',
+                                'is_refundable': is_refundable
+                            }
+                            order_data['items'].append(item_data)
+                        else:
+                            # Cart item or product no longer exists
+                            item_data = {
+                                'checkout_id': str(checkout.id),
+                                'cart_item_id': str(checkout.cart_item_id),
+                                'product_id': None,
+                                'product_name': 'Item no longer available',
+                                'product_description': '',
+                                'product_condition': '',
+                                'product_status': '',
+                                'variant_id': None,
+                                'variant_title': None,
+                                'variant_sku': None,
+                                'shop_id': None,
+                                'shop_name': 'Unknown Shop',
+                                'shop_picture': None,
+                                'seller_username': None,
+                                'quantity': checkout.quantity,
+                                'price': '0.00',
+                                'subtotal': str(checkout.total_amount),
+                                'status': order.status,
+                                'remarks': checkout.remarks,
+                                'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
+                                'product_images': [],
+                                'primary_image': None,
+                                'voucher_applied': None,
+                                'can_review': False,
+                                'is_refundable': False
+                            }
+                            order_data['items'].append(item_data)
                     else:
-                        # Handle case where cart_item or product might be null
+                        # Fallback for old data with no reference
                         item_data = {
                             'checkout_id': str(checkout.id),
                             'cart_item_id': None,
@@ -24541,17 +24765,17 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'subtotal': str(checkout.total_amount),
                             'status': order.status,
                             'remarks': checkout.remarks,
-                            'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
+                            'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
                             'product_images': [],
                             'primary_image': None,
                             'voucher_applied': None,
-                            'can_review': False
+                            'can_review': False,
+                            'is_refundable': False
                         }
                         order_data['items'].append(item_data)
                 
-                # include refund/dispute metadata for rider notifications
+                # Include refund/dispute metadata
                 try:
-                    from .models import Refund, DisputeRequest
                     refund_obj = Refund.objects.filter(order_id=order.order).order_by('-created_at').first()
                     if refund_obj:
                         order_data['refund_status'] = refund_obj.status
@@ -24582,6 +24806,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 {'error': 'Internal server error', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
 
     @action(detail=False, methods=['get'], url_path='status-counts')
     def status_counts(self, request):
