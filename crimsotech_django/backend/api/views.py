@@ -22268,17 +22268,91 @@ class CheckoutOrder(viewsets.ViewSet):
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')
     def get_checkout_items(self, request):
         user_id = request.GET.get("user_id")
+        cart_id = request.GET.get("cart_id")
+        product_id = request.GET.get("product_id")
         selected_ids_str = request.GET.get("selected", "")
 
         if not user_id:
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not selected_ids_str:
-            return Response({"error": "No items selected for checkout"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
+        # Determine which entry point was used
+        if cart_id:
+            # Direct cart checkout - get all items in the cart
+            try:
+                cart_items = CartItem.objects.filter(
+                    user_id=user_id,
+                    cart_id=cart_id,
+                    is_ordered=False
+                ).select_related(
+                    "product",
+                    "product__shop",
+                    "variant"
+                ).prefetch_related(
+                    'product__productmedia_set'
+                )
+                
+                if not cart_items.exists():
+                    return Response(
+                        {"error": "Cart not found or cart is empty"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            except Exception as e:
+                return Response(
+                    {"error": f"Invalid cart_id: {str(e)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        elif product_id:
+            # Direct product checkout (Buy Now)
+            try:
+                from django.db.models import Q
+                
+                # Get the product and its default variant or first available variant
+                product = Product.objects.filter(id=product_id).first()
+                if not product:
+                    return Response(
+                        {"error": "Product not found"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                
+                # Get the default variant or first active variant
+                variant = Variants.objects.filter(
+                    product_id=product_id,
+                    is_active=True
+                ).first()
+                
+                if not variant:
+                    return Response(
+                        {"error": "No active variant available for this product"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Create a temporary cart item-like structure
+                from collections import namedtuple
+                TempCartItem = namedtuple('TempCartItem', [
+                    'id', 'product', 'variant', 'quantity', 'is_ordered', 'added_at'
+                ])
+                
+                temp_id = f"temp_{product_id}_{variant.id}"
+                cart_items = [TempCartItem(
+                    id=temp_id,
+                    product=product,
+                    variant=variant,
+                    quantity=1,  # Default quantity
+                    is_ordered=False,
+                    added_at=timezone.now()
+                )]
+                
+            except Exception as e:
+                return Response(
+                    {"error": f"Error processing product: {str(e)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        elif selected_ids_str:
+            # Selected cart items checkout
             selected_ids = selected_ids_str.split(',')
-
+            
             cart_items = CartItem.objects.filter(
                 id__in=selected_ids,
                 user_id=user_id,
@@ -22310,8 +22384,20 @@ class CheckoutOrder(viewsets.ViewSet):
                     },
                     status=status.HTTP_400_BAD_REQUEST
                 )
+        else:
+            return Response(
+                {"error": "Either cart_id, product_id, or selected items are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-            for cart_item in cart_items:
+        try:
+            # If cart_items is not a list (for product_id case), convert to list for iteration
+            if product_id and not isinstance(cart_items, list):
+                cart_items = list(cart_items)
+                
+            # Validate variant selection for product checkout
+            if product_id and cart_items:
+                cart_item = cart_items[0]
                 if cart_item.product and not cart_item.variant:
                     has_variants = Variants.objects.filter(
                         product=cart_item.product,
@@ -22322,11 +22408,29 @@ class CheckoutOrder(viewsets.ViewSet):
                         return Response(
                             {
                                 "error": f"Please select a variant for product '{cart_item.product.name}'",
-                                "cart_item_id": str(cart_item.id),
                                 "product_id": str(cart_item.product.id)
                             },
                             status=status.HTTP_400_BAD_REQUEST
                         )
+            
+            # Validate variants for cart items (if not product checkout)
+            if not product_id:
+                for cart_item in cart_items:
+                    if cart_item.product and not cart_item.variant:
+                        has_variants = Variants.objects.filter(
+                            product=cart_item.product,
+                            is_active=True
+                        ).exists()
+
+                        if has_variants:
+                            return Response(
+                                {
+                                    "error": f"Please select a variant for product '{cart_item.product.name}'",
+                                    "cart_item_id": str(cart_item.id),
+                                    "product_id": str(cart_item.product.id)
+                                },
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
 
             checkout_items = []
             shop_ids = set()
@@ -22375,16 +22479,16 @@ class CheckoutOrder(viewsets.ViewSet):
                     resolved_price = float(product.price) if product and product.price else 0.0
 
                 item_data = {
-                    "id": str(cart_item.id),
+                    "id": str(cart_item.id) if hasattr(cart_item, 'id') else cart_item.id,
                     "product_id": str(product.id) if product else None,
                     "name": product.name if product else "Unknown Product",
                     "price": resolved_price,
                     "quantity": cart_item.quantity,
                     "shop_name": shop.name if shop else "Unknown Shop",
                     "shop_id": str(shop.id) if shop else None,
-                    "added_at": cart_item.added_at.isoformat() if cart_item.added_at else None,
+                    "added_at": cart_item.added_at.isoformat() if hasattr(cart_item, 'added_at') and cart_item.added_at else None,
                     "subtotal": resolved_price * cart_item.quantity,
-                    "is_ordered": cart_item.is_ordered
+                    "is_ordered": cart_item.is_ordered if hasattr(cart_item, 'is_ordered') else False
                 }
 
                 if variant and variant.image and hasattr(variant.image, 'url'):
@@ -22466,7 +22570,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Internal server error", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+    
     def _get_user_purchase_history(self, user_id):
         try:
             completed_orders = Order.objects.filter(
@@ -22793,15 +22897,19 @@ class CheckoutOrder(viewsets.ViewSet):
     def create_order(self, request):
         user_id = request.data.get("user_id")
         selected_ids = request.data.get("selected_ids", [])
+        cart_id = request.data.get("cart_id")
+        product_id = request.data.get("product_id")
+        variant_id = request.data.get("variant_id")
+        quantity = request.data.get("quantity", 1)
         payment_method = request.data.get("payment_method", "cod")
         shipping_method = request.data.get("shipping_method", "pickup")
         shipping_address_id = request.data.get("shipping_address_id")
         voucher_id = request.data.get("voucher_id")
         remarks = request.data.get("remarks")
 
-        if not user_id or not selected_ids:
+        if not user_id:
             return Response(
-                {"error": "user_id and selected_ids are required"},
+                {"error": "user_id is required"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -22825,70 +22933,144 @@ class CheckoutOrder(viewsets.ViewSet):
                 )
                 delivery_address_text = shipping_address.get_full_address()
 
-            cart_items = CartItem.objects.filter(
-                id__in=selected_ids,
-                user=user
-            ).select_related(
-                "product",
-                "product__shop",
-                "product__customer__customer",
-                "variant"
-            )
+            # Variables to store product and variant for direct checkout
+            direct_product = None
+            direct_variant = None
+            direct_quantity = 1
+            is_direct_checkout = False
 
-            if not cart_items.exists():
-                return Response(
-                    {"error": "No cart items found"},
-                    status=status.HTTP_404_NOT_FOUND
+            # Determine which entry point was used and fetch cart items
+            if cart_id:
+                # Direct cart checkout by cart_id
+                cart_items = CartItem.objects.filter(
+                    cart_id=cart_id,
+                    user=user,
+                    is_ordered=False
+                ).select_related(
+                    "product",
+                    "product__shop",
+                    "product__customer__customer",
+                    "variant"
+                )
+                
+                if not cart_items.exists():
+                    return Response(
+                        {"error": "Cart not found or cart is empty"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                    
+            elif product_id and variant_id:
+                # Direct product checkout (Buy Now)
+                is_direct_checkout = True
+                try:
+                    direct_product = get_object_or_404(Product, id=product_id)
+                    direct_variant = get_object_or_404(Variants, id=variant_id, is_active=True)
+                    direct_quantity = int(quantity)
+                    
+                    # No cart items to fetch
+                    cart_items = []
+                    
+                except Product.DoesNotExist:
+                    return Response(
+                        {"error": "Product not found"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                except Variants.DoesNotExist:
+                    return Response(
+                        {"error": "Variant not found or inactive"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                except Exception as e:
+                    return Response(
+                        {"error": f"Error processing product: {str(e)}"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                    
+            elif selected_ids:
+                # Selected cart items checkout
+                cart_items = CartItem.objects.filter(
+                    id__in=selected_ids,
+                    user=user,
+                    is_ordered=False
+                ).select_related(
+                    "product",
+                    "product__shop",
+                    "product__customer__customer",
+                    "variant"
                 )
 
-            already_ordered = cart_items.filter(is_ordered=True).exists()
-            if already_ordered:
-                return Response({
-                    "error": "Some items have already been ordered",
-                    "details": "Please refresh your cart"
-                }, status=status.HTTP_400_BAD_REQUEST)
+                if not cart_items.exists():
+                    return Response(
+                        {"error": "No cart items found"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                    
+            else:
+                return Response(
+                    {"error": "Either cart_id, product_id+variant_id, or selected_ids are required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             subtotal = Decimal('0')
             stock_validation_errors = []
 
-            for cart_item in cart_items:
-                has_variants = Variants.objects.filter(
-                    product=cart_item.product,
-                    is_active=True
-                ).exists()
-
-                if has_variants and not cart_item.variant:
+            # Handle direct checkout (Buy Now)
+            if is_direct_checkout:
+                # Validate stock
+                if direct_quantity > direct_variant.quantity:
                     return Response({
-                        "error": f"Please select a variant for product '{cart_item.product.name}' before placing your order.",
-                        "cart_item_id": str(cart_item.id)
+                        "error": f"Insufficient stock for {direct_variant.title}. Available: {direct_variant.quantity}"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Calculate subtotal
+                price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
+                subtotal = price * direct_quantity
+                
+            else:
+                # Process cart items
+                for cart_item in cart_items:
+                    # Check if product has variants
+                    has_variants = Variants.objects.filter(
+                        product=cart_item.product,
+                        is_active=True
+                    ).exists()
+
+                    if has_variants and not cart_item.variant:
+                        return Response({
+                            "error": f"Please select a variant for product '{cart_item.product.name}' before placing your order.",
+                            "cart_item_id": str(cart_item.id),
+                            "product_id": str(cart_item.product.id)
+                        }, status=status.HTTP_400_BAD_REQUEST)
+
+                    # Get price
+                    price = Decimal('0')
+                    if cart_item.variant and cart_item.variant.price is not None:
+                        price = Decimal(str(cart_item.variant.price))
+                    elif cart_item.product and cart_item.product.price is not None:
+                        price = Decimal(str(cart_item.product.price))
+
+                    line_total = price * cart_item.quantity
+                    subtotal += line_total
+
+                    # Check stock
+                    if cart_item.variant:
+                        if cart_item.quantity > cart_item.variant.quantity:
+                            stock_validation_errors.append(
+                                f"Insufficient stock for {cart_item.variant.title}. Available: {cart_item.variant.quantity}"
+                            )
+                    elif cart_item.product:
+                        if cart_item.quantity > cart_item.product.quantity:
+                            stock_validation_errors.append(
+                                f"Insufficient stock for {cart_item.product.name}. Available: {cart_item.product.quantity}"
+                            )
+
+                if stock_validation_errors:
+                    return Response({
+                        "error": "Some items are out of stock",
+                        "details": stock_validation_errors
                     }, status=status.HTTP_400_BAD_REQUEST)
 
-                price = Decimal('0')
-                if cart_item.variant and cart_item.variant.price is not None:
-                    price = Decimal(str(cart_item.variant.price))
-                elif cart_item.product and cart_item.product.price is not None:
-                    price = Decimal(str(cart_item.product.price))
-
-                line_total = price * cart_item.quantity
-                subtotal += line_total
-
-                if cart_item.variant:
-                    if cart_item.quantity > cart_item.variant.quantity:
-                        stock_validation_errors.append(
-                            f"Insufficient stock for {cart_item.variant.title}. Available: {cart_item.variant.quantity}"
-                        )
-                elif cart_item.product:
-                    if cart_item.quantity > cart_item.product.quantity:
-                        stock_validation_errors.append(
-                            f"Insufficient stock for {cart_item.product.name}. Available: {cart_item.product.quantity}"
-                        )
-
-            if stock_validation_errors:
-                return Response({
-                    "error": "Some items are out of stock",
-                    "details": stock_validation_errors
-                }, status=status.HTTP_400_BAD_REQUEST)
-
+            # Apply voucher
             discount_amount = Decimal('0')
             voucher = None
             current_date = timezone.now().date()
@@ -22909,9 +23091,11 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
+            # Calculate delivery fee and total
             delivery_fee = Decimal('0') if shipping_method.lower() == "pickup" else Decimal('50.00')
             total_amount = subtotal + delivery_fee - discount_amount
 
+            # Create order
             order = Order.objects.create(
                 user=user,
                 shipping_address=shipping_address,
@@ -22925,33 +23109,79 @@ class CheckoutOrder(viewsets.ViewSet):
             cart_item_ids = []
             checkout_items = []
 
-            for cart_item in cart_items:
-                if cart_item.variant and cart_item.variant.price is not None:
-                    unit_price = Decimal(str(cart_item.variant.price))
-                else:
-                    unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
-
-                checkout_total = unit_price * cart_item.quantity
+            # Process items based on checkout type
+            if is_direct_checkout:
+                # Direct product checkout - create checkout record without cart_item
+                unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
+                checkout_total = unit_price * direct_quantity
 
                 checkout_item = Checkout.objects.create(
                     order=order,
-                    cart_item=cart_item,
+                    cart_item=None,  # No cart item for direct checkout
                     voucher=voucher,
-                    quantity=cart_item.quantity,
+                    quantity=direct_quantity,
                     total_amount=checkout_total,
                     status='pending',
                     remarks=remarks[:500] if remarks else None
                 )
 
-                cart_item_ids.append(str(cart_item.id))
+                cart_item_ids.append(f"direct_{direct_product.id}_{direct_variant.id}")
                 checkout_items.append({
                     "id": str(checkout_item.id),
-                    "cart_item_id": str(cart_item.id),
-                    "product_name": cart_item.product.name if cart_item.product else "Unknown",
-                    "quantity": cart_item.quantity,
+                    "cart_item_id": f"direct_{direct_product.id}",
+                    "product_name": direct_product.name,
+                    "quantity": direct_quantity,
                     "total_amount": float(checkout_total),
                     "status": "pending"
                 })
+
+                # Update stock
+                direct_variant.quantity -= direct_quantity
+                direct_variant.save()
+                
+            else:
+                # Process cart items
+                for cart_item in cart_items:
+                    # Get unit price
+                    if cart_item.variant and cart_item.variant.price is not None:
+                        unit_price = Decimal(str(cart_item.variant.price))
+                    else:
+                        unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
+
+                    checkout_total = unit_price * cart_item.quantity
+
+                    # Create checkout record
+                    checkout_item = Checkout.objects.create(
+                        order=order,
+                        cart_item=cart_item,
+                        voucher=voucher,
+                        quantity=cart_item.quantity,
+                        total_amount=checkout_total,
+                        status='pending',
+                        remarks=remarks[:500] if remarks else None
+                    )
+
+                    cart_item_ids.append(str(cart_item.id))
+                    checkout_items.append({
+                        "id": str(checkout_item.id),
+                        "cart_item_id": str(cart_item.id),
+                        "product_name": cart_item.product.name if cart_item.product else "Unknown",
+                        "quantity": cart_item.quantity,
+                        "total_amount": float(checkout_total),
+                        "status": "pending"
+                    })
+
+                    # Update stock
+                    if cart_item.variant:
+                        cart_item.variant.quantity -= cart_item.quantity
+                        cart_item.variant.save()
+                    elif cart_item.product:
+                        cart_item.product.quantity -= cart_item.quantity
+                        cart_item.product.save()
+
+                    # Mark as ordered
+                    cart_item.is_ordered = True
+                    cart_item.save()
 
             return Response({
                 "success": True,
@@ -22977,7 +23207,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+        
     @action(detail=False, methods=['get'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
         try:
@@ -23096,11 +23326,9 @@ class CheckoutOrder(viewsets.ViewSet):
         order_id = request.data.get('order_id')
         user_id = request.data.get('user_id')
         
-        # Get platform parameter (mobile or web)
         platform = request.data.get('platform', 'web')
         is_mobile = platform == 'mobile'
         
-        # Log the received value for debugging
         logger.info(f"Initiate Maya payment - platform: {platform}, is_mobile: {is_mobile}")
 
         if not order_id or not user_id:
@@ -23166,10 +23394,8 @@ class CheckoutOrder(viewsets.ViewSet):
 
             base_url = request.build_absolute_uri('/')
             
-            # Pass the platform as a query parameter
-            platform_param = platform  # 'mobile' or 'web'
+            platform_param = platform
 
-            # Build redirect URLs with trailing slashes and include the platform
             success_url = (
                 f"{base_url}api/checkout-order/maya-success/"
                 f"?order_id={order_id}&platform={platform_param}"
@@ -23183,7 +23409,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 f"?order_id={order_id}&platform={platform_param}"
             )
             
-            # Log the URLs for debugging
             logger.info(f"Success URL: {success_url}")
             logger.info(f"Failure URL: {failure_url}")
             logger.info(f"Cancel URL: {cancel_url}")
@@ -23201,7 +23426,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 }
             }
 
-            # Persist the reference and the platform in order metadata
             order.metadata = order.metadata or {}
             order.metadata['maya_reference'] = reference
             order.metadata['platform'] = platform
@@ -23273,7 +23497,6 @@ class CheckoutOrder(viewsets.ViewSet):
         platform = request.GET.get('platform', 'web')
         is_mobile = platform == 'mobile'
         
-        # Add debug logging
         logger.info(f"Maya success callback - order_id: {order_id}, platform: {platform}, is_mobile: {is_mobile}")
         
         if not order_id:
@@ -23285,20 +23508,16 @@ class CheckoutOrder(viewsets.ViewSet):
         try:
             order = get_object_or_404(Order, order=order_id)
             
-            # Also check the stored metadata as a backup
             stored_platform = order.metadata.get('platform', 'web') if order.metadata else 'web'
             
-            # Use the parameter if present, otherwise fall back to stored value
             final_platform = platform if platform != 'web' else stored_platform
             final_is_mobile = final_platform == 'mobile'
             
             logger.info(f"Maya success - param platform: {platform}, stored platform: {stored_platform}, final: {final_platform}, is_mobile: {final_is_mobile}")
             
-            # Update order status
             order.status = 'processing'
             order.save(update_fields=['status'])
             
-            # Create or update payment record
             payment, created = Payment.objects.get_or_create(
                 order=order,
                 defaults={
@@ -23312,14 +23531,11 @@ class CheckoutOrder(viewsets.ViewSet):
                 payment.status = 'success'
                 payment.save(update_fields=['status'])
             
-            # Process seller payments
             self._process_seller_payments(order)
             
-            # For mobile, return HTML page with JavaScript redirect
             if final_is_mobile:
                 mobile_redirect_url = f"crimsotechreactnative://order-successful/{order_id}"
                 
-                # Create HTML page with JavaScript redirect
                 html_content = f"""
                 <!DOCTYPE html>
                 <html>
@@ -23372,9 +23588,6 @@ class CheckoutOrder(viewsets.ViewSet):
                             border: none;
                             font-size: 16px;
                         }}
-                        .button:hover {{
-                            background-color: #f0f0f0;
-                        }}
                     </style>
                 </head>
                 <body>
@@ -23404,7 +23617,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 logger.info(f"Returning HTML page with redirect to: {mobile_redirect_url}")
                 return HttpResponse(html_content, content_type='text/html')
             
-            # Regular web redirect
             frontend_url = getattr(settings, 'FRONTEND_URL')
             logger.info(f"Redirecting to web URL: {frontend_url}/order-successful/{order_id}")
             return redirect(f"{frontend_url}/order-successful/{order_id}")
@@ -23412,18 +23624,15 @@ class CheckoutOrder(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Error in Maya success callback: {str(e)}")
             
-            # ✅ FIX: Determine final_is_mobile here, inside the except block
             try:
                 order = Order.objects.get(order=order_id)
                 stored_platform = order.metadata.get('platform', 'web') if order.metadata else 'web'
                 error_final_platform = platform if platform != 'web' else stored_platform
                 error_final_is_mobile = error_final_platform == 'mobile'
             except:
-                # Fallback to the original platform parameter
                 error_final_is_mobile = platform == 'mobile'
             
             if error_final_is_mobile:
-                # Return HTML page with error redirect
                 mobile_redirect_url = f"crimsotechreactnative://order-successful/{order_id}?error=payment_failed"
                 html_content = f"""
                 <!DOCTYPE html>
@@ -23507,7 +23716,6 @@ class CheckoutOrder(viewsets.ViewSet):
             except Order.DoesNotExist:
                 pass
         
-        # ✅ For mobile, return HTML page with JavaScript redirect
         if is_mobile:
             mobile_redirect_url = f"crimsotechreactnative://pay-order?order_id={order_id}&status=failed"
             
@@ -23585,7 +23793,6 @@ class CheckoutOrder(viewsets.ViewSet):
         platform = request.GET.get('platform', 'web')
         is_mobile = platform == 'mobile'
         
-        # ✅ For mobile, return HTML page with JavaScript redirect
         if is_mobile:
             mobile_redirect_url = f"crimsotechreactnative://pay-order?order_id={order_id}&status=cancelled"
             
@@ -23657,15 +23864,11 @@ class CheckoutOrder(viewsets.ViewSet):
         frontend_url = getattr(settings, 'FRONTEND_URL')
         return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=cancelled")
 
-
     @action(detail=False, methods=['GET'], url_path='verify_payment_status/(?P<order_id>[^/.]+)')
     def verify_payment_status(self, request, order_id=None):
-        """Verify if payment was actually completed"""
         try:
-            # Get the order
             order = get_object_or_404(Order, order=order_id)
             
-            # Determine payment status
             payment_status = 'pending'
             if hasattr(order, 'payment'):
                 payment_status = order.payment.status if order.payment else 'pending'
@@ -23729,7 +23932,8 @@ class CheckoutOrder(viewsets.ViewSet):
 
         except Exception as e:
             logger.error(f"Error processing seller payments: {str(e)}")
-            
+
+
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
     def get_shipping_addresses(self, request):
