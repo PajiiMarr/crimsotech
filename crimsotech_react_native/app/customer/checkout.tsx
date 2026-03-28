@@ -40,6 +40,12 @@ interface CartItem {
   image?: string;
   is_ordered: boolean;
   subtotal: number;
+  variant?: {
+    // Add variant property
+    id: string;
+    title?: string;
+    price?: number;
+  };
 }
 
 interface Voucher {
@@ -59,12 +65,10 @@ interface Voucher {
   discount_amount?: number;
   voucher_type?: "shop" | "product";
 }
-
 interface VoucherCategory {
   category: string;
   vouchers: Voucher[];
 }
-
 interface ShippingAddress {
   id: string;
   recipient_name: string;
@@ -85,7 +89,6 @@ interface ShippingAddress {
   full_address: string;
   created_at: string;
 }
-
 interface ShopAddress {
   shop_id: string;
   shop_name: string;
@@ -96,14 +99,12 @@ interface ShopAddress {
   shop_province: string;
   shop_contact_number?: string;
 }
-
 interface UserPurchaseStats {
   total_spent: number;
   recent_orders_count: number;
   average_order_value: number;
   customer_tier: string;
 }
-
 interface CheckoutSummary {
   subtotal: number;
   delivery: number;
@@ -111,7 +112,6 @@ interface CheckoutSummary {
   item_count: number;
   shop_count: number;
 }
-
 interface CheckoutData {
   success: boolean;
   checkout_items: CartItem[];
@@ -191,6 +191,10 @@ export default function CheckoutPage() {
   const { userId, userRole, loading: authLoading } = useAuth();
   const params = useLocalSearchParams();
 
+  // Optional direct params: cartId and productId
+  const cartId = params?.cartId ? String(params.cartId).trim() : null;
+  const productId = params?.productId ? String(params.productId).trim() : null;
+
   // Normalize selected ids from query params
   const getSelectedIds = () => {
     const raw = (params?.selected ??
@@ -210,6 +214,11 @@ export default function CheckoutPage() {
   };
 
   const selectedIds = getSelectedIds();
+
+  // Determine if we have a valid entry point:
+  // Either selectedIds from cart, OR a direct cartId, OR a direct productId
+  const hasValidEntry =
+    selectedIds.length > 0 || cartId !== null || productId !== null;
 
   const [checkoutData, setCheckoutData] = useState<CheckoutData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -233,7 +242,6 @@ export default function CheckoutPage() {
     remarks: "",
     selectedAddressId: null as string | null,
   });
-
   const [processingOrder, setProcessingOrder] = useState(false);
   const [summary, setSummary] = useState({
     subtotal: 0,
@@ -242,40 +250,82 @@ export default function CheckoutPage() {
     discount: 0,
   });
 
+  // Build API params depending on which entry point was used
+  const buildCheckoutApiParams = () => {
+    const base: Record<string, any> = { user_id: userId };
+
+    if (cartId) {
+      // Direct cart checkout
+      base.cart_id = cartId;
+    } else if (productId) {
+      // Direct product checkout (Buy Now)
+      base.product_id = productId;
+    } else {
+      // Cart items selected checkout
+      base.selected = selectedIds.join(",");
+    }
+
+    return base;
+  };
+
+  // Build order request body depending on entry point
+  // Build order request body depending on entry point
+  const buildOrderRequestBody = (checkoutItems: CartItem[]) => {
+    const base: Record<string, any> = {
+      user_id: userId,
+      shipping_address_id: formData.selectedAddressId,
+      payment_method: formData.paymentMethod,
+      shipping_method: formData.shippingMethod,
+      voucher_id: appliedVoucher?.id || null,
+      remarks: formData.remarks.substring(0, 500) || null,
+    };
+
+    if (cartId) {
+      // Direct cart checkout - send cart_id
+      base.cart_id = cartId;
+    } else if (productId) {
+      // Direct product checkout (Buy Now) - send product_id and variant_id
+      base.product_id = productId;
+      // Also need to send the selected variant ID and quantity
+      if (checkoutItems && checkoutItems.length > 0) {
+        base.variant_id = checkoutItems[0].variant?.id;
+        base.quantity = checkoutItems[0].quantity;
+      }
+    } else {
+      // Cart items selected checkout - send selected_ids array
+      base.selected_ids = checkoutItems.map((p) => p.cartItemId || p.id);
+    }
+
+    return base;
+  };
+
   // Fetch checkout data
   const fetchCheckoutData = useCallback(async () => {
-    if (!userId || selectedIds.length === 0) {
+    if (!userId || !hasValidEntry) {
       setLoading(false);
       setError(
         userId ? "No items selected for checkout" : "Please login to checkout",
       );
       return;
     }
-
     try {
       setLoading(true);
       setError(null);
-
-      console.log("Fetching checkout data with:", { selectedIds, userId });
-
+      console.log("Fetching checkout data with:", {
+        selectedIds,
+        cartId,
+        productId,
+        userId,
+      });
       const response = await AxiosInstance.get(
         "/checkout-order/get_checkout_items/",
-        {
-          params: {
-            selected: selectedIds.join(","),
-            user_id: userId,
-          },
-        },
+        { params: buildCheckoutApiParams() },
       );
-
       console.log("Checkout response:", response.data);
-
       if (response.data.success) {
-        // Check for ordered items
         const hasOrderedItems = response.data.checkout_items?.some(
           (item: any) => item.is_ordered === true,
         );
-
         if (hasOrderedItems) {
           setError(
             "Some items in your cart have already been ordered. Please refresh your cart.",
@@ -283,21 +333,17 @@ export default function CheckoutPage() {
           setCheckoutData(null);
           return;
         }
-
-        // Normalize items
         const normalizedItems = response.data.checkout_items.map(
           (item: any) => ({
             ...item,
             cartItemId: item.id || item.cartItemId,
+            variant: item.variant, // Preserve variant data
           }),
         );
-
         setCheckoutData({
           ...response.data,
           checkout_items: normalizedItems,
         });
-
-        // Update summary
         if (response.data.summary) {
           setSummary({
             subtotal: response.data.summary.subtotal,
@@ -306,8 +352,6 @@ export default function CheckoutPage() {
             discount: 0,
           });
         }
-
-        // Set default shipping address if available
         if (response.data.default_shipping_address) {
           setFormData((prev) => ({
             ...prev,
@@ -327,7 +371,6 @@ export default function CheckoutPage() {
       }
     } catch (error: any) {
       console.error("Error fetching checkout data:", error);
-
       let errorMessage = "Failed to load checkout items";
       if (error.response?.status === 404) {
         errorMessage = error.response.data?.error || "Checkout items not found";
@@ -336,32 +379,28 @@ export default function CheckoutPage() {
       } else if (!error.response) {
         errorMessage = "Network error. Please check your connection.";
       }
-
       setError(errorMessage);
       setCheckoutData(null);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [userId, selectedIds]);
+  }, [userId, selectedIds, cartId, productId]);
 
   useEffect(() => {
     if (authLoading) return;
-
     if (!userId) {
       setLoading(false);
       setError("Please login to checkout");
       return;
     }
-
-    if (selectedIds.length === 0) {
+    if (!hasValidEntry) {
       setLoading(false);
       setError("No items selected for checkout");
       return;
     }
-
     fetchCheckoutData();
-  }, [authLoading, userId, selectedIds.length]);
+  }, [authLoading, userId, hasValidEntry]);
 
   // Fetch vouchers when subtotal changes
   useEffect(() => {
@@ -369,7 +408,6 @@ export default function CheckoutPage() {
       const timer = setTimeout(() => {
         fetchVouchersByAmount(summary.subtotal);
       }, 500);
-
       return () => clearTimeout(timer);
     }
   }, [summary.subtotal, userId]);
@@ -381,7 +419,6 @@ export default function CheckoutPage() {
 
   const fetchVouchersByAmount = async (amount: number) => {
     if (!userId) return;
-
     setLoadingVouchers(true);
     try {
       const response = await AxiosInstance.get(
@@ -393,7 +430,6 @@ export default function CheckoutPage() {
           },
         },
       );
-
       if (response.data.success) {
         setCheckoutData((prev) => {
           if (!prev) return prev;
@@ -402,7 +438,6 @@ export default function CheckoutPage() {
             available_vouchers: response.data.available_vouchers || [],
           };
         });
-
         console.log("Fetched vouchers:", response.data.available_vouchers);
       }
     } catch (err: any) {
@@ -418,8 +453,6 @@ export default function CheckoutPage() {
   // Handle input changes
   const handleInputChange = (field: string, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
-
-    // Update payment method name when shipping method changes
     if (field === "shippingMethod") {
       const codMethod = paymentMethods.find((m) => m.id === "cod");
       if (codMethod) {
@@ -427,7 +460,6 @@ export default function CheckoutPage() {
           typeof codMethod.name === "function"
             ? codMethod.name(value)
             : codMethod.name;
-
         if (
           formData.paymentMethod === "Cash on Pickup" ||
           formData.paymentMethod === "Cash on Delivery"
@@ -435,8 +467,6 @@ export default function CheckoutPage() {
           setFormData((prev) => ({ ...prev, paymentMethod: methodName }));
         }
       }
-
-      // Update delivery cost in summary
       const deliveryCost = value === "Pickup from Store" ? 0 : 50.0;
       const newTotal = summary.subtotal + deliveryCost - summary.discount;
       setSummary((prev) => ({
@@ -455,7 +485,6 @@ export default function CheckoutPage() {
         typeof method.name === "function"
           ? method.name(formData.shippingMethod)
           : method.name;
-
       setFormData((prev) => ({
         ...prev,
         paymentMethod: methodName,
@@ -471,12 +500,9 @@ export default function CheckoutPage() {
 
   // Check if voucher is applicable to current cart
   const isVoucherApplicable = (voucher: Voucher) => {
-    // Check minimum spend
     if (voucher.minimum_spend > summary.subtotal) {
       return false;
     }
-
-    // Check if voucher is from a shop in the cart (for shop-specific vouchers)
     if (!voucher.is_general && voucher.shop_name !== "All Shops") {
       return (
         checkoutData?.checkout_items.some(
@@ -484,7 +510,6 @@ export default function CheckoutPage() {
         ) || false
       );
     }
-
     return true;
   };
 
@@ -493,7 +518,6 @@ export default function CheckoutPage() {
     if (voucher.minimum_spend > summary.subtotal) {
       return `Minimum spend: ₱${voucher.minimum_spend.toFixed(2)}`;
     }
-
     if (!voucher.is_general && voucher.shop_name !== "All Shops") {
       const hasShop = checkoutData?.checkout_items.some(
         (item) => item.shop_name === voucher.shop_name,
@@ -502,7 +526,6 @@ export default function CheckoutPage() {
         return `Only applicable to ${voucher.shop_name}`;
       }
     }
-
     return null;
   };
 
@@ -512,8 +535,6 @@ export default function CheckoutPage() {
       setVoucherError("Unable to apply voucher");
       return;
     }
-
-    // Check if voucher is applicable
     if (!isVoucherApplicable(voucher)) {
       const reason = getVoucherInapplicableReason(voucher);
       Alert.alert(
@@ -523,12 +544,9 @@ export default function CheckoutPage() {
       );
       return;
     }
-
     setVoucherLoading(true);
     setVoucherError(null);
-
     try {
-      // Determine which shop this voucher belongs to
       let shopId = null;
       if (!voucher.is_general && voucher.shop_name !== "All Shops") {
         const shopItem = checkoutData.checkout_items.find(
@@ -536,7 +554,6 @@ export default function CheckoutPage() {
         );
         shopId = shopItem?.shop_id || null;
       }
-
       const response = await AxiosInstance.post(
         "/checkout-order/validate_voucher/",
         {
@@ -546,44 +563,35 @@ export default function CheckoutPage() {
           shop_id: shopId,
         },
       );
-
       if (response.data.valid) {
         const validatedVoucher = response.data.voucher;
-
-        // Calculate discount amount
         let discountAmount = 0;
         if (validatedVoucher.discount_type === "percentage") {
           discountAmount = (summary.subtotal * validatedVoucher.value) / 100;
         } else {
           discountAmount = Math.min(validatedVoucher.value, summary.subtotal);
         }
-
         const voucherWithDiscount = {
           ...validatedVoucher,
           discount_amount: discountAmount,
           is_general: validatedVoucher.is_general || false,
         };
-
         setAppliedVoucher(voucherWithDiscount);
         setVoucherError(null);
         setIsVoucherModalVisible(false);
-
         const deliveryCost =
           formData.shippingMethod === "Pickup from Store" ? 0 : 50.0;
         const newTotal = summary.subtotal + deliveryCost - discountAmount;
-
         setSummary((prev) => ({
           ...prev,
           discount: discountAmount,
           total: newTotal,
         }));
-
         Alert.alert("Success", `Voucher ${voucher.code} applied successfully!`);
       } else {
         const errorMessage =
           response.data.error || "This voucher is not applicable to your order";
         setVoucherError(errorMessage);
-
         Alert.alert("Voucher Not Applicable", errorMessage, [{ text: "OK" }]);
       }
     } catch (err: any) {
@@ -591,12 +599,8 @@ export default function CheckoutPage() {
         err.response?.data?.error ||
         err.response?.data?.details ||
         "This voucher cannot be applied to your order";
-
       setVoucherError(errorMessage);
-
       Alert.alert("Voucher Not Applicable", errorMessage, [{ text: "OK" }]);
-
-      // Only log in development
       if (__DEV__) {
         console.log("Voucher validation details:", err.response?.data);
       }
@@ -609,11 +613,9 @@ export default function CheckoutPage() {
   const handleRemoveVoucher = () => {
     setAppliedVoucher(null);
     setVoucherError(null);
-
     const deliveryCost =
       formData.shippingMethod === "Pickup from Store" ? 0 : 50.0;
     const newTotal = summary.subtotal + deliveryCost;
-
     setSummary((prev) => ({
       ...prev,
       discount: 0,
@@ -622,15 +624,11 @@ export default function CheckoutPage() {
   };
 
   // Place order
-  // Place order
-  // Place order
   const handlePlaceOrder = async () => {
     if (!userId || !checkoutData) {
       Alert.alert("Error", "Please complete all required information");
       return;
     }
-
-    // Validate voucher still applicable
     if (appliedVoucher && !isVoucherApplicable(appliedVoucher)) {
       const reason = getVoucherInapplicableReason(appliedVoucher);
       Alert.alert(
@@ -641,8 +639,6 @@ export default function CheckoutPage() {
       );
       return;
     }
-
-    // Validate shipping address for delivery
     if (
       formData.shippingMethod === "Standard Delivery" &&
       !formData.selectedAddressId
@@ -650,7 +646,6 @@ export default function CheckoutPage() {
       Alert.alert("Required", "Please select a shipping address for delivery");
       return;
     }
-
     if (!formData.agreeTerms) {
       Alert.alert(
         "Required",
@@ -658,53 +653,31 @@ export default function CheckoutPage() {
       );
       return;
     }
-
     setProcessingOrder(true);
     setError(null);
-
     try {
-      const requestBody = {
-        user_id: userId,
-        selected_ids: checkoutData.checkout_items.map(
-          (p) => p.cartItemId || p.id,
-        ),
-        shipping_address_id: formData.selectedAddressId,
-        payment_method: formData.paymentMethod,
-        shipping_method: formData.shippingMethod,
-        voucher_id: appliedVoucher?.id || null,
-        remarks: formData.remarks.substring(0, 500) || null,
-      };
-
+      const requestBody = buildOrderRequestBody(checkoutData.checkout_items);
       console.log("Placing order with data:", requestBody);
-
       const response = await AxiosInstance.post(
         "/checkout-order/create_order/",
         requestBody,
       );
-
       if (response.data.success) {
         const orderId = response.data.order_id;
         const isEWalletPayment = ["Maya"].includes(formData.paymentMethod);
-
         console.log(
           "Order created, redirecting. orderId=",
           orderId,
           "isEWallet=",
           isEWalletPayment,
         );
-
         if (isEWalletPayment) {
-          // For e-wallet payments, go to payment page
           router.push({
             pathname: "/customer/pay-order",
             params: { order_id: orderId },
           });
         } else {
-          // For COD/Cash payments, go to purchases page
-          // Navigate to purchases and show success message
           router.replace("/customer/purchases");
-
-          // Show success message after a short delay to ensure navigation happens
           setTimeout(() => {
             Alert.alert(
               "Order Placed Successfully",
@@ -744,17 +717,14 @@ export default function CheckoutPage() {
   // Get selected address
   const getSelectedAddress = () => {
     if (!checkoutData) return null;
-
     if (formData.selectedAddressId) {
       const selected = checkoutData.shipping_addresses?.find(
         (addr) => addr.id === formData.selectedAddressId,
       );
       if (selected) return selected;
     }
-
     if (checkoutData.default_shipping_address)
       return checkoutData.default_shipping_address;
-
     return checkoutData.shipping_addresses &&
       checkoutData.shipping_addresses.length > 0
       ? checkoutData.shipping_addresses[0]
@@ -770,7 +740,6 @@ export default function CheckoutPage() {
     ) {
       return [];
     }
-
     const productShopIds = [
       ...new Set(checkoutData.checkout_items.map((p) => p.shop_id)),
     ];
@@ -861,15 +830,12 @@ export default function CheckoutPage() {
   // Get filtered vouchers
   const getFilteredVouchers = () => {
     if (!checkoutData) return [];
-
     if (activeVoucherCategory === "all") {
       return getAllVouchers();
     }
-
     const category = checkoutData.available_vouchers.find((cat: any) =>
       cat.category.includes(activeVoucherCategory.replace("_", " ")),
     );
-
     return category ? category.vouchers : [];
   };
 
@@ -881,10 +847,8 @@ export default function CheckoutPage() {
       silver: { label: "Silver", color: "#6B7280" },
       new: { label: "New", color: "#EA580C" },
     };
-
     const config =
       tierConfig[tier as keyof typeof tierConfig] || tierConfig.new;
-
     return (
       <View style={[styles.tierBadge, { backgroundColor: config.color }]}>
         <Text style={styles.tierBadgeText}>{config.label}</Text>
@@ -900,7 +864,6 @@ export default function CheckoutPage() {
   // Calculate button text
   const getPlaceOrderButtonText = () => {
     if (processingOrder) return "Processing Order...";
-
     const isEWalletPayment = ["Maya"].includes(formData.paymentMethod);
     if (isEWalletPayment) {
       return `Pay with ${formData.paymentMethod} • ₱${summary.total.toFixed(2)}`;
@@ -1017,7 +980,6 @@ export default function CheckoutPage() {
               </Text>
             </View>
           </View>
-
           <View style={styles.itemsList}>
             {checkoutData.checkout_items.map((item) => (
               <View key={item.id} style={styles.itemCard}>
@@ -1031,13 +993,11 @@ export default function CheckoutPage() {
                     <MaterialIcons name="image" size={24} color="#9CA3AF" />
                   </View>
                 )}
-
                 <View style={styles.itemDetails}>
                   <Text style={styles.itemName} numberOfLines={2}>
                     {item.name}
                   </Text>
                   <Text style={styles.itemShop}>{item.shop_name}</Text>
-
                   <View style={styles.itemBottomRow}>
                     <View>
                       <Text style={styles.itemTotalPrice}>
@@ -1047,7 +1007,6 @@ export default function CheckoutPage() {
                         ₱{item.price.toFixed(2)} each
                       </Text>
                     </View>
-
                     <View style={styles.itemQuantity}>
                       <Text style={styles.quantityText}>
                         Qty: {item.quantity}
@@ -1073,12 +1032,10 @@ export default function CheckoutPage() {
               </Text>
             </View>
           </View>
-
           <View style={styles.shippingMethods}>
             {shippingMethods.map((method) => {
               const IconComponent = MaterialIcons;
               const isSelected = formData.shippingMethod === method.name;
-
               return (
                 <TouchableOpacity
                   key={method.id}
@@ -1114,7 +1071,6 @@ export default function CheckoutPage() {
                         </Text>
                       </View>
                     </View>
-
                     <View style={styles.shippingMethodRight}>
                       <Text style={styles.shippingMethodCost}>
                         {method.cost === 0
@@ -1153,7 +1109,6 @@ export default function CheckoutPage() {
                 <Text style={styles.manageButtonText}>Manage</Text>
               </TouchableOpacity>
             </View>
-
             {checkoutData.shipping_addresses &&
             checkoutData.shipping_addresses.length > 0 ? (
               <View>
@@ -1194,11 +1149,9 @@ export default function CheckoutPage() {
                           ]}
                         />
                       </View>
-
                       <Text style={styles.addressFull} numberOfLines={2}>
                         {address.full_address}
                       </Text>
-
                       {address.instructions && (
                         <Text
                           style={styles.addressInstructions}
@@ -1210,7 +1163,6 @@ export default function CheckoutPage() {
                     </TouchableOpacity>
                   ))}
                 </View>
-
                 {formData.selectedAddressId && selectedAddress && (
                   <View style={styles.selectedAddressCard}>
                     <Text style={styles.selectedAddressTitle}>
@@ -1264,7 +1216,6 @@ export default function CheckoutPage() {
                   </Text>
                 </View>
               </View>
-
               {shopAddresses.map((shop, index) => (
                 <View key={index} style={styles.pickupShopCard}>
                   <View style={styles.pickupShopHeader}>
@@ -1283,7 +1234,6 @@ export default function CheckoutPage() {
                   )}
                 </View>
               ))}
-
               <View style={styles.pickupInstructions}>
                 <MaterialIcons name="info" size={16} color="#EA580C" />
                 <Text style={styles.pickupInstructionsText}>
@@ -1307,7 +1257,6 @@ export default function CheckoutPage() {
               </Text>
             </View>
           </View>
-
           <View style={styles.paymentMethods}>
             {paymentMethods.map((method) => {
               const methodName =
@@ -1321,7 +1270,6 @@ export default function CheckoutPage() {
               const isSelected = formData.paymentMethod === methodName;
               const IconComponent =
                 method.iconSet === "FontAwesome5" ? FontAwesome5 : FontAwesome;
-
               return (
                 <TouchableOpacity
                   key={method.id}
@@ -1338,7 +1286,6 @@ export default function CheckoutPage() {
                       color={isSelected ? "#EA580C" : "#6B7280"}
                     />
                   </View>
-
                   <View style={styles.paymentMethodInfo}>
                     <Text
                       style={[
@@ -1352,7 +1299,6 @@ export default function CheckoutPage() {
                       {methodDescription}
                     </Text>
                   </View>
-
                   <View
                     style={[
                       styles.paymentRadio,
@@ -1390,7 +1336,6 @@ export default function CheckoutPage() {
               </View>
             </View>
           </View>
-
           {appliedVoucher ? (
             <View style={styles.appliedVoucherCard}>
               <View style={styles.appliedVoucherHeader}>
@@ -1448,7 +1393,6 @@ export default function CheckoutPage() {
                           : Math.min(voucher.value, summary.subtotal);
                       const applicable = isVoucherApplicable(voucher);
                       const reason = getVoucherInapplicableReason(voucher);
-
                       return (
                         <TouchableOpacity
                           key={voucher.id || index}
@@ -1522,7 +1466,6 @@ export default function CheckoutPage() {
               )}
             </>
           )}
-
           {voucherError && (
             <View style={styles.voucherErrorCard}>
               <MaterialIcons name="error-outline" size={20} color="#DC2626" />
@@ -1551,7 +1494,6 @@ export default function CheckoutPage() {
         {/* Order Summary */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Order Summary</Text>
-
           <View style={styles.orderSummary}>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>
@@ -1561,7 +1503,6 @@ export default function CheckoutPage() {
                 ₱{summary.subtotal.toFixed(2)}
               </Text>
             </View>
-
             {appliedVoucher && (
               <View style={styles.discountRow}>
                 <Text style={styles.discountLabel}>
@@ -1575,7 +1516,6 @@ export default function CheckoutPage() {
                 </Text>
               </View>
             )}
-
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Shipping</Text>
               <Text style={styles.summaryValue}>
@@ -1584,7 +1524,6 @@ export default function CheckoutPage() {
                   : `₱${summary.delivery.toFixed(2)}`}
               </Text>
             </View>
-
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Total</Text>
               <View style={styles.totalRight}>
@@ -1654,7 +1593,6 @@ export default function CheckoutPage() {
               </Text>
             </View>
           )}
-
         {!formData.agreeTerms && (
           <View style={styles.validationMessage}>
             <MaterialIcons name="warning" size={16} color="#D97706" />
@@ -1674,7 +1612,6 @@ export default function CheckoutPage() {
           </View>
           <Text style={styles.totalVat}>Including VAT</Text>
         </View>
-
         <TouchableOpacity
           style={[
             styles.checkoutButton,
@@ -1700,7 +1637,6 @@ export default function CheckoutPage() {
             </Text>
           )}
         </TouchableOpacity>
-
         <View style={styles.footerNotes}>
           <MaterialIcons name="security" size={14} color="#6B7280" />
           <Text style={styles.footerNoteText}>
@@ -1727,7 +1663,6 @@ export default function CheckoutPage() {
                 <MaterialIcons name="close" size={24} color="#374151" />
               </TouchableOpacity>
             </View>
-
             <ScrollView style={styles.modalContent}>
               {(checkoutData.shipping_addresses ?? []).map((address) => {
                 const isSelected = formData.selectedAddressId === address.id;
@@ -1765,11 +1700,9 @@ export default function CheckoutPage() {
                         ]}
                       />
                     </View>
-
                     <Text style={styles.modalAddressFull}>
                       {address.full_address}
                     </Text>
-
                     {address.instructions && (
                       <Text style={styles.modalAddressInstructions}>
                         📝 {address.instructions}
@@ -1778,7 +1711,6 @@ export default function CheckoutPage() {
                   </TouchableOpacity>
                 );
               })}
-
               <TouchableOpacity
                 style={styles.addNewAddressButton}
                 onPress={() => {
@@ -1812,9 +1744,7 @@ export default function CheckoutPage() {
                 <MaterialIcons name="close" size={24} color="#374151" />
               </TouchableOpacity>
             </View>
-
             <ScrollView style={styles.modalContent}>
-              {/* Voucher Categories */}
               {checkoutData.available_vouchers.length > 1 && (
                 <ScrollView
                   horizontal
@@ -1839,7 +1769,6 @@ export default function CheckoutPage() {
                       All Vouchers
                     </Text>
                   </TouchableOpacity>
-
                   {checkoutData.available_vouchers.map((category, index) => (
                     <TouchableOpacity
                       key={index}
@@ -1865,8 +1794,6 @@ export default function CheckoutPage() {
                   ))}
                 </ScrollView>
               )}
-
-              {/* Vouchers List */}
               {loadingVouchers ? (
                 <View style={styles.loadingVouchers}>
                   <ActivityIndicator size="large" color="#EA580C" />
@@ -1882,7 +1809,6 @@ export default function CheckoutPage() {
                       : Math.min(voucher.value, summary.subtotal);
                   const applicable = isVoucherApplicable(voucher);
                   const reason = getVoucherInapplicableReason(voucher);
-
                   return (
                     <TouchableOpacity
                       key={index}
@@ -1937,7 +1863,6 @@ export default function CheckoutPage() {
                             <Text style={styles.modalVoucherDescription}>
                               {voucher.description}
                             </Text>
-
                             <View style={styles.modalVoucherDetails}>
                               <View style={styles.modalVoucherDetail}>
                                 <MaterialIcons
@@ -1955,7 +1880,6 @@ export default function CheckoutPage() {
                                 </Text>
                               </View>
                             </View>
-
                             {!applicable && reason && (
                               <View style={styles.notApplicableContainer}>
                                 <MaterialIcons
@@ -1970,7 +1894,6 @@ export default function CheckoutPage() {
                             )}
                           </View>
                         </View>
-
                         <View style={styles.modalVoucherRight}>
                           <View style={styles.modalVoucherDiscount}>
                             <Text style={styles.modalVoucherDiscountValue}>
@@ -1982,13 +1905,11 @@ export default function CheckoutPage() {
                               OFF
                             </Text>
                           </View>
-
                           {applicable && (
                             <Text style={styles.modalVoucherSavings}>
                               Save ₱{savings.toFixed(2)}
                             </Text>
                           )}
-
                           <View
                             style={[
                               styles.modalApplyButton,
@@ -3233,7 +3154,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 6,
   },
-
   modalApplyButtonText: {
     color: "#FFFFFF",
     fontSize: 12,

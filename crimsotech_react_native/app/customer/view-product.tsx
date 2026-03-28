@@ -128,7 +128,6 @@ type ProductDetail = {
   total_reviews?: number;
   favorites_count?: number;
   variants?: Variant[];
-  // API returns media_files (not media)
   media_files?: MediaItem[];
   media?: MediaItem[];
   created_at?: string;
@@ -174,7 +173,6 @@ const statusColor = (status?: string) => {
   return "#475569";
 };
 
-// Prefer _url over raw S3 URL (file_url / image_url are already public Supabase URLs)
 const resolveMediaUrl = (item: MediaItem): string | null => {
   return item.file_url || item.file_data || null;
 };
@@ -263,7 +261,6 @@ const ImageGalleryModal = ({
         >
           <Ionicons name="close" size={30} color="#FFFFFF" />
         </TouchableOpacity>
-
         <FlatList
           ref={flatListRef}
           data={images}
@@ -308,7 +305,6 @@ const ImageGalleryModal = ({
           )}
           keyExtractor={(_, index) => index.toString()}
         />
-
         {images.length > 1 && (
           <View
             style={{
@@ -341,6 +337,7 @@ const OwnershipInfoCard = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const proofUrl = resolveProofImageUrl(variant);
+
   if (!variant.original_price && !variant.purchase_date && !proofUrl)
     return null;
 
@@ -383,7 +380,6 @@ const OwnershipInfoCard = ({
           color="#EA580C"
         />
       </TouchableOpacity>
-
       {isExpanded && (
         <View style={{ padding: 14, paddingTop: 4 }}>
           {variant.original_price && (
@@ -562,7 +558,7 @@ const OwnershipInfoCard = ({
   );
 };
 
-// Make sure this is what you have at the top of SellerInfoCard:
+// ─── Seller Info Card ──────────────────────────────────────────────────────────
 const SellerInfoCard = ({
   product,
   onPress,
@@ -695,6 +691,7 @@ const ReviewsSection = ({
       </View>
     );
   }
+
   return (
     <View
       style={{
@@ -782,6 +779,7 @@ export default function CustomerViewProductScreen() {
     id?: string | string[];
     productId?: string | string[];
   }>();
+
   const rawProductId = params.id ?? params.productId;
   const productId = Array.isArray(rawProductId)
     ? String(rawProductId[0] ?? "")
@@ -840,7 +838,6 @@ export default function CustomerViewProductScreen() {
   }, [fetchProduct]);
 
   // ── Media resolution ──────────────────────────────────────────────────────
-  // API returns media_files (not media)
   const productImages = useMemo(() => {
     const mediaItems = product?.media_files ?? product?.media ?? [];
     return mediaItems
@@ -860,7 +857,6 @@ export default function CustomerViewProductScreen() {
       .filter((url): url is string => !!url);
   }, [product]);
 
-  // Gallery = product photos + variant images (proof images opened separately)
   const galleryImages = useMemo(
     () => [...productImages, ...variantImages],
     [productImages, variantImages],
@@ -877,10 +873,8 @@ export default function CustomerViewProductScreen() {
   };
 
   const openProofGallery = (url: string) => {
-    // Show proof image in its own single-image gallery
     setSelectedImageIndex(0);
     setGalleryVisible(false);
-    // We'll open a temporary gallery for just this proof image
     setProofGalleryImages([url]);
     setProofGalleryVisible(true);
   };
@@ -913,7 +907,6 @@ export default function CustomerViewProductScreen() {
       Alert.alert("Out of Stock", "This variant is currently out of stock");
       return;
     }
-
     setAddingToCart(true);
     try {
       await AxiosInstance.post("/view-cart/", {
@@ -936,7 +929,8 @@ export default function CustomerViewProductScreen() {
     }
   };
 
-  const buyNow = async () => {
+  // ── Buy Now — passes directly to checkout without adding to cart ──────────
+  const buyNow = () => {
     if (!userId) {
       Alert.alert("Sign In Required", "Please sign in to purchase");
       return;
@@ -950,38 +944,15 @@ export default function CustomerViewProductScreen() {
       return;
     }
 
-    setAddingToCart(true);
-    try {
-      // Silently add to cart (or use existing cart item)
-      const response = await AxiosInstance.post("/view-cart/", {
-        user_id: userId,
-        variant_id: selectedVariant.id,
-        quantity,
-      });
-
-      const cartItemId = response.data.cart_item?.id;
-
-      if (!cartItemId) {
-        Alert.alert("Error", "Could not prepare item for checkout.");
-        return;
-      }
-
-      // Go directly to checkout with the cart item ID
-      router.push({
-        pathname: "/customer/checkout",
-        params: {
-          selected: cartItemId,
-        },
-      });
-    } catch (err: any) {
-      const msg =
-        err.response?.data?.error ??
-        err.response?.data?.detail ??
-        "Failed to proceed to checkout.";
-      Alert.alert("Error", msg);
-    } finally {
-      setAddingToCart(false);
-    }
+    // Pass productId and variantId directly — no cart mutation needed
+    router.push({
+      pathname: "/customer/checkout",
+      params: {
+        productId,
+        variantId: selectedVariant.id,
+        quantity: String(quantity),
+      },
+    });
   };
 
   // ── Loading / error states ─────────────────────────────────────────────────
@@ -1043,8 +1014,6 @@ export default function CustomerViewProductScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F9FAFB" }}>
       {/* Header */}
-      {/* Header */}
-
       <View
         style={{
           paddingHorizontal: 16,
@@ -1129,7 +1098,6 @@ export default function CustomerViewProductScreen() {
                 )}
                 keyExtractor={(_, index) => index.toString()}
               />
-              {/* Dot indicators */}
               {productImages.length > 1 && (
                 <View
                   style={{
@@ -1292,19 +1260,11 @@ export default function CustomerViewProductScreen() {
           </View>
         </View>
 
-        {/* Media Strip — all product photos */}
-
         {/* Seller Info */}
         <SellerInfoCard
           product={product}
           onPress={() => {
-            console.log("shop:", product.shop);
-            console.log("seller_id:", product.seller_id);
-            console.log("seller_name:", product.seller_name);
-
             const shopId = product.shop?.id ?? product.seller_id;
-            console.log("shopId resolved:", shopId);
-
             if (shopId) {
               router.push({
                 pathname: "/customer/view-shop",
@@ -1642,18 +1602,10 @@ export default function CustomerViewProductScreen() {
               opacity: addingToCart ? 0.7 : 1,
             }}
           >
-            {addingToCart ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons name="flash-outline" size={20} color="#FFFFFF" />
-                <Text
-                  style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}
-                >
-                  Buy Now
-                </Text>
-              </>
-            )}
+            <Ionicons name="flash-outline" size={20} color="#FFFFFF" />
+            <Text style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}>
+              Buy Now
+            </Text>
           </TouchableOpacity>
         </View>
       ) : (

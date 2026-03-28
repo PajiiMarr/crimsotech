@@ -25,16 +25,23 @@ import AxiosInstance from '../../contexts/axios';
 interface OrderItem {
   checkout_id: string;
   cart_item_id: string | null;
-  product_id: string;
+  product_id: string | null;  // Can be null
   product_name: string;
+  product_description?: string;
+  product_condition?: number;
+  product_status?: string;
+  variant_id?: string | null;
+  variant_title?: string | null;
+  variant_sku?: string | null;
   shop_id: string | null;
   shop_name: string | null;
+  shop_picture?: string | null;
   seller_username: string | null;
   quantity: number;
   price: string;
   subtotal: string;
   status: string;
-  remarks: string;
+  remarks: string | null;
   purchased_at: string;
   voucher_applied: {
     id: string;
@@ -48,6 +55,7 @@ interface OrderItem {
     file_type: string;
   } | null;
   product_images?: Array<{
+    id?: string;
     url: string;
     file_type: string;
   }>;
@@ -65,8 +73,8 @@ interface PurchaseOrder {
   payment_status: string | null;
   delivery_status: string | null;
   delivery_rider: string | null;
+  pickup_date: string | null;
   items: OrderItem[];
-  pickup_date?: string | null;
 }
 
 interface PurchasesResponse {
@@ -79,7 +87,7 @@ interface PurchasesResponse {
 interface PurchaseItem {
   id: string;
   order_id: string;
-  product_id: string;
+  product_id: string | null;
   product_name: string;
   shop_name: string;
   shop_id: string | null;
@@ -91,9 +99,13 @@ interface PurchaseItem {
   reason?: string;
   refund_request_id?: string;
   order: PurchaseOrder;
-  item?: OrderItem;
+  item: OrderItem;
   is_refundable: boolean;
   can_review: boolean;
+  variant_info?: {
+    title: string;
+    sku: string;
+  };
 }
 
 // Status tabs configuration - All 8 tabs from web
@@ -109,7 +121,7 @@ const STATUS_TABS = [
 ];
 
 // Status configuration for badges
-const STATUS_CONFIG = {
+const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string }> = {
   pending: { 
     label: 'Pending', 
     color: '#F59E0B',
@@ -165,19 +177,15 @@ const STATUS_CONFIG = {
 // Helper function to format image URL
 const formatImageUrl = (url: string | null | undefined): string | null => {
   if (!url || url.trim() === '') return null;
-
   if (url.startsWith('http://') || url.startsWith('https://')) {
     return url;
   }
-
   const baseURL = (AxiosInstance.defaults && AxiosInstance.defaults.baseURL) 
     ? AxiosInstance.defaults.baseURL.replace(/\/$/, '') 
     : 'http://localhost:8000';
-  
   if (url.startsWith('/')) {
     return `${baseURL}${url}`;
   }
-
   return `${baseURL}/${url}`;
 };
 
@@ -274,7 +282,7 @@ export default function PurchasesPage() {
   const fetchPurchases = async () => {
     try {
       setLoading(true);
-      const response = await AxiosInstance.get<PurchasesResponse>('/purchases-buyer/user_purchases/', {
+      const response = await AxiosInstance.get<PurchasesResponse>('/purchases-buyer/user-purchases/', {
         headers: {
           'X-User-Id': userId
         }
@@ -284,32 +292,45 @@ export default function PurchasesPage() {
       const items: PurchaseItem[] = [];
 
       purchasesData.purchases.forEach((order: PurchaseOrder) => {
+        // Check if order has items
         if (order.items && order.items.length > 0) {
           order.items.forEach((item: OrderItem, index: number) => {
+            // Skip items with no product_id (unavailable items)
+            // But we still want to show them? Let's show them as "Item no longer available"
             const statusToUse = item.status || order.status || 'pending';
             const mappedStatus = mapStatus(statusToUse);
             
-            const imageUrl = formatImageUrl(
-              item.primary_image?.url || 
-              (item.product_images && item.product_images[0]?.url)
-            ) || 'https://via.placeholder.com/100';
+            // Get image URL - check primary_image first, then product_images
+            let imageUrl = 'https://via.placeholder.com/100?text=No+Image';
+            
+            if (item.primary_image?.url) {
+              const formatted = formatImageUrl(item.primary_image.url);
+              if (formatted) imageUrl = formatted;
+            } else if (item.product_images && item.product_images.length > 0 && item.product_images[0]?.url) {
+              const formatted = formatImageUrl(item.product_images[0].url);
+              if (formatted) imageUrl = formatted;
+            }
 
             const purchaseItem: PurchaseItem = {
               id: `${order.order_id}-${index}`,
               order_id: order.order_id,
               product_id: item.product_id,
-              product_name: item.product_name,
+              product_name: item.product_name || 'Item no longer available',
               shop_name: item.shop_name || 'Unknown Shop',
               shop_id: item.shop_id,
               quantity: item.quantity,
               status: mappedStatus,
               purchased_at: item.purchased_at,
-              total_amount: parseFloat(item.subtotal),
+              total_amount: parseFloat(item.subtotal) || 0,
               image: imageUrl,
               order: order,
               item: item,
               is_refundable: item.is_refundable || false,
-              can_review: item.can_review || false
+              can_review: item.can_review || false,
+              variant_info: item.variant_title ? {
+                title: item.variant_title,
+                sku: item.variant_sku || ''
+              } : undefined
             };
 
             if (item.status === 'cancelled' && item.remarks) {
@@ -319,6 +340,8 @@ export default function PurchasesPage() {
             items.push(purchaseItem);
           });
         }
+        // If order has no items, we can optionally show a placeholder
+        // For now, we'll just skip orders with no items
       });
 
       setPurchaseItems(items);
@@ -459,8 +482,7 @@ export default function PurchasesPage() {
   };
 
   const getStatusBadge = (status: string) => {
-    const config = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG] || 
-                   { label: status, color: '#6B7280', bgColor: '#F3F4F6' };
+    const config = STATUS_CONFIG[status] || { label: status, color: '#6B7280', bgColor: '#F3F4F6' };
     
     return (
       <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
@@ -480,8 +502,16 @@ export default function PurchasesPage() {
         { 
           text: 'Yes, Cancel', 
           style: 'destructive',
-          onPress: () => {
-            // router.push(`/cancel-order/${item.order_id}?item_id=${item.id}`);
+          onPress: async () => {
+            try {
+              await AxiosInstance.post(`/purchases-buyer/${item.order_id}/cancel/`, {}, {
+                headers: { 'X-User-Id': userId }
+              });
+              Alert.alert('Success', 'Order cancelled successfully');
+              fetchPurchases(); // Refresh list
+            } catch (error) {
+              Alert.alert('Error', 'Failed to cancel order');
+            }
           }
         }
       ]
@@ -510,7 +540,7 @@ export default function PurchasesPage() {
             <View style={styles.pickupBannerContent}>
               <Text style={styles.pickupBannerTitle}>Pickup Scheduled</Text>
               <Text style={styles.pickupBannerDate}>
-                {formatPickupDateTime(pickupDate!)}
+                {formatPickupDateTime(pickupDate)}
               </Text>
               <View style={styles.pickupBannerLocation}>
                 <MaterialIcons name="location-on" size={10} color="#F59E0B" />
@@ -527,7 +557,7 @@ export default function PurchasesPage() {
         <View style={styles.shopHeader}>
           <View style={styles.shopInfo}>
             <MaterialIcons name="store" size={16} color="#6B7280" />
-            <Text style={styles.shopName}>{item.shop_name}</Text>
+            <Text style={styles.shopName} numberOfLines={1}>{item.shop_name}</Text>
           </View>
           <MaterialIcons name="chevron-right" size={20} color="#9CA3AF" />
         </View>
@@ -545,10 +575,10 @@ export default function PurchasesPage() {
             </Text>
             
             {/* Variant - if available */}
-            {item.item?.remarks && (
+            {item.variant_info && item.variant_info.title && (
               <View style={styles.infoRow}>
                 <MaterialIcons name="label-outline" size={14} color="#9CA3AF" />
-                <Text style={styles.infoText} numberOfLines={1}>{item.item.remarks}</Text>
+                <Text style={styles.infoText} numberOfLines={1}>{item.variant_info.title}</Text>
               </View>
             )}
 
@@ -575,7 +605,7 @@ export default function PurchasesPage() {
         {item.item?.voucher_applied && (
           <View style={styles.voucherContainer}>
             <MaterialIcons name="local-offer" size={14} color="#10B981" />
-            <Text style={styles.voucherText}>
+            <Text style={styles.voucherText} numberOfLines={1}>
               {item.item.voucher_applied.name} ({item.item.voucher_applied.code})
             </Text>
           </View>
@@ -623,7 +653,7 @@ export default function PurchasesPage() {
                   <Text style={styles.rateButtonText}>Rate</Text>
                 </TouchableOpacity>
                 
-                {item.is_refundable && (
+                {item.is_refundable && item.product_id && (
                   <TouchableOpacity 
                     style={[styles.actionButton, styles.refundButton]}
                     onPress={() => router.push(`/customer/request-refund?orderId=${item.order_id}&productId=${item.product_id}`)}
@@ -636,7 +666,7 @@ export default function PurchasesPage() {
             )}
 
             {/* For picked_up/completed items - Rate button only if can_review */}
-            {(item.status === 'picked_up' || item.status === 'completed') && item.can_review && (
+            {(item.status === 'picked_up' || item.status === 'completed') && item.can_review && item.product_id && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.rateButton]}
                 onPress={() => router.push(`/customer/order-review?productId=${item.product_id}&orderId=${item.order_id}&productName=${encodeURIComponent(item.product_name)}`)}
@@ -959,11 +989,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flex: 1,
   },
   shopName: {
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
+    flex: 1,
   },
   productContainer: {
     flexDirection: 'row',
@@ -1038,6 +1070,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#10B981',
     fontWeight: '500',
+    flex: 1,
   },
   footer: {
     flexDirection: 'row',

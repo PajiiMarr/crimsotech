@@ -1028,6 +1028,13 @@ class Checkout(models.Model):
         null=True,
         blank=True,
     )
+    direct_product_id = models.UUIDField(null=True, blank=True)
+    direct_variant_id = models.UUIDField(null=True, blank=True)
+    direct_product_name = models.CharField(max_length=500, null=True, blank=True)
+    direct_product_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    direct_product_image = models.CharField(max_length=500, null=True, blank=True)
+    direct_shop_id = models.UUIDField(null=True, blank=True)
+    direct_shop_name = models.CharField(max_length=200, null=True, blank=True)
     quantity = models.IntegerField(default=0)
     total_amount = models.DecimalField(decimal_places=2, max_digits=9)
     status = models.TextField()
