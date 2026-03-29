@@ -34,6 +34,7 @@ Crimsotech is a comprehensive marketplace platform designed to create a seamless
 ## 🏗 System Architecture
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'background': '#ffffff', 'primaryColor': '#238636', 'primaryBorderColor': '#2ea043', 'primaryTextColor': '#000000', 'lineColor': '#000000', 'secondaryColor': '#f0f0f0', 'tertiaryColor': '#ffffff', 'fontFamily': 'arial', 'fontSize': '14px'}}}%%
 graph LR
     A[React Native Mobile App] --> D[HTTP Server/REST API]
     B[React Web Admin] --> D
@@ -48,13 +49,13 @@ graph LR
         G
     end
     
-    style A fill:#f9f,stroke:#333,stroke-width:2px
-    style B fill:#9cf,stroke:#333,stroke-width:2px
-    style C fill:#ff9,stroke:#333,stroke-width:2px
-    style D fill:#5f9,stroke:#333,stroke-width:4px
-    style E fill:#f96,stroke:#333,stroke-width:2px
-    style F fill:#5f9,stroke:#333,stroke-width:2px
-    style G fill:#5f9,stroke:#333,stroke-width:2px
+    style A fill:#f9f,stroke:#333,stroke-width:2px,color:#000000
+    style B fill:#9cf,stroke:#333,stroke-width:2px,color:#000000
+    style C fill:#ff9,stroke:#333,stroke-width:2px,color:#000000
+    style D fill:#5f9,stroke:#333,stroke-width:4px,color:#000000
+    style E fill:#f96,stroke:#333,stroke-width:2px,color:#000000
+    style F fill:#5f9,stroke:#333,stroke-width:2px,color:#000000
+    style G fill:#5f9,stroke:#333,stroke-width:2px,color:#000000
 ```
 
 ### Core Components
