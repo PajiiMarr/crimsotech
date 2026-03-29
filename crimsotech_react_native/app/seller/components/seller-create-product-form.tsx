@@ -1292,18 +1292,6 @@ export default function CreateProductForm({
                     </View>
                   </View>
 
-                  {/* SKU */}
-                  <View style={styles.formGroup}>
-                    <Text style={styles.label}>SKU Code</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={variant.sku_code || ''}
-                      onChangeText={(text) => updateVariantField(variant.id, 'sku_code', text)}
-                      placeholder="Optional"
-                      placeholderTextColor="#9CA3AF"
-                    />
-                  </View>
-
                   {/* ===== DEPRECIATION SECTION ===== */}
                   <View style={styles.depreciationSection}>
                     <View style={styles.depreciationHeader}>
