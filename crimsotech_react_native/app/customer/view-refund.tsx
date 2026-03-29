@@ -193,18 +193,30 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
   const returnAddress = refund.return_address || shopReturnAddress || null;
 
   const extractReturnProofUrls = () => {
-    const rrObj = refund.return_request || {};
-    const candidates = rrObj.media || rrObj.media_files || rrObj.return_media || rrObj.proofs || refund.return_request_media || refund.return_media || refund.return_media_files || refund.return_request?.media_files || refund.return_request?.media || [];
-    const arr = Array.isArray(candidates) ? candidates : [];
-    const urls: string[] = [];
-    arr.forEach((m: any) => {
-      if (!m) return;
-      if (typeof m === 'string') { urls.push(m); return; }
-      const u = m.file_url || m.file_data?.url || m.file?.url || m.url || m.file_data || m.path || m.src;
-      if (u) urls.push(u);
+  const rrObj = refund.return_request || {};
+  
+  // Try all possible paths where media might be stored
+  const mediaFromReturn = rrObj.medias || 
+                          rrObj.media || 
+                          rrObj.media_files || 
+                          refund.return_request_media || 
+                          [];
+  
+  const urls: string[] = [];
+  
+  if (Array.isArray(mediaFromReturn) && mediaFromReturn.length > 0) {
+    mediaFromReturn.forEach((m: any) => {
+      // Try different possible URL field names
+      const url = m.file_url || m.url || m.file_data;
+      if (url && typeof url === 'string') {
+        urls.push(url);
+      }
     });
-    return urls;
-  };
+  }
+  
+  console.log('Extracted media URLs:', urls);
+  return urls;
+};
   const shippingProofUrls = extractReturnProofUrls();
   
   const isProcessing = (
@@ -221,137 +233,151 @@ const returnDeadline = refund.processed_at ? new Date(new Date(refund.processed_
     return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
   }
 
-  return (
-    <View style={styles.statusSection}>
-      <View style={styles.statusRow}>
-        <CheckCircle2 size={24} color={isReturnItem ? "#3B82F6" : "#10B981"} fill={isReturnItem ? "#DBEAFE" : "#D1FAE5"} />
-        <View style={styles.statusTextContainer}>
-          <Text style={[styles.statusTitle, isReturnItem && { color: "#3B82F6" }]}>
-            {isReturnItem ? 'Approved - Waiting for return' : 'Refund Approved'}
+ return (
+  <View style={styles.statusSection}>
+    <View style={styles.statusRow}>
+      <CheckCircle2 size={24} color={isReturnItem ? "#3B82F6" : "#10B981"} fill={isReturnItem ? "#DBEAFE" : "#D1FAE5"} />
+      <View style={styles.statusTextContainer}>
+        {/* Show different title based on shipping status */}
+        <Text style={[styles.statusTitle, isReturnItem && { color: "#3B82F6" }]}>
+          {!isReturnItem 
+            ? 'Refund Approved' 
+            : rrStatus === 'shipped' 
+              ? 'Approved - Shipped' 
+              : 'Approved - Waiting for return'}
+        </Text>
+        
+        {!isReturnItem ? (
+          <Text style={styles.statusSubtitle}>Your refund will be processed soon</Text>
+        ) : (
+          isReturnAcceptedWaitingModeration ? (
+            <View style={styles.moderationCard}>
+              <Text style={styles.moderationTitle}>Return Accepted</Text>
+              <Text style={styles.moderationText}>Seller accepted your return request. Waiting for the moderation team to process the refund.</Text>
+              {refund.return_request?.return_deadline && <Text style={styles.moderationDeadline}>Return Deadline: {formatDate(refund.return_request.return_deadline)}</Text>}
+            </View>
+          ) : rrStatus === 'shipped' ? (
+            // Show shipped status message
+            <Text style={[styles.statusSubtitle, { color: "#3B82F6" }]}>
+              Your item has been shipped. Waiting for seller to receive and verify the item.
+            </Text>
+          ) : !hasShippingInfo ? (
+            <Text style={[styles.statusSubtitle, { color: "#3B82F6" }]}>
+              Please return the item to complete your refund
+            </Text>
+          ) : null
+        )}
+      </View>
+    </View>
+    
+    {/* Return Address Card - Show only when not shipped yet */}
+    {isReturnItem && !hasShippingInfo && returnAddress && (
+      <View style={styles.returnAddressCardLarge}>
+        <View style={styles.returnAddressHeader}>
+          <MapPin size={20} color="#3B82F6" />
+          <Text style={styles.returnAddressHeaderText}>Return to Seller</Text>
+        </View>
+        
+        <View style={styles.returnAddressContent}>
+          <View style={styles.returnAddressRow}>
+            <Text style={styles.returnAddressLabel}>Recipient:</Text>
+            <Text style={styles.returnAddressValue}>{returnAddress.recipient_name || returnAddress.name || 'Not specified'}</Text>
+          </View>
+          
+          <View style={styles.returnAddressRow}>
+            <Text style={styles.returnAddressLabel}>Contact:</Text>
+            <Text style={styles.returnAddressValue}>{returnAddress.contact_number || returnAddress.phone || 'Not specified'}</Text>
+          </View>
+          
+          <View style={styles.returnAddressRow}>
+            <Text style={styles.returnAddressLabel}>Address:</Text>
+            <Text style={[styles.returnAddressValue, { flex: 1 }]}>
+              {returnAddress.street && `${returnAddress.street}, `}
+              {returnAddress.barangay && `${returnAddress.barangay}, `}
+              {returnAddress.city && `${returnAddress.city}, `}
+              {returnAddress.province && `${returnAddress.province}`}
+            </Text>
+          </View>
+        </View>
+        
+        {returnDeadline && (
+          <View style={styles.returnDeadlineCard}>
+            <Clock size={16} color="#F59E0B" />
+            <Text style={styles.returnDeadlineText}>
+              Please ship the item by <Text style={styles.returnDeadlineDate}>{formatDate(returnDeadline.toISOString())}</Text>
+            </Text>
+          </View>
+        )}
+      </View>
+    )}
+    
+    {/* Return details section - Show only when not shipped yet */}
+    {isReturnItem && !hasShippingInfo && (
+      <View style={[styles.returnDetails, { borderLeftColor: "#3B82F6", borderLeftWidth: 4, marginTop: 12 }]}>
+        <View style={styles.returnDetailRow}>
+          <Text style={styles.returnDetailLabel}>Return Deadline:</Text>
+          <Text style={[styles.returnDetailValue, { color: "#F59E0B", fontWeight: "600" }]}>
+            {rr.return_deadline || refund.return_deadline ? formatDate(rr.return_deadline || refund.return_deadline) : (returnDeadline ? formatDate(returnDeadline.toISOString()) : '7 days from approval')}
           </Text>
-          {!isReturnItem ? (
-            <Text style={styles.statusSubtitle}>Your refund will be processed soon</Text>
-          ) : (
-            isReturnAcceptedWaitingModeration ? (
-              <View style={styles.moderationCard}>
-                <Text style={styles.moderationTitle}>Return Accepted</Text>
-                <Text style={styles.moderationText}>Seller accepted your return request. Waiting for the moderation team to process the refund.</Text>
-                {refund.return_request?.return_deadline && <Text style={styles.moderationDeadline}>Return Deadline: {formatDate(refund.return_request.return_deadline)}</Text>}
-              </View>
-            ) : !hasShippingInfo ? (
-              <Text style={[styles.statusSubtitle, { color: "#3B82F6" }]}>Please return the item to complete your refund</Text>
-            ) : null
-          )}
+        </View>
+        <View style={styles.returnDetailRow}>
+          <Text style={styles.returnDetailLabel}>Instructions:</Text>
+          <Text style={[styles.returnDetailValue, { fontSize: 12, color: "#6B7280" }]}>
+            1. Package the item securely{'\n'}
+            2. Include all original packaging and accessories{'\n'}
+            3. Ship to the return address above{'\n'}
+            4. Provide tracking number once shipped
+          </Text>
         </View>
       </View>
-      
-      {/* Return Address Card - Displayed prominently for return-type refunds */}
-      {isReturnItem && !hasShippingInfo && returnAddress && (
-        <View style={styles.returnAddressCardLarge}>
-          <View style={styles.returnAddressHeader}>
-            <MapPin size={20} color="#3B82F6" />
-            <Text style={styles.returnAddressHeaderText}>Return to Seller</Text>
-          </View>
-          
-          <View style={styles.returnAddressContent}>
-            <View style={styles.returnAddressRow}>
-              <Text style={styles.returnAddressLabel}>Recipient:</Text>
-              <Text style={styles.returnAddressValue}>{returnAddress.recipient_name || returnAddress.name || 'Not specified'}</Text>
+    )}
+    
+    {/* Shipped Info Section - Show when status is shipped */}
+    {isReturnItem && rrStatus === 'shipped' && (
+      <View style={styles.shippedInfo}>
+        <Text style={styles.shippedTitle}>Item has been shipped</Text>
+        <Text style={styles.shippedSubtitle}>Waiting for the seller to receive the item.</Text>
+        <View style={styles.shippingDetails}>
+          {rr.tracking_number && (
+            <View style={styles.shippingDetail}>
+              <Text style={styles.shippingLabel}>Tracking Number:</Text>
+              <Text style={styles.shippingValue}>{rr.tracking_number}</Text>
             </View>
-            
-            <View style={styles.returnAddressRow}>
-              <Text style={styles.returnAddressLabel}>Contact:</Text>
-              <Text style={styles.returnAddressValue}>{returnAddress.contact_number || returnAddress.phone || 'Not specified'}</Text>
+          )}
+          {rr.logistic_service && (
+            <View style={styles.shippingDetail}>
+              <Text style={styles.shippingLabel}>Shipping Service:</Text>
+              <Text style={styles.shippingValue}>{rr.logistic_service}</Text>
             </View>
-            
-            <View style={styles.returnAddressRow}>
-              <Text style={styles.returnAddressLabel}>Address:</Text>
-              <Text style={[styles.returnAddressValue, { flex: 1 }]}>
-                {returnAddress.street && `${returnAddress.street}, `}
-                {returnAddress.barangay && `${returnAddress.barangay}, `}
-                {returnAddress.city && `${returnAddress.city}, `}
-                {returnAddress.province && `${returnAddress.province}`}
-              </Text>
-            </View>
-          </View>
-          
-          {returnDeadline && (
-            <View style={styles.returnDeadlineCard}>
-              <Clock size={16} color="#F59E0B" />
-              <Text style={styles.returnDeadlineText}>
-                Please ship the item by <Text style={styles.returnDeadlineDate}>{formatDate(returnDeadline.toISOString())}</Text>
-              </Text>
+          )}
+          {rr.shipped_at && (
+            <View style={styles.shippingDetail}>
+              <Text style={styles.shippingLabel}>Shipped At:</Text>
+              <Text style={styles.shippingValue}>{formatDate(rr.shipped_at)}</Text>
             </View>
           )}
         </View>
-      )}
-      
-      {/* Return details section with deadline and instructions */}
-      {isReturnItem && !hasShippingInfo && (
-        <View style={[styles.returnDetails, { borderLeftColor: "#3B82F6", borderLeftWidth: 4, marginTop: 12 }]}>
-          <View style={styles.returnDetailRow}>
-            <Text style={styles.returnDetailLabel}>Return Deadline:</Text>
-            <Text style={[styles.returnDetailValue, { color: "#F59E0B", fontWeight: "600" }]}>
-              {rr.return_deadline || refund.return_deadline ? formatDate(rr.return_deadline || refund.return_deadline) : (returnDeadline ? formatDate(returnDeadline.toISOString()) : '7 days from approval')}
-            </Text>
+        {shippingProofUrls.length > 0 && (
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ fontSize: 14, color: '#374151', marginBottom: 8, fontWeight: '600' }}>Shipping Proofs</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+              {shippingProofUrls.map((u, idx) => (
+                <TouchableOpacity key={`${u}-${idx}`} onPress={() => onOpenProofViewer && onOpenProofViewer(shippingProofUrls, idx)} style={{ marginRight: 8 }}>
+                  <Image source={{ uri: u }} style={{ width: 90, height: 90, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
-          <View style={styles.returnDetailRow}>
-            <Text style={styles.returnDetailLabel}>Instructions:</Text>
-            <Text style={[styles.returnDetailValue, { fontSize: 12, color: "#6B7280" }]}>
-              1. Package the item securely{'\n'}
-              2. Include all original packaging and accessories{'\n'}
-              3. Ship to the return address above{'\n'}
-              4. Provide tracking number once shipped
-            </Text>
-          </View>
-        </View>
-      )}
-      
-      {isReturnItem && rrStatus === 'shipped' && (
-        <View style={styles.shippedInfo}>
-          <Text style={styles.shippedTitle}>Item has been shipped</Text>
-          <Text style={styles.shippedSubtitle}>Waiting for the seller to receive the item.</Text>
-          <View style={styles.shippingDetails}>
-            {rr.tracking_number && (
-              <View style={styles.shippingDetail}>
-                <Text style={styles.shippingLabel}>Tracking Number:</Text>
-                <Text style={styles.shippingValue}>{rr.tracking_number}</Text>
-              </View>
-            )}
-            {rr.logistic_service && (
-              <View style={styles.shippingDetail}>
-                <Text style={styles.shippingLabel}>Shipping Service:</Text>
-                <Text style={styles.shippingValue}>{rr.logistic_service}</Text>
-              </View>
-            )}
-            {rr.shipped_at && (
-              <View style={styles.shippingDetail}>
-                <Text style={styles.shippingLabel}>Shipped At:</Text>
-                <Text style={styles.shippingValue}>{formatDate(rr.shipped_at)}</Text>
-              </View>
-            )}
-          </View>
-          {shippingProofUrls.length > 0 && (
-            <View style={{ marginTop: 12 }}>
-              <Text style={{ fontSize: 14, color: '#374151', marginBottom: 8, fontWeight: '600' }}>Shipping Proofs</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
-                {shippingProofUrls.map((u, idx) => (
-                  <TouchableOpacity key={`${u}-${idx}`} onPress={() => onOpenProofViewer && onOpenProofViewer(shippingProofUrls, idx)} style={{ marginRight: 8 }}>
-                    <Image source={{ uri: u }} style={{ width: 90, height: 90, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          )}
-          {onOpenTrackingDialog && !isReturnAcceptedWaitingModeration && (
-            <TouchableOpacity style={styles.updateShippingBtn} onPress={onOpenTrackingDialog}>
-              <Text style={styles.updateShippingText}>Update shipping info</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-    </View>
-  );
+        )}
+        {onOpenTrackingDialog && !isReturnAcceptedWaitingModeration && (
+          <TouchableOpacity style={styles.updateShippingBtn} onPress={onOpenTrackingDialog}>
+            <Text style={styles.updateShippingText}>Update shipping info</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    )}
+  </View>
+);
 };
 
 // ========== 5. WAITING STATUS ==========

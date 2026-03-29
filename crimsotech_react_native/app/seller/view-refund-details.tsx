@@ -41,12 +41,32 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 // ========== HELPER TO GET DISPLAY STATUS ==========
+// ========== HELPER TO GET DISPLAY STATUS ==========
+// ========== HELPER TO GET DISPLAY STATUS ==========
+// ========== HELPER TO GET DISPLAY STATUS ==========
 const getDisplayStatus = (refund: any) => {
   if (!refund) return '';
   const status = refund.status?.toLowerCase();
   const refundType = refund.refund_type;
+  const returnStatus = refund.return_request?.status?.toLowerCase();
   
-  // If refund is approved and type is 'return', show combined status
+  // If refund is approved, type is 'return', and return request status is 'approved'
+  // Show regular "Approved" since seller accepted the return and admin will process
+  if (status === 'approved' && refundType === 'return' && returnStatus === 'approved') {
+    return 'APPROVED';
+  }
+  
+  // If refund is approved, type is 'return', and return request status is 'shipped'
+  if (status === 'approved' && refundType === 'return' && returnStatus === 'shipped') {
+    return 'Approved - Shipped';
+  }
+  
+  // If refund is approved, type is 'return', and return request status is 'received' (Inspecting)
+  if (status === 'approved' && refundType === 'return' && returnStatus === 'received') {
+    return 'Approved - Inspecting';
+  }
+  
+  // If refund is approved and type is 'return', show waiting for return
   if (status === 'approved' && refundType === 'return') {
     return 'Approved - Waiting for return';
   }
@@ -56,12 +76,31 @@ const getDisplayStatus = (refund: any) => {
 };
 
 // ========== HELPER TO GET STATUS COLOR ==========
+// ========== HELPER TO GET STATUS COLOR ==========
+// ========== HELPER TO GET STATUS COLOR ==========
+// ========== HELPER TO GET STATUS COLOR ==========
 const getStatusColor = (refund: any) => {
   if (!refund) return '#9CA3AF';
   const status = refund.status?.toLowerCase();
   const refundType = refund.refund_type;
+  const returnStatus = refund.return_request?.status?.toLowerCase();
   
-  // If refund is approved and type is 'return', use waiting color (blue)
+  // If refund is approved, type is 'return', and return request status is 'approved' - use green (regular approved)
+  if (status === 'approved' && refundType === 'return' && returnStatus === 'approved') {
+    return STATUS_COLORS.approved; // Green color (#10B981)
+  }
+  
+  // If refund is approved, type is 'return', and return request status is 'shipped' - use blue
+  if (status === 'approved' && refundType === 'return' && returnStatus === 'shipped') {
+    return STATUS_COLORS.waiting; // Blue color (#3B82F6)
+  }
+  
+  // If refund is approved, type is 'return', and return request status is 'received' - use purple for inspecting
+  if (status === 'approved' && refundType === 'return' && returnStatus === 'received') {
+    return '#8B5CF6'; // Purple color for inspecting
+  }
+  
+  // If refund is approved and type is 'return' (no specific return status) - use waiting color (blue)
   if (status === 'approved' && refundType === 'return') {
     return STATUS_COLORS.waiting; // Blue color
   }
@@ -157,6 +196,9 @@ export default function ViewRefundDetails() {
   // Approve confirmation modal
   const [showApproveConfirm, setShowApproveConfirm] = useState(false);
 
+  // Mark as Received confirmation modal
+  const [showMarkReceivedConfirm, setShowMarkReceivedConfirm] = useState(false);
+
   // Reject modal
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReasonCode, setRejectReasonCode] = useState('');
@@ -164,6 +206,11 @@ export default function ViewRefundDetails() {
   const [rejectFiles, setRejectFiles] = useState<any[]>([]);
   const [rejectFilePreviews, setRejectFilePreviews] = useState<string[]>([]);
   const [showReasonPicker, setShowReasonPicker] = useState(false);
+
+  // Accept/Decline modal for item inspection
+  const [showAcceptDeclineModal, setShowAcceptDeclineModal] = useState(false);
+  const [acceptDeclineAction, setAcceptDeclineAction] = useState<'accept' | 'decline'>('accept');
+  const [inspectionNotes, setInspectionNotes] = useState('');
 
   // Negotiate modal
   const [showNegotiateModal, setShowNegotiateModal] = useState(false);
@@ -245,6 +292,7 @@ export default function ViewRefundDetails() {
       setActionLoading(false);
     }
   };
+
 
   const handleReject = async () => {
     if (!rejectReasonCode || !rejectReasonDetail.trim()) {
@@ -338,6 +386,66 @@ export default function ViewRefundDetails() {
       setActionLoading(false);
     }
   };
+
+  const handleMarkAsReceived = async () => {
+  try {
+    setActionLoading(true);
+    await AxiosInstance.post(`/return-refund/${refundId}/update_return_status/`, {
+      action: 'mark_received',
+      notes: '',
+    }, {
+      headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
+    });
+    Alert.alert('Success', 'Item marked as received successfully');
+    setShowMarkReceivedConfirm(false);
+    setReturnAction('');
+    fetchDetail();
+  } catch (err: any) {
+    Alert.alert('Error', err?.response?.data?.error || 'Failed to mark as received');
+  } finally {
+    setActionLoading(false);
+  }
+};
+
+const handleAcceptReturn = async () => {
+  try {
+    setActionLoading(true);
+    await AxiosInstance.post(`/return-refund/${refundId}/verify_item/`, {
+      verification_result: 'approved',
+      verification_notes: inspectionNotes,
+    }, {
+      headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
+    });
+    Alert.alert('Success', 'Return accepted. Processing payment...');
+    setShowAcceptDeclineModal(false);
+    setInspectionNotes('');
+    fetchDetail();
+  } catch (err: any) {
+    Alert.alert('Error', err?.response?.data?.error || 'Failed to accept return');
+  } finally {
+    setActionLoading(false);
+  }
+};
+
+const handleDeclineReturn = async () => {
+  try {
+    setActionLoading(true);
+    await AxiosInstance.post(`/return-refund/${refundId}/verify_item/`, {
+      verification_result: 'rejected',
+      verification_notes: inspectionNotes,
+    }, {
+      headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
+    });
+    Alert.alert('Success', 'Return declined');
+    setShowAcceptDeclineModal(false);
+    setInspectionNotes('');
+    fetchDetail();
+  } catch (err: any) {
+    Alert.alert('Error', err?.response?.data?.error || 'Failed to decline return');
+  } finally {
+    setActionLoading(false);
+  }
+};
 
   const handleUpdateReturnStatus = async () => {
     try {
@@ -549,10 +657,14 @@ const renderMedia = (mediaList: any[], title: string) => {
 
   // ========== STATUS DESCRIPTION ==========
  // Inside the component, this function should exist and be correct:
+// ========== STATUS DESCRIPTION ==========
+// ========== STATUS DESCRIPTION ==========
 const getStatusDescription = () => {
   if (!refund) return '';
   const status = refund.status?.toLowerCase();
+  const returnStatus = refund.return_request?.status?.toLowerCase();
   const orderId = refund.order?.order_id || refund.order_id || '';
+  
   switch (status) {
     case 'pending':
       return `Pending request for order #${orderId.slice(0, 8)}. Please review the refund request. If you do not respond within 48 hours, the refund will be automatically approved.`;
@@ -560,6 +672,15 @@ const getStatusDescription = () => {
       return `You have sent a counter‑offer. Waiting for the buyer to accept or reject.`;
     case 'approved':
       if (refund.refund_type === 'return') {
+        if (returnStatus === 'approved') {
+          return `Return accepted. The refund will now be processed by the admin team. You don't need to take any further action.`;
+        }
+        if (returnStatus === 'shipped') {
+          return `The buyer has shipped the item back. Tracking number: ${refund.return_request?.tracking_number || 'provided'}. Once you receive the item, mark it as received to begin inspection.`;
+        }
+        if (returnStatus === 'received') {
+          return `Item has been received. Please inspect the item condition and decide whether to accept or decline the return.`;
+        }
         return `Waiting for buyer to ship the item back. Once the item is shipped, you will be notified.`;
       }
       return `Refund approved. The refund will be processed by the admin team. You don't need to take any further action.`;
@@ -575,111 +696,126 @@ const getStatusDescription = () => {
 };
 
   // ========== ACTION BUTTONS ==========
-  const renderActionButtons = () => {
-    if (!refund) return null;
-    const status = refund.status?.toLowerCase();
-    const returnStatus = refund.return_request?.status?.toLowerCase();
-    const isReturn = refund.refund_type === 'return';
-    const refundType = refund.refund_type; // 'keep' or 'return'
 
-    let buttons: React.ReactNode[] = [];
+const renderActionButtons = () => {
+  if (!refund) return null;
+  const status = refund.status?.toLowerCase();
+  const returnStatus = refund.return_request?.status?.toLowerCase();
+  const isReturn = refund.refund_type === 'return';
+  const refundType = refund.refund_type; // 'keep' or 'return'
 
-    if (status === 'pending') {
-      buttons = [
-        <TouchableOpacity key="approve" style={[styles.actionBtn, styles.approveBtn]} onPress={() => setShowApproveConfirm(true)} disabled={actionLoading}>
-          <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
-          <Text style={styles.actionBtnText}>Approve</Text>
-        </TouchableOpacity>,
-        <TouchableOpacity key="reject" style={[styles.actionBtn, styles.rejectBtn]} onPress={() => setShowRejectModal(true)} disabled={actionLoading}>
-          <Ionicons name="close-circle-outline" size={16} color="#fff" />
-          <Text style={styles.actionBtnText}>Reject</Text>
-        </TouchableOpacity>,
-        <TouchableOpacity key="negotiate" style={[styles.actionBtn, styles.negotiateBtn]} onPress={() => {
-          // Pre‑select appropriate default option based on refund type
-          if (refundType === 'keep') {
-            setCounterType('return'); // default to return
-          } else if (refundType === 'return') {
-            setCounterType('replace'); // only option
-          }
-          setCounterAmount(computeReturnAmount(refund));
-          setShowNegotiateModal(true);
-        }} disabled={actionLoading}>
-          <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
-          <Text style={styles.actionBtnText}>Negotiate</Text>
-        </TouchableOpacity>,
-      ];
-    } else {
-      // if (status === 'approved' && !isReturn) {
-      //   buttons.push(
-      //     <TouchableOpacity key="process" style={[styles.actionBtn, styles.processBtn]} onPress={() => setShowProcessModal(true)} disabled={actionLoading}>
-      //       <Ionicons name="cash-outline" size={16} color="#fff" />
-      //       <Text style={styles.actionBtnText}>Process Payment</Text>
-      //     </TouchableOpacity>
-      //   );
-      // }
+  let buttons: React.ReactNode[] = [];
 
-      if (isReturn && status === 'approved') {
-        if (['pending', 'approved'].includes(returnStatus || '')) {
-          buttons.push(
-            <TouchableOpacity key="tracking" style={[styles.actionBtn, styles.trackingBtn]} onPress={() => setShowTrackingModal(true)} disabled={actionLoading}>
-              <Ionicons name="send-outline" size={16} color="#fff" />
-              <Text style={styles.actionBtnText}>Provide Tracking</Text>
-            </TouchableOpacity>
-          );
+  if (status === 'pending') {
+    buttons = [
+      <TouchableOpacity key="approve" style={[styles.actionBtn, styles.approveBtn]} onPress={() => setShowApproveConfirm(true)} disabled={actionLoading}>
+        <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
+        <Text style={styles.actionBtnText}>Approve</Text>
+      </TouchableOpacity>,
+      <TouchableOpacity key="reject" style={[styles.actionBtn, styles.rejectBtn]} onPress={() => setShowRejectModal(true)} disabled={actionLoading}>
+        <Ionicons name="close-circle-outline" size={16} color="#fff" />
+        <Text style={styles.actionBtnText}>Reject</Text>
+      </TouchableOpacity>,
+      <TouchableOpacity key="negotiate" style={[styles.actionBtn, styles.negotiateBtn]} onPress={() => {
+        if (refundType === 'keep') {
+          setCounterType('return');
+        } else if (refundType === 'return') {
+          setCounterType('replace');
         }
-        if (['shipped', 'received'].includes(returnStatus || '')) {
-          buttons.push(
-            <TouchableOpacity key="returnStatus" style={[styles.actionBtn, styles.returnStatusBtn]} onPress={() => {
-              setReturnAction(returnStatus === 'shipped' ? 'mark_received' : 'mark_inspected');
-              setShowReturnStatusModal(true);
-            }} disabled={actionLoading}>
-              <Ionicons name="refresh-outline" size={16} color="#fff" />
-              <Text style={styles.actionBtnText}>Update Return Status</Text>
-            </TouchableOpacity>
-          );
-        }
-        if (returnStatus === 'inspected') {
-          buttons.push(
-            <TouchableOpacity key="verify" style={[styles.actionBtn, styles.verifyBtn]} onPress={() => setShowVerifyModal(true)} disabled={actionLoading}>
-              <Ionicons name="checkbox-outline" size={16} color="#fff" />
-              <Text style={styles.actionBtnText}>Verify Item</Text>
-            </TouchableOpacity>
-          );
-        }
-        if (returnStatus === 'approved') {
-          buttons.push(
-            <TouchableOpacity key="processReturn" style={[styles.actionBtn, styles.processBtn]} onPress={() => setShowProcessModal(true)} disabled={actionLoading}>
-              <Ionicons name="cash-outline" size={16} color="#fff" />
-              <Text style={styles.actionBtnText}>Process Payment</Text>
-            </TouchableOpacity>
-          );
-        }
-      }
-
-      // Only show Upload Proofs for non-pending and non-approved statuses
-      const shouldShowProofs = status !== 'pending' && status !== 'approved';
-      if (shouldShowProofs) {
-        buttons.push(
-          <TouchableOpacity key="proofs" style={[styles.actionBtn, styles.proofBtn]} onPress={() => setShowProofModal(true)} disabled={uploadingProofs}>
-            <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
-            <Text style={styles.actionBtnText}>Upload Proofs</Text>
-          </TouchableOpacity>
-        );
-      }
+        setCounterAmount(computeReturnAmount(refund));
+        setShowNegotiateModal(true);
+      }} disabled={actionLoading}>
+        <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
+        <Text style={styles.actionBtnText}>Negotiate</Text>
+      </TouchableOpacity>,
+    ];
+  } else if (isReturn && status === 'approved') {
+    // Show "Provide Tracking" button ONLY when return status is 'pending' (not yet shipped)
+    // NOT when it's 'approved' (already accepted)
+    if (returnStatus === 'pending') {
+      buttons.push(
+        <TouchableOpacity key="tracking" style={[styles.actionBtn, styles.trackingBtn]} onPress={() => setShowTrackingModal(true)} disabled={actionLoading}>
+          <Ionicons name="send-outline" size={16} color="#fff" />
+          <Text style={styles.actionBtnText}>Provide Tracking</Text>
+        </TouchableOpacity>
+      );
     }
+    
+    // Show "Mark as Received" button when return status is 'shipped'
+    if (returnStatus === 'shipped') {
+      buttons.push(
+        <TouchableOpacity 
+          key="markReceived" 
+          style={[styles.actionBtn, { backgroundColor: '#10B981' }]} 
+          onPress={() => {
+            setReturnAction('mark_received');
+            setShowMarkReceivedConfirm(true);
+          }} 
+          disabled={actionLoading}
+        >
+          <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
+          <Text style={styles.actionBtnText}>Mark as Received</Text>
+        </TouchableOpacity>
+      );
+    }
+    
+    // Show Accept/Decline buttons when return status is 'received' (inspecting)
+    if (returnStatus === 'received') {
+      buttons.push(
+        <View key="acceptDecline" style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
+          <TouchableOpacity 
+            style={[styles.actionBtn, { flex: 1, backgroundColor: '#10B981' }]} 
+            onPress={() => {
+              setAcceptDeclineAction('accept');
+              setShowAcceptDeclineModal(true);
+            }} 
+            disabled={actionLoading}
+          >
+            <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
+            <Text style={styles.actionBtnText}>Accept Return</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.actionBtn, { flex: 1, backgroundColor: '#EF4444' }]} 
+            onPress={() => {
+              setAcceptDeclineAction('decline');
+              setShowAcceptDeclineModal(true);
+            }} 
+            disabled={actionLoading}
+          >
+            <Ionicons name="close-circle-outline" size={16} color="#fff" />
+            <Text style={styles.actionBtnText}>Decline Return</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    
+    // When returnStatus is 'approved' - NO buttons should show (dead end, admin handles payment)
+    // No buttons added for returnStatus === 'approved'
+  }
 
-    if (buttons.length === 0) return null;
-
-    return (
-      <View style={styles.actionsContainer}>
-        {buttons.map((btn, idx) => (
-          <View key={idx} style={styles.actionItem}>
-            {btn}
-          </View>
-        ))}
-      </View>
+  // Only show Upload Proofs for non-pending and non-approved statuses
+  const shouldShowProofs = status !== 'pending' && status !== 'approved';
+  if (shouldShowProofs) {
+    buttons.push(
+      <TouchableOpacity key="proofs" style={[styles.actionBtn, styles.proofBtn]} onPress={() => setShowProofModal(true)} disabled={uploadingProofs}>
+        <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
+        <Text style={styles.actionBtnText}>Upload Proofs</Text>
+      </TouchableOpacity>
     );
-  };
+  }
+
+  if (buttons.length === 0) return null;
+
+  return (
+    <View style={styles.actionsContainer}>
+      {buttons.map((btn, idx) => (
+        <View key={idx} style={styles.actionItem}>
+          {btn}
+        </View>
+      ))}
+    </View>
+  );
+};
 
   // ========== MODAL RENDERING ==========
   const renderModals = () => (
@@ -715,6 +851,55 @@ const getStatusDescription = () => {
           </View>
         </View>
       </Modal>
+
+      {/* Accept/Decline Return Modal */}
+<Modal visible={showAcceptDeclineModal} transparent={true} animationType="none" onRequestClose={() => setShowAcceptDeclineModal(false)}>
+  <View style={styles.centeredModalOverlay}>
+    <View style={styles.centeredModalBox}>
+      <Text style={styles.modalTitle}>
+        {acceptDeclineAction === 'accept' ? 'Accept Return' : 'Decline Return'}
+      </Text>
+      <Text style={styles.modalSubtitle}>
+        {acceptDeclineAction === 'accept' 
+          ? 'Are you sure you want to accept this return? The refund will be processed.'
+          : 'Are you sure you want to decline this return? The buyer will be notified.'}
+      </Text>
+     
+      <View style={styles.modalBtns}>
+        <TouchableOpacity style={styles.modalCancel} onPress={() => setShowAcceptDeclineModal(false)}>
+          <Text style={styles.modalCancelText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.modalConfirm, { backgroundColor: acceptDeclineAction === 'accept' ? '#10B981' : '#EF4444' }]} 
+          onPress={acceptDeclineAction === 'accept' ? handleAcceptReturn : handleDeclineReturn} 
+          disabled={actionLoading}
+        >
+          {actionLoading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalConfirmText}>Confirm</Text>}
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
+
+      {/* Mark as Received Confirmation Modal */}
+<Modal visible={showMarkReceivedConfirm} transparent={true} animationType="none" onRequestClose={() => setShowMarkReceivedConfirm(false)}>
+  <View style={styles.centeredModalOverlay}>
+    <View style={styles.centeredModalBox}>
+      <Text style={styles.modalTitle}>Confirm Mark as Received</Text>
+      <Text style={styles.modalSubtitle}>
+        Are you sure you want to mark this item as received?
+      </Text>
+      <View style={styles.modalBtns}>
+        <TouchableOpacity style={styles.modalCancel} onPress={() => setShowMarkReceivedConfirm(false)}>
+          <Text style={styles.modalCancelText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.modalConfirm, { backgroundColor: '#10B981' }]} onPress={handleMarkAsReceived} disabled={actionLoading}>
+          {actionLoading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalConfirmText}>Confirm</Text>}
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
 
       {/* Reject Modal */}
       <Modal visible={showRejectModal} transparent={true} animationType="none" onRequestClose={() => setShowRejectModal(false)}>
@@ -1260,20 +1445,25 @@ const getStatusDescription = () => {
         </View>
 
         {/* Return Request */}
-        {refund.return_request && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Return Request</Text>
-            <InfoRow label="Method" value={refund.return_request.return_method || 'N/A'} />
-            <InfoRow label="Logistic Service" value={refund.return_request.logistic_service || 'N/A'} />
-            <InfoRow label="Tracking Number" value={refund.return_request.tracking_number || 'N/A'} />
-            <InfoRow label="Status" value={refund.return_request.status || 'N/A'} />
-            <InfoRow label="Shipped At" value={formatDate(refund.return_request.shipped_at)} />
-            <InfoRow label="Received At" value={formatDate(refund.return_request.received_at)} />
-            <InfoRow label="Return Deadline" value={formatDate(refund.return_request.return_deadline)} />
-            {refund.return_request.notes && <InfoRow label="Notes" value={refund.return_request.notes} />}
-            {renderMedia(refund.return_request.media, 'Return Media')}
-          </View>
-        )}
+        {/* Return Request */}
+{refund.return_request && (
+  <View style={styles.card}>
+    <Text style={styles.cardTitle}>Return Request</Text>
+    <InfoRow label="Method" value={refund.return_request.return_method || 'N/A'} />
+    <InfoRow label="Logistic Service" value={refund.return_request.logistic_service || 'N/A'} />
+    <InfoRow label="Tracking Number" value={refund.return_request.tracking_number || 'N/A'} />
+    <InfoRow label="Status" value={
+      refund.return_request.status === 'shipped' 
+        ? 'Shipped - In Transit' 
+        : (refund.return_request.status || 'N/A')
+    } />
+    <InfoRow label="Shipped At" value={formatDate(refund.return_request.shipped_at)} />
+    <InfoRow label="Received At" value={formatDate(refund.return_request.received_at)} />
+    <InfoRow label="Return Deadline" value={formatDate(refund.return_request.return_deadline)} />
+    {refund.return_request.notes && <InfoRow label="Notes" value={refund.return_request.notes} />}
+    {renderMedia(refund.return_request.media, 'Return Media')}
+  </View>
+)}
 
         {/* Return Address */}
         {refund.return_address && (

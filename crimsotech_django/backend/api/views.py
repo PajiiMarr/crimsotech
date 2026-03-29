@@ -31242,6 +31242,7 @@ class RefundViewSet(viewsets.ViewSet):
             data['seller_delivery_proofs'] = []
 
         # Return request information
+        # Return request information
         if refund.refund_type == 'return':
             try:
                 return_request = refund.return_request
@@ -31256,17 +31257,30 @@ class RefundViewSet(viewsets.ViewSet):
                     "return_deadline": return_request.return_deadline.isoformat() if return_request.return_deadline else None,
                     "notes": return_request.notes
                 }
-                return_media = ReturnRequestMedia.objects.filter(return_id=return_request)
-                data['return_request']['media'] = [
-                    {
-                        "id": str(rm.id),
-                        "file_url": request.build_absolute_uri(rm.file_data.url) if rm.file_data else None,
-                        "file_type": rm.file_type,
-                        "notes": rm.notes,
-                        "uploaded_at": rm.uploaded_at.isoformat()
-                    }
-                    for rm in return_media
-                ]
+                
+                # Get return request media
+                return_media = ReturnRequestMedia.objects.filter(return_id=return_request).order_by('-uploaded_at')
+                
+                # Create media array with proper URLs
+                media_array = []
+                for rm in return_media:
+                    if rm.file_data:
+                        # Build absolute URL
+                        file_url = request.build_absolute_uri(rm.file_data.url)
+                        media_array.append({
+                            "id": str(rm.id),
+                            "file_url": file_url,
+                            "file_type": rm.file_type,
+                            "notes": rm.notes,
+                            "uploaded_at": rm.uploaded_at.isoformat(),
+                            "uploaded_by": str(rm.uploaded_by.id) if rm.uploaded_by else None
+                        })
+                
+                # Add media to return_request in multiple formats for frontend compatibility
+                data['return_request']['media'] = media_array
+                data['return_request']['medias'] = media_array  # For backward compatibility
+                data['return_request']['media_files'] = media_array  # For backward compatibility
+                
             except ReturnRequestItem.DoesNotExist:
                 data['return_request'] = None
 
