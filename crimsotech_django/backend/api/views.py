@@ -21656,30 +21656,44 @@ class SellerOrderList(viewsets.ViewSet):
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
                 return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+
             shop_id = request.GET.get('shop_id')
             if not shop_id:
                 return Response({"success": False, "message": "Shop ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+
             has_shop_items = Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists()
             if not has_shop_items:
                 return Response({"success": False, "message": "Order not found or doesn't belong to your shop"}, status=status.HTTP_403_FORBIDDEN)
+
             has_pending_offer = Delivery.objects.filter(order=order, status='pending').exists()
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
-                                                      for keyword in ['pickup', 'store', 'collect'])
+                                                    for keyword in ['pickup', 'store', 'collect'])
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
             current_shipping_status = self._get_shipping_status(
                 order.status,
                 latest_delivery.status if latest_delivery else None
             )
+
+            # ── Payment gate ──────────────────────────────────────────────────────
+            # For Maya orders, the seller can only confirm once payment is verified.
+            is_maya = order.payment_method and order.payment_method.lower() == 'maya'
+            is_paid = Payment.objects.filter(order=order, status='success').exists()
+            can_confirm = not is_maya or is_paid  # COD / other methods: always ok; Maya: only if paid
+            # ─────────────────────────────────────────────────────────────────────
+
             available_actions = []
             if current_shipping_status == 'pending_shipment':
-                if is_pickup:
-                    available_actions = ['confirm']
-                else:
-                    available_actions = ['confirm', 'prepare_shipment']
+                if can_confirm:                      # ← gate added here
+                    if is_pickup:
+                        available_actions = ['confirm']
+                    else:
+                        available_actions = ['confirm', 'prepare_shipment']
+                # If can_confirm is False, no confirm/prepare actions are exposed
             elif current_shipping_status == 'to_ship':
                 if is_pickup:
                     available_actions = ['ready_for_pickup']
@@ -21700,11 +21714,15 @@ class SellerOrderList(viewsets.ViewSet):
                 available_actions = ['complete']
             elif current_shipping_status == 'in_transit':
                 available_actions = ['complete']
+
             if order.status == 'processing' and latest_delivery and latest_delivery.status == 'accepted':
                 available_actions.append('print_waybill')
+
             if current_shipping_status not in ['completed', 'cancelled', 'picked_up']:
                 available_actions.append('cancel')
+
             available_actions.append('view_details')
+
             return Response({
                 "success": True,
                 "data": {
@@ -21712,12 +21730,13 @@ class SellerOrderList(viewsets.ViewSet):
                     "current_status": current_shipping_status,
                     "is_pickup": is_pickup,
                     "has_pending_offer": has_pending_offer,
-                    "available_actions": available_actions
+                    "available_actions": available_actions,
+                    "can_confirm": can_confirm,          # ← expose for debugging / future use
                 }
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
     @action(detail=True, methods=['patch'])
     def update_status(self, request, pk=None):
         try:
