@@ -35,15 +35,26 @@ Crimsotech is a comprehensive marketplace platform designed to create a seamless
 
 ```mermaid
 graph LR
-    A[React Native Mobile App] --> C[Django Backend]
-    B[React Web Admin] --> C
-    C --> D[(PostgreSQL)]
-    C --> E[ML Model Service]
-    C --> F[WebSocket Server]
+    A[React Native Mobile App] --> D[HTTP Server/REST API]
+    B[React Web Admin] --> D
+    C[Third-Party Services] --> D
+    D --> E[(PostgreSQL)]
+    D --> F[WebSocket Server]
+    D --> G[ML Model Service]
+    
+    subgraph "Django Backend"
+        D
+        F
+        G
+    end
     
     style A fill:#f9f,stroke:#333,stroke-width:2px
     style B fill:#9cf,stroke:#333,stroke-width:2px
-    style C fill:#5f9,stroke:#333,stroke-width:2px
+    style C fill:#ff9,stroke:#333,stroke-width:2px
+    style D fill:#5f9,stroke:#333,stroke-width:4px
+    style E fill:#f96,stroke:#333,stroke-width:2px
+    style F fill:#5f9,stroke:#333,stroke-width:2px
+    style G fill:#5f9,stroke:#333,stroke-width:2px
 ```
 
 ### Core Components
