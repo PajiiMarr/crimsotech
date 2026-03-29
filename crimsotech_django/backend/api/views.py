@@ -4118,7 +4118,6 @@ class AdminShops(viewsets.ViewSet):
         try:
             start_date_str = request.GET.get('start_date')
             end_date_str = request.GET.get('end_date')
-            exclude_pending = request.GET.get('exclude_pending', 'true').lower() == 'true'
 
             # Get date range
             try:
@@ -4131,10 +4130,6 @@ class AdminShops(viewsets.ViewSet):
 
             # Base queryset with related data
             shops_qs = Shop.objects.all().select_related('customer__customer')
-
-            # Exclude pending shops unless explicitly requested
-            if exclude_pending:
-                shops_qs = shops_qs.exclude(status="Pending")
 
             # Filter shops that were active during the date range
             if start_date and end_date:
@@ -4276,7 +4271,6 @@ class AdminShops(viewsets.ViewSet):
                 'success': True,
                 'shops': shops_data,
                 'total_count': len(shops_data),
-                'exclude_pending': exclude_pending,
                 'message': 'Shops retrieved successfully',
                 'date_range': {
                     'start_date': start_date_str or start_date.isoformat(),
@@ -12587,11 +12581,15 @@ class ModeratorShops(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_shops_list(self, request):
         """
-        Get list of all shops with computed metrics with optional date range filtering
+        Get list of all shops with computed metrics and summary counts
         """
         try:
             start_date_str = request.GET.get('start_date')
             end_date_str = request.GET.get('end_date')
+            
+            # 1. Get total pending count (ignoring date filters for the global counter)
+            # Assuming status for pending is 'pending'
+            pending_total_count = Shop.objects.filter(status='pending').count()
             
             # Get date range
             try:
@@ -12602,100 +12600,63 @@ class ModeratorShops(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Base queryset - filter by date range if provided
+            # Base queryset
             shops_qs = Shop.objects.all().select_related('customer__customer')
             
+            # Apply date filter to the list if provided
             if start_date and end_date:
                 shops_qs = shops_qs.filter(created_at__range=[start_date, end_date])
             
-            # DEBUG: Print query info
-            print(f"Found {shops_qs.count()} shops in date range")
-            
-            # Get shop IDs for related data queries
             shop_ids = list(shops_qs.values_list('id', flat=True))
             
-            # Compute followers count for each shop
-            followers_data = ShopFollow.objects.filter(
-                shop__in=shop_ids
-            ).values('shop').annotate(
-                followers_count=Count('id')
-            )
+            # --- Metrics Computation (same as your original logic) ---
+            followers_data = ShopFollow.objects.filter(shop__in=shop_ids).values('shop').annotate(followers_count=Count('id'))
             followers_map = {fd['shop']: fd['followers_count'] for fd in followers_data}
             
-            # Compute products count for each shop
-            products_data = Product.objects.filter(
-                shop__in=shop_ids
-            ).values('shop').annotate(
-                products_count=Count('id')
-            )
+            products_data = Product.objects.filter(shop__in=shop_ids).values('shop').annotate(products_count=Count('id'))
             products_map = {pd['shop']: pd['products_count'] for pd in products_data}
             
-            # Compute ratings for each shop
-            ratings_data = Review.objects.filter(
-                shop__in=shop_ids
-            ).values('shop').annotate(
-                avg_rating=Avg('rating'),
-                total_ratings=Count('id')
-            )
+            ratings_data = Review.objects.filter(shop__in=shop_ids).values('shop').annotate(avg_rating=Avg('rating'), total_ratings=Count('id'))
             ratings_map = {rd['shop']: rd for rd in ratings_data}
             
-            # Compute active boosts for each shop
-            boosts_data = Boost.objects.filter(
-                shop__in=shop_ids,
-                status='active'
-            ).values('shop').annotate(
-                active_boosts=Count('id')
-            )
+            boosts_data = Boost.objects.filter(shop__in=shop_ids, status='active').values('shop').annotate(active_boosts=Count('id'))
             boosts_map = {bd['shop']: bd['active_boosts'] for bd in boosts_data}
             
             # Build shops data
             shops_data = []
             for shop in shops_qs:
                 shop_id = shop.id
-                
-                # Get owner name
                 customer = shop.customer
-                if customer and customer.customer:
-                    user = customer.customer
-                    owner_name = f"{user.first_name} {user.last_name}".strip()
-                    if not owner_name:
-                        owner_name = user.username or "Unknown"
-                else:
-                    owner_name = "Unknown Owner"
+                owner_name = f"{customer.customer.first_name} {customer.customer.last_name}".strip() if customer and customer.customer else "Unknown Owner"
                 
-                # Get computed metrics
-                followers = followers_map.get(shop_id, 0)
-                products_count = products_map.get(shop_id, 0)
                 rating_info = ratings_map.get(shop_id, {'avg_rating': 0.0, 'total_ratings': 0})
-                active_boosts = boosts_map.get(shop_id, 0)
                 
-                shop_data = {
+                shops_data.append({
                     'id': str(shop_id),
                     'name': shop.name,
                     'owner': owner_name,
-                    'location': f"{shop.city}, {shop.province}" if shop.city and shop.province else shop.city or shop.province or 'Unknown',
-                    'followers': followers,
-                    'products': products_count,
+                    'location': f"{shop.city}, {shop.province}" if shop.city and shop.province else 'Unknown',
+                    'followers': followers_map.get(shop_id, 0),
+                    'products': products_map.get(shop_id, 0),
                     'rating': round(float(rating_info['avg_rating']), 1),
                     'totalRatings': rating_info['total_ratings'],
                     'status': shop.status,
                     'joinedDate': shop.created_at.isoformat() if shop.created_at else None,
                     'totalSales': float(shop.total_sales),
-                    'activeBoosts': active_boosts,
+                    'activeBoosts': boosts_map.get(shop_id, 0),
                     'verified': shop.verified
-                }
-                shops_data.append(shop_data)
+                })
             
+            # 2. Add pending_count and other metadata to the response
             response_data = {
                 'success': True,
                 'shops': shops_data,
                 'total_count': len(shops_data),
+                'pending_count': pending_total_count,  # Global pending count for badges
                 'message': 'Shops retrieved successfully',
                 'date_range': {
                     'start_date': start_date_str or start_date.isoformat(),
                     'end_date': end_date_str or end_date.isoformat(),
-                    'actual_start': start_date.isoformat() if start_date else None,
-                    'actual_end': end_date.isoformat() if end_date else None
                 }
             }
             
