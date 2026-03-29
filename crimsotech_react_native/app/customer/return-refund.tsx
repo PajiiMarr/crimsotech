@@ -113,47 +113,62 @@ export default function ReturnRefund() {
   const [cancellingRefund, setCancellingRefund] = useState<string | null>(null);
 
   const getRefundsForTab = (tabId: string): RefundItem[] => {
-    if (!refundData) return [];
-    const refunds = Array.isArray(refundData) ? refundData : [];
+  if (!refundData) return [];
+  const refunds = Array.isArray(refundData) ? refundData : [];
 
-    switch (tabId) {
-      case 'pending-request':
-        return refunds.filter(refund =>
-          String(refund.status).toLowerCase() === 'pending' &&
-          String(refund.refund_payment_status).toLowerCase() === 'pending'
-        );
-      case 'to-process':
-        return refunds.filter(refund => {
-          const st = String(refund.status || '').toLowerCase();
-          const rtype = String(refund.refund_type || '').toLowerCase();
-          const rrStatus = (refund.return_request?.status || '').toLowerCase();
-          const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
+  switch (tabId) {
+    case 'pending-request':
+      return refunds.filter(refund =>
+        String(refund.status).toLowerCase() === 'pending' &&
+        String(refund.refund_payment_status).toLowerCase() === 'pending'
+      );
+    case 'to-process':
+      return refunds.filter(refund => {
+        const st = String(refund.status || '').toLowerCase();
+        const rtype = String(refund.refund_type || '').toLowerCase();
+        const rrStatus = (refund.return_request?.status || '').toLowerCase();
+        const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
 
-          if (st === 'negotiation' && paymentStatus === 'pending') return true;
-          if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped', 'received'].includes(rrStatus))) return true;
-          if (rtype === 'return' && st === 'approved' && rrStatus === 'shipped') return true;
-          if (rtype === 'return' && st === 'approved' && rrStatus === 'received') return true;
-          if (rtype === 'return' && st === 'approved' && rrStatus === 'inspected') return true;
-          if (st === 'approved' && (
-            (rtype === 'keep' && paymentStatus === 'processing') ||
-            (rtype === 'return' && paymentStatus === 'processing' && rrStatus === 'approved')
-          )) return true;
-          return false;
-        });
-      case 'disputes':
-        return refunds.filter(refund => String(refund.status || '').toLowerCase() === 'dispute');
-      case 'completed':
-        return refunds.filter(refund => {
-          const st = String(refund.status || '').toLowerCase();
-          const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
-          return paymentStatus === 'completed' ||
-            ['rejected', 'cancelled', 'failed'].includes(st) ||
-            (st === 'approved' && refund.return_request?.status === 'rejected');
-        });
-      default:
-        return refunds;
-    }
-  };
+        // Negotiation status
+        if (st === 'negotiation' && paymentStatus === 'pending') return true;
+        
+        // KEEP type refund: approved and payment pending
+        if (rtype === 'keep' && st === 'approved' && paymentStatus === 'pending') return true;
+        
+        // RETURN type refund: approved and waiting for buyer to ship
+        if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped', 'received', 'inspected', 'approved'].includes(rrStatus))) return true;
+        
+        // RETURN type refund: shipped (waiting for seller to receive)
+        if (rtype === 'return' && st === 'approved' && rrStatus === 'shipped') return true;
+        
+        // RETURN type refund: received (waiting for inspection)
+        if (rtype === 'return' && st === 'approved' && rrStatus === 'received') return true;
+        
+        // RETURN type refund: inspected (waiting for seller to accept/reject)
+        if (rtype === 'return' && st === 'approved' && rrStatus === 'inspected') return true;
+        
+        // RETURN type refund: approved (seller accepted, admin processing payment)
+        if (rtype === 'return' && st === 'approved' && rrStatus === 'approved' && paymentStatus === 'processing') return true;
+        
+        // Any approved refund with processing payment status
+        if (st === 'approved' && paymentStatus === 'processing') return true;
+        
+        return false;
+      });
+    case 'disputes':
+      return refunds.filter(refund => String(refund.status || '').toLowerCase() === 'dispute');
+    case 'completed':
+      return refunds.filter(refund => {
+        const st = String(refund.status || '').toLowerCase();
+        const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
+        return paymentStatus === 'completed' ||
+          ['rejected', 'cancelled', 'failed'].includes(st) ||
+          (st === 'approved' && refund.return_request?.status === 'rejected');
+      });
+    default:
+      return refunds;
+  }
+};
 
   useEffect(() => {
     fetchRefundData();
