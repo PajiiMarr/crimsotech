@@ -4112,38 +4112,42 @@ class AdminShops(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='get_shops_list')
     def get_shops_list(self, request):
         """
-        Get list of all shops with computed metrics with optional date range filtering
+        Get list of all shops with computed metrics with optional date range filtering.
+        Excludes Pending shops by default (pass exclude_pending=false to include them).
         """
         try:
             start_date_str = request.GET.get('start_date')
             end_date_str = request.GET.get('end_date')
-            
+            exclude_pending = request.GET.get('exclude_pending', 'true').lower() == 'true'
+
             # Get date range
             try:
                 start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
             except ValueError as e:
                 return Response(
-                    {'success': False, 'error': str(e)}, 
+                    {'success': False, 'error': str(e)},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             # Base queryset with related data
             shops_qs = Shop.objects.all().select_related('customer__customer')
-            
+
+            # Exclude pending shops unless explicitly requested
+            if exclude_pending:
+                shops_qs = shops_qs.exclude(status="Pending")
+
             # Filter shops that were active during the date range
             if start_date and end_date:
                 shops_qs = shops_qs.filter(
-                    # Shop must have been created before or during the range
                     created_at__lte=end_date
                 ).exclude(
-                    # Exclude shops that were suspended for the entire range
                     Q(is_suspended=True, suspended_until__gte=end_date, created_at__lte=start_date) |
                     Q(is_suspended=True, suspended_until__isnull=False, suspended_until__gte=start_date, created_at__lte=start_date)
                 )
-            
+
             # Get shop IDs
             shop_ids = list(shops_qs.values_list('id', flat=True))
-            
+
             # Compute followers count
             followers_data = ShopFollow.objects.filter(
                 shop__in=shop_ids
@@ -4151,7 +4155,7 @@ class AdminShops(viewsets.ViewSet):
                 followers_count=Count('id')
             )
             followers_map = {str(fd['shop']): fd['followers_count'] for fd in followers_data}
-            
+
             # Compute products count
             products_data = Product.objects.filter(
                 shop__in=shop_ids,
@@ -4160,23 +4164,21 @@ class AdminShops(viewsets.ViewSet):
                 products_count=Count('id')
             )
             products_map = {str(pd['shop']): pd['products_count'] for pd in products_data}
-            
-            # FIX: Compute favorites count per shop by counting Favorites entries
-            # Get all product IDs for these shops
+
+            # Compute favorites count per shop
             product_ids = Product.objects.filter(
                 shop__in=shop_ids,
                 upload_status='published'
             ).values_list('id', flat=True)
-            
-            # Count favorites per product and group by shop
+
             favorites_data = Favorites.objects.filter(
                 product__in=product_ids
             ).values('product__shop').annotate(
                 total_favorites=Count('id')
             )
             favorites_map = {str(fd['product__shop']): fd['total_favorites'] for fd in favorites_data}
-            
-            # FIX: Changed from 'rating' to 'average_rating'
+
+            # Compute ratings
             ratings_data = Review.objects.filter(
                 shop__in=shop_ids
             ).values('shop').annotate(
@@ -4184,7 +4186,7 @@ class AdminShops(viewsets.ViewSet):
                 total_ratings=Count('id')
             )
             ratings_map = {str(rd['shop']): rd for rd in ratings_data}
-            
+
             # Compute active boosts
             boosts_data = Boost.objects.filter(
                 shop__in=shop_ids,
@@ -4193,8 +4195,8 @@ class AdminShops(viewsets.ViewSet):
                 active_boosts=Count('id')
             )
             boosts_map = {str(bd['shop']): bd['active_boosts'] for bd in boosts_data}
-            
-            # Compute report counts per shop
+
+            # Compute active report counts per shop
             reports_data = Report.objects.filter(
                 reported_shop__in=shop_ids,
                 status__in=['pending', 'under_review']
@@ -4202,12 +4204,12 @@ class AdminShops(viewsets.ViewSet):
                 active_reports=Count('id')
             )
             reports_map = {str(rd['reported_shop']): rd['active_reports'] for rd in reports_data}
-            
+
             # Build shops data
             shops_data = []
             for shop in shops_qs:
                 shop_id = str(shop.id)
-                
+
                 # Get owner info
                 customer = shop.customer
                 owner_info = None
@@ -4226,7 +4228,7 @@ class AdminShops(viewsets.ViewSet):
                         owner_name = user.username or "Unknown"
                 else:
                     owner_name = "Unknown Owner"
-                
+
                 # Get computed metrics
                 followers = followers_map.get(shop_id, 0)
                 products_count = products_map.get(shop_id, 0)
@@ -4234,8 +4236,8 @@ class AdminShops(viewsets.ViewSet):
                 rating_info = ratings_map.get(shop_id, {'avg_rating': 0.0, 'total_ratings': 0})
                 active_boosts = boosts_map.get(shop_id, 0)
                 active_reports = reports_map.get(shop_id, 0)
-                
-                shop_data = {
+
+                shops_data.append({
                     'id': shop_id,
                     'shop_picture': shop.shop_picture.url if shop.shop_picture else None,
                     'name': shop.name,
@@ -4267,14 +4269,14 @@ class AdminShops(viewsets.ViewSet):
                     'active_report_count': active_reports,
                     'is_suspended': shop.is_suspended,
                     'suspension_reason': shop.suspension_reason,
-                    'suspended_until': shop.suspended_until.isoformat() if shop.suspended_until else None
-                }
-                shops_data.append(shop_data)
-            
-            response_data = {
+                    'suspended_until': shop.suspended_until.isoformat() if shop.suspended_until else None,
+                })
+
+            return Response({
                 'success': True,
                 'shops': shops_data,
                 'total_count': len(shops_data),
+                'exclude_pending': exclude_pending,
                 'message': 'Shops retrieved successfully',
                 'date_range': {
                     'start_date': start_date_str or start_date.isoformat(),
@@ -4282,16 +4284,15 @@ class AdminShops(viewsets.ViewSet):
                     'actual_start': start_date.isoformat() if start_date else None,
                     'actual_end': end_date.isoformat() if end_date else None
                 }
-            }
-            
-            return Response(response_data, status=status.HTTP_200_OK)
-            
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
             return Response(
-                {'success': False, 'error': f'Error retrieving shops: {str(e)}'}, 
+                {'success': False, 'error': f'Error retrieving shops: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
+
     @action(detail=True, methods=['get'], url_path='get_shop_details')
     def get_shop_details(self, request, pk=None):
         """
@@ -4357,7 +4358,7 @@ class AdminShops(viewsets.ViewSet):
             shop_data = {
                 'id': str(shop.id),
                 'shop_picture': shop.shop_picture.url if shop.shop_picture else None,
-                'customer': owner_info,  # Always returns an object, never None
+                'customer': owner_info,
                 'description': shop.description,
                 'name': shop.name,
                 'province': shop.province,
@@ -4376,7 +4377,18 @@ class AdminShops(viewsets.ViewSet):
                 'active_report_count': active_reports,
                 'favorites_count': favorites_count,
                 'followers_count': followers_count,
-                'categories': list(categories)
+                'categories': list(categories),
+                # ── Legal Documents ──────────────────────────────────────────────────
+                'business_registration_type': shop.business_registration_type,
+                'business_registration_number': shop.business_registration_number,
+                'business_registration_image': request.build_absolute_uri(shop.business_registration_image.url) if shop.business_registration_image else None,
+                'government_id_type': shop.government_id_type,
+                'government_id_number': shop.government_id_number,
+                'government_id_image_front': request.build_absolute_uri(shop.government_id_image_front.url) if shop.government_id_image_front else None,
+                'government_id_image_back': request.build_absolute_uri(shop.government_id_image_back.url) if shop.government_id_image_back else None,
+                'business_permit_number': shop.business_permit_number,
+                'business_permit_image': request.build_absolute_uri(shop.business_permit_image.url) if shop.business_permit_image else None,
+                'legal_documents_complete': shop.legal_documents_complete,
             }
             
             return Response({
@@ -5143,6 +5155,68 @@ class AdminShops(viewsets.ViewSet):
                 'error': f'Error executing action: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=False, methods=['get'], url_path='get_pending_shops')
+    def get_pending_shops(self, request):
+        try:
+            pending_shops = Shop.objects.filter(
+                status="Pending"
+            ).select_related('customer__customer').order_by('created_at')
+
+            shops_data = []
+            for shop in pending_shops:
+                customer = shop.customer
+                owner_info = None
+                if customer and customer.customer:
+                    user = customer.customer
+                    owner_info = {
+                        'id': str(user.id),
+                        'username': user.username,
+                        'email': user.email,
+                        'first_name': user.first_name,
+                        'last_name': user.last_name,
+                        'contact_number': user.contact_number,
+                    }
+
+                shops_data.append({
+                    'id': str(shop.id),
+                    'name': shop.name,
+                    'description': shop.description,
+                    'shop_picture': shop.shop_picture.url if shop.shop_picture else None,
+                    'owner': owner_info,
+                    'province': shop.province,
+                    'city': shop.city,
+                    'barangay': shop.barangay,
+                    'street': shop.street,
+                    'contact_number': shop.contact_number,
+                    'status': shop.status,
+                    'verified': shop.verified,
+                    'created_at': shop.created_at.isoformat() if shop.created_at else None,
+                    # ── Legal Documents ──────────────────────────────────────
+                    'business_registration_type': shop.business_registration_type,
+                    'business_registration_number': shop.business_registration_number,
+                    'business_registration_image': request.build_absolute_uri(shop.business_registration_image.url) if shop.business_registration_image else None,
+                    'government_id_type': shop.government_id_type,
+                    'government_id_number': shop.government_id_number,
+                    'government_id_image_front': request.build_absolute_uri(shop.government_id_image_front.url) if shop.government_id_image_front else None,
+                    'government_id_image_back': request.build_absolute_uri(shop.government_id_image_back.url) if shop.government_id_image_back else None,
+                    'business_permit_number': shop.business_permit_number,
+                    'business_permit_image': request.build_absolute_uri(shop.business_permit_image.url) if shop.business_permit_image else None,
+                    'legal_documents_complete': shop.legal_documents_complete,
+                })
+
+            return Response({
+                'success': True,
+                'shops': shops_data,
+                'total_count': len(shops_data),
+                'message': 'Pending shops retrieved successfully'
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error retrieving pending shops: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 class AdminBoosting(viewsets.ViewSet):
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""
@@ -14822,183 +14896,221 @@ class CustomerShops(APIView):
             }, status=status.HTTP_200_OK) 
          
     def post(self, request):
-            """
-            Create a new shop for a customer
-            """
-            try:
-                # Get user ID from request data (passed from frontend)
-                user_id = request.data.get('customer')
-                
-                if not user_id:
-                    return Response(
-                        {'error': 'User ID is required'}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Validate that the user exists and is a customer
-                try:
-                    user = User.objects.get(id=user_id)
-                    
-                    # Check if user is a customer
-                    if not user.is_customer:
-                        return Response(
-                            {'error': 'User is not registered as a customer'}, 
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
-                    
-                    # Get or create Customer instance
-                    customer, created = Customer.objects.get_or_create(customer=user)
-                    
-                except User.DoesNotExist:
-                    return Response(
-                        {'error': 'User not found'}, 
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-                
-                # Validate required fields
-                required_fields = ['name', 'description', 'province', 'city', 'barangay', 'street', 'contact_number']
-                missing_fields = []
-                
-                for field in required_fields:
-                    if field not in request.data or not request.data.get(field):
-                        missing_fields.append(field)
-                
-                if missing_fields:
-                    return Response(
-                        {'error': f'Missing required fields: {", ".join(missing_fields)}'}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Validate field lengths based on model
-                validation_errors = {}
-                
-                # Validate name (max 50 characters in model)
-                name = request.data.get('name', '').strip()
-                if len(name) > 50:
-                    validation_errors['name'] = 'Shop name must be 50 characters or less'
-                
-                # Validate description (max 200 characters in model)
-                description = request.data.get('description', '').strip()
-                if len(description) > 200:
-                    validation_errors['description'] = 'Description must be 200 characters or less'
-                
-                # Validate location fields (max 50 characters each in model)
-                location_fields = ['province', 'city', 'barangay', 'street']
-                for field in location_fields:
-                    value = request.data.get(field, '').strip()
-                    if len(value) > 50:
-                        validation_errors[field] = f'{field.capitalize()} must be 50 characters or less'
-                
-                # Validate contact number (max 20 characters in model)
-                contact_number = request.data.get('contact_number', '').strip()
-                if len(contact_number) > 20:
-                    validation_errors['contact_number'] = 'Contact number must be 20 characters or less'
-                
-                if validation_errors:
-                    return Response(
-                        {'errors': validation_errors}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Check if customer already has a shop (optional, based on business logic)
-                # Remove this if customers can have multiple shops
-                # existing_shop = Shop.objects.filter(customer=customer).first()
-                # if existing_shop:
-                #     return Response(
-                #         {'error': 'Customer already has a shop'}, 
-                #         status=status.HTTP_400_BAD_REQUEST
-                #     )
-                
-                # Use atomic transaction for data integrity
-                with transaction.atomic():
-                    # Create the shop
-                    shop = Shop.objects.create(
-                        id=uuid.uuid4(),
-                        name=name,
-                        description=description,
-                        province=request.data.get('province', '').strip(),
-                        city=request.data.get('city', '').strip(),
-                        barangay=request.data.get('barangay', '').strip(),
-                        street=request.data.get('street', '').strip(),
-                        contact_number=contact_number,
-                        customer=customer,
-                        # Set default values
-                        verified=False,
-                        status="Active",
-                        total_sales=0,
-                        is_suspended=False,
-                        created_at=timezone.now(),
-                        updated_at=timezone.now()
-                    )
-                    
-                    # Handle shop picture if provided
-                    shop_picture = request.FILES.get('shop_picture')
-                    if shop_picture:
-                        # Validate file type
-                        valid_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
-                        valid_mime_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
-                        
-                        # Get file extension
-                        file_extension = shop_picture.name.split('.')[-1].lower()
-                        
-                        # Validate both extension and content type
-                        if (file_extension not in valid_extensions or 
-                            shop_picture.content_type not in valid_mime_types):
-                            raise ValueError(
-                                'Invalid file type. Supported formats: JPEG, PNG, GIF, WebP'
-                            )
-                        
-                        # Validate file size (5MB limit as in frontend)
-                        if shop_picture.size > 5 * 1024 * 1024:
-                            raise ValueError('File size must be less than 5MB')
-                        
-                        shop.shop_picture = shop_picture
-                        shop.save()
-                    
-                    # Prepare response data
-                    shop_data = {
-                        'id': str(shop.id),
-                        'name': shop.name,
-                        'description': shop.description,
-                        'province': shop.province,
-                        'city': shop.city,
-                        'barangay': shop.barangay,
-                        'street': shop.street,
-                        'contact_number': shop.contact_number,
-                        'customer': str(shop.customer.customer_id) if shop.customer else None,
-                        'verified': shop.verified,
-                        'status': shop.status,
-                        'total_sales': str(shop.total_sales),
-                        'created_at': shop.created_at.isoformat(),
-                        'updated_at': shop.updated_at.isoformat(),
-                    }
-                    
-                    if shop.shop_picture:
-                        shop_data['shop_picture'] = request.build_absolute_uri(shop.shop_picture.url)
-                    
-                    logger.info(f"Shop created successfully: {shop.name} by user {user_id}")
-                    
-                    return Response({
-                        'success': True,
-                        'message': 'Shop created successfully',
-                        'shop': shop_data,
-                        'id': str(shop.id)
-                    }, status=status.HTTP_201_CREATED)
-                    
-            except ValueError as e:
+        """
+        Create a new shop for a customer with legal requirements
+        """
+        try:
+            user_id = request.data.get('customer')
+
+            if not user_id:
                 return Response(
-                    {'error': str(e)}, 
+                    {'error': 'User ID is required'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            except Exception as e:
-                logger.error(f"Shop creation failed: {str(e)}", exc_info=True)
+
+            try:
+                user = User.objects.get(id=user_id)
+                if not user.is_customer:
+                    return Response(
+                        {'error': 'User is not registered as a customer'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                customer, created = Customer.objects.get_or_create(customer=user)
+            except User.DoesNotExist:
                 return Response(
-                    {
-                        'error': 'An error occurred while creating the shop',
-                        'details': str(e)
-                    }, 
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    {'error': 'User not found'},
+                    status=status.HTTP_404_NOT_FOUND
                 )
+
+            # ── Required base fields ─────────────────────────────────────────────
+            required_fields = [
+                'name', 'description', 'province', 'city',
+                'barangay', 'street', 'contact_number'
+            ]
+            missing_fields = [f for f in required_fields if not request.data.get(f)]
+            if missing_fields:
+                return Response(
+                    {'error': f'Missing required fields: {", ".join(missing_fields)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # ── Required legal fields (text) ─────────────────────────────────────
+            required_legal_text = [
+                'business_registration_type',
+                'business_registration_number',
+                'government_id_type',
+                'government_id_number',
+                'business_permit_number',
+            ]
+            missing_legal = [f for f in required_legal_text if not request.data.get(f)]
+            if missing_legal:
+                return Response(
+                    {'error': f'Missing required legal fields: {", ".join(missing_legal)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # ── Required legal uploads ────────────────────────────────────────────
+            required_legal_files = [
+                'business_registration_image',
+                'government_id_image_front',
+                'business_permit_image',
+            ]
+            missing_files = [f for f in required_legal_files if not request.FILES.get(f)]
+            if missing_files:
+                return Response(
+                    {'error': f'Missing required document uploads: {", ".join(missing_files)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # ── Validate business_registration_type ──────────────────────────────
+            reg_type = request.data.get('business_registration_type', '').upper()
+            if reg_type not in ['DTI', 'SEC']:
+                return Response(
+                    {'error': 'business_registration_type must be either DTI or SEC'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # ── Field length validation ───────────────────────────────────────────
+            validation_errors = {}
+
+            name = request.data.get('name', '').strip()
+            if len(name) > 50:
+                validation_errors['name'] = 'Shop name must be 50 characters or less'
+
+            description = request.data.get('description', '').strip()
+            if len(description) > 200:
+                validation_errors['description'] = 'Description must be 200 characters or less'
+
+            for field in ['province', 'city', 'barangay', 'street']:
+                value = request.data.get(field, '').strip()
+                if len(value) > 50:
+                    validation_errors[field] = f'{field.capitalize()} must be 50 characters or less'
+
+            contact_number = request.data.get('contact_number', '').strip()
+            if len(contact_number) > 20:
+                validation_errors['contact_number'] = 'Contact number must be 20 characters or less'
+
+            for field in ['business_registration_number', 'government_id_number', 'business_permit_number']:
+                value = request.data.get(field, '').strip()
+                if len(value) > 100:
+                    validation_errors[field] = f'{field.replace("_", " ").capitalize()} must be 100 characters or less'
+
+            if validation_errors:
+                return Response({'errors': validation_errors}, status=status.HTTP_400_BAD_REQUEST)
+
+            # ── Image validation helper ───────────────────────────────────────────
+            def validate_image(file, field_name):
+                valid_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
+                valid_mime_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
+                ext = file.name.split('.')[-1].lower()
+                if ext not in valid_extensions or file.content_type not in valid_mime_types:
+                    raise ValueError(f'{field_name}: Invalid file type. Supported: JPEG, PNG, GIF, WebP')
+                if file.size > 5 * 1024 * 1024:
+                    raise ValueError(f'{field_name}: File size must be less than 5MB')
+
+            with transaction.atomic():
+                # Validate all uploaded images before creating anything
+                image_fields = [
+                    (request.FILES.get('shop_picture'), 'Shop picture'),
+                    (request.FILES.get('business_registration_image'), 'Business registration image'),
+                    (request.FILES.get('government_id_image_front'), 'Government ID front'),
+                    (request.FILES.get('government_id_image_back'), 'Government ID back'),
+                    (request.FILES.get('business_permit_image'), 'Business permit image'),
+                ]
+                for file, label in image_fields:
+                    if file:
+                        validate_image(file, label)
+
+                # Create shop
+                shop = Shop.objects.create(
+                    id=uuid.uuid4(),
+                    name=name,
+                    description=description,
+                    province=request.data.get('province', '').strip(),
+                    city=request.data.get('city', '').strip(),
+                    barangay=request.data.get('barangay', '').strip(),
+                    street=request.data.get('street', '').strip(),
+                    contact_number=contact_number,
+                    customer=customer,
+                    verified=False,
+                    status="Pending",
+                    total_sales=0,
+                    is_suspended=False,
+                    # Legal fields - text
+                    business_registration_type=reg_type,
+                    business_registration_number=request.data.get('business_registration_number', '').strip(),
+                    government_id_type=request.data.get('government_id_type', '').strip(),
+                    government_id_number=request.data.get('government_id_number', '').strip(),
+                    business_permit_number=request.data.get('business_permit_number', '').strip(),
+                )
+
+                # Attach all images
+                for file_key, field_name in [
+                    ('shop_picture',                'shop_picture'),
+                    ('business_registration_image', 'business_registration_image'),
+                    ('government_id_image_front',   'government_id_image_front'),
+                    ('government_id_image_back',    'government_id_image_back'),
+                    ('business_permit_image',       'business_permit_image'),
+                ]:
+                    file = request.FILES.get(file_key)
+                    if file:
+                        setattr(shop, field_name, file)
+
+                shop.save()
+
+                # Notify all admins
+                admin_users = User.objects.filter(is_admin=True)
+                for admin_user in admin_users:
+                    Notification.objects.create(
+                        user=admin_user,
+                        title='New Shop Pending Approval',
+                        type='shop_pending_approval',
+                        message=f'A new shop "{shop.name}" has been submitted with legal documents and is awaiting your approval.'
+                    )
+
+                shop_data = {
+                    'id': str(shop.id),
+                    'name': shop.name,
+                    'description': shop.description,
+                    'province': shop.province,
+                    'city': shop.city,
+                    'barangay': shop.barangay,
+                    'street': shop.street,
+                    'contact_number': shop.contact_number,
+                    'customer': str(shop.customer.customer_id) if shop.customer else None,
+                    'verified': shop.verified,
+                    'status': shop.status,
+                    'total_sales': str(shop.total_sales),
+                    'created_at': shop.created_at.isoformat(),
+                    'updated_at': shop.updated_at.isoformat(),
+                    'legal_documents_complete': shop.legal_documents_complete,
+                    'business_registration_type': shop.business_registration_type,
+                    'business_registration_number': shop.business_registration_number,
+                    'government_id_type': shop.government_id_type,
+                    'government_id_number': shop.government_id_number,
+                    'business_permit_number': shop.business_permit_number,
+                }
+
+                if shop.shop_picture:
+                    shop_data['shop_picture'] = request.build_absolute_uri(shop.shop_picture.url)
+
+                logger.info(f"Shop created (pending): {shop.name} by user {user_id}")
+
+                return Response({
+                    'success': True,
+                    'message': 'Shop submitted for approval. You will be notified once an admin reviews your application.',
+                    'shop': shop_data,
+                    'id': str(shop.id)
+                }, status=status.HTTP_201_CREATED)
+
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Shop creation failed: {str(e)}", exc_info=True)
+            return Response(
+                {'error': 'An error occurred while creating the shop', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def put(self, request):
         customer_id = request.data.get('customer_id')

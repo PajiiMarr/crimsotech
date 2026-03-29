@@ -229,6 +229,69 @@ class Shop(models.Model):
     suspension_reason = models.TextField(blank=True, null=True)
     suspended_until = models.DateTimeField(blank=True, null=True)
 
+    # ── Legal Requirements ───────────────────────────────────────────────────
+
+    # Business Registration (DTI/SEC)
+    business_registration_type = models.CharField(
+        max_length=10,
+        choices=[('DTI', 'DTI'), ('SEC', 'SEC')],
+        blank=True,
+        null=True,
+        help_text="Type of business registration"
+    )
+    business_registration_number = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="DTI or SEC registration number"
+    )
+    business_registration_image = models.ImageField(
+        upload_to='shop/legal/registration/',
+        blank=True,
+        null=True,
+        help_text="Upload of DTI or SEC certificate"
+    )
+
+    # Valid Government ID
+    government_id_type = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Type of government ID (e.g. PhilSys, Passport, Driver's License)"
+    )
+    government_id_number = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Government ID number"
+    )
+    government_id_image_front = models.ImageField(
+        upload_to='shop/legal/government_id/',
+        blank=True,
+        null=True,
+        help_text="Front of government ID"
+    )
+    government_id_image_back = models.ImageField(
+        upload_to='shop/legal/government_id/',
+        blank=True,
+        null=True,
+        help_text="Back of government ID"
+    )
+
+    # Business Permit
+    business_permit_number = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Local government business permit number"
+    )
+    business_permit_image = models.ImageField(
+        upload_to='shop/legal/permits/',
+        blank=True,
+        null=True,
+        help_text="Upload of business permit"
+    )
+
     class Meta:
         indexes = [
             models.Index(fields=['customer', 'verified']),
@@ -240,11 +303,24 @@ class Shop(models.Model):
 
     def __str__(self):
         return f"{self.name}"
-    
+
     @property
     def active_report_count(self):
         return self.reports_against.filter(status__in=['pending', 'under_review']).count()
 
+    @property
+    def legal_documents_complete(self):
+        """Check if all required legal documents have been submitted"""
+        return all([
+            self.business_registration_number,
+            self.business_registration_image,
+            self.government_id_type,
+            self.government_id_number,
+            self.government_id_image_front,
+            self.business_permit_number,
+            self.business_permit_image,
+        ])
+    
 class ShopFollow(models.Model): 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     followed_at = models.DateTimeField(auto_now_add=True)
