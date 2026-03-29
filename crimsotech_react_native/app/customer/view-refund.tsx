@@ -14,7 +14,10 @@ import {
   Modal,
   FlatList,
   Dimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
 import {
@@ -178,13 +181,32 @@ const RejectedStatus = ({ refund, formatCurrency, onDispute }: { refund: any; fo
 };
 
 // ========== 4. APPROVED STATUS ==========
-const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDate }: { refund: any; onOpenTrackingDialog?: () => void; formatCurrency: (amount: string | number) => string; formatDate: (dateString: string) => string }) => {
+const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDate, shopReturnAddress, onOpenProofViewer }: { refund: any; onOpenTrackingDialog?: () => void; formatCurrency: (amount: string | number) => string; formatDate: (dateString: string) => string; shopReturnAddress?: any; onOpenProofViewer?: (urls: string[], index?: number) => void }) => {
   const isReturnItem = refund.refund_type === 'return';
   const rr = refund.return_request || {};
   const rrStatus = String(rr?.status || '').toLowerCase();
   const payStatus = String(refund.refund_payment_status || '').toLowerCase();
   const hasShippingInfo = Boolean(rr.tracking_number) || rrStatus === 'shipped' || rrStatus === 'received';
   const dr = refund.dispute || refund.dispute_request || null;
+  
+  // Get return address - first from refund data, then from shop data
+  const returnAddress = refund.return_address || shopReturnAddress || null;
+
+  const extractReturnProofUrls = () => {
+    const rrObj = refund.return_request || {};
+    const candidates = rrObj.media || rrObj.media_files || rrObj.return_media || rrObj.proofs || refund.return_request_media || refund.return_media || refund.return_media_files || refund.return_request?.media_files || refund.return_request?.media || [];
+    const arr = Array.isArray(candidates) ? candidates : [];
+    const urls: string[] = [];
+    arr.forEach((m: any) => {
+      if (!m) return;
+      if (typeof m === 'string') { urls.push(m); return; }
+      const u = m.file_url || m.file_data?.url || m.file?.url || m.url || m.file_data || m.path || m.src;
+      if (u) urls.push(u);
+    });
+    return urls;
+  };
+  const shippingProofUrls = extractReturnProofUrls();
+  
   const isProcessing = (
     (isReturnItem && rrStatus === 'approved' && payStatus === 'processing' && refund.status?.toLowerCase() === 'approved') ||
     (!isReturnItem && payStatus === 'processing' && refund.status?.toLowerCase() === 'approved') ||
@@ -192,7 +214,7 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
   );
   const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
   const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
-  const returnDeadline = refund.processed_at ? new Date(new Date(refund.processed_at).getTime() + 7 * 24 * 60 * 60 * 1000) : null;
+const returnDeadline = refund.processed_at ? new Date(new Date(refund.processed_at).getTime() + 2 * 24 * 60 * 60 * 1000) : null;
 
   if (isProcessing) return <ProcessingStatus refund={refund} formatCurrency={formatCurrency} />;
   if ((payStatus === 'completed' && refund.status?.toLowerCase() === 'approved') || refund.status?.toLowerCase() === 'completed') {
@@ -202,9 +224,11 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
   return (
     <View style={styles.statusSection}>
       <View style={styles.statusRow}>
-        <CheckCircle2 size={24} color="#10B981" fill="#D1FAE5" />
+        <CheckCircle2 size={24} color={isReturnItem ? "#3B82F6" : "#10B981"} fill={isReturnItem ? "#DBEAFE" : "#D1FAE5"} />
         <View style={styles.statusTextContainer}>
-          <Text style={styles.statusTitle}>Refund Approved</Text>
+          <Text style={[styles.statusTitle, isReturnItem && { color: "#3B82F6" }]}>
+            {isReturnItem ? 'Approved - Waiting for return' : 'Refund Approved'}
+          </Text>
           {!isReturnItem ? (
             <Text style={styles.statusSubtitle}>Your refund will be processed soon</Text>
           ) : (
@@ -215,37 +239,74 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
                 {refund.return_request?.return_deadline && <Text style={styles.moderationDeadline}>Return Deadline: {formatDate(refund.return_request.return_deadline)}</Text>}
               </View>
             ) : !hasShippingInfo ? (
-              <Text style={styles.statusSubtitle}>Please return the item to complete your refund</Text>
+              <Text style={[styles.statusSubtitle, { color: "#3B82F6" }]}>Please return the item to complete your refund</Text>
             ) : null
           )}
         </View>
       </View>
+      
+      {/* Return Address Card - Displayed prominently for return-type refunds */}
+      {isReturnItem && !hasShippingInfo && returnAddress && (
+        <View style={styles.returnAddressCardLarge}>
+          <View style={styles.returnAddressHeader}>
+            <MapPin size={20} color="#3B82F6" />
+            <Text style={styles.returnAddressHeaderText}>Return to Seller</Text>
+          </View>
+          
+          <View style={styles.returnAddressContent}>
+            <View style={styles.returnAddressRow}>
+              <Text style={styles.returnAddressLabel}>Recipient:</Text>
+              <Text style={styles.returnAddressValue}>{returnAddress.recipient_name || returnAddress.name || 'Not specified'}</Text>
+            </View>
+            
+            <View style={styles.returnAddressRow}>
+              <Text style={styles.returnAddressLabel}>Contact:</Text>
+              <Text style={styles.returnAddressValue}>{returnAddress.contact_number || returnAddress.phone || 'Not specified'}</Text>
+            </View>
+            
+            <View style={styles.returnAddressRow}>
+              <Text style={styles.returnAddressLabel}>Address:</Text>
+              <Text style={[styles.returnAddressValue, { flex: 1 }]}>
+                {returnAddress.street && `${returnAddress.street}, `}
+                {returnAddress.barangay && `${returnAddress.barangay}, `}
+                {returnAddress.city && `${returnAddress.city}, `}
+                {returnAddress.province && `${returnAddress.province}`}
+              </Text>
+            </View>
+          </View>
+          
+          {returnDeadline && (
+            <View style={styles.returnDeadlineCard}>
+              <Clock size={16} color="#F59E0B" />
+              <Text style={styles.returnDeadlineText}>
+                Please ship the item by <Text style={styles.returnDeadlineDate}>{formatDate(returnDeadline.toISOString())}</Text>
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+      
+      {/* Return details section with deadline and instructions */}
       {isReturnItem && !hasShippingInfo && (
-        <View style={styles.returnDetails}>
+        <View style={[styles.returnDetails, { borderLeftColor: "#3B82F6", borderLeftWidth: 4, marginTop: 12 }]}>
           <View style={styles.returnDetailRow}>
             <Text style={styles.returnDetailLabel}>Return Deadline:</Text>
-            <Text style={styles.returnDetailValue}>
-              {rr.return_deadline || refund.return_deadline ? formatDate(rr.return_deadline || refund.return_deadline) : (returnDeadline ? formatDate(returnDeadline.toISOString()) : 'Not set')}
+            <Text style={[styles.returnDetailValue, { color: "#F59E0B", fontWeight: "600" }]}>
+              {rr.return_deadline || refund.return_deadline ? formatDate(rr.return_deadline || refund.return_deadline) : (returnDeadline ? formatDate(returnDeadline.toISOString()) : '7 days from approval')}
             </Text>
           </View>
           <View style={styles.returnDetailRow}>
-            <Text style={styles.returnDetailLabel}>Return Address:</Text>
-            <View style={styles.returnAddress}>
-              {refund.return_address ? (
-                <>
-                  <Text style={styles.addressName}>{refund.return_address.recipient_name} — {refund.return_address.contact_number}</Text>
-                  <Text style={styles.addressText}>
-                    {refund.return_address.street}, {refund.return_address.barangay}, {refund.return_address.city}, {refund.return_address.province} {refund.return_address.zip_code}, {refund.return_address.country}
-                  </Text>
-                  {refund.return_address.notes && <Text style={styles.addressNotes}>{refund.return_address.notes}</Text>}
-                </>
-              ) : (
-                <Text style={styles.addressText}>Not provided</Text>
-              )}
-            </View>
+            <Text style={styles.returnDetailLabel}>Instructions:</Text>
+            <Text style={[styles.returnDetailValue, { fontSize: 12, color: "#6B7280" }]}>
+              1. Package the item securely{'\n'}
+              2. Include all original packaging and accessories{'\n'}
+              3. Ship to the return address above{'\n'}
+              4. Provide tracking number once shipped
+            </Text>
           </View>
         </View>
       )}
+      
       {isReturnItem && rrStatus === 'shipped' && (
         <View style={styles.shippedInfo}>
           <Text style={styles.shippedTitle}>Item has been shipped</Text>
@@ -270,6 +331,18 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
               </View>
             )}
           </View>
+          {shippingProofUrls.length > 0 && (
+            <View style={{ marginTop: 12 }}>
+              <Text style={{ fontSize: 14, color: '#374151', marginBottom: 8, fontWeight: '600' }}>Shipping Proofs</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                {shippingProofUrls.map((u, idx) => (
+                  <TouchableOpacity key={`${u}-${idx}`} onPress={() => onOpenProofViewer && onOpenProofViewer(shippingProofUrls, idx)} style={{ marginRight: 8 }}>
+                    <Image source={{ uri: u }} style={{ width: 90, height: 90, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
           {onOpenTrackingDialog && !isReturnAcceptedWaitingModeration && (
             <TouchableOpacity style={styles.updateShippingBtn} onPress={onOpenTrackingDialog}>
               <Text style={styles.updateShippingText}>Update shipping info</Text>
@@ -282,7 +355,7 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
 };
 
 // ========== 5. WAITING STATUS ==========
-const WaitingStatus = ({ refund, onOpenTrackingDialog, formatDate }: { refund: any; onOpenTrackingDialog?: () => void; formatDate: (dateString: string) => string }) => {
+const WaitingStatus = ({ refund, onOpenTrackingDialog, formatDate, onOpenProofViewer }: { refund: any; onOpenTrackingDialog?: () => void; formatDate: (dateString: string) => string; onOpenProofViewer?: (urls: string[], index?: number) => void }) => {
   const rr = refund.return_request || {};
   const deadline = rr.return_deadline || refund.return_deadline;
   const deadlineDate = deadline ? new Date(deadline) : null;
@@ -333,6 +406,31 @@ const WaitingStatus = ({ refund, onOpenTrackingDialog, formatDate }: { refund: a
               <Text style={styles.shippingValue}>{rr.tracking_number}</Text>
             </View>
           )}
+          {/* shipping proofs (return_request media) */}
+          {(() => {
+            const candidates = rr.media || rr.media_files || rr.return_media || rr.proofs || refund.return_request_media || refund.return_media || [];
+            const arr = Array.isArray(candidates) ? candidates : [];
+            const urls: string[] = [];
+            arr.forEach((m: any) => {
+              if (!m) return;
+              if (typeof m === 'string') { urls.push(m); return; }
+              const u = m.file_url || m.file_data?.url || m.file?.url || m.url || m.file_data || m.path || m.src;
+              if (u) urls.push(u);
+            });
+            if (urls.length === 0) return null;
+            return (
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ fontSize: 14, color: '#374151', marginBottom: 8, fontWeight: '600' }}>Shipping Proofs</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                  {urls.map((u, idx) => (
+                    <TouchableOpacity key={`${u}-${idx}`} onPress={() => onOpenProofViewer && onOpenProofViewer(urls, idx)} style={{ marginRight: 8 }}>
+                      <Image source={{ uri: u }} style={{ width: 90, height: 90, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            );
+          })()}
           {onOpenTrackingDialog && <TouchableOpacity style={styles.updateShippingBtn} onPress={onOpenTrackingDialog}><Text style={styles.updateShippingText}>Update shipping info</Text></TouchableOpacity>}
         </View>
       )}
@@ -563,7 +661,7 @@ const CompletedStatus = ({ refund, formatCurrency, formatDate }: { refund: any; 
               </ScrollView>
             </View>
           )}
-          <Modal animationType="fade" transparent={true} visible={proofModalVisible} onRequestClose={() => setProofModalVisible(false)}>
+          <Modal animationType="none" transparent={true} visible={proofModalVisible} onRequestClose={() => setProofModalVisible(false)}>
             <View style={styles.modalOverlay}>
               <View style={[styles.modalContainer, { width: '95%', padding: 0, backgroundColor: '#000' }]}>
                 <View style={styles.modalHeader}>
@@ -711,13 +809,70 @@ export default function ViewRefundPage() {
   const [shippingAddress, setShippingAddress] = useState<any | null>(null);
   const [loadingShippingAddress, setLoadingShippingAddress] = useState(false);
   const [showTrackingForm, setShowTrackingForm] = useState(false);
-  const [trackingForm, setTrackingForm] = useState({ logistic_service: '', tracking_number: '', shipped_at: '', notes: '' });
+  const [trackingForm, setTrackingForm] = useState({ logistic_service: '', tracking_number: '', notes: '' });
+  const [trackingMedia, setTrackingMedia] = useState<Array<any>>([]);
   const [showWalkInConfirm, setShowWalkInConfirm] = useState(false);
   const [proofModalVisible, setProofModalVisible] = useState(false);
   const [proofUrls, setProofUrls] = useState<string[]>([]);
   const [proofIndex, setProofIndex] = useState(0);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
+  const [shopReturnAddress, setShopReturnAddress] = useState<any | null>(null);
+
+  // Add this useEffect after your fetchRefund useEffect
+// Update the fetchShopAddress useEffect
+// Update the fetchShopAddress useEffect in your buyer ViewRefundPage
+useEffect(() => {
+  const fetchShopAddress = async () => {
+    if (!user?.id) return;
+    
+    // Get seller shop ID from the refund data - check all possible locations
+    const sellerShopId = refund?.shop_id || 
+                         refund?.order?.shop_id || 
+                         refund?.order?.shop?.id ||
+                         refund?.order_items?.[0]?.shop_id ||
+                         refund?.order_items?.[0]?.shop?.id ||
+                         refund?.seller_shop_id;
+    
+    console.log('Seller Shop ID:', sellerShopId);
+    console.log('Full refund data:', JSON.stringify(refund, null, 2));
+    
+    // Only fetch if refund is approved and type is return AND we have a seller shop ID
+    if (refund?.status?.toLowerCase() === 'approved' && 
+        refund?.refund_type === 'return' && 
+        sellerShopId) {
+      try {
+        // Fetch shop details using the seller's shop ID
+        const response = await AxiosInstance.get(`/shops/${sellerShopId}/`, {
+          headers: { 'X-User-Id': user.id }
+        });
+        
+        console.log('Shop address response:', response.data);
+        
+        if (response.data) {
+          setShopReturnAddress({
+            recipient_name: response.data.name,
+            contact_number: response.data.contact_number,
+            street: response.data.street,
+            barangay: response.data.barangay,
+            city: response.data.city,
+            province: response.data.province,
+            full_address: `${response.data.street}, ${response.data.barangay}, ${response.data.city}, ${response.data.province}`
+          });
+        }
+      } catch (error: any) {
+        console.error('Error fetching seller shop address:', error);
+      }
+    } else {
+      console.log('Conditions not met for fetching shop address:');
+      console.log('- refund status approved?', refund?.status?.toLowerCase() === 'approved');
+      console.log('- refund_type return?', refund?.refund_type === 'return');
+      console.log('- sellerShopId exists?', sellerShopId);
+    }
+  };
+  
+  fetchShopAddress();
+}, [refund, user?.id]);
 
   useEffect(() => {
     fetchRefund();
@@ -849,7 +1004,7 @@ export default function ViewRefundPage() {
       ]);
     }
   };
-  const handleOpenTrackingForm = () => { setTrackingForm({ logistic_service: '', tracking_number: '', shipped_at: '', notes: '' }); setShowTrackingForm(true); };
+  const handleOpenTrackingForm = () => { setTrackingForm({ logistic_service: '', tracking_number: '', notes: '' }); setShowTrackingForm(true); };
   const handleAddTracking = () => handleOpenTrackingForm();
   const handleOpenWalkInConfirm = () => setShowWalkInConfirm(true);
   const handleConfirmWalkIn = async () => {
@@ -865,29 +1020,78 @@ export default function ViewRefundPage() {
     } catch (err: any) { Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to record walk-in return'); }
     finally { setActionLoading(false); }
   };
-  const handleSubmitTrackingForm = async () => {
-    if (!trackingForm.logistic_service || !trackingForm.tracking_number) {
-      Alert.alert('Missing fields', 'Please provide both service and tracking number');
-      return;
+const handleSubmitTrackingForm = async () => {
+  if (!trackingForm.logistic_service || !trackingForm.tracking_number) {
+    Alert.alert('Missing fields', 'Please provide both service and tracking number');
+    return;
+  }
+  
+  try {
+    setActionLoading(true);
+    
+    if (!refund.return_request) {
+      await AxiosInstance.post(`/return-refund/${refundId}/start_return_process/`, {}, { 
+        headers: { 'X-User-Id': user?.id } 
+      });
     }
-    try {
-      setActionLoading(true);
-      if (!refund.return_request) {
-        await AxiosInstance.post(`/return-refund/${refundId}/start_return_process/`, {}, { headers: { 'X-User-Id': user?.id } });
+
+    const formData = new FormData();
+    formData.append('logistic_service', trackingForm.logistic_service);
+    formData.append('tracking_number', trackingForm.tracking_number);
+    if (trackingForm.notes) formData.append('notes', trackingForm.notes);
+
+    // Append media files - Using React Native's File object format
+    if (Array.isArray(trackingMedia) && trackingMedia.length > 0) {
+      for (let i = 0; i < trackingMedia.length; i++) {
+        const m = trackingMedia[i];
+        
+        // In React Native, FormData accepts objects with uri, name, type
+        // But we need to cast to any to bypass TypeScript checks
+        const fileObject: any = {
+          uri: m.uri,
+          name: m.fileName || m.uri.split('/').pop() || `media_${Date.now()}_${i}.${m.mime?.split('/')[1] || 'jpg'}`,
+          type: m.mime || (m.type === 'video' ? 'video/mp4' : 'image/jpeg')
+        };
+        
+        formData.append('media_files', fileObject);
       }
-      const payload: any = {
-        logistic_service: trackingForm.logistic_service,
-        tracking_number: trackingForm.tracking_number,
-      };
-      if (trackingForm.shipped_at) payload.shipped_at = trackingForm.shipped_at;
-      if (trackingForm.notes) payload.notes = trackingForm.notes;
-      await AxiosInstance.post(`/return-refund/${refundId}/update_tracking/`, payload, { headers: { 'X-User-Id': user?.id } });
-      Alert.alert('Success', 'Shipping information submitted');
-      setShowTrackingForm(false);
-      await fetchRefund();
-    } catch (err: any) { Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to submit tracking info'); }
-    finally { setActionLoading(false); }
-  };
+    }
+
+    console.log('Submitting tracking info:', {
+      logistic_service: trackingForm.logistic_service,
+      tracking_number: trackingForm.tracking_number,
+      media_count: trackingMedia.length
+    });
+
+    const response = await AxiosInstance.post(
+      `/return-refund/${refundId}/update_tracking/`, 
+      formData,
+      { 
+        headers: { 
+          'X-User-Id': user?.id,
+          'Content-Type': 'multipart/form-data'
+        } 
+      }
+    );
+    
+    console.log('Response:', response.data);
+    Alert.alert('Success', 'Shipping information submitted');
+    setShowTrackingForm(false);
+    setTrackingMedia([]);
+    await fetchRefund();
+  } catch (err: any) {
+    console.error('Tracking submission error:', err);
+    console.error('Error response:', err.response?.data);
+    console.error('Error status:', err.response?.status);
+    
+    Alert.alert(
+      'Error', 
+      err?.response?.data?.error || err?.message || 'Failed to submit tracking info'
+    );
+  } finally { 
+    setActionLoading(false); 
+  }
+};
   const handleAcknowledgeDispute = async () => {
     const dr = refund?.dispute || refund?.dispute_request;
     if (!dr?.id) return;
@@ -901,6 +1105,72 @@ export default function ViewRefundPage() {
       }
     } catch (err: any) { Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to acknowledge dispute'); }
     finally { setActionLoading(false); }
+  };
+
+  // Media picker for tracking proofs
+ const pickTrackingMedia = async () => {
+  try {
+    if (trackingMedia.length >= 9) {
+      Alert.alert('Limit reached', 'You can upload up to 9 media files.');
+      return;
+    }
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Permission needed to access your media library.');
+      return;
+    }
+    const res: any = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      allowsEditing: false,
+      quality: 0.7,
+    });
+    if (res?.canceled) return;
+    
+    // Support both new (assets[]) and legacy (uri) result shapes
+    const assets = Array.isArray(res?.assets) && res.assets.length > 0 ? res.assets : (res?.uri ? [res] : []);
+    const selected = assets.map((a: any) => {
+      // Determine mime type based on file extension or provided type
+      let mimeType = a.mimeType || a.type;
+      let fileType = 'image';
+      
+      if (!mimeType) {
+        const uri = a.uri;
+        if (uri && uri.toLowerCase().endsWith('.mp4')) {
+          mimeType = 'video/mp4';
+          fileType = 'video';
+        } else if (uri && (uri.toLowerCase().endsWith('.jpg') || uri.toLowerCase().endsWith('.jpeg'))) {
+          mimeType = 'image/jpeg';
+          fileType = 'image';
+        } else if (uri && uri.toLowerCase().endsWith('.png')) {
+          mimeType = 'image/png';
+          fileType = 'image';
+        } else if (uri && uri.toLowerCase().endsWith('.gif')) {
+          mimeType = 'image/gif';
+          fileType = 'image';
+        } else {
+          mimeType = 'image/jpeg';
+          fileType = 'image';
+        }
+      } else {
+        fileType = mimeType.startsWith('video') ? 'video' : 'image';
+      }
+      
+      return {
+        uri: a.uri,
+        type: fileType,
+        mime: mimeType,
+        fileName: a.fileName || a.uri.split('/').pop() || `media_${Date.now()}.${mimeType.split('/')[1] || 'jpg'}`,
+      };
+    });
+    setTrackingMedia(prev => [...prev, ...selected].slice(0, 9));
+  } catch (e) {
+    console.error('Picker error', e);
+    Alert.alert('Error', 'Failed to pick media');
+  }
+};
+
+  const removeTrackingMedia = (index: number) => {
+    setTrackingMedia(prev => prev.filter((_, i) => i !== index));
   };
   const copyToClipboard = (text: string) => { console.log('Copy to clipboard:', text); };
   const formatDate = (dateString: string) => {
@@ -1001,8 +1271,16 @@ export default function ViewRefundPage() {
         return <ReceivedStatus />;
       }
     }
-    if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus refund={refund} onOpenTrackingDialog={handleAddTracking} formatCurrency={formatCurrency} formatDate={formatDate} />;
-    if (STATUS_CONDITIONS.showWaitingStatus(statusUpper)) return <WaitingStatus refund={refund} onOpenTrackingDialog={handleAddTracking} formatDate={formatDate} />;
+    // In renderRefundStatus function, update the ApprovedStatus call
+if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus 
+  refund={refund} 
+  onOpenTrackingDialog={handleAddTracking} 
+  formatCurrency={formatCurrency} 
+  formatDate={formatDate}
+  shopReturnAddress={shopReturnAddress}
+  onOpenProofViewer={openProofViewerFromUrls}
+/> 
+    if (STATUS_CONDITIONS.showWaitingStatus(statusUpper)) return <WaitingStatus refund={refund} onOpenTrackingDialog={handleAddTracking} formatDate={formatDate} onOpenProofViewer={openProofViewerFromUrls} />;
     if (STATUS_CONDITIONS.showToVerifyStatus(statusUpper)) return <ToVerifyStatus />;
     if (STATUS_CONDITIONS.showReturnAcceptedStatus(statusUpper)) return <ReturnAcceptedStatus />;
     if (STATUS_CONDITIONS.showReturnRejectedStatus(statusUpper)) return <ReturnRejectedStatus onDispute={handleDispute} />;
@@ -1029,30 +1307,41 @@ export default function ViewRefundPage() {
     return <PendingStatus refund={refund} />;
   };
 
-  const renderActionButtons = () => {
-    if (!refund) return null;
-    const statusUpper = (refund.status || '').toUpperCase();
-    const rrStatus = String(refund.return_request?.status || '').toLowerCase();
-    const payStatus = String(refund.refund_payment_status || '').toLowerCase();
-    const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
-    const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
-    const isReturnItem = refund.refund_type === 'return';
-    const showAddTrackingAction = (
-      (statusUpper === 'APPROVED' && isReturnItem && !['shipped','received','inspected'].includes(rrStatus) && !(rrStatus === 'approved' && ['processing','completed'].includes(payStatus)) && !isReturnAcceptedWaitingModeration) ||
-      STATUS_CONDITIONS.showWaitingStatus(statusUpper)
-    );
-    if (showAddTrackingAction) return <ReturnActions onAddTracking={handleAddTracking} onWalkIn={handleOpenWalkInConfirm} loading={actionLoading} />;
-    if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) return <PendingActions onCancel={handleCancelRefund} loading={actionLoading} />;
-    if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) return <NegotiationActions onAccept={handleAcceptOffer} onReject={handleRejectOffer} loading={actionLoading} isAccepting={isAccepting} />;
-    if (STATUS_CONDITIONS.showRejectedStatus(statusUpper)) return <RejectedActions onFileDispute={handleDispute} loading={actionLoading} />;
-    if (STATUS_CONDITIONS.showDisputeStatus(statusUpper)) {
-      const dr = refund.dispute || refund.dispute_request || null;
-      if (dr && dr.status?.toLowerCase() === 'rejected' && refund.status?.toLowerCase() === 'dispute') {
-        return <DisputeActions onAcknowledge={handleAcknowledgeDispute} loading={actionLoading} acknowledged={acknowledged} />;
-      }
-    }
+ const renderActionButtons = () => {
+  if (!refund) return null;
+
+  // Check if the refund is effectively completed
+  const isCompleted = 
+    refund.status?.toLowerCase() === 'completed' ||
+    (refund.status?.toLowerCase() === 'approved' && refund.refund_payment_status?.toLowerCase() === 'completed');
+
+  // If completed, only show the back button
+  if (isCompleted) {
     return <DefaultActions onBack={() => router.back()} />;
-  };
+  }
+
+  const statusUpper = (refund.status || '').toUpperCase();
+  const rrStatus = String(refund.return_request?.status || '').toLowerCase();
+  const payStatus = String(refund.refund_payment_status || '').toLowerCase();
+  const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
+  const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
+  const isReturnItem = refund.refund_type === 'return';
+  const showAddTrackingAction = (
+    (statusUpper === 'APPROVED' && isReturnItem && !['shipped','received','inspected'].includes(rrStatus) && !(rrStatus === 'approved' && ['processing','completed'].includes(payStatus)) && !isReturnAcceptedWaitingModeration) ||
+    STATUS_CONDITIONS.showWaitingStatus(statusUpper)
+  );
+  if (showAddTrackingAction) return <ReturnActions onAddTracking={handleAddTracking} onWalkIn={handleOpenWalkInConfirm} loading={actionLoading} />;
+  if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) return <PendingActions onCancel={handleCancelRefund} loading={actionLoading} />;
+  if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) return <NegotiationActions onAccept={handleAcceptOffer} onReject={handleRejectOffer} loading={actionLoading} isAccepting={isAccepting} />;
+  if (STATUS_CONDITIONS.showRejectedStatus(statusUpper)) return <RejectedActions onFileDispute={handleDispute} loading={actionLoading} />;
+  if (STATUS_CONDITIONS.showDisputeStatus(statusUpper)) {
+    const dr = refund.dispute || refund.dispute_request || null;
+    if (dr && dr.status?.toLowerCase() === 'rejected' && refund.status?.toLowerCase() === 'dispute') {
+      return <DisputeActions onAcknowledge={handleAcknowledgeDispute} loading={actionLoading} acknowledged={acknowledged} />;
+    }
+  }
+  return <DefaultActions onBack={() => router.back()} />;
+};
 
   if (loading) {
     return (
@@ -1096,6 +1385,12 @@ export default function ViewRefundPage() {
     if (!urls || urls.length === 0) return;
     setProofUrls(urls);
     setProofIndex(index);
+    setProofModalVisible(true);
+  };
+  const openProofViewerFromUrls = (urls: string[], index = 0) => {
+    if (!Array.isArray(urls) || urls.length === 0) return;
+    setProofUrls(urls.filter(Boolean));
+    setProofIndex(index || 0);
     setProofModalVisible(true);
   };
   const customerNote = refund.customer_note || refund.detailed_reason || '';
@@ -1284,24 +1579,41 @@ export default function ViewRefundPage() {
         </View>
 
         {/* Modals for tracking and walk‑in */}
-        {showTrackingForm && (
-          <View style={styles.modalOverlay}>
+        <Modal animationType="none" transparent={true} visible={showTrackingForm} onRequestClose={() => setShowTrackingForm(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
             <View style={styles.modalContainer}>
               <Text style={styles.modalTitle}>Provide Shipping Info</Text>
               <TextInput style={styles.input} placeholder="Logistic Service (e.g., LBC, J&T)" value={trackingForm.logistic_service} onChangeText={(t) => setTrackingForm(prev => ({ ...prev, logistic_service: t }))} />
               <TextInput style={styles.input} placeholder="Tracking Number" value={trackingForm.tracking_number} onChangeText={(t) => setTrackingForm(prev => ({ ...prev, tracking_number: t }))} />
-              <TextInput style={styles.input} placeholder="Shipped At (YYYY-MM-DD)" value={trackingForm.shipped_at} onChangeText={(t) => setTrackingForm(prev => ({ ...prev, shipped_at: t }))} />
+              {/* shipped_at is set automatically on submission; not collected from user */}
               <TextInput style={[styles.input, { height: 80 }]} placeholder="Notes (optional)" value={trackingForm.notes} onChangeText={(t) => setTrackingForm(prev => ({ ...prev, notes: t }))} multiline />
+
+              <View style={styles.trackingMediaRow}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: 'center' }}>
+                  {trackingMedia.map((m: any, idx: number) => (
+                    <View key={m.uri + idx} style={styles.trackingPreview}>
+                      {m.mime && m.mime.startsWith('video') ? (
+                        <View style={styles.videoPreview}><Image source={{ uri: m.uri }} style={styles.trackingThumb} /><View style={styles.playOverlaySmall}><Play size={18} color="#FFF" /></View></View>
+                      ) : (
+                        <Image source={{ uri: m.uri }} style={styles.trackingThumb} />
+                      )}
+                      <TouchableOpacity style={styles.removePreview} onPress={() => removeTrackingMedia(idx)}><Text style={{ color: '#FFF', fontSize: 12 }}>Remove</Text></TouchableOpacity>
+                    </View>
+                  ))}
+                  <TouchableOpacity style={styles.addMediaBtn} onPress={pickTrackingMedia}><Text style={styles.addMediaText}>+ Add</Text></TouchableOpacity>
+                </ScrollView>
+              </View>
+
               <View style={styles.modalButtons}>
-                <TouchableOpacity style={[styles.secondaryButton, { flex: 1, marginRight: 8 }]} onPress={() => setShowTrackingForm(false)} disabled={actionLoading}><Text style={styles.secondaryButtonText}>Cancel</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.secondaryButton, { flex: 1, marginRight: 8 }]} onPress={() => { setShowTrackingForm(false); setTrackingMedia([]); }} disabled={actionLoading}><Text style={styles.secondaryButtonText}>Cancel</Text></TouchableOpacity>
                 <TouchableOpacity style={[styles.primaryButton, { flex: 1 }]} onPress={handleSubmitTrackingForm} disabled={actionLoading}><Text style={styles.primaryButtonText}>{actionLoading ? 'Submitting...' : 'Submit'}</Text></TouchableOpacity>
               </View>
             </View>
-          </View>
-        )}
+          </KeyboardAvoidingView>
+        </Modal>
 
-        {showWalkInConfirm && (
-          <View style={styles.modalOverlay}>
+        <Modal animationType="none" transparent={true} visible={showWalkInConfirm} onRequestClose={() => setShowWalkInConfirm(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
             <View style={styles.modalContainer}>
               <Text style={styles.modalTitle}>Walk in Return</Text>
               {(refund.return_address || refund.return_request?.return_address) ? (
@@ -1320,11 +1632,11 @@ export default function ViewRefundPage() {
                 <TouchableOpacity style={[styles.primaryButton, { flex: 1 }]} onPress={handleConfirmWalkIn} disabled={actionLoading}><Text style={styles.primaryButtonText}>{actionLoading ? 'Processing...' : 'Confirm'}</Text></TouchableOpacity>
               </View>
             </View>
-          </View>
-        )}
+          </KeyboardAvoidingView>
+        </Modal>
 
         {/* Image proof modal */}
-        <Modal animationType="fade" transparent={true} visible={proofModalVisible} onRequestClose={() => setProofModalVisible(false)}>
+        <Modal animationType="none" transparent={true} visible={proofModalVisible} onRequestClose={() => setProofModalVisible(false)}>
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContainer, { width: '95%', padding: 0, backgroundColor: '#000' }]}>
               <View style={styles.modalHeader}>
@@ -1352,7 +1664,7 @@ export default function ViewRefundPage() {
         </Modal>
 
         {/* Video modal */}
-        <Modal animationType="fade" transparent={true} visible={videoModalVisible} onRequestClose={() => setVideoModalVisible(false)}>
+        <Modal animationType="none" transparent={true} visible={videoModalVisible} onRequestClose={() => setVideoModalVisible(false)}>
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContainer, { width: '95%', padding: 0, backgroundColor: '#000' }]}>
               <View style={styles.modalHeader}>
@@ -1496,6 +1808,14 @@ const styles = StyleSheet.create({
   proofThumbWrapper: { marginRight: 8, width: 90, alignItems: 'center' },
   proofThumb: { width: 90, height: 90, borderRadius: 8, backgroundColor: '#F3F4F6' },
   proofNote: { fontSize: 12, color: '#6B7280', marginTop: 6, width: 90, textAlign: 'center' },
+  trackingMediaRow: { marginTop: 8, minHeight: 100 },
+  trackingPreview: { width: 86, marginRight: 8, alignItems: 'center' },
+  trackingThumb: { width: 86, height: 86, borderRadius: 8, backgroundColor: '#F3F4F6' },
+  removePreview: { position: 'absolute', bottom: 4, left: 4, right: 4, backgroundColor: '#EF4444', paddingVertical: 4, borderRadius: 6, alignItems: 'center' },
+  addMediaBtn: { width: 86, height: 86, borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB', justifyContent: 'center', alignItems: 'center' },
+  addMediaText: { color: '#374151', fontWeight: '700' },
+  videoPreview: { position: 'relative', width: 86, height: 86 },
+  playOverlaySmall: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 8 },
   modalHeader: { flexDirection: 'row', justifyContent: 'flex-end', padding: 8 },
   closeButton: { padding: 8 },
   modalImageContainer: { width: SCREEN_WIDTH, height: SCREEN_WIDTH, justifyContent: 'center', alignItems: 'center' },
@@ -1506,4 +1826,64 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 16, color: '#9CA3AF', marginBottom: 16 },
   backButton: { backgroundColor: '#F97316', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
   backButtonText: { color: '#FFF', fontSize: 14, fontWeight: '600' },
+  returnAddressCardLarge: {
+    marginTop: 16,
+    backgroundColor: '#F0F9FF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+    overflow: 'hidden',
+  },
+  returnAddressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#EFF6FF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#3B82F6',
+    gap: 8,
+  },
+  returnAddressHeaderText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#3B82F6',
+  },
+  returnAddressContent: {
+    padding: 12,
+    gap: 8,
+  },
+  returnAddressRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  returnAddressLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6B7280',
+    width: 70,
+  },
+  returnAddressValue: {
+    fontSize: 13,
+    color: '#1F2937',
+    flex: 1,
+  },
+  returnDeadlineCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    padding: 10,
+    margin: 12,
+    borderRadius: 8,
+    gap: 8,
+  },
+  returnDeadlineText: {
+    fontSize: 12,
+    color: '#92400E',
+    flex: 1,
+  },
+  returnDeadlineDate: {
+    fontWeight: '700',
+    color: '#F59E0B',
+  },
 });

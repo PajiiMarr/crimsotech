@@ -14785,12 +14785,18 @@ class CustomerShops(APIView):
     def get(self, request):
         # Get customer_id from query parameters
         customer_id = request.query_params.get('customer_id')
+        action = request.query_params.get('action')
+        shop_id = request.query_params.get('shop_id')
         
         if not customer_id:
             return Response({
                 "success": False,
                 "error": "customer_id parameter is required"
             }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Handle return address action
+        if action == 'return_address' and shop_id:
+            return self.get_return_address(customer_id, shop_id)
 
         try:
             # Get the customer object
@@ -14814,7 +14820,7 @@ class CustomerShops(APIView):
                 "message": "No customer found with this ID",
                 "data_source": "database"
             }, status=status.HTTP_200_OK) 
-            
+         
     def post(self, request):
             """
             Create a new shop for a customer
@@ -14993,6 +14999,80 @@ class CustomerShops(APIView):
                     }, 
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
+    
+    def put(self, request):
+        customer_id = request.data.get('customer_id')
+        action = request.data.get('action')
+        shop_id = request.data.get('shop_id')
+        
+        if not customer_id:
+            return Response({'error': 'customer_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if action == 'return_address' and shop_id:
+            return self.update_return_address(request, customer_id, shop_id)
+        
+        return Response({'error': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    def get_return_address(self, customer_id, shop_id):
+        """Get the return address for a specific shop"""
+        try:
+            customer = Customer.objects.get(customer_id=customer_id)
+            shop = Shop.objects.get(id=shop_id, customer=customer)
+            
+            return Response({
+                'success': True,
+                'return_address': {
+                    'province': shop.province,
+                    'city': shop.city,
+                    'barangay': shop.barangay,
+                    'street': shop.street,
+                    'contact_number': shop.contact_number,
+                    'full_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                },
+                'shop_name': shop.name,
+                'shop_id': str(shop.id)
+            }, status=status.HTTP_200_OK)
+            
+        except Customer.DoesNotExist:
+            return Response({'error': 'Customer not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Shop.DoesNotExist:
+            return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def update_return_address(self, request, customer_id, shop_id):
+        """Update shop's return address"""
+        try:
+            customer = Customer.objects.get(customer_id=customer_id)
+            shop = Shop.objects.get(id=shop_id, customer=customer)
+            
+            # Update fields
+            shop.province = request.data.get('province', shop.province)
+            shop.city = request.data.get('city', shop.city)
+            shop.barangay = request.data.get('barangay', shop.barangay)
+            shop.street = request.data.get('street', shop.street)
+            shop.contact_number = request.data.get('contact_number', shop.contact_number)
+            shop.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Return address updated successfully',
+                'return_address': {
+                    'province': shop.province,
+                    'city': shop.city,
+                    'barangay': shop.barangay,
+                    'street': shop.street,
+                    'contact_number': shop.contact_number,
+                    'full_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Customer.DoesNotExist:
+            return Response({'error': 'Customer not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Shop.DoesNotExist:
+            return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class CustomerShopsAddSeller(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
@@ -29315,38 +29395,69 @@ class RefundViewSet(viewsets.ViewSet):
         """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
-            return Response({"error": "User ID required"}, 
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "User ID required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
-            user = User.objects.get(id=user_id)
+            # =========================
+            # GET USER
+            # =========================
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response(
+                    {"error": "User not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
-            # Get refund
+            # =========================
+            # GET REFUND
+            # =========================
             try:
                 refund = Refund.objects.get(refund_id=pk)
             except Refund.DoesNotExist:
-                return Response({"error": "Refund not found"}, 
-                                status=status.HTTP_404_NOT_FOUND)
+                return Response(
+                    {"error": "Refund not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
-            # Authorization check - seller must own the shop
+            # =========================
+            # AUTHORIZATION CHECK
+            # =========================
             shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
             if err:
                 return err
 
-            # Get refund data with seller-specific details
+            # =========================
+            # BASE REFUND DATA
+            # =========================
             data = self._get_refund_details_data(refund, request, user)
             if not isinstance(data, dict) or data is None:
                 print(f"Warning: _get_refund_details_data returned non-dict for refund {pk}: {data}")
                 data = {}
 
-            # Add seller-specific information
+         
+            media_files = RefundMedia.objects.filter(refund_id=refund)
+            media_serializer = RefundMediaSerializer(media_files, many=True, context={'request': request})
+            
+            # Add to both fields for compatibility
+            data['refund_media'] = media_serializer.data
+            data['evidence'] = media_serializer.data  # This matches the buyer side
+
+            # =========================
+            # SHOP INFO
+            # =========================
             data['shop'] = {
                 "id": str(shop.id),
                 "name": shop.name,
                 "is_suspended": shop.is_suspended
             }
 
-            # Add counter refund requests
+            # =========================
+            # COUNTER REFUND REQUESTS
+            # =========================
             counter_requests = CounterRefundRequest.objects.filter(
                 refund_id=refund,
                 shop_id=shop
@@ -29356,6 +29467,8 @@ class RefundViewSet(viewsets.ViewSet):
                 {
                     "counter_id": str(cr.counter_id),
                     "requested_by": cr.requested_by,
+                    "counter_refund_type": cr.counter_refund_type,
+                    "counter_refund_amount": str(cr.counter_refund_amount) if cr.counter_refund_amount else None,
                     "counter_refund_method": cr.counter_refund_method,
                     "notes": cr.notes,
                     "status": cr.status,
@@ -29365,13 +29478,19 @@ class RefundViewSet(viewsets.ViewSet):
                 for cr in counter_requests
             ]
 
-            return Response(data)
+            # =========================
+            # FINAL RESPONSE
+            # =========================
+            return Response(data, status=status.HTTP_200_OK)
 
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, 
-                            status=status.HTTP_404_NOT_FOUND)
-
-
+        except Exception as e:
+            print(f"Error in get_seller_refund_details: {str(e)}")
+            return Response(
+                {"error": "Something went wrong", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    
     # allow multipart and JSON payloads so seller can send reason/files
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser, JSONParser])
     def seller_respond_to_refund(self, request, pk=None):
@@ -30052,6 +30171,7 @@ class RefundViewSet(viewsets.ViewSet):
         """
         BUYER VIEW: Update logistic service and tracking number for an ongoing return.
         Creates a ReturnRequestItem if necessary and marks the return_request as 'shipped'.
+        Also saves uploaded media files as buyer shipping proofs.
         Note: This does NOT change `refund.status`; keep refund.status as 'approved'.
         """
         user_id = request.headers.get('X-User-Id')
@@ -30075,9 +30195,9 @@ class RefundViewSet(viewsets.ViewSet):
 
             logistic_service = request.data.get('logistic_service')
             tracking_number = request.data.get('tracking_number')
+            notes = request.data.get('notes', '')
 
-
-
+            # Get or create return request
             return_request = getattr(refund, 'return_request', None)
             if not return_request:
                 return_request = ReturnRequestItem.objects.create(
@@ -30086,6 +30206,7 @@ class RefundViewSet(viewsets.ViewSet):
                     return_deadline=timezone.now() + timedelta(days=7)
                 )
 
+            # Update return request with shipping info
             return_request.logistic_service = logistic_service
             return_request.tracking_number = tracking_number
             return_request.status = 'shipped'
@@ -30094,10 +30215,8 @@ class RefundViewSet(viewsets.ViewSet):
             shipped_at = request.data.get('shipped_at')
             if shipped_at:
                 try:
-                    # Expect ISO format date
                     return_request.shipped_at = timezone.datetime.fromisoformat(shipped_at)
                 except Exception:
-                    # fallback to now if parsing fails
                     return_request.shipped_at = timezone.now()
             else:
                 return_request.shipped_at = timezone.now()
@@ -30105,46 +30224,115 @@ class RefundViewSet(viewsets.ViewSet):
             # Save shipped_by if uploader is a buyer
             return_request.shipped_by = user
 
-            # Save any notes
-            notes = request.data.get('notes')
+            # Save notes if provided
             if notes:
                 return_request.notes = notes
 
             return_request.save()
 
-            # Handle uploaded media files (media_files[])
+            # ========== SAVE BUYER SHIPPING PROOFS TO ReturnRequestMedia ==========
+            # Handle uploaded media files
             files = request.FILES.getlist('media_files') if hasattr(request, 'FILES') else []
-
-            # Enforce server-side limit: max 9 media files per return request
-            existing_media_count = ReturnRequestMedia.objects.filter(return_id=return_request).count()
-            if existing_media_count + len(files) > 9:
-                remaining = max(0, 9 - existing_media_count)
-                return Response({"error": f"Cannot upload: only {remaining} image(s) remaining"}, status=status.HTTP_400_BAD_REQUEST)
+            if not files:
+                single = request.FILES.get('media_file')
+                if single:
+                    files = [single]
+            
+            # Also check for 'media' field (alternative naming)
+            if not files:
+                media_files = request.FILES.getlist('media')
+                if media_files:
+                    files = media_files
 
             created_media = []
-            for f in files:
-                try:
-                    rm = ReturnRequestMedia.objects.create(
-                        return_id=return_request,
-                        file_type=(f.content_type or '')[:255],
-                        file_data=f,
-                        uploaded_by=user,
-                        notes=notes or ''
+            media_objects = []
+            
+            
+            if files:
+                # Enforce server-side limit: max 9 media files per return request
+                existing_media_count = ReturnRequestMedia.objects.filter(return_id=return_request).count()
+                if existing_media_count + len(files) > 9:
+                    remaining = max(0, 9 - existing_media_count)
+                    return Response(
+                        {"error": f"Cannot upload: only {remaining} image(s) remaining"}, 
+                        status=status.HTTP_400_BAD_REQUEST
                     )
-                    created_media.append(rm)
-                except Exception as e:
-                    # Log and continue; do not fail the entire request for a single file
-                    print('Failed to save return media', e)
 
-            # Do not change refund.status here; we keep refund.status as 'approved' and use buyer_notified_at / return_request to indicate waiting state
-            refund.save()
+                for file in files:
+                    try:
+                        # Validate file type
+                        allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime']
+                        
+                        # Get content type
+                        content_type = getattr(file, 'content_type', None)
+                        if not content_type:
+                            # Try to determine from file name
+                            file_name = getattr(file, 'name', '')
+                            if file_name.lower().endswith('.mp4'):
+                                content_type = 'video/mp4'
+                            elif file_name.lower().endswith('.jpg') or file_name.lower().endswith('.jpeg'):
+                                content_type = 'image/jpeg'
+                            elif file_name.lower().endswith('.png'):
+                                content_type = 'image/png'
+                            elif file_name.lower().endswith('.gif'):
+                                content_type = 'image/gif'
+                            else:
+                                content_type = 'image/jpeg'  # Default to image
+                        
+                        if content_type not in allowed_types:
+                            print(f"Skipping file with invalid content type: {content_type}")
+                            continue
 
+                        # Create ReturnRequestMedia record
+                        media = ReturnRequestMedia.objects.create(
+                            return_id=return_request,
+                            file_type=content_type[:50],
+                            file_data=file,
+                            uploaded_by=user,
+                            notes=notes or f"Shipping proof for {logistic_service} - {tracking_number}"
+                        )
+                        media_objects.append(media)
+                        created_media.append({
+                            'id': str(media.id),
+                            'file_url': media.file_data.url if media.file_data else None
+                        })
+                        print(f"Successfully saved media file: {media.id}")
+                        
+                    except Exception as e:
+                        print(f'Failed to save return media: {e}')
+                        import traceback
+                        traceback.print_exc()
+                        # Continue with other files even if one fails
+
+            # Get the serialized refund data
             data = self._get_refund_details_data(refund, request, user)
-            return Response({"message": "Tracking updated", "refund": data, "created_media_count": len(created_media)})
+
+            media_data = []
+            for media_obj in media_objects:
+                media_data.append({
+                    'id': str(media_obj.id),
+                    'file_url': f"{request.build_absolute_uri(media_obj.file_data.url)}" if media_obj.file_data else None,
+                    'file_type': media_obj.file_type,
+                    'uploaded_at': media_obj.uploaded_at,
+                    'notes': media_obj.notes
+                })
+            
+            return Response({
+                "message": "Tracking updated successfully", 
+                "refund": data, 
+                "created_media_count": len(created_media),
+                "media_ids": [m['id'] for m in created_media] if created_media else [],
+                "media_data": media_data
+            })
 
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
+        except Exception as e:
+            print(f"Unexpected error in update_tracking: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def add_proof(self, request, pk=None):
         """
@@ -31028,21 +31216,11 @@ class RefundViewSet(viewsets.ViewSet):
             for media in media_files
         ]
 
-        # Add seller-uploaded proofs
-        proofs_qs = RefundProof.objects.filter(refund=refund)
-        data['proofs'] = [
-            {
-                "id": str(p.id),
-                "file_url": request.build_absolute_uri(p.file_data.url) if p.file_data else None,
-                "file_type": p.file_type,
-                "uploaded_by": str(p.uploaded_by.id) if p.uploaded_by else None,
-                "uploaded_by_username": p.uploaded_by.username if p.uploaded_by else None,
-                "notes": p.notes,
-                "created_at": p.created_at.isoformat() if p.created_at else None,
-            }
-            for p in proofs_qs
-        ]
+        proofs_queryset = refund.proofs.all()  # uses related_name='proofs'
+        data['proofs'] = RefundProofSerializer(proofs_queryset, many=True, context={'request': request}).data
 
+        # Add seller-uploaded proofs
+        
         # Seller delivery proofs (if any)
         try:
             from .models import Delivery, Proof

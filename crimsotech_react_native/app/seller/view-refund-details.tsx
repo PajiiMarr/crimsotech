@@ -26,17 +26,48 @@ import { useAuth } from '../../contexts/AuthContext';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // ========== STATUS COLORS ==========
+// ========== STATUS COLORS ==========
 const STATUS_COLORS: Record<string, string> = {
   pending: '#F59E0B',
   negotiation: '#8B5CF6',
   approved: '#10B981',
-  waiting: '#6B7280',
+  waiting: '#3B82F6', // Changed from '#6B7280' to blue
   to_verify: '#3B82F6',
   to_process: '#0EA5E9',
   dispute: '#EF4444',
   completed: '#059669',
   rejected: '#DC2626',
   cancelled: '#9CA3AF',
+};
+
+// ========== HELPER TO GET DISPLAY STATUS ==========
+const getDisplayStatus = (refund: any) => {
+  if (!refund) return '';
+  const status = refund.status?.toLowerCase();
+  const refundType = refund.refund_type;
+  
+  // If refund is approved and type is 'return', show combined status
+  if (status === 'approved' && refundType === 'return') {
+    return 'Approved - Waiting for return';
+  }
+  
+  // Otherwise return the regular status
+  return (refund.status || 'pending').replace('_', ' ').toUpperCase();
+};
+
+// ========== HELPER TO GET STATUS COLOR ==========
+const getStatusColor = (refund: any) => {
+  if (!refund) return '#9CA3AF';
+  const status = refund.status?.toLowerCase();
+  const refundType = refund.refund_type;
+  
+  // If refund is approved and type is 'return', use waiting color (blue)
+  if (status === 'approved' && refundType === 'return') {
+    return STATUS_COLORS.waiting; // Blue color
+  }
+  
+  // Otherwise return the regular status color
+  return STATUS_COLORS[status] || '#9CA3AF';
 };
 
 // ========== REASON CODES ==========
@@ -55,6 +86,18 @@ const formatCurrency = (value: any): string => {
   const num = parseFloat(value);
   if (isNaN(num)) return '₱0.00';
   return `₱${num.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+};
+
+const isVideoMedia = (media: any) => {
+  // Use MIME type if available (most reliable)
+  if (media.file_type) {
+    return media.file_type.startsWith('video/');
+  }
+  // Fallback: check URL extension (strip query params first)
+  const url = media.file_url || '';
+  const cleanUrl = url.split('?')[0]; // ← strip query params
+  const ext = cleanUrl.split('.').pop()?.toLowerCase();
+  return ['mp4', 'mov', 'm4v', '3gp', 'mkv', 'webm'].includes(ext || '');
 };
 
 const formatDate = (dateStr: string) => {
@@ -167,6 +210,7 @@ export default function ViewRefundDetails() {
     }
   }, [refundId, userId, effectiveShopId]);
 
+  
   const fetchDetail = async () => {
     try {
       setLoading(true);
@@ -439,72 +483,96 @@ export default function ViewRefundDetails() {
   };
 
   const openMediaViewer = (url: string, type: string) => {
-    const absoluteUrl = getAbsoluteUrl(url);
-    if (!absoluteUrl) return;
-    setSelectedMedia({ url: absoluteUrl, type });
-    setMediaModalVisible(true);
-  };
-
-  const renderMedia = (mediaList: any[], title: string) => {
-    if (!mediaList?.length) return null;
-    return (
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>{title}</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
-          {mediaList.map((item, idx) => {
-            const fileUrl = getAbsoluteUrl(item.file_url);
-            if (!fileUrl) return null;
-            const isVideo = item.file_type?.startsWith('video/') || item.file_type === 'video';
-            return (
-              <TouchableOpacity
-                key={idx}
-                style={styles.mediaThumbWrapper}
-                onPress={() => openMediaViewer(item.file_url, item.file_type)}
-              >
-                {isVideo ? (
-                  <View style={styles.videoThumb}>
-                    <Image source={{ uri: fileUrl }} style={styles.mediaThumb} />
-                    <View style={styles.playOverlay}>
-                      <Ionicons name="play-circle" size={30} color="#fff" />
-                    </View>
+  console.log('Opening media viewer with URL:', url);
+  if (!url) return;
+  setSelectedMedia({ url: url, type: type });
+  setMediaModalVisible(true);
+};
+const renderMedia = (mediaList: any[], title: string) => {
+  if (!mediaList?.length) return null;
+  
+  console.log(`Rendering ${title} with ${mediaList.length} items`);
+  
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
+        {mediaList.map((item, idx) => {
+          // Get the file URL - it's already absolute from backend
+          const fileUrl = item.file_url;
+          
+          if (!fileUrl) {
+            console.log(`No file_url for item ${idx}`);
+            return null;
+          }
+          
+          console.log(`Media ${idx} URL:`, fileUrl);
+          
+          // Determine if it's video
+          const isVideo = item.file_type === 'video' || 
+                         item.file_type === 'video/mp4' ||
+                         (fileUrl && (fileUrl.includes('.mp4') || fileUrl.includes('.mov') || fileUrl.includes('.webm')));
+          
+          return (
+            <TouchableOpacity
+              key={idx}
+              style={styles.mediaThumbWrapper}
+              onPress={() => openMediaViewer(fileUrl, item.file_type)}
+            >
+              {isVideo ? (
+                <View style={styles.videoThumb}>
+                  <Image 
+                    source={{ uri: fileUrl }} 
+                    style={styles.mediaThumb}
+                    resizeMode="cover"
+                    onError={(e) => console.log(`Video thumbnail error for ${idx}:`, e.nativeEvent.error)}
+                  />
+                  <View style={styles.playOverlay}>
+                    <Ionicons name="play-circle" size={30} color="#fff" />
                   </View>
-                ) : (
-                  <Image source={{ uri: fileUrl }} style={styles.mediaThumb} />
-                )}
-                {item.notes && <Text style={styles.mediaNote} numberOfLines={1}>{item.notes}</Text>}
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
-    );
-  };
+                </View>
+              ) : (
+                <Image 
+                  source={{ uri: fileUrl }} 
+                  style={styles.mediaThumb}
+                  resizeMode="cover"
+                  onError={(e) => console.log(`Image error for ${idx}:`, e.nativeEvent.error)}
+                />
+              )}
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+};
 
   // ========== STATUS DESCRIPTION ==========
-  const getStatusDescription = () => {
-    if (!refund) return '';
-    const status = refund.status?.toLowerCase();
-    const orderId = refund.order?.order_id || refund.order_id || '';
-    switch (status) {
-      case 'pending':
-        return `Pending request for order #${orderId.slice(0, 8)}. Please review the refund request. If you do not respond within 48 hours, the refund will be automatically approved.`;
-      case 'negotiation':
-        return `You have sent a counter‑offer. Waiting for the buyer to accept or reject.`;
-      case 'approved':
-        if (refund.refund_type === 'return') {
-          return `Waiting for buyer to ship the item back. Once the item is shipped, you will be notified.`;
-        }
-        return `Refund approved. The refund will be processed by the admin team. You don't need to take any further action.`;
-      case 'dispute':
-        return `A dispute has been opened. Please check the details and respond.`;
-      case 'rejected':
-        return `Refund request rejected. The buyer can file a dispute if they disagree.`;
-      case 'completed':
-        return `Refund completed. The payment has been sent to the buyer.`;
-      default:
-        return `Status: ${refund.status}`;
-    }
-  };
+ // Inside the component, this function should exist and be correct:
+const getStatusDescription = () => {
+  if (!refund) return '';
+  const status = refund.status?.toLowerCase();
+  const orderId = refund.order?.order_id || refund.order_id || '';
+  switch (status) {
+    case 'pending':
+      return `Pending request for order #${orderId.slice(0, 8)}. Please review the refund request. If you do not respond within 48 hours, the refund will be automatically approved.`;
+    case 'negotiation':
+      return `You have sent a counter‑offer. Waiting for the buyer to accept or reject.`;
+    case 'approved':
+      if (refund.refund_type === 'return') {
+        return `Waiting for buyer to ship the item back. Once the item is shipped, you will be notified.`;
+      }
+      return `Refund approved. The refund will be processed by the admin team. You don't need to take any further action.`;
+    case 'dispute':
+      return `A dispute has been opened. Please check the details and respond.`;
+    case 'rejected':
+      return `Refund request rejected. The buyer can file a dispute if they disagree.`;
+    case 'completed':
+      return `Refund completed. The payment has been sent to the buyer.`;
+    default:
+      return `Status: ${refund.status}`;
+  }
+};
 
   // ========== ACTION BUTTONS ==========
   const renderActionButtons = () => {
@@ -976,19 +1044,22 @@ export default function ViewRefundDetails() {
           <TouchableOpacity style={styles.mediaCloseButton} onPress={() => setMediaModalVisible(false)}>
             <Ionicons name="close" size={28} color="#fff" />
           </TouchableOpacity>
-          {selectedMedia?.type === 'image' ? (
-            <Image source={{ uri: selectedMedia.url }} style={styles.fullscreenImage} resizeMode="contain" />
-          ) : (
-            <Video
-              ref={videoRef}
-              source={{ uri: selectedMedia?.url }}
-              style={styles.fullscreenVideo}
-              useNativeControls
-              resizeMode={ResizeMode.CONTAIN}
-              shouldPlay
-              isLooping={false}
-            />
-          )}
+          {selectedMedia?.type && !(selectedMedia?.type?.startsWith('video/') ||
+  ['mp4','mov','m4v','3gp','mkv','webm'].includes(
+    selectedMedia?.url?.split('?')[0].split('.').pop()?.toLowerCase() || ''
+  )) ? (
+  <Image source={{ uri: selectedMedia.url }} style={styles.fullscreenImage} resizeMode="contain" />
+) : (
+  <Video
+    ref={videoRef}
+    source={{ uri: selectedMedia?.url }}
+    style={styles.fullscreenVideo}
+    useNativeControls
+    resizeMode={ResizeMode.CONTAIN}
+    shouldPlay
+    isLooping={false}
+  />
+)}
         </View>
       </Modal>
     </>
@@ -1074,18 +1145,20 @@ export default function ViewRefundDetails() {
         style={styles.scrollView}
       >
         {/* Status Card */}
-        <View style={styles.statusCard}>
-          <View style={styles.statusRow}>
-            <Text style={styles.requestNumber}>#{refund.request_number || String(refundId).slice(0, 8).toUpperCase()}</Text>
-            <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
-              <Text style={[styles.statusText, { color: statusColor }]}>
-                {(refund.status || 'pending').replace('_', ' ').toUpperCase()}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.statusDescription}>{getStatusDescription()}</Text>
-          <Text style={styles.dateText}>Requested: {formatDate(refund.requested_at)}</Text>
-        </View>
+        {/* Status Card */}
+{/* Status Card */}
+<View style={styles.statusCard}>
+  <View style={styles.statusRow}>
+    <Text style={styles.requestNumber}>#{refund.request_number || String(refundId).slice(0, 8).toUpperCase()}</Text>
+    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(refund) + '20' }]}>
+      <Text style={[styles.statusText, { color: getStatusColor(refund) }]}>
+        {getDisplayStatus(refund)}
+      </Text>
+    </View>
+  </View>
+  <Text style={styles.statusDescription}>{getStatusDescription()}</Text>
+  <Text style={styles.dateText}>Requested: {formatDate(refund.requested_at)}</Text>
+</View>
 
         {/* Buyer Information */}
         <View style={styles.card}>
@@ -1223,7 +1296,16 @@ export default function ViewRefundDetails() {
         )}
 
         {/* Evidence (buyer) */}
-        {refund.evidence?.length > 0 && renderMedia(refund.evidence, 'Evidence (Buyer)')}
+        {/* Evidence (buyer) */}
+        {(() => {
+  if (refund.refund_media && refund.refund_media.length > 0) {
+    console.log('Evidence found, rendering...');
+    return renderMedia(refund.refund_media, 'Evidence (Buyer)');
+  }
+  console.log('No evidence found');
+  return null;
+})()}
+
 
         {/* Proofs (seller) */}
         {refund.proofs?.length > 0 && renderMedia(refund.proofs, 'Proofs (Seller)')}

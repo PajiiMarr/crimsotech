@@ -118,6 +118,67 @@ const TYPE_CONFIG: Record<string, { label: string; color: string; bgColor: strin
   failed_delivery: { label: 'Failed Delivery', color: '#dc2626', bgColor: '#fef2f2', icon: 'car-outline' }
 };
 
+// ========== STATUS HELPER FUNCTIONS ==========
+// Get display status (same as in view-refund-details)
+const getDisplayStatus = (refund: ReturnItem) => {
+  if (!refund) return '';
+  const status = refund.status?.toLowerCase();
+  const refundType = refund.refund_type;
+  
+  // If refund is approved and type is 'return', show combined status
+  if (status === 'approved' && refundType === 'return') {
+    return 'Approved - Waiting for return';
+  }
+  
+  // Otherwise return the regular status
+  return STATUS_CONFIG[status]?.label || (refund.status || 'pending').replace('_', ' ').toUpperCase();
+};
+
+// Get status color
+const getStatusColor = (refund: ReturnItem) => {
+  if (!refund) return '#9CA3AF';
+  const status = refund.status?.toLowerCase();
+  const refundType = refund.refund_type;
+  
+  // If refund is approved and type is 'return', use blue color
+  if (status === 'approved' && refundType === 'return') {
+    return '#3B82F6'; // Blue color for waiting
+  }
+  
+  // Otherwise return the regular status color
+  return STATUS_CONFIG[status]?.color || '#9CA3AF';
+};
+
+// Get status background color
+const getStatusBgColor = (refund: ReturnItem) => {
+  if (!refund) return '#f9fafb';
+  const status = refund.status?.toLowerCase();
+  const refundType = refund.refund_type;
+  
+  // If refund is approved and type is 'return', use light blue background
+  if (status === 'approved' && refundType === 'return') {
+    return '#EFF6FF'; // Light blue background
+  }
+  
+  // Otherwise return the regular status background
+  return STATUS_CONFIG[status]?.bgColor || '#f9fafb';
+};
+
+// Get status icon
+const getStatusIcon = (refund: ReturnItem): keyof typeof Ionicons.glyphMap => {
+  if (!refund) return 'time-outline';
+  const status = refund.status?.toLowerCase();
+  const refundType = refund.refund_type;
+  
+  // For approved return type, use a different icon
+  if (status === 'approved' && refundType === 'return') {
+    return 'time-outline'; // Clock icon for waiting
+  }
+  
+  // Use regular status icon
+  return STATUS_CONFIG[status]?.icon || 'time-outline';
+};
+
 // Tabs
 const STATUS_TABS = [
   { id: 'all', label: 'All Requests', icon: 'list-outline' },
@@ -405,12 +466,16 @@ const fetchRefundData = async () => {
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
+  const getStatusBadge = (refund: ReturnItem) => {
+    const displayStatus = getDisplayStatus(refund);
+    const statusColor = getStatusColor(refund);
+    const statusBgColor = getStatusBgColor(refund);
+    const statusIcon = getStatusIcon(refund);
+    
     return (
-      <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
-        <Ionicons name={config.icon} size={10} color={config.color} />
-        <Text style={[styles.statusText, { color: config.color }]}>{config.label}</Text>
+      <View style={[styles.statusBadge, { backgroundColor: statusBgColor }]}>
+        <Ionicons name={statusIcon} size={10} color={statusColor} />
+        <Text style={[styles.statusText, { color: statusColor }]}>{displayStatus}</Text>
       </View>
     );
   };
@@ -444,10 +509,20 @@ const fetchRefundData = async () => {
   };
 
   const getActionIcon = (refund: ReturnItem) => {
+    const status = refund.status?.toLowerCase();
+    const refundType = refund.refund_type;
+    
+    // For approved return type
+    if (status === 'approved' && refundType === 'return') {
+      return { name: 'time-outline', color: '#3B82F6' };
+    }
+    
+    // Regular status logic
     switch(refund.status) {
       case 'pending':
-      case 'negotiation':
         return { name: 'eye-outline', color: '#3b82f6' };
+      case 'negotiation':
+        return { name: 'chatbubble-outline', color: '#3b82f6' };
       case 'approved':
         return { name: 'checkmark-circle-outline', color: '#10b981' };
       case 'dispute':
@@ -656,7 +731,7 @@ const fetchRefundData = async () => {
                         onPress={() => toggleRefundExpansion(refund.id)}
                         style={styles.expandButton}
                       >
-                        {getStatusBadge(refund.status)}
+                        {getStatusBadge(refund)}
                         <Ionicons 
                           name={isExpanded ? 'chevron-up' : 'chevron-down'} 
                           size={18} 
