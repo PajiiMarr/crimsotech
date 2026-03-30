@@ -327,34 +327,39 @@ export default function ViewRefundDetails() {
     }
   };
 
-  const handleNegotiate = async () => {
-    // Map 'replace' to 'return' for now until backend supports 'replace'
-    const typeToSend = counterType === 'replace' ? 'return' : counterType;
-    let amount = undefined;
-    if (typeToSend === 'return') {
-      amount = computeReturnAmount(refund);
-    }
-    try {
-      setActionLoading(true);
-      await AxiosInstance.post(`/return-refund/${refundId}/seller_respond_to_refund/`, {
-        action: 'negotiate',
-        counter_refund_type: typeToSend,
-        counter_refund_amount: amount,
-        counter_notes: counterNotes,
-      }, {
-        headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
-      });
-      Alert.alert('Success', 'Counter offer sent');
-      setShowNegotiateModal(false);
-      setCounterType('return');
-      setCounterNotes('');
-      fetchDetail();
-    } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.error || 'Failed to send counter offer');
-    } finally {
-      setActionLoading(false);
-    }
-  };
+ const handleNegotiate = async () => {
+  // Send the actual counter type without mapping
+  const typeToSend = counterType;
+  let amount = undefined;
+  
+  // Only calculate amount for 'return' type
+  if (typeToSend === 'return') {
+    amount = computeReturnAmount(refund);
+  }
+  // For 'replace' type, amount should be null/undefined (no amount needed)
+  
+  try {
+    setActionLoading(true);
+    await AxiosInstance.post(`/return-refund/${refundId}/seller_respond_to_refund/`, {
+      action: 'negotiate',
+      counter_refund_type: typeToSend,
+      counter_refund_amount: amount,  // Will be undefined for 'replace'
+      counter_notes: counterNotes,
+    }, {
+      headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
+    });
+    Alert.alert('Success', 'Counter offer sent');
+    setShowNegotiateModal(false);
+    setCounterType('return');
+    setCounterNotes('');
+    fetchDetail();
+  } catch (err: any) {
+    console.error('Negotiate error:', err.response?.data);
+    Alert.alert('Error', err?.response?.data?.error || 'Failed to send counter offer');
+  } finally {
+    setActionLoading(false);
+  }
+};
 
   const handleProcessRefund = async () => {
     if (!processFinalMethod && !processStatus) {

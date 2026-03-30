@@ -29647,7 +29647,7 @@ class RefundViewSet(viewsets.ViewSet):
 
                         # Normalize and parse potential 'type:method' input (frontend may send 'keep:wallet')
                         allowed_methods = [m[0] for m in Refund.REFUND_METHOD_CHOICES]
-                        allowed_types = ['return', 'keep']
+                        allowed_types = ['return', 'keep', 'replace']
 
                         counter_method = ''
                         counter_type = None
@@ -29659,7 +29659,6 @@ class RefundViewSet(viewsets.ViewSet):
                                 m = parts[1].strip().lower()
                                 if t in allowed_types:
                                     counter_type = t
-                                # method part validation
                                 if m in allowed_methods:
                                     counter_method = m
                                 else:
@@ -29671,7 +29670,7 @@ class RefundViewSet(viewsets.ViewSet):
                                 else:
                                     return Response({"error": "Invalid counter refund method"}, status=status.HTTP_400_BAD_REQUEST)
 
-                        # Also accept an explicit counter type parameter (frontend may send 'counter_refund_type' separately)
+                        # Also accept an explicit counter type parameter
                         explicit_type = request.data.get('counter_refund_type') or request.data.get('counter_type')
                         if explicit_type:
                             try:
@@ -29679,19 +29678,27 @@ class RefundViewSet(viewsets.ViewSet):
                                 if tval in allowed_types:
                                     counter_type = tval
                                 else:
-                                    return Response({"error": "Invalid counter refund type"}, status=status.HTTP_400_BAD_REQUEST)
+                                    return Response({"error": f"Invalid counter refund type: {tval}. Allowed: {allowed_types}"}, status=status.HTTP_400_BAD_REQUEST)
                             except Exception:
                                 return Response({"error": "Invalid counter refund type"}, status=status.HTTP_400_BAD_REQUEST)
 
-                        # Accept counter amount (required for keep/return offers)
+                        # If counter_type is still None, return error
+                        if counter_type is None:
+                            return Response({"error": "Counter refund type is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+                        # Handle counter amount based on type
                         counter_amount_raw = request.data.get('counter_refund_amount') or request.data.get('counter_amount')
                         counter_amount_decimal = None
 
-                        # If seller explicitly specified a counter type (return/keep) require an amount
-                        if counter_type in ['keep', 'return'] and (counter_amount_raw is None or str(counter_amount_raw).strip() == ''):
-                            return Response({"error": "Counter refund amount is required for keep/return offers"}, status=status.HTTP_400_BAD_REQUEST)
-
-                        if counter_amount_raw is not None and str(counter_amount_raw).strip() != '':
+                        # For 'replace' type, amount is NOT required
+                        if counter_type == 'replace':
+                            # No amount needed for replacement
+                            counter_amount_decimal = None
+                        else:
+                            # For 'keep' and 'return' types, amount is required
+                            if counter_amount_raw is None or str(counter_amount_raw).strip() == '':
+                                return Response({"error": "Counter refund amount is required for keep/return offers"}, status=status.HTTP_400_BAD_REQUEST)
+                            
                             try:
                                 counter_amount_decimal = Decimal(str(counter_amount_raw))
                                 if counter_amount_decimal <= 0:
@@ -29706,13 +29713,7 @@ class RefundViewSet(viewsets.ViewSet):
                             except Exception:
                                 return Response({"error": "Invalid counter refund amount"}, status=status.HTTP_400_BAD_REQUEST)
 
-                        # If counter type is 'return', ensure a return address already exists; require seller to call set_return_address first
-                        if counter_type == 'return':
-                            existing_ra = getattr(refund, 'return_address', None)
-                            if not existing_ra:
-                                return Response({"error": "Return address required for return-type counter offers. Use set_return_address endpoint."}, status=status.HTTP_400_BAD_REQUEST)
-
-                        # Create counter request (method may be empty, notes carry the seller message)
+                        # Create counter request
                         CounterRefundRequest.objects.create(
                             refund_id=refund,
                             requested_by='seller',
@@ -29775,7 +29776,6 @@ class RefundViewSet(viewsets.ViewSet):
             # Find latest pending counter request from seller
             cr = CounterRefundRequest.objects.filter(refund_id=refund, requested_by='seller', status='pending').order_by('-requested_at').first()
             if not cr:
-                # If there is no pending counter, check for latest seller counter and return informative message
                 latest = CounterRefundRequest.objects.filter(refund_id=refund, requested_by='seller').order_by('-requested_at').first()
                 if latest:
                     return Response({"error": f"No pending counter request found (latest status: {latest.status})"}, status=status.HTTP_400_BAD_REQUEST)
@@ -29792,26 +29792,39 @@ class RefundViewSet(viewsets.ViewSet):
                     try:
                         refund.approved_refund_amount = Decimal(str(cr.counter_refund_amount))
                     except Exception:
-                        # ignore invalid amounts
                         pass
 
-                # If seller provided a counter type (return|keep), apply it to the refund
+                # If seller provided a counter type (return|keep|replace), apply it to the refund
                 if getattr(cr, 'counter_refund_type', None):
                     ctype = str(cr.counter_refund_type).lower()
-                    if ctype in ('return', 'keep'):
-                        refund.refund_type = ctype
-
-                        # Record the final accepted counter type explicitly
+                    
+                    # Handle 'replace' type - store 'replace' directly
+                    if ctype == 'replace':
+                        # Store 'replace' in both fields (now that you added 'replace' to choices)
+                        refund.refund_type = 'replace'
+                        refund.final_refund_type = 'replace'
+                        
+                        # For replacement, still need return workflow (item needs to be returned)
+                        refund.buyer_notified_at = timezone.now()
                         try:
-                            refund.final_refund_type = str(cr.counter_refund_type)
-                        except Exception:
-                            pass
+                            rr = refund.return_request
+                        except ReturnRequestItem.DoesNotExist:
+                            try:
+                                ReturnRequestItem.objects.create(
+                                    refund_id=refund,
+                                    return_method=cr.counter_refund_method or refund.buyer_preferred_refund_method or 'courier',
+                                    return_deadline=timezone.now() + timedelta(days=7)
+                                )
+                            except Exception:
+                                pass
+                                
+                    elif ctype in ('return', 'keep'):
+                        refund.refund_type = ctype
+                        refund.final_refund_type = str(cr.counter_refund_type)
 
-                        # If the accepted type is a return, prepare return workflow so buyer can enter shipping info
+                        # If the accepted type is a return, prepare return workflow
                         if ctype == 'return':
-                            # Mark buyer as notified so UI shows 'to ship' flow
                             refund.buyer_notified_at = timezone.now()
-                            # Create a ReturnRequestItem if one does not exist so buyer can submit tracking right away
                             try:
                                 rr = refund.return_request
                             except ReturnRequestItem.DoesNotExist:
@@ -29822,7 +29835,6 @@ class RefundViewSet(viewsets.ViewSet):
                                         return_deadline=timezone.now() + timedelta(days=7)
                                     )
                                 except Exception:
-                                    # If creation fails, continue without blocking acceptance
                                     pass
 
                 refund.status = 'approved'
@@ -29830,8 +29842,8 @@ class RefundViewSet(viewsets.ViewSet):
                 refund.processed_at = timezone.now()
                 cr.status = 'accepted'
                 cr.save()
+                
                 # Keep payment status as pending for admin/moderation to process the actual payment.
-                # Do not auto-set to 'processing' here. If the payment was already completed, preserve that state.
                 if getattr(refund, 'refund_payment_status', None) != 'completed':
                     refund.refund_payment_status = 'pending'
                 refund.save()
@@ -29842,7 +29854,6 @@ class RefundViewSet(viewsets.ViewSet):
             elif action == 'reject':
                 cr.status = 'rejected'
                 cr.save()
-                # When buyer rejects the seller's counter, mark the entire refund as rejected
                 refund.status = 'rejected'
                 refund.processed_by = user
                 refund.processed_at = timezone.now()
@@ -29854,11 +29865,6 @@ class RefundViewSet(viewsets.ViewSet):
 
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, 
-                            status=status.HTTP_404_NOT_FOUND)
-
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def process_refund(self, request, pk=None):
         """
