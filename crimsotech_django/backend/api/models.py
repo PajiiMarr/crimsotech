@@ -1588,12 +1588,19 @@ class Refund(models.Model):
         return f"Refund {self.refund_id}"
 
 class RefundMedia(models.Model):
+    ENTITY_CHOICES = [
+        ('buyer', 'Buyer'),
+        ('seller', 'Seller'),
+        ('rider', 'Rider'),
+    ]
+
     refundmedia = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     file_data = models.FileField(upload_to='refunds/media/')
     file_type = models.CharField(max_length=50)
     refund_id = models.ForeignKey(Refund, on_delete=models.CASCADE, related_name='medias')
     uploaded_by = models.ForeignKey(User, on_delete=models.CASCADE)
     uploaded_at = models.DateTimeField(auto_now_add=True)
+    uploaded_by_entity = models.CharField(max_length=10,choices=ENTITY_CHOICES, blank=True, null=True)
 
     class Meta:
         indexes = [
@@ -1601,7 +1608,7 @@ class RefundMedia(models.Model):
         ]
 
     def __str__(self):
-        return f"Media for Refund {self.refund_id.refund_id}"
+        return f"{self.uploaded_by_entity} media for Refund {self.refund_id.refund_id}"
 
 class RefundWallet(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
