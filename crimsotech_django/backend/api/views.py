@@ -4847,6 +4847,294 @@ class AdminShops(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
+# ── update_shop_status ─────────────────────────────────────────────────────
+    @action(detail=False, methods=['put'], url_path='update_shop_status')
+    def update_shop_status(self, request):
+        """
+        Non-detail PUT endpoint called by the frontend ActionsCell.
+
+        Actual Shop model fields used:
+            - status            (CharField, default="Pending")
+            - verified          (BooleanField)
+            - is_suspended      (BooleanField)
+            - suspension_reason (TextField, nullable)
+            - suspended_until   (DateTimeField, nullable)
+
+        NOTE: The Shop model has NO is_removed field.
+              "restore" sets status back to "Active" and clears suspension fields.
+              "delete"  hard-deletes the Shop row.
+
+        Expected payload:
+        {
+            "shop_id":         "<uuid>",
+            "action_type":     "verify|unverify|approve|reject|suspend|unsuspend|ban|unban|activate|restore|delete",
+            "user_id":         "<admin uuid>",   # optional but logged
+            "reason":          "...",            # required for reject/suspend/ban/delete
+            "suspension_days": 7                 # only meaningful for suspend
+        }
+        """
+        try:
+            shop_id         = request.data.get('shop_id')
+            action_type     = request.data.get('action_type')
+            user_id         = request.data.get('user_id')
+            reason          = (request.data.get('reason') or '').strip()
+            suspension_days = request.data.get('suspension_days', 7)
+
+            # ── Basic validation ───────────────────────────────────────────────
+            if not shop_id:
+                return Response(
+                    {'success': False, 'error': 'shop_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not action_type:
+                return Response(
+                    {'success': False, 'error': 'action_type is required'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            VALID_ACTIONS = {
+                'verify', 'unverify',
+                'approve', 'reject',
+                'suspend', 'unsuspend',
+                'ban', 'unban',
+                'activate', 'restore', 'delete',
+            }
+            if action_type not in VALID_ACTIONS:
+                return Response(
+                    {'success': False, 'error': f'Invalid action_type: {action_type}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            REASON_REQUIRED = {'reject', 'suspend', 'ban', 'delete'}
+            if action_type in REASON_REQUIRED and not reason:
+                return Response(
+                    {'success': False, 'error': f'reason is required for action: {action_type}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # ── Fetch shop ─────────────────────────────────────────────────────
+            try:
+                shop = Shop.objects.select_related('customer__customer').get(pk=shop_id)
+            except Shop.DoesNotExist:
+                return Response(
+                    {'success': False, 'error': 'Shop not found'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # ── Fetch admin user (optional — only used for audit log) ──────────
+            admin_user = None
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id)
+                except User.DoesNotExist:
+                    pass  # Don't block the action; just skip logging
+
+            # ── Notification helper ────────────────────────────────────────────
+            def notify_owner(title, notif_type, message):
+                """
+                Shop.customer is a FK to Customer.
+                Customer.customer is a OneToOneField to User.
+                """
+                if shop.customer and shop.customer.customer:
+                    Notification.objects.create(
+                        user=shop.customer.customer,
+                        title=title,
+                        type=notif_type,
+                        message=message,
+                    )
+
+            # ── Audit log helper ───────────────────────────────────────────────
+            def write_log(action_label):
+                if admin_user:
+                    detail = f' — Reason: {reason}' if reason else ''
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=(
+                            f'Admin action "{action_label}" on shop: '
+                            f'{shop.name} (ID: {shop.id}){detail}'
+                        ),
+                    )
+
+            # ── Apply the requested action ─────────────────────────────────────
+            deleted = False
+
+            if action_type == 'verify':
+                # Toggle verified badge — does NOT change status
+                shop.verified = True
+                notify_owner(
+                    'Shop Verified',
+                    'shop_verification',
+                    f'Your shop "{shop.name}" has been verified and now displays a verification badge.',
+                )
+
+            elif action_type == 'unverify':
+                # Remove verification badge — does NOT change status
+                shop.verified = False
+                notify_owner(
+                    'Shop Verification Removed',
+                    'shop_unverification',
+                    f'The verification badge has been removed from your shop "{shop.name}".',
+                )
+
+            elif action_type == 'approve':
+                # Approve a Pending shop → Active; clear any leftover suspension state
+                shop.status            = 'Active'
+                shop.is_suspended      = False
+                shop.suspension_reason = None
+                shop.suspended_until   = None
+                notify_owner(
+                    'Shop Approved',
+                    'shop_approval',
+                    f'Congratulations! Your shop "{shop.name}" has been approved and is now active.',
+                )
+
+            elif action_type == 'reject':
+                # Reject a Pending application; store reason for reference
+                shop.status            = 'Rejected'
+                shop.is_suspended      = False
+                shop.suspension_reason = reason
+                shop.suspended_until   = None
+                notify_owner(
+                    'Shop Application Rejected',
+                    'shop_rejection',
+                    f'Your shop "{shop.name}" application was rejected. Reason: {reason}',
+                )
+
+            elif action_type == 'suspend':
+                # Temporarily suspend — sets both is_suspended flag and status
+                try:
+                    days = max(1, int(suspension_days))
+                except (ValueError, TypeError):
+                    days = 7
+
+                shop.is_suspended      = True
+                shop.status            = 'Suspended'
+                shop.suspension_reason = reason
+                shop.suspended_until   = timezone.now() + timedelta(days=days)
+                notify_owner(
+                    'Shop Suspended',
+                    'shop_suspension',
+                    (
+                        f'Your shop "{shop.name}" has been suspended for {days} day(s). '
+                        f'Reason: {reason}'
+                    ),
+                )
+
+            elif action_type == 'unsuspend':
+                # Lift temporary suspension → Active; clear all suspension fields
+                shop.is_suspended      = False
+                shop.status            = 'Active'
+                shop.suspension_reason = None
+                shop.suspended_until   = None
+                notify_owner(
+                    'Shop Unsuspended',
+                    'shop_unsuspension',
+                    f'Your shop "{shop.name}" suspension has been lifted. It is now active again.',
+                )
+
+            elif action_type == 'ban':
+                # Permanent ban — supersedes any active suspension
+                shop.status            = 'Banned'
+                shop.is_suspended      = False   # ban replaces suspension
+                shop.suspension_reason = reason  # reuse field to store ban reason
+                shop.suspended_until   = None
+                notify_owner(
+                    'Shop Banned',
+                    'shop_ban',
+                    f'Your shop "{shop.name}" has been permanently banned. Reason: {reason}',
+                )
+
+            elif action_type == 'unban':
+                # Lift a permanent ban → Active; clear stored reason
+                shop.status            = 'Active'
+                shop.is_suspended      = False
+                shop.suspension_reason = None
+                shop.suspended_until   = None
+                notify_owner(
+                    'Shop Ban Lifted',
+                    'shop_unban',
+                    f'The ban on your shop "{shop.name}" has been lifted. It is now active again.',
+                )
+
+            elif action_type == 'activate':
+                # Manually activate an Inactive shop
+                shop.status            = 'Active'
+                shop.is_suspended      = False
+                shop.suspension_reason = None
+                shop.suspended_until   = None
+                notify_owner(
+                    'Shop Activated',
+                    'shop_activation',
+                    f'Your shop "{shop.name}" has been activated.',
+                )
+
+            elif action_type == 'restore':
+                # Restore a Deleted/Rejected/Banned shop back to Active
+                # Shop model has no is_removed field; status is the source of truth
+                shop.status            = 'Active'
+                shop.is_suspended      = False
+                shop.suspension_reason = None
+                shop.suspended_until   = None
+                notify_owner(
+                    'Shop Restored',
+                    'shop_restoration',
+                    f'Your shop "{shop.name}" has been restored and is now active.',
+                )
+
+            elif action_type == 'delete':
+                # Hard delete — notify and log BEFORE deleting (FK will be gone after)
+                write_log('delete')
+                notify_owner(
+                    'Shop Deleted',
+                    'shop_deletion',
+                    f'Your shop "{shop.name}" has been permanently deleted. Reason: {reason}',
+                )
+                shop.delete()
+                deleted = True
+
+            # ── Persist + audit log for non-delete actions ─────────────────────
+            if not deleted:
+                shop.save()
+                write_log(action_type)
+
+                return Response(
+                    {
+                        'success': True,
+                        'message': f'Shop {action_type} completed successfully',
+                        'action':  action_type,
+                        'shop': {
+                            'id':                str(shop.id),
+                            'name':              shop.name,
+                            'status':            shop.status,
+                            'verified':          shop.verified,
+                            'is_suspended':      shop.is_suspended,
+                            'suspension_reason': shop.suspension_reason,
+                            'suspended_until': (
+                                shop.suspended_until.isoformat()
+                                if shop.suspended_until else None
+                            ),
+                        },
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            else:
+                return Response(
+                    {
+                        'success': True,
+                        'message': 'Shop deleted successfully',
+                        'action':  action_type,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'success': False, 'error': f'Error updating shop status: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
     # ── get_pending_shops ──────────────────────────────────────────────────────
 
     @action(detail=False, methods=['get'], url_path='get_pending_shops')
