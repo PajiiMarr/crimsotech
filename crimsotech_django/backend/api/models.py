@@ -1533,6 +1533,7 @@ class Refund(models.Model):
     REFUND_TYPE_CHOICES = [
         ('return', 'Return Item'),
         ('keep', 'Keep Item'),
+        ('replace', 'Replacement Item'),
     ]
 
     STATUS_CHOICES = [
