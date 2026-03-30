@@ -63,31 +63,61 @@ export async function action({ request }: Route.ActionArgs) {
     const { getSession, commitSession } = await import('~/sessions.server');
     const session = await getSession(request.headers.get("Cookie"));
     
+    // IMPORTANT: Set the userId
     session.set("userId", response.data.user_id);
+    
+    // IMPORTANT: Set the complete userData object (this is what root.tsx expects)
+    session.set("userData", {
+      username: response.data.username,
+      email: response.data.email,
+      isAdmin: response.data.is_admin,
+      isCustomer: response.data.is_customer,
+      isRider: response.data.is_rider,
+      isModerator: response.data.is_moderator,
+      registration_stage: response.data.registration_stage,
+    });
+    
+    // Also set individual flags for convenience
     session.set("isRider", response.data.is_rider);
     session.set("isCustomer", response.data.is_customer);
+    session.set("isAdmin", response.data.is_admin);
+    session.set("isModerator", response.data.is_moderator);
     
+    console.log("Session data after setting:", {
+      userId: session.get("userId"),
+      userData: session.get("userData"),
+      isRider: session.get("isRider"),
+      isCustomer: session.get("isCustomer"),
+    });
+    
+    // Redirect based on user role
     if (response.data.is_customer) {
+      console.log("Redirecting to /home");
       return redirect("/home", {
         headers: { "Set-Cookie": await commitSession(session) }
       });
     } else if (response.data.is_rider) {
+      console.log("Redirecting to /rider");
       return redirect("/rider", {
         headers: { "Set-Cookie": await commitSession(session) }
       });
     } else if (response.data.is_moderator) {
+      console.log("Redirecting to /moderator");
       return redirect("/moderator", {
         headers: { "Set-Cookie": await commitSession(session) }
       });
     } else if (response.data.is_admin) {
+      console.log("Redirecting to /admin");
       return redirect("/admin", {
         headers: { "Set-Cookie": await commitSession(session) }
       });
     }
     
-    // return redirect("/home", {
-    //   headers: { "Set-Cookie": await commitSession(session) }
-    // });
+    // Fallback redirect
+    return redirect("/home", {
+      headers: { "Set-Cookie": await commitSession(session) }
+    });
+    
   } catch (error: any) {
     console.error("Login error:", error);
     
