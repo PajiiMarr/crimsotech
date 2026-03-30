@@ -3946,337 +3946,296 @@ class AdminShops(viewsets.ViewSet):
     """
     ViewSet for admin shop management with comprehensive endpoints
     """
-    
-    def parse_date(self, date_str):
-        """Parse date string in multiple formats"""
-        if not date_str:
+
+    # ── Image URL helper ───────────────────────────────────────────────────────
+
+    def get_media_url(self, file_field):
+        """Return a public Supabase URL for any ImageField / FileField, or None."""
+        if not file_field:
+            return None
+        try:
+            return convert_s3_to_public_url(file_field.url)
+        except Exception as e:
+            print(f"Error getting media URL: {e}")
             return None
 
+    def build_shop_legal_docs(self, shop):
+        """Return a dict of all legal-document fields for a shop."""
+        return {
+            'business_registration_type':   shop.business_registration_type,
+            'business_registration_number': shop.business_registration_number,
+            'business_registration_image':  self.get_media_url(shop.business_registration_image),
+            'government_id_type':           shop.government_id_type,
+            'government_id_number':         shop.government_id_number,
+            'government_id_image_front':    self.get_media_url(shop.government_id_image_front),
+            'government_id_image_back':     self.get_media_url(shop.government_id_image_back),
+            'business_permit_number':       shop.business_permit_number,
+            'business_permit_image':        self.get_media_url(shop.business_permit_image),
+            'legal_documents_complete':     shop.legal_documents_complete,
+        }
+
+    # ── Date helpers ───────────────────────────────────────────────────────────
+
+    def parse_date(self, date_str):
+        if not date_str:
+            return None
         try:
-            # Try ISO format with timezone (2025-12-07T03:21:09.209Z)
             if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', date_str):
                 if date_str.endswith('Z'):
                     return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
                 return datetime.fromisoformat(date_str)
-            
-            # Try simple date format (2025-12-07)
             elif re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
                 return datetime.strptime(date_str, '%Y-%m-%d')
-            
-            # Try other common formats
             for fmt in ['%Y-%m-%d %H:%M:%S', '%Y/%m/%d', '%m/%d/%Y']:
                 try:
                     return datetime.strptime(date_str, fmt)
                 except ValueError:
                     continue
-                    
             return None
-            
         except (ValueError, TypeError) as e:
             print(f"Date parsing error for '{date_str}': {e}")
             return None
-    
+
     def get_date_range_filter(self, start_date_str, end_date_str):
-        """Get date range filter or return default (last 30 days)"""
-        # Default to last 30 days if no date range provided
         if not start_date_str and not end_date_str:
             end_date = timezone.now()
             start_date = end_date - timedelta(days=30)
             return start_date, end_date
-        
-        # Parse provided dates
+
         start_date = self.parse_date(start_date_str) if start_date_str else None
-        end_date = self.parse_date(end_date_str) if end_date_str else None
-        
-        # Validate dates
+        end_date   = self.parse_date(end_date_str)   if end_date_str   else None
+
         if start_date_str and not start_date:
             raise ValueError(f"Invalid start_date format: {start_date_str}")
-        
         if end_date_str and not end_date:
             raise ValueError(f"Invalid end_date format: {end_date_str}")
-        
-        # Make dates timezone aware if needed
+
         if start_date and not timezone.is_aware(start_date):
             start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
-        
         if end_date and not timezone.is_aware(end_date):
             end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
-        
-        # If only start date provided, end date defaults to now
+
         if start_date and not end_date:
             end_date = timezone.now()
-        
-        # If only end date provided, start date defaults to 30 days before end date
         if end_date and not start_date:
             start_date = end_date - timedelta(days=30)
-        
+
         return start_date, end_date
+
+    # ── get_metrics ────────────────────────────────────────────────────────────
 
     @action(detail=False, methods=['get'], url_path='get_metrics')
     def get_metrics(self, request):
-        """
-        Get comprehensive shop metrics for admin dashboard with date range support
-        """
         try:
             start_date_str = request.GET.get('start_date')
-            end_date_str = request.GET.get('end_date')
-            
-            # Get date range
+            end_date_str   = request.GET.get('end_date')
+
             try:
                 start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
             except ValueError as e:
-                return Response(
-                    {'success': False, 'error': str(e)}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Base queryset for ALL shops
+                return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
             all_shops_qs = Shop.objects.all()
-            total_shops = all_shops_qs.count()
-            
-            # Shops created in the date range
+            total_shops  = all_shops_qs.count()
+
             new_shops_qs = Shop.objects.all()
             if start_date and end_date:
                 new_shops_qs = new_shops_qs.filter(created_at__range=[start_date, end_date])
             new_shops_in_period = new_shops_qs.count()
-            
-            # Calculate total followers
+
             total_followers = ShopFollow.objects.count()
-            
-            # FIX: Changed from 'rating' to 'average_rating'
+
             rating_agg = Review.objects.aggregate(
                 avg_rating=Avg('average_rating'),
                 total_reviews=Count('id')
             )
             avg_rating = rating_agg['avg_rating'] or 0.0
-            
-            # Get verified shops count
-            verified_shops = all_shops_qs.filter(verified=True).count()
+
+            verified_shops           = all_shops_qs.filter(verified=True).count()
             verified_shops_in_period = new_shops_qs.filter(verified=True).count()
-            
-            # FIX: Changed from 'rating' to 'average_rating'
+
             top_shop = all_shops_qs.annotate(
                 avg_rating=Avg('reviews__average_rating'),
                 followers_count=Count('followers')
             ).filter(avg_rating__isnull=False).order_by('-avg_rating').first()
-            
             top_shop_name = top_shop.name if top_shop else "No shops"
-            
-            # Get active reports count
-            active_reports = Report.objects.filter(
-                report_type='shop',
-                status__in=['pending', 'under_review']
-            ).count()
-            
-            # Get suspended shops count
+
+            active_reports  = Report.objects.filter(report_type='shop', status__in=['pending', 'under_review']).count()
             suspended_shops = all_shops_qs.filter(is_suspended=True).count()
-            
-            # Get total products across all shops
-            total_products = Product.objects.filter(shop__isnull=False).count()
-            
-            # Get total sales across all shops
+            total_products  = Product.objects.filter(shop__isnull=False).count()
             total_sales_all = all_shops_qs.aggregate(total=Sum('total_sales'))['total'] or 0
-            
-            response_data = {
+
+            return Response({
                 'success': True,
                 'metrics': {
-                    'total_shops': total_shops,
-                    'total_followers': total_followers,
-                    'avg_rating': round(float(avg_rating), 1),
-                    'verified_shops': verified_shops,
-                    'top_shop_name': top_shop_name,
-                    'new_shops_in_period': new_shops_in_period,
+                    'total_shops':             total_shops,
+                    'total_followers':          total_followers,
+                    'avg_rating':               round(float(avg_rating), 1),
+                    'verified_shops':           verified_shops,
+                    'top_shop_name':            top_shop_name,
+                    'new_shops_in_period':      new_shops_in_period,
                     'verified_shops_in_period': verified_shops_in_period,
-                    'active_reports': active_reports,
-                    'suspended_shops': suspended_shops,
-                    'total_products': total_products,
-                    'total_sales': float(total_sales_all),
+                    'active_reports':           active_reports,
+                    'suspended_shops':          suspended_shops,
+                    'total_products':           total_products,
+                    'total_sales':              float(total_sales_all),
                 },
                 'message': 'Metrics retrieved successfully',
                 'date_range': {
-                    'start_date': start_date_str or start_date.isoformat(),
-                    'end_date': end_date_str or end_date.isoformat(),
+                    'start_date':   start_date_str or start_date.isoformat(),
+                    'end_date':     end_date_str   or end_date.isoformat(),
                     'actual_start': start_date.isoformat() if start_date else None,
-                    'actual_end': end_date.isoformat() if end_date else None
+                    'actual_end':   end_date.isoformat()   if end_date   else None,
                 }
-            }
-            
-            return Response(response_data, status=status.HTTP_200_OK)
-            
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
             return Response(
-                {'success': False, 'error': f'Error retrieving metrics: {str(e)}'}, 
+                {'success': False, 'error': f'Error retrieving metrics: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
+    # ── get_shops_list ─────────────────────────────────────────────────────────
+
     @action(detail=False, methods=['get'], url_path='get_shops_list')
     def get_shops_list(self, request):
         """
-        Get list of all shops with computed metrics with optional date range filtering.
-        Excludes Pending shops by default (pass exclude_pending=false to include them).
+        Return ALL shops. Date range only filters metrics, never the shop list itself.
         """
         try:
             start_date_str = request.GET.get('start_date')
-            end_date_str = request.GET.get('end_date')
+            end_date_str   = request.GET.get('end_date')
 
-            # Get date range
-            try:
-                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
-            except ValueError as e:
-                return Response(
-                    {'success': False, 'error': str(e)},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            # Only parse dates when explicitly supplied — no silent 30-day default
+            start_date = end_date = None
+            if start_date_str or end_date_str:
+                try:
+                    start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+                except ValueError as e:
+                    return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Base queryset with related data
+            # ALL shops — no date filter on the queryset
             shops_qs = Shop.objects.all().select_related('customer__customer')
-
-            # Filter shops that were active during the date range
-            if start_date and end_date:
-                shops_qs = shops_qs.filter(
-                    created_at__lte=end_date
-                ).exclude(
-                    Q(is_suspended=True, suspended_until__gte=end_date, created_at__lte=start_date) |
-                    Q(is_suspended=True, suspended_until__isnull=False, suspended_until__gte=start_date, created_at__lte=start_date)
-                )
-
-            # Get shop IDs
             shop_ids = list(shops_qs.values_list('id', flat=True))
 
-            # Compute followers count
-            followers_data = ShopFollow.objects.filter(
-                shop__in=shop_ids
-            ).values('shop').annotate(
-                followers_count=Count('id')
-            )
-            followers_map = {str(fd['shop']): fd['followers_count'] for fd in followers_data}
+            # Followers
+            followers_map = {
+                str(fd['shop']): fd['followers_count']
+                for fd in ShopFollow.objects.filter(shop__in=shop_ids)
+                    .values('shop').annotate(followers_count=Count('id'))
+            }
 
-            # Compute products count
-            products_data = Product.objects.filter(
-                shop__in=shop_ids,
-                upload_status='published'
-            ).values('shop').annotate(
-                products_count=Count('id')
-            )
-            products_map = {str(pd['shop']): pd['products_count'] for pd in products_data}
+            # Products
+            products_map = {
+                str(pd['shop']): pd['products_count']
+                for pd in Product.objects.filter(shop__in=shop_ids, upload_status='published')
+                    .values('shop').annotate(products_count=Count('id'))
+            }
 
-            # Compute favorites count per shop
+            # Favorites
             product_ids = Product.objects.filter(
-                shop__in=shop_ids,
-                upload_status='published'
+                shop__in=shop_ids, upload_status='published'
             ).values_list('id', flat=True)
 
-            favorites_data = Favorites.objects.filter(
-                product__in=product_ids
-            ).values('product__shop').annotate(
-                total_favorites=Count('id')
-            )
-            favorites_map = {str(fd['product__shop']): fd['total_favorites'] for fd in favorites_data}
+            favorites_map = {
+                str(fd['product__shop']): fd['total_favorites']
+                for fd in Favorites.objects.filter(product__in=product_ids)
+                    .values('product__shop').annotate(total_favorites=Count('id'))
+            }
 
-            # Compute ratings
-            ratings_data = Review.objects.filter(
-                shop__in=shop_ids
-            ).values('shop').annotate(
-                avg_rating=Avg('average_rating'),
-                total_ratings=Count('id')
-            )
-            ratings_map = {str(rd['shop']): rd for rd in ratings_data}
+            # Ratings
+            ratings_map = {
+                str(rd['shop']): rd
+                for rd in Review.objects.filter(shop__in=shop_ids)
+                    .values('shop').annotate(avg_rating=Avg('average_rating'), total_ratings=Count('id'))
+            }
 
-            # Compute active boosts
-            boosts_data = Boost.objects.filter(
-                shop__in=shop_ids,
-                status='active'
-            ).values('shop').annotate(
-                active_boosts=Count('id')
-            )
-            boosts_map = {str(bd['shop']): bd['active_boosts'] for bd in boosts_data}
+            # Boosts
+            boosts_map = {
+                str(bd['shop']): bd['active_boosts']
+                for bd in Boost.objects.filter(shop__in=shop_ids, status='active')
+                    .values('shop').annotate(active_boosts=Count('id'))
+            }
 
-            # Compute active report counts per shop
-            reports_data = Report.objects.filter(
-                reported_shop__in=shop_ids,
-                status__in=['pending', 'under_review']
-            ).values('reported_shop').annotate(
-                active_reports=Count('id')
-            )
-            reports_map = {str(rd['reported_shop']): rd['active_reports'] for rd in reports_data}
+            # Reports
+            reports_map = {
+                str(rd['reported_shop']): rd['active_reports']
+                for rd in Report.objects.filter(reported_shop__in=shop_ids, status__in=['pending', 'under_review'])
+                    .values('reported_shop').annotate(active_reports=Count('id'))
+            }
 
-            # Build shops data
             shops_data = []
             for shop in shops_qs:
                 shop_id = str(shop.id)
 
-                # Get owner info
                 customer = shop.customer
                 owner_info = None
                 if customer and customer.customer:
                     user = customer.customer
                     owner_info = {
-                        'id': str(user.id),
-                        'username': user.username,
-                        'email': user.email,
-                        'first_name': user.first_name,
-                        'last_name': user.last_name,
-                        'contact_number': user.contact_number
+                        'id':             str(user.id),
+                        'username':       user.username,
+                        'email':          user.email,
+                        'first_name':     user.first_name,
+                        'last_name':      user.last_name,
+                        'contact_number': user.contact_number,
                     }
-                    owner_name = f"{user.first_name} {user.last_name}".strip()
-                    if not owner_name:
-                        owner_name = user.username or "Unknown"
+                    owner_name = f"{user.first_name} {user.last_name}".strip() or user.username or "Unknown"
                 else:
                     owner_name = "Unknown Owner"
 
-                # Get computed metrics
-                followers = followers_map.get(shop_id, 0)
+                rating_info  = ratings_map.get(shop_id, {'avg_rating': 0.0, 'total_ratings': 0})
+                followers    = followers_map.get(shop_id, 0)
                 products_count = products_map.get(shop_id, 0)
                 total_favorites = favorites_map.get(shop_id, 0)
-                rating_info = ratings_map.get(shop_id, {'avg_rating': 0.0, 'total_ratings': 0})
                 active_boosts = boosts_map.get(shop_id, 0)
                 active_reports = reports_map.get(shop_id, 0)
 
                 shops_data.append({
-                    'id': shop_id,
-                    'shop_picture': shop.shop_picture.url if shop.shop_picture else None,
-                    'name': shop.name,
-                    'description': shop.description,
-                    'owner': owner_name,
-                    'customer': owner_info,
-                    'province': shop.province,
-                    'city': shop.city,
-                    'barangay': shop.barangay,
-                    'street': shop.street,
+                    'id':           shop_id,
+                    'shop_picture': self.get_media_url(shop.shop_picture),  # ← fixed
+                    'name':         shop.name,
+                    'description':  shop.description,
+                    'owner':        owner_name,
+                    'customer':     owner_info,
+                    'province':     shop.province,
+                    'city':         shop.city,
+                    'barangay':     shop.barangay,
+                    'street':       shop.street,
                     'contact_number': shop.contact_number,
-                    'location': f"{shop.city}, {shop.province}" if shop.city and shop.province else shop.city or shop.province or 'Unknown',
-                    'followers': followers,
-                    'followers_count': followers,
-                    'favorites_count': total_favorites,
-                    'products': products_count,
-                    'products_count': products_count,
-                    'rating': round(float(rating_info['avg_rating']), 1),
-                    'totalRatings': rating_info['total_ratings'],
-                    'total_ratings': rating_info['total_ratings'],
-                    'status': shop.status,
-                    'verified': shop.verified,
-                    'joinedDate': shop.created_at.isoformat() if shop.created_at else None,
-                    'created_at': shop.created_at.isoformat() if shop.created_at else None,
-                    'totalSales': float(shop.total_sales),
-                    'total_sales': float(shop.total_sales),
-                    'activeBoosts': active_boosts,
-                    'active_boosts': active_boosts,
+                    'location':     f"{shop.city}, {shop.province}" if shop.city and shop.province else shop.city or shop.province or 'Unknown',
+                    'followers':         followers,
+                    'followers_count':   followers,
+                    'favorites_count':   total_favorites,
+                    'products':          products_count,
+                    'products_count':    products_count,
+                    'rating':            round(float(rating_info['avg_rating']), 1),
+                    'totalRatings':      rating_info['total_ratings'],
+                    'total_ratings':     rating_info['total_ratings'],
+                    'status':            shop.status,
+                    'verified':          shop.verified,
+                    'joinedDate':        shop.created_at.isoformat() if shop.created_at else None,
+                    'created_at':        shop.created_at.isoformat() if shop.created_at else None,
+                    'totalSales':        float(shop.total_sales),
+                    'total_sales':       float(shop.total_sales),
+                    'activeBoosts':      active_boosts,
+                    'active_boosts':     active_boosts,
                     'active_report_count': active_reports,
-                    'is_suspended': shop.is_suspended,
+                    'is_suspended':      shop.is_suspended,
                     'suspension_reason': shop.suspension_reason,
-                    'suspended_until': shop.suspended_until.isoformat() if shop.suspended_until else None,
+                    'suspended_until':   shop.suspended_until.isoformat() if shop.suspended_until else None,
                 })
 
             return Response({
-                'success': True,
-                'shops': shops_data,
+                'success':     True,
+                'shops':       shops_data,
                 'total_count': len(shops_data),
-                'message': 'Shops retrieved successfully',
+                'message':     'Shops retrieved successfully',
                 'date_range': {
-                    'start_date': start_date_str or start_date.isoformat(),
-                    'end_date': end_date_str or end_date.isoformat(),
+                    'start_date':   start_date_str,
+                    'end_date':     end_date_str,
                     'actual_start': start_date.isoformat() if start_date else None,
-                    'actual_end': end_date.isoformat() if end_date else None
+                    'actual_end':   end_date.isoformat()   if end_date   else None,
                 }
             }, status=status.HTTP_200_OK)
 
@@ -4286,868 +4245,609 @@ class AdminShops(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    # ── get_shop_details ───────────────────────────────────────────────────────
 
     @action(detail=True, methods=['get'], url_path='get_shop_details')
     def get_shop_details(self, request, pk=None):
-        """
-        Get detailed information for a specific shop
-        """
         try:
             shop = Shop.objects.select_related('customer__customer').get(pk=pk)
-            
-            # Get owner info - handle case when customer is None
+
             customer = shop.customer
-            owner_info = None
             if customer and customer.customer:
                 user = customer.customer
                 owner_info = {
-                    'id': str(user.id),
-                    'username': user.username,
-                    'email': user.email,
-                    'first_name': user.first_name,
-                    'last_name': user.last_name,
-                    'contact_number': user.contact_number,
-                    'product_limit': customer.product_limit,
-                    'current_product_count': customer.current_product_count
+                    'id':                    str(user.id),
+                    'username':              user.username,
+                    'email':                 user.email,
+                    'first_name':            user.first_name,
+                    'last_name':             user.last_name,
+                    'contact_number':        user.contact_number,
+                    'product_limit':         customer.product_limit,
+                    'current_product_count': customer.current_product_count,
                 }
             else:
-                # Provide default values when no customer exists
                 owner_info = {
-                    'id': None,
-                    'username': 'No Owner',
-                    'email': '',
-                    'first_name': '',
-                    'last_name': '',
-                    'contact_number': '',
-                    'product_limit': 0,
-                    'current_product_count': 0
+                    'id': None, 'username': 'No Owner', 'email': '',
+                    'first_name': '', 'last_name': '', 'contact_number': '',
+                    'product_limit': 0, 'current_product_count': 0,
                 }
-            
-            # Get followers count
+
             followers_count = ShopFollow.objects.filter(shop=shop).count()
-            
-            # Calculate favorites count properly
+
             shop_products = Product.objects.filter(
-                shop=shop,
-                upload_status='published'
+                shop=shop, upload_status='published'
             ).values_list('id', flat=True)
-            
-            favorites_count = Favorites.objects.filter(
-                product__in=shop_products
-            ).count()
-            
-            # Get active reports count
+            favorites_count = Favorites.objects.filter(product__in=shop_products).count()
+
             active_reports = Report.objects.filter(
-                reported_shop=shop,
-                status__in=['pending', 'under_review']
+                reported_shop=shop, status__in=['pending', 'under_review']
             ).count()
-            
-            # Get product categories - distinct categories from shop's products
-            # Using both category and category_admin to get all categories
+
             categories = Category.objects.filter(
-                Q(products__shop=shop) |  # Shop owner categories
-                Q(admin_products__shop=shop)  # Global admin categories used by shop
+                Q(products__shop=shop) | Q(admin_products__shop=shop)
             ).distinct().values('id', 'name')
-            
+
             shop_data = {
-                'id': str(shop.id),
-                'shop_picture': shop.shop_picture.url if shop.shop_picture else None,
-                'customer': owner_info,
-                'description': shop.description,
-                'name': shop.name,
-                'province': shop.province,
-                'city': shop.city,
-                'barangay': shop.barangay,
-                'street': shop.street,
+                'id':             str(shop.id),
+                'shop_picture':   self.get_media_url(shop.shop_picture),  # ← fixed
+                'customer':       owner_info,
+                'description':    shop.description,
+                'name':           shop.name,
+                'province':       shop.province,
+                'city':           shop.city,
+                'barangay':       shop.barangay,
+                'street':         shop.street,
                 'contact_number': shop.contact_number,
-                'verified': shop.verified,
-                'status': shop.status,
-                'total_sales': float(shop.total_sales),
-                'created_at': shop.created_at.isoformat() if shop.created_at else None,
-                'updated_at': shop.updated_at.isoformat() if shop.updated_at else None,
-                'is_suspended': shop.is_suspended,
+                'verified':       shop.verified,
+                'status':         shop.status,
+                'total_sales':    float(shop.total_sales),
+                'created_at':     shop.created_at.isoformat() if shop.created_at else None,
+                'updated_at':     shop.updated_at.isoformat() if shop.updated_at else None,
+                'is_suspended':   shop.is_suspended,
                 'suspension_reason': shop.suspension_reason,
-                'suspended_until': shop.suspended_until.isoformat() if shop.suspended_until else None,
+                'suspended_until':   shop.suspended_until.isoformat() if shop.suspended_until else None,
                 'active_report_count': active_reports,
-                'favorites_count': favorites_count,
-                'followers_count': followers_count,
-                'categories': list(categories),
-                # ── Legal Documents ──────────────────────────────────────────────────
-                'business_registration_type': shop.business_registration_type,
-                'business_registration_number': shop.business_registration_number,
-                'business_registration_image': request.build_absolute_uri(shop.business_registration_image.url) if shop.business_registration_image else None,
-                'government_id_type': shop.government_id_type,
-                'government_id_number': shop.government_id_number,
-                'government_id_image_front': request.build_absolute_uri(shop.government_id_image_front.url) if shop.government_id_image_front else None,
-                'government_id_image_back': request.build_absolute_uri(shop.government_id_image_back.url) if shop.government_id_image_back else None,
-                'business_permit_number': shop.business_permit_number,
-                'business_permit_image': request.build_absolute_uri(shop.business_permit_image.url) if shop.business_permit_image else None,
-                'legal_documents_complete': shop.legal_documents_complete,
+                'favorites_count':     favorites_count,
+                'followers_count':     followers_count,
+                'categories':          list(categories),
+                # ── Legal docs — all via get_media_url ──
+                **self.build_shop_legal_docs(shop),
             }
-            
+
             return Response({
                 'success': True,
-                'shop': shop_data,
+                'shop':    shop_data,
                 'message': 'Shop details retrieved successfully'
             }, status=status.HTTP_200_OK)
-            
-        except Shop.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Shop not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': f'Error retrieving shop details: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            
+        except Shop.DoesNotExist:
+            return Response({'success': False, 'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'Error retrieving shop details: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_products ───────────────────────────────────────────────────────────
+
     @action(detail=True, methods=['get'], url_path='get_products')
     def get_products(self, request, pk=None):
-        """
-        Get products for a specific shop with detailed information matching AdminProduct pattern
-        Properly handles category_admin (global) and category (shop owner) fields
-        Displays price as price range since products have multiple variants
-        """
         try:
             shop = Shop.objects.get(pk=pk)
-            
-            # Get query parameters
-            search = request.GET.get('search', '')
-            category = request.GET.get('category', 'all')
+
+            search    = request.GET.get('search', '')
+            category  = request.GET.get('category', 'all')
             start_date = request.GET.get('start_date')
-            end_date = request.GET.get('end_date')
-            
-            # Start with base query - include all products regardless of upload_status for admin view
-            products = Product.objects.filter(
-                shop=shop
-            ).order_by('-created_at').select_related(
-                'shop', 
-                'category',      # Shop owner's category
-                'category_admin' # Global admin category
+            end_date   = request.GET.get('end_date')
+
+            products = Product.objects.filter(shop=shop).order_by('-created_at').select_related(
+                'shop', 'category', 'category_admin'
             )
-            
-            # Apply date range filter if provided
-            start_datetime = None
-            end_datetime = None
-            
+
+            start_datetime = end_datetime = None
             if start_date and end_date:
                 try:
-                    start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
-                    end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
-                    
-                    end_date_obj_with_time = datetime.combine(end_date_obj, time.max)
-                    
                     tz = timezone.get_current_timezone()
-                    start_datetime = timezone.make_aware(datetime.combine(start_date_obj, time.min), tz)
-                    end_datetime = timezone.make_aware(end_date_obj_with_time, tz)
-                    
-                    products = products.filter(
-                        created_at__gte=start_datetime,
-                        created_at__lte=end_datetime
+                    start_datetime = timezone.make_aware(
+                        datetime.combine(datetime.strptime(start_date, '%Y-%m-%d').date(), time.min), tz
                     )
-                    
+                    end_datetime = timezone.make_aware(
+                        datetime.combine(datetime.strptime(end_date, '%Y-%m-%d').date(), time.max), tz
+                    )
+                    products = products.filter(created_at__gte=start_datetime, created_at__lte=end_datetime)
                 except ValueError as e:
                     print(f"Date parsing error: {str(e)}")
-            
-            # Apply search filter
+
             if search:
-                products = products.filter(
-                    Q(name__icontains=search) | 
-                    Q(description__icontains=search)
-                )
-            
-            # Apply category filter - check both category and category_admin
+                products = products.filter(Q(name__icontains=search) | Q(description__icontains=search))
+
             if category != 'all':
                 products = products.filter(
-                    Q(category__name=category) | 
-                    Q(category_admin__name=category)
+                    Q(category__name=category) | Q(category_admin__name=category)
                 )
-            
-            # Get all products
+
             all_products = list(products)
-            total_count = len(all_products)
-            
-            # Get product IDs for related data queries
-            product_ids = [product.id for product in all_products]
-            
-            # Compute engagement data from CustomerActivity
+            total_count  = len(all_products)
+            product_ids  = [p.id for p in all_products]
+
+            # Engagement
             engagement_filters = {}
             if start_datetime and end_datetime:
-                engagement_filters = {
-                    'created_at__gte': start_datetime,
-                    'created_at__lte': end_datetime
-                }
-            
-            engagement_data = CustomerActivity.objects.filter(
-                product__in=product_ids,
-                **engagement_filters
-            ).values('product', 'activity_type').annotate(
-                count=Count('activity_type')
-            )
-            
+                engagement_filters = {'created_at__gte': start_datetime, 'created_at__lte': end_datetime}
+
             engagement_map = {}
-            for engagement in engagement_data:
-                product_id = engagement['product']
-                activity_type = engagement['activity_type']
-                count = engagement['count']
-                
-                if product_id not in engagement_map:
-                    engagement_map[product_id] = {'views': 0, 'purchases': 0, 'favorites': 0}
-                
-                if activity_type == 'view':
-                    engagement_map[product_id]['views'] = count
-                elif activity_type == 'purchase':
-                    engagement_map[product_id]['purchases'] = count
-                elif activity_type == 'favorite':
-                    engagement_map[product_id]['favorites'] = count
-            
-            # Compute variants data - get price range and total quantity
-            variants_data = Variants.objects.filter(
-                product__in=product_ids,
-                is_active=True
-            ).values('product').annotate(
-                variants_count=Count('id'),
-                min_price=Min('price'),
-                max_price=Max('price'),
-                total_quantity=Sum('quantity')
-            )
-            
-            variants_map = {}
-            for vd in variants_data:
-                variants_map[vd['product']] = {
-                    'variants_count': vd['variants_count'],
-                    'min_price': vd['min_price'],
-                    'max_price': vd['max_price'],
-                    'total_quantity': vd['total_quantity'] or 0
-                }
-            
-            # Compute issues count
-            issues_data = Issues.objects.filter(
-                product__in=product_ids
-            ).values('product').annotate(
-                issues_count=Count('id')
-            )
-            
-            issues_map = {id['product']: id['issues_count'] for id in issues_data}
-            
-            # Compute boost plan
-            boost_data = Boost.objects.filter(
-                product__in=product_ids,
-                status='active'
-            ).select_related('boost_plan')
-            
+            for eng in CustomerActivity.objects.filter(product__in=product_ids, **engagement_filters) \
+                    .values('product', 'activity_type').annotate(count=Count('activity_type')):
+                pid = eng['product']
+                engagement_map.setdefault(pid, {'views': 0, 'purchases': 0, 'favorites': 0})
+                if eng['activity_type'] == 'view':
+                    engagement_map[pid]['views'] = eng['count']
+                elif eng['activity_type'] == 'purchase':
+                    engagement_map[pid]['purchases'] = eng['count']
+                elif eng['activity_type'] == 'favorite':
+                    engagement_map[pid]['favorites'] = eng['count']
+
+            # Variants
+            variants_map = {
+                vd['product']: vd
+                for vd in Variants.objects.filter(product__in=product_ids, is_active=True)
+                    .values('product').annotate(
+                        variants_count=Count('id'),
+                        min_price=Min('price'),
+                        max_price=Max('price'),
+                        total_quantity=Sum('quantity')
+                    )
+            }
+
+            # Issues
+            issues_map = {
+                id['product']: id['issues_count']
+                for id in Issues.objects.filter(product__in=product_ids)
+                    .values('product').annotate(issues_count=Count('id'))
+            }
+
+            # Boosts
             boost_map = {}
-            for boost in boost_data:
+            for boost in Boost.objects.filter(product__in=product_ids, status='active').select_related('boost_plan'):
                 if boost.boost_plan and boost.product_id:
                     boost_map[boost.product_id] = boost.boost_plan.name
-            
-            # FIX: Changed from 'rating' to 'average_rating'
-            review_data = Review.objects.filter(
-                product__in=product_ids
-            ).values('product').annotate(
-                avg_rating=Avg('average_rating')
-            )
-            
-            rating_map = {rd['product']: rd['avg_rating'] or 0.0 for rd in review_data}
-            
-            # Serialize with computed fields
+
+            # Ratings
+            rating_map = {
+                rd['product']: rd['avg_rating'] or 0.0
+                for rd in Review.objects.filter(product__in=product_ids)
+                    .values('product').annotate(avg_rating=Avg('average_rating'))
+            }
+
             products_data = []
             for product in all_products:
-                product_id = product.id
-                
-                # Get computed engagement data
-                engagement = engagement_map.get(product_id, {'views': 0, 'purchases': 0, 'favorites': 0})
-                
-                # Get rating
-                product_rating = rating_map.get(product_id, 0.0)
-                
-                # Get variants data
-                variant_info = variants_map.get(product_id, {
-                    'variants_count': 0,
-                    'min_price': None,
-                    'max_price': None,
-                    'total_quantity': 0
-                })
-                
-                # Get issues count
-                issues_count = issues_map.get(product_id, 0)
-                
-                # Get boost plan
-                boost_plan = boost_map.get(product_id, 'None')
-                
-                # Determine low stock based on variants
-                low_stock = variant_info['total_quantity'] < 5 if variant_info['total_quantity'] else True
-                
-                # Get category name - category_admin (global) takes precedence over category (shop owner)
+                pid          = product.id
+                engagement   = engagement_map.get(pid, {'views': 0, 'purchases': 0, 'favorites': 0})
+                variant_info = variants_map.get(pid, {'variants_count': 0, 'min_price': None, 'max_price': None, 'total_quantity': 0})
+                issues_count = issues_map.get(pid, 0)
+                boost_plan   = boost_map.get(pid, 'None')
+                product_rating = rating_map.get(pid, 0.0)
+                low_stock    = variant_info['total_quantity'] < 5 if variant_info['total_quantity'] else True
+
+                # Category
                 category_name = 'Uncategorized'
                 category_type = 'none'
-                category_id = None
-                
+                category_id   = None
                 if product.category_admin:
                     category_name = product.category_admin.name
                     category_type = 'global'
-                    category_id = str(product.category_admin.id)
+                    category_id   = str(product.category_admin.id)
                 elif product.category:
                     category_name = product.category.name
                     category_type = 'shop'
-                    category_id = str(product.category.id)
-                
-                # Format price display as price range (since products have multiple variants)
+                    category_id   = str(product.category.id)
+
+                # Price range
                 min_price = variant_info['min_price']
                 max_price = variant_info['max_price']
-                
+                price_range   = {'min': None, 'max': None}
                 price_display = "No price"
-                price_range = {
-                    'min': None,
-                    'max': None
-                }
-                
+
                 if min_price and max_price:
-                    price_range = {
-                        'min': float(min_price),
-                        'max': float(max_price)
-                    }
-                    if min_price == max_price:
-                        price_display = f"₱{min_price:,.2f}"
-                    else:
-                        price_display = f"₱{min_price:,.2f} - ₱{max_price:,.2f}"
+                    price_range   = {'min': float(min_price), 'max': float(max_price)}
+                    price_display = (
+                        f"₱{min_price:,.2f}" if min_price == max_price
+                        else f"₱{min_price:,.2f} - ₱{max_price:,.2f}"
+                    )
                 elif min_price:
-                    price_range = {
-                        'min': float(min_price),
-                        'max': float(min_price)
-                    }
+                    price_range   = {'min': float(min_price), 'max': float(min_price)}
                     price_display = f"₱{min_price:,.2f}"
-                
-                # Build product data matching AdminProduct pattern with enhanced category and price information
-                product_data = {
-                    'id': str(product_id),
+
+                # Primary image via get_media_url
+                primary_media = product.productmedia_set.first()
+                primary_image = self.get_media_url(primary_media.file_data) if primary_media else None  # ← fixed
+
+                products_data.append({
+                    'id':   str(pid),
                     'name': product.name,
                     'description': product.description,
-                    'category': {
-                        'id': category_id,
-                        'name': category_name,
-                        'type': category_type  # 'global' for admin categories, 'shop' for shop owner categories
-                    },
+                    'primary_image': primary_image,
+                    'category': {'id': category_id, 'name': category_name, 'type': category_type},
                     'shop': {
-                        'id': str(product.shop.id) if product.shop else None,
-                        'name': product.shop.name if product.shop else 'No Shop'
+                        'id':   str(product.shop.id) if product.shop else None,
+                        'name': product.shop.name    if product.shop else 'No Shop',
                     },
-                    'price': {
-                        'display': price_display,
-                        'min': price_range['min'],
-                        'max': price_range['max']
-                    },
-                    'quantity': variant_info['total_quantity'],
-                    'condition': product.condition,
-                    'status': product.status,
-                    'upload_status': product.upload_status,
-                    'views': engagement['views'],
-                    'purchases': engagement['purchases'],
-                    'favorites': engagement['favorites'],
-                    'rating': round(product_rating, 1),
-                    'boostPlan': boost_plan,
+                    'price':          {'display': price_display, 'min': price_range['min'], 'max': price_range['max']},
+                    'quantity':       variant_info['total_quantity'],
+                    'condition':      product.condition,
+                    'status':         product.status,
+                    'upload_status':  product.upload_status,
+                    'views':          engagement['views'],
+                    'purchases':      engagement['purchases'],
+                    'favorites':      engagement['favorites'],
+                    'rating':         round(product_rating, 1),
+                    'boostPlan':      boost_plan,
                     'variants_count': variant_info['variants_count'],
-                    'issues_count': issues_count,
-                    'lowStock': low_stock,
-                    'is_refundable': product.is_refundable,
-                    'refund_days': product.refund_days,
-                    'is_removed': product.is_removed,
+                    'issues_count':   issues_count,
+                    'lowStock':       low_stock,
+                    'is_refundable':  product.is_refundable,
+                    'refund_days':    product.refund_days,
+                    'is_removed':     product.is_removed,
                     'removal_reason': product.removal_reason,
-                    'created_at': product.created_at.isoformat() if product.created_at else None,
-                    'updated_at': product.updated_at.isoformat() if product.updated_at else None
-                }
-                products_data.append(product_data)
-            
-            response_data = {
-                'success': True,
-                'products': products_data,
+                    'created_at':     product.created_at.isoformat() if product.created_at else None,
+                    'updated_at':     product.updated_at.isoformat() if product.updated_at else None,
+                })
+
+            return Response({
+                'success':     True,
+                'products':    products_data,
                 'total_count': total_count,
-                'date_range': {
-                    'start_date': start_date,
-                    'end_date': end_date
-                } if start_date and end_date else None,
-                'message': f'{total_count} products retrieved successfully',
+                'date_range':  {'start_date': start_date, 'end_date': end_date} if start_date and end_date else None,
+                'message':     f'{total_count} products retrieved successfully',
                 'data_source': 'database'
-            }
-            
-            return Response(response_data, status=status.HTTP_200_OK)
-            
+            }, status=status.HTTP_200_OK)
+
         except Shop.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Shop not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            print(f"Error retrieving products: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return Response({
-                'success': False,
-                'error': f'Error retrieving products: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+            import traceback; traceback.print_exc()
+            return Response(
+                {'success': False, 'error': f'Error retrieving products: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_categories ─────────────────────────────────────────────────────────
+
     @action(detail=True, methods=['get'], url_path='get_categories')
     def get_categories(self, request, pk=None):
-        """
-        Get categories for a specific shop based on its products
-        Includes both global categories (category_admin) and shop owner categories (category)
-        """
         try:
             shop = Shop.objects.get(pk=pk)
-            
-            # Get distinct categories from shop's products - including both category and category_admin
-            # Using Union or combined approach to get unique categories
+
             from django.db.models import Value, CharField
-            
-            # Get shop owner categories
-            shop_categories = Category.objects.filter(
-                products__shop=shop
-            ).annotate(
+
+            shop_categories = Category.objects.filter(products__shop=shop).annotate(
                 category_type=Value('shop', output_field=CharField())
             ).values('id', 'name', 'category_type').distinct()
-            
-            # Get global admin categories used by shop
-            global_categories = Category.objects.filter(
-                admin_products__shop=shop
-            ).annotate(
+
+            global_categories = Category.objects.filter(admin_products__shop=shop).annotate(
                 category_type=Value('global', output_field=CharField())
             ).values('id', 'name', 'category_type').distinct()
-            
-            # Combine and remove duplicates by name (case-insensitive)
-            combined = list(shop_categories) + list(global_categories)
-            
-            # Use a dictionary to deduplicate by name (case-insensitive)
+
             unique_categories = {}
-            for cat in combined:
+            for cat in list(shop_categories) + list(global_categories):
                 key = cat['name'].lower()
                 if key not in unique_categories:
-                    # Get product count for this category in this shop
-                    product_count = Product.objects.filter(
-                        shop=shop
-                    ).filter(
+                    cat['product_count'] = Product.objects.filter(shop=shop).filter(
                         Q(category_id=cat['id']) | Q(category_admin_id=cat['id'])
                     ).count()
-                    
-                    cat['product_count'] = product_count
                     unique_categories[key] = cat
-            
-            categories_data = list(unique_categories.values())
-            
-            # Sort by name
-            categories_data.sort(key=lambda x: x['name'])
-            
+
+            categories_data = sorted(unique_categories.values(), key=lambda x: x['name'])
+
             return Response({
-                'success': True,
-                'categories': categories_data,
+                'success':     True,
+                'categories':  categories_data,
                 'total_count': len(categories_data),
-                'message': 'Categories retrieved successfully'
+                'message':     'Categories retrieved successfully'
             }, status=status.HTTP_200_OK)
-            
+
         except Shop.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Shop not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            print(f"Error retrieving categories: {str(e)}")
-            return Response({
-                'success': False,
-                'error': f'Error retrieving categories: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            return Response(
+                {'success': False, 'error': f'Error retrieving categories: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_reviews ────────────────────────────────────────────────────────────
+
     @action(detail=True, methods=['get'], url_path='get_reviews')
     def get_reviews(self, request, pk=None):
-        """
-        Get reviews for a specific shop
-        """
         try:
-            shop = Shop.objects.get(pk=pk)
-            
-            reviews = Review.objects.filter(
-                shop=shop
-            ).select_related('customer__customer').order_by('-created_at')
-            
+            shop    = Shop.objects.get(pk=pk)
+            reviews = Review.objects.filter(shop=shop).select_related('customer__customer').order_by('-created_at')
+
             reviews_data = []
             for review in reviews:
-                customer = review.customer
+                customer  = review.customer
                 user_info = None
                 if customer and customer.customer:
                     user = customer.customer
                     user_info = {
-                        'id': str(user.id),
-                        'username': user.username,
-                        'email': user.email,
-                        'first_name': user.first_name,
-                        'last_name': user.last_name,
-                        'contact_number': user.contact_number
+                        'id':             str(user.id),
+                        'username':       user.username,
+                        'email':          user.email,
+                        'first_name':     user.first_name,
+                        'last_name':      user.last_name,
+                        'contact_number': user.contact_number,
                     }
-                
-                # FIX: Changed from 'rating' to 'average_rating'
                 reviews_data.append({
                     'id': str(review.id),
                     'customer': {
-                        'customer': user_info,
-                        'product_limit': customer.product_limit if customer else None,
-                        'current_product_count': customer.current_product_count if customer else None
+                        'customer':              user_info,
+                        'product_limit':         customer.product_limit         if customer else None,
+                        'current_product_count': customer.current_product_count if customer else None,
                     } if customer else None,
-                    'rating': review.average_rating,
-                    'comment': review.comment,
-                    'created_at': review.created_at.isoformat() if review.created_at else None
+                    'rating':     review.average_rating,
+                    'comment':    review.comment,
+                    'created_at': review.created_at.isoformat() if review.created_at else None,
                 })
-            
-            # FIX: Changed from 'rating' to 'average_rating'
+
             avg_rating = reviews.aggregate(avg=Avg('average_rating'))['avg'] or 0
-            
+
             return Response({
-                'success': True,
-                'reviews': reviews_data,
+                'success':        True,
+                'reviews':        reviews_data,
                 'average_rating': round(float(avg_rating), 1),
-                'total_count': len(reviews_data),
-                'message': 'Reviews retrieved successfully'
+                'total_count':    len(reviews_data),
+                'message':        'Reviews retrieved successfully'
             }, status=status.HTTP_200_OK)
-            
+
         except Shop.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Shop not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({
-                'success': False,
-                'error': f'Error retrieving reviews: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            return Response(
+                {'success': False, 'error': f'Error retrieving reviews: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_vouchers ───────────────────────────────────────────────────────────
+
     @action(detail=True, methods=['get'], url_path='get_vouchers')
     def get_vouchers(self, request, pk=None):
-        """
-        Get vouchers for a specific shop
-        """
         try:
-            shop = Shop.objects.get(pk=pk)
-            
-            vouchers = Voucher.objects.filter(
-                shop=shop
-            ).order_by('-valid_until')
-            
+            shop     = Shop.objects.get(pk=pk)
+            vouchers = Voucher.objects.filter(shop=shop).order_by('-valid_until')
+
             vouchers_data = [{
-                'id': str(v.id),
-                'name': v.name,
-                'code': v.code,
+                'id':            str(v.id),
+                'name':          v.name,
+                'code':          v.code,
                 'discount_type': v.discount_type,
-                'value': float(v.value),
-                'valid_until': v.valid_until.isoformat() if v.valid_until else None,
-                'is_active': v.is_active
+                'value':         float(v.value),
+                'valid_until':   v.valid_until.isoformat() if v.valid_until else None,
+                'is_active':     v.is_active,
             } for v in vouchers]
-            
+
             return Response({
-                'success': True,
+                'success':  True,
                 'vouchers': vouchers_data,
-                'message': 'Vouchers retrieved successfully'
+                'message':  'Vouchers retrieved successfully'
             }, status=status.HTTP_200_OK)
-            
+
         except Shop.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Shop not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({
-                'success': False,
-                'error': f'Error retrieving vouchers: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            return Response(
+                {'success': False, 'error': f'Error retrieving vouchers: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_boosts ─────────────────────────────────────────────────────────────
+
     @action(detail=True, methods=['get'], url_path='get_boosts')
     def get_boosts(self, request, pk=None):
-        """
-        Get active boosts for a specific shop
-        """
         try:
-            shop = Shop.objects.get(pk=pk)
-            
-            boosts = Boost.objects.filter(
-                shop=shop
-            ).select_related('product', 'boost_plan').order_by('-end_date')
-            
+            shop   = Shop.objects.get(pk=pk)
+            boosts = Boost.objects.filter(shop=shop).select_related('product', 'boost_plan').order_by('-end_date')
+
             boosts_data = []
             for boost in boosts:
                 product = boost.product
-                plan = boost.boost_plan
-                
+                plan    = boost.boost_plan
                 boosts_data.append({
                     'id': str(boost.id),
                     'product': {
-                        'id': str(product.id) if product else None,
-                        'name': product.name if product else None
+                        'id':   str(product.id) if product else None,
+                        'name': product.name    if product else None,
                     } if product else None,
                     'boost_plan': {
-                        'id': str(plan.id) if plan else None,
-                        'name': plan.name if plan else None,
-                        'price': float(plan.price) if plan else 0
+                        'id':    str(plan.id)      if plan else None,
+                        'name':  plan.name         if plan else None,
+                        'price': float(plan.price) if plan else 0,
                     } if plan else None,
-                    'status': boost.status,
+                    'status':     boost.status,
                     'start_date': boost.start_date.isoformat() if boost.start_date else None,
-                    'end_date': boost.end_date.isoformat() if boost.end_date else None
+                    'end_date':   boost.end_date.isoformat()   if boost.end_date   else None,
                 })
-            
+
             return Response({
                 'success': True,
-                'boosts': boosts_data,
+                'boosts':  boosts_data,
                 'message': 'Boosts retrieved successfully'
             }, status=status.HTTP_200_OK)
-            
+
         except Shop.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Shop not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({
-                'success': False,
-                'error': f'Error retrieving boosts: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            return Response(
+                {'success': False, 'error': f'Error retrieving boosts: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_reports ────────────────────────────────────────────────────────────
+
     @action(detail=True, methods=['get'], url_path='get_reports')
     def get_reports(self, request, pk=None):
-        """
-        Get reports for a specific shop
-        """
         try:
-            shop = Shop.objects.get(pk=pk)
-            
-            reports = Report.objects.filter(
-                reported_shop=shop
-            ).select_related('reporter').order_by('-created_at')
-            
+            shop    = Shop.objects.get(pk=pk)
+            reports = Report.objects.filter(reported_shop=shop).select_related('reporter').order_by('-created_at')
+
             reports_data = []
             for report in reports:
                 reporter = report.reporter
-                reporter_info = None
-                if reporter:
-                    reporter_info = {
-                        'id': str(reporter.id),
-                        'username': reporter.username,
-                        'email': reporter.email,
-                        'first_name': reporter.first_name,
-                        'last_name': reporter.last_name
-                    }
-                
                 reports_data.append({
                     'id': str(report.id),
-                    'reporter': reporter_info,
-                    'reason': report.reason,
+                    'reporter': {
+                        'id':         str(reporter.id),
+                        'username':   reporter.username,
+                        'email':      reporter.email,
+                        'first_name': reporter.first_name,
+                        'last_name':  reporter.last_name,
+                    } if reporter else None,
+                    'reason':      report.reason,
                     'description': report.description,
-                    'status': report.status,
-                    'created_at': report.created_at.isoformat() if report.created_at else None
+                    'status':      report.status,
+                    'created_at':  report.created_at.isoformat() if report.created_at else None,
                 })
-            
+
             return Response({
                 'success': True,
                 'reports': reports_data,
                 'message': 'Reports retrieved successfully'
             }, status=status.HTTP_200_OK)
-            
+
         except Shop.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Shop not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response({
-                'success': False,
-                'error': f'Error retrieving reports: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            return Response(
+                {'success': False, 'error': f'Error retrieving reports: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── execute_action ─────────────────────────────────────────────────────────
+
     @action(detail=True, methods=['post'], url_path='execute_action')
     def execute_action(self, request, pk=None):
-        """
-        Execute admin actions on a shop (suspend, unsuspend, verify, unverify, delete, approve, reject)
-        """
         try:
-            shop = Shop.objects.get(pk=pk)
-            action = request.data.get('action')
-            reason = request.data.get('reason', '')
+            shop    = Shop.objects.get(pk=pk)
+            action  = request.data.get('action')
+            reason  = request.data.get('reason', '')
             suspension_days = request.data.get('suspension_days')
-            user_id = request.data.get('user_id')  # Get user_id from request data
-            
+            user_id = request.data.get('user_id')
+
             if not action:
-                return Response({
-                    'success': False,
-                    'error': 'Action is required'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get the admin user from the provided user_id
+                return Response({'success': False, 'error': 'Action is required'}, status=status.HTTP_400_BAD_REQUEST)
+
             admin_user = None
             if user_id:
                 try:
                     admin_user = User.objects.get(id=user_id)
                 except User.DoesNotExist:
-                    return Response({
-                        'success': False,
-                        'error': 'Admin user not found'
-                    }, status=status.HTTP_404_NOT_FOUND)
-            
-            # Validate reason for suspend, reject, and delete actions
+                    return Response({'success': False, 'error': 'Admin user not found'}, status=status.HTTP_404_NOT_FOUND)
+
             if action in ['suspend', 'reject', 'delete'] and not reason:
-                return Response({
-                    'success': False,
-                    'error': f'Reason is required for {action} action'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Execute action
-            if action == 'suspend':
-                if not suspension_days:
-                    suspension_days = 7
-                
-                shop.is_suspended = True
-                shop.status = 'Suspended'
-                shop.suspension_reason = reason
-                shop.suspended_until = timezone.now() + timedelta(days=int(suspension_days))
-                
-                # Create notification for shop owner
+                return Response(
+                    {'success': False, 'error': f'Reason is required for {action} action'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            def notify_owner(title, notif_type, message):
                 if shop.customer and shop.customer.customer:
                     Notification.objects.create(
                         user=shop.customer.customer,
-                        title='Shop Suspended',
-                        type='shop_suspension',
-                        message=f'Your shop "{shop.name}" has been suspended. Reason: {reason}'
+                        title=title,
+                        type=notif_type,
+                        message=message
                     )
-                
+
+            if action == 'suspend':
+                suspension_days = int(suspension_days) if suspension_days else 7
+                shop.is_suspended    = True
+                shop.status          = 'Suspended'
+                shop.suspension_reason = reason
+                shop.suspended_until = timezone.now() + timedelta(days=suspension_days)
+                notify_owner('Shop Suspended', 'shop_suspension',
+                             f'Your shop "{shop.name}" has been suspended. Reason: {reason}')
+
             elif action == 'unsuspend':
-                shop.is_suspended = False
-                shop.status = 'Active'
+                shop.is_suspended    = False
+                shop.status          = 'Active'
                 shop.suspension_reason = None
                 shop.suspended_until = None
-                
-                # Create notification for shop owner
-                if shop.customer and shop.customer.customer:
-                    Notification.objects.create(
-                        user=shop.customer.customer,
-                        title='Shop Unsuspended',
-                        type='shop_unsuspension',
-                        message=f'Your shop "{shop.name}" has been unsuspended.'
-                    )
-                
+                notify_owner('Shop Unsuspended', 'shop_unsuspension',
+                             f'Your shop "{shop.name}" has been unsuspended.')
+
             elif action == 'verify':
                 shop.verified = True
-                
-                # Create notification for shop owner
-                if shop.customer and shop.customer.customer:
-                    Notification.objects.create(
-                        user=shop.customer.customer,
-                        title='Shop Verified',
-                        type='shop_verification',
-                        message=f'Your shop "{shop.name}" has been verified!'
-                    )
-                
+                notify_owner('Shop Verified', 'shop_verification',
+                             f'Your shop "{shop.name}" has been verified!')
+
             elif action == 'unverify':
                 shop.verified = False
-                
-                # Create notification for shop owner
-                if shop.customer and shop.customer.customer:
-                    Notification.objects.create(
-                        user=shop.customer.customer,
-                        title='Shop Verification Removed',
-                        type='shop_unverification',
-                        message=f'Verification has been removed from your shop "{shop.name}".'
-                    )
-                
+                notify_owner('Shop Verification Removed', 'shop_unverification',
+                             f'Verification has been removed from your shop "{shop.name}".')
+
             elif action == 'approve':
                 shop.status = 'Active'
-                
-                # Create notification for shop owner
-                if shop.customer and shop.customer.customer:
-                    Notification.objects.create(
-                        user=shop.customer.customer,
-                        title='Shop Approved',
-                        type='shop_approval',
-                        message=f'Your shop "{shop.name}" has been approved and is now active!'
-                    )
-                
+                notify_owner('Shop Approved', 'shop_approval',
+                             f'Your shop "{shop.name}" has been approved and is now active!')
+
             elif action == 'reject':
-                shop.status = 'Rejected'
+                shop.status            = 'Rejected'
                 shop.suspension_reason = reason
-                
-                # Create notification for shop owner
-                if shop.customer and shop.customer.customer:
-                    Notification.objects.create(
-                        user=shop.customer.customer,
-                        title='Shop Rejected',
-                        type='shop_rejection',
-                        message=f'Your shop "{shop.name}" has been rejected. Reason: {reason}'
-                    )
-                
+                notify_owner('Shop Rejected', 'shop_rejection',
+                             f'Your shop "{shop.name}" has been rejected. Reason: {reason}')
+
             elif action == 'delete':
-                # Log the deletion if admin user exists
                 if admin_user:
                     Logs.objects.create(
                         user=admin_user,
                         action=f'Deleted shop: {shop.name} (ID: {shop.id}) - Reason: {reason}'
                     )
-                
-                # Create notification before deletion
-                if shop.customer and shop.customer.customer:
-                    Notification.objects.create(
-                        user=shop.customer.customer,
-                        title='Shop Deleted',
-                        type='shop_deletion',
-                        message=f'Your shop "{shop.name}" has been deleted. Reason: {reason}'
-                    )
-                
-                # Delete the shop
+                notify_owner('Shop Deleted', 'shop_deletion',
+                             f'Your shop "{shop.name}" has been deleted. Reason: {reason}')
                 shop.delete()
-                
                 return Response({
                     'success': True,
-                    'message': f'Shop deleted successfully',
-                    'action': action
+                    'message': 'Shop deleted successfully',
+                    'action':  action
                 }, status=status.HTTP_200_OK)
-            
+
             else:
-                return Response({
-                    'success': False,
-                    'error': f'Invalid action: {action}'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
+                return Response(
+                    {'success': False, 'error': f'Invalid action: {action}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             shop.save()
-            
-            # Log the action if admin user exists
+
             if admin_user:
                 Logs.objects.create(
                     user=admin_user,
                     action=f'{action} on shop: {shop.name} (ID: {shop.id})'
                 )
-            
-            # Return updated shop data
+
             return Response({
                 'success': True,
                 'shop': {
-                    'id': str(shop.id),
-                    'name': shop.name,
-                    'verified': shop.verified,
-                    'status': shop.status,
-                    'is_suspended': shop.is_suspended,
+                    'id':               str(shop.id),
+                    'name':             shop.name,
+                    'verified':         shop.verified,
+                    'status':           shop.status,
+                    'is_suspended':     shop.is_suspended,
                     'suspension_reason': shop.suspension_reason,
-                    'suspended_until': shop.suspended_until.isoformat() if shop.suspended_until else None
+                    'suspended_until':  shop.suspended_until.isoformat() if shop.suspended_until else None,
                 },
                 'message': f'Action {action} completed successfully',
-                'action': action
+                'action':  action
             }, status=status.HTTP_200_OK)
-            
+
         except Shop.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Shop not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+            return Response({'success': False, 'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            print(f"Error executing action: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return Response({
-                'success': False,
-                'error': f'Error executing action: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            import traceback; traceback.print_exc()
+            return Response(
+                {'success': False, 'error': f'Error executing action: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_pending_shops ──────────────────────────────────────────────────────
 
     @action(detail=False, methods=['get'], url_path='get_pending_shops')
     def get_pending_shops(self, request):
@@ -5163,53 +4863,44 @@ class AdminShops(viewsets.ViewSet):
                 if customer and customer.customer:
                     user = customer.customer
                     owner_info = {
-                        'id': str(user.id),
-                        'username': user.username,
-                        'email': user.email,
-                        'first_name': user.first_name,
-                        'last_name': user.last_name,
+                        'id':             str(user.id),
+                        'username':       user.username,
+                        'email':          user.email,
+                        'first_name':     user.first_name,
+                        'last_name':      user.last_name,
                         'contact_number': user.contact_number,
                     }
 
                 shops_data.append({
-                    'id': str(shop.id),
-                    'name': shop.name,
-                    'description': shop.description,
-                    'shop_picture': shop.shop_picture.url if shop.shop_picture else None,
-                    'owner': owner_info,
-                    'province': shop.province,
-                    'city': shop.city,
-                    'barangay': shop.barangay,
-                    'street': shop.street,
+                    'id':             str(shop.id),
+                    'name':           shop.name,
+                    'description':    shop.description,
+                    'shop_picture':   self.get_media_url(shop.shop_picture),  # ← fixed
+                    'owner':          owner_info,
+                    'province':       shop.province,
+                    'city':           shop.city,
+                    'barangay':       shop.barangay,
+                    'street':         shop.street,
                     'contact_number': shop.contact_number,
-                    'status': shop.status,
-                    'verified': shop.verified,
-                    'created_at': shop.created_at.isoformat() if shop.created_at else None,
-                    # ── Legal Documents ──────────────────────────────────────
-                    'business_registration_type': shop.business_registration_type,
-                    'business_registration_number': shop.business_registration_number,
-                    'business_registration_image': request.build_absolute_uri(shop.business_registration_image.url) if shop.business_registration_image else None,
-                    'government_id_type': shop.government_id_type,
-                    'government_id_number': shop.government_id_number,
-                    'government_id_image_front': request.build_absolute_uri(shop.government_id_image_front.url) if shop.government_id_image_front else None,
-                    'government_id_image_back': request.build_absolute_uri(shop.government_id_image_back.url) if shop.government_id_image_back else None,
-                    'business_permit_number': shop.business_permit_number,
-                    'business_permit_image': request.build_absolute_uri(shop.business_permit_image.url) if shop.business_permit_image else None,
-                    'legal_documents_complete': shop.legal_documents_complete,
+                    'status':         shop.status,
+                    'verified':       shop.verified,
+                    'created_at':     shop.created_at.isoformat() if shop.created_at else None,
+                    # ── Legal docs — all via get_media_url ──
+                    **self.build_shop_legal_docs(shop),
                 })
 
             return Response({
-                'success': True,
-                'shops': shops_data,
+                'success':     True,
+                'shops':       shops_data,
                 'total_count': len(shops_data),
-                'message': 'Pending shops retrieved successfully'
+                'message':     'Pending shops retrieved successfully'
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            return Response({
-                'success': False,
-                'error': f'Error retrieving pending shops: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {'success': False, 'error': f'Error retrieving pending shops: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         
 class AdminBoosting(viewsets.ViewSet):
     def parse_date(self, date_str):
@@ -14817,57 +14508,78 @@ class RiderStatus(viewsets.ViewSet):
 
 
 class CustomerShops(APIView):
+
+    # ── Image URL helper ───────────────────────────────────────────────────────
+
+    def get_media_url(self, file_field):
+        """Return a public Supabase URL for any ImageField / FileField, or None."""
+        if not file_field:
+            return None
+        try:
+            return convert_s3_to_public_url(file_field.url)
+        except Exception as e:
+            print(f"Error getting media URL: {e}")
+            return None
+
+    def build_shop_legal_docs(self, shop):
+        """Return all legal-document fields for a shop with proper image URLs."""
+        return {
+            'business_registration_type':   shop.business_registration_type,
+            'business_registration_number': shop.business_registration_number,
+            'business_registration_image':  self.get_media_url(shop.business_registration_image),
+            'government_id_type':           shop.government_id_type,
+            'government_id_number':         shop.government_id_number,
+            'government_id_image_front':    self.get_media_url(shop.government_id_image_front),
+            'government_id_image_back':     self.get_media_url(shop.government_id_image_back),
+            'business_permit_number':       shop.business_permit_number,
+            'business_permit_image':        self.get_media_url(shop.business_permit_image),
+            'legal_documents_complete':     shop.legal_documents_complete,
+        }
+
+    # ── GET ────────────────────────────────────────────────────────────────────
+
     def get(self, request):
-        # Get customer_id from query parameters
         customer_id = request.query_params.get('customer_id')
-        action = request.query_params.get('action')
-        shop_id = request.query_params.get('shop_id')
-        
+        action      = request.query_params.get('action')
+        shop_id     = request.query_params.get('shop_id')
+
         if not customer_id:
             return Response({
                 "success": False,
                 "error": "customer_id parameter is required"
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Handle return address action
+
         if action == 'return_address' and shop_id:
             return self.get_return_address(customer_id, shop_id)
 
         try:
-            # Get the customer object
             customer = Customer.objects.get(customer_id=customer_id)
-            
-            # Filter shops by this customer
             shops_queryset = Shop.objects.filter(customer=customer).order_by('name')
             serializer = ShopSerializer(shops_queryset, many=True, context={'request': request})
-            
+
             return Response({
-                "success": True,
-                "shops": serializer.data,
-                "message": "Shops retrieved successfully",
+                "success":     True,
+                "shops":       serializer.data,
+                "message":     "Shops retrieved successfully",
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
-            
+
         except Customer.DoesNotExist:
             return Response({
-                "success": True,
-                "shops": [],
-                "message": "No customer found with this ID",
+                "success":     True,
+                "shops":       [],
+                "message":     "No customer found with this ID",
                 "data_source": "database"
-            }, status=status.HTTP_200_OK) 
-         
+            }, status=status.HTTP_200_OK)
+
+    # ── POST ───────────────────────────────────────────────────────────────────
+
     def post(self, request):
-        """
-        Create a new shop for a customer with legal requirements
-        """
+        """Create a new shop for a customer with legal requirements."""
         try:
             user_id = request.data.get('customer')
-
             if not user_id:
-                return Response(
-                    {'error': 'User ID is required'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({'error': 'User ID is required'}, status=status.HTTP_400_BAD_REQUEST)
 
             try:
                 user = User.objects.get(id=user_id)
@@ -14878,24 +14590,18 @@ class CustomerShops(APIView):
                     )
                 customer, created = Customer.objects.get_or_create(customer=user)
             except User.DoesNotExist:
-                return Response(
-                    {'error': 'User not found'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+                return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-            # ── Required base fields ─────────────────────────────────────────────
-            required_fields = [
-                'name', 'description', 'province', 'city',
-                'barangay', 'street', 'contact_number'
-            ]
-            missing_fields = [f for f in required_fields if not request.data.get(f)]
+            # ── Required base fields ─────────────────────────────────────────
+            required_fields = ['name', 'description', 'province', 'city', 'barangay', 'street', 'contact_number']
+            missing_fields  = [f for f in required_fields if not request.data.get(f)]
             if missing_fields:
                 return Response(
                     {'error': f'Missing required fields: {", ".join(missing_fields)}'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # ── Required legal fields (text) ─────────────────────────────────────
+            # ── Required legal text fields ───────────────────────────────────
             required_legal_text = [
                 'business_registration_type',
                 'business_registration_number',
@@ -14910,7 +14616,7 @@ class CustomerShops(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # ── Required legal uploads ────────────────────────────────────────────
+            # ── Required legal file uploads ──────────────────────────────────
             required_legal_files = [
                 'business_registration_image',
                 'government_id_image_front',
@@ -14923,7 +14629,7 @@ class CustomerShops(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # ── Validate business_registration_type ──────────────────────────────
+            # ── Validate business_registration_type ──────────────────────────
             reg_type = request.data.get('business_registration_type', '').upper()
             if reg_type not in ['DTI', 'SEC']:
                 return Response(
@@ -14931,7 +14637,7 @@ class CustomerShops(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # ── Field length validation ───────────────────────────────────────────
+            # ── Field length validation ──────────────────────────────────────
             validation_errors = {}
 
             name = request.data.get('name', '').strip()
@@ -14959,7 +14665,7 @@ class CustomerShops(APIView):
             if validation_errors:
                 return Response({'errors': validation_errors}, status=status.HTTP_400_BAD_REQUEST)
 
-            # ── Image validation helper ───────────────────────────────────────────
+            # ── Image validation helper ──────────────────────────────────────
             def validate_image(file, field_name):
                 valid_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
                 valid_mime_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
@@ -14970,13 +14676,13 @@ class CustomerShops(APIView):
                     raise ValueError(f'{field_name}: File size must be less than 5MB')
 
             with transaction.atomic():
-                # Validate all uploaded images before creating anything
+                # Validate all images before writing anything
                 image_fields = [
-                    (request.FILES.get('shop_picture'), 'Shop picture'),
+                    (request.FILES.get('shop_picture'),                'Shop picture'),
                     (request.FILES.get('business_registration_image'), 'Business registration image'),
-                    (request.FILES.get('government_id_image_front'), 'Government ID front'),
-                    (request.FILES.get('government_id_image_back'), 'Government ID back'),
-                    (request.FILES.get('business_permit_image'), 'Business permit image'),
+                    (request.FILES.get('government_id_image_front'),   'Government ID front'),
+                    (request.FILES.get('government_id_image_back'),    'Government ID back'),
+                    (request.FILES.get('business_permit_image'),       'Business permit image'),
                 ]
                 for file, label in image_fields:
                     if file:
@@ -14997,7 +14703,6 @@ class CustomerShops(APIView):
                     status="Pending",
                     total_sales=0,
                     is_suspended=False,
-                    # Legal fields - text
                     business_registration_type=reg_type,
                     business_registration_number=request.data.get('business_registration_number', '').strip(),
                     government_id_type=request.data.get('government_id_type', '').strip(),
@@ -15005,7 +14710,7 @@ class CustomerShops(APIView):
                     business_permit_number=request.data.get('business_permit_number', '').strip(),
                 )
 
-                # Attach all images
+                # Attach images
                 for file_key, field_name in [
                     ('shop_picture',                'shop_picture'),
                     ('business_registration_image', 'business_registration_image'),
@@ -15019,9 +14724,8 @@ class CustomerShops(APIView):
 
                 shop.save()
 
-                # Notify all admins
-                admin_users = User.objects.filter(is_admin=True)
-                for admin_user in admin_users:
+                # Notify admins
+                for admin_user in User.objects.filter(is_admin=True):
                     Notification.objects.create(
                         user=admin_user,
                         title='New Shop Pending Approval',
@@ -15029,39 +14733,33 @@ class CustomerShops(APIView):
                         message=f'A new shop "{shop.name}" has been submitted with legal documents and is awaiting your approval.'
                     )
 
+                # Build response — all images via get_media_url
                 shop_data = {
-                    'id': str(shop.id),
-                    'name': shop.name,
-                    'description': shop.description,
-                    'province': shop.province,
-                    'city': shop.city,
-                    'barangay': shop.barangay,
-                    'street': shop.street,
+                    'id':             str(shop.id),
+                    'name':           shop.name,
+                    'description':    shop.description,
+                    'province':       shop.province,
+                    'city':           shop.city,
+                    'barangay':       shop.barangay,
+                    'street':         shop.street,
                     'contact_number': shop.contact_number,
-                    'customer': str(shop.customer.customer_id) if shop.customer else None,
-                    'verified': shop.verified,
-                    'status': shop.status,
-                    'total_sales': str(shop.total_sales),
-                    'created_at': shop.created_at.isoformat(),
-                    'updated_at': shop.updated_at.isoformat(),
-                    'legal_documents_complete': shop.legal_documents_complete,
-                    'business_registration_type': shop.business_registration_type,
-                    'business_registration_number': shop.business_registration_number,
-                    'government_id_type': shop.government_id_type,
-                    'government_id_number': shop.government_id_number,
-                    'business_permit_number': shop.business_permit_number,
+                    'customer':       str(shop.customer.customer_id) if shop.customer else None,
+                    'verified':       shop.verified,
+                    'status':         shop.status,
+                    'total_sales':    str(shop.total_sales),
+                    'created_at':     shop.created_at.isoformat(),
+                    'updated_at':     shop.updated_at.isoformat(),
+                    'shop_picture':   self.get_media_url(shop.shop_picture),  # ← fixed
+                    **self.build_shop_legal_docs(shop),                        # ← fixed
                 }
-
-                if shop.shop_picture:
-                    shop_data['shop_picture'] = request.build_absolute_uri(shop.shop_picture.url)
 
                 logger.info(f"Shop created (pending): {shop.name} by user {user_id}")
 
                 return Response({
                     'success': True,
                     'message': 'Shop submitted for approval. You will be notified once an admin reviews your application.',
-                    'shop': shop_data,
-                    'id': str(shop.id)
+                    'shop':    shop_data,
+                    'id':      str(shop.id)
                 }, status=status.HTTP_201_CREATED)
 
         except ValueError as e:
@@ -15072,40 +14770,45 @@ class CustomerShops(APIView):
                 {'error': 'An error occurred while creating the shop', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
+    # ── PUT ────────────────────────────────────────────────────────────────────
+
     def put(self, request):
         customer_id = request.data.get('customer_id')
-        action = request.data.get('action')
-        shop_id = request.data.get('shop_id')
-        
+        action      = request.data.get('action')
+        shop_id     = request.data.get('shop_id')
+
         if not customer_id:
             return Response({'error': 'customer_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         if action == 'return_address' and shop_id:
             return self.update_return_address(request, customer_id, shop_id)
-        
+
         return Response({'error': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)
-    
+
+    # ── Helpers ────────────────────────────────────────────────────────────────
+
     def get_return_address(self, customer_id, shop_id):
-        """Get the return address for a specific shop"""
+        """Get the return address for a specific shop."""
         try:
             customer = Customer.objects.get(customer_id=customer_id)
-            shop = Shop.objects.get(id=shop_id, customer=customer)
-            
+            shop     = Shop.objects.get(id=shop_id, customer=customer)
+
             return Response({
                 'success': True,
                 'return_address': {
-                    'province': shop.province,
-                    'city': shop.city,
-                    'barangay': shop.barangay,
-                    'street': shop.street,
+                    'province':       shop.province,
+                    'city':           shop.city,
+                    'barangay':       shop.barangay,
+                    'street':         shop.street,
                     'contact_number': shop.contact_number,
-                    'full_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                    'full_address':   f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}",
                 },
-                'shop_name': shop.name,
-                'shop_id': str(shop.id)
+                'shop_name':    shop.name,
+                'shop_id':      str(shop.id),
+                'shop_picture': self.get_media_url(shop.shop_picture),  # ← fixed
             }, status=status.HTTP_200_OK)
-            
+
         except Customer.DoesNotExist:
             return Response({'error': 'Customer not found'}, status=status.HTTP_404_NOT_FOUND)
         except Shop.DoesNotExist:
@@ -15114,39 +14817,39 @@ class CustomerShops(APIView):
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def update_return_address(self, request, customer_id, shop_id):
-        """Update shop's return address"""
+        """Update shop's return address."""
         try:
             customer = Customer.objects.get(customer_id=customer_id)
-            shop = Shop.objects.get(id=shop_id, customer=customer)
-            
-            # Update fields
-            shop.province = request.data.get('province', shop.province)
-            shop.city = request.data.get('city', shop.city)
-            shop.barangay = request.data.get('barangay', shop.barangay)
-            shop.street = request.data.get('street', shop.street)
+            shop     = Shop.objects.get(id=shop_id, customer=customer)
+
+            shop.province       = request.data.get('province',       shop.province)
+            shop.city           = request.data.get('city',           shop.city)
+            shop.barangay       = request.data.get('barangay',       shop.barangay)
+            shop.street         = request.data.get('street',         shop.street)
             shop.contact_number = request.data.get('contact_number', shop.contact_number)
             shop.save()
-            
+
             return Response({
                 'success': True,
                 'message': 'Return address updated successfully',
                 'return_address': {
-                    'province': shop.province,
-                    'city': shop.city,
-                    'barangay': shop.barangay,
-                    'street': shop.street,
+                    'province':       shop.province,
+                    'city':           shop.city,
+                    'barangay':       shop.barangay,
+                    'street':         shop.street,
                     'contact_number': shop.contact_number,
-                    'full_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
-                }
+                    'full_address':   f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}",
+                },
+                'shop_picture': self.get_media_url(shop.shop_picture),  # ← fixed
             }, status=status.HTTP_200_OK)
-            
+
         except Customer.DoesNotExist:
             return Response({'error': 'Customer not found'}, status=status.HTTP_404_NOT_FOUND)
         except Shop.DoesNotExist:
             return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+            
 class CustomerShopsAddSeller(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_shop(self, request):

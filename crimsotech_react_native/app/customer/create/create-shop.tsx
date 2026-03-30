@@ -17,6 +17,14 @@ import CreateShopForm from './create-shop-form';
 import { MaterialIcons } from '@expo/vector-icons';
 import AxiosInstance from '../../../contexts/axios';
 
+const IMAGE_FIELDS = new Set([
+  'shop_picture',
+  'business_registration_image',
+  'government_id_image_front',
+  'government_id_image_back',
+  'business_permit_image',
+]);
+
 export default function CreateShopPage() {
   const { userId, loading: authLoading } = useAuth();
   const [submitting, setSubmitting] = useState(false);
@@ -28,33 +36,32 @@ export default function CreateShopPage() {
     }
 
     setSubmitting(true);
+
     try {
-      // Create FormData object
       const data = new FormData();
-      
-      // Add form fields
+
       Object.entries(formData).forEach(([key, value]) => {
-        if (value !== null && value !== undefined) {
-          if (key === 'shop_picture' && typeof value === 'object') {
-            // For image files - normalize file-like objects and cast to any so TypeScript accepts FormData.append
-            const file = value as any;
-            if (file instanceof Blob) {
-              data.append(key, file);
-            } else if (file && file.uri) {
-              // React Native file object: { uri, name?, type? }
-              data.append(key, { uri: file.uri, name: file.name ?? 'photo.jpg', type: file.type ?? 'image/jpeg' } as any);
-            } else {
-              // Fallback: append serialized object
-              data.append(key, JSON.stringify(file));
-            }
-          } else {
-            data.append(key, String(value));
+        if (value === null || value === undefined) return;
+
+        if (IMAGE_FIELDS.has(key) && typeof value === 'object') {
+          const file = value as any;
+          if (file instanceof Blob) {
+            data.append(key, file);
+          } else if (file && file.uri) {
+            data.append(key, {
+              uri: file.uri,
+              name: file.name ?? `${key}_${Date.now()}.jpg`,
+              type: file.type ?? 'image/jpeg',
+            } as any);
           }
+          // if neither Blob nor uri, skip — don't append garbage
+        } else if (!IMAGE_FIELDS.has(key)) {
+          data.append(key, String(value));
         }
       });
 
-      // Add user ID
-      data.append('customer', userId);
+      // Add user ID as customer
+      data.append('customer', String(userId));
 
       const response = await AxiosInstance.post('/customer-shops/', data, {
         headers: {
@@ -66,7 +73,7 @@ export default function CreateShopPage() {
       if (response.data.success) {
         Alert.alert(
           'Success',
-          'Shop created successfully!',
+          'Shop submitted for approval!',
           [
             {
               text: 'Start Selling',
@@ -83,16 +90,14 @@ export default function CreateShopPage() {
       }
     } catch (error: any) {
       console.error('Shop creation error:', error);
-      
+
       let errorMessage = 'Failed to create shop';
-      
+
       if (error.response) {
-        // Server responded with error
         const serverError = error.response.data;
         if (serverError.error) {
           errorMessage = serverError.error;
         } else if (serverError.errors) {
-          // Handle validation errors
           const errorList = Object.entries(serverError.errors)
             .map(([field, message]) => `${field}: ${message}`)
             .join('\n');
@@ -101,10 +106,9 @@ export default function CreateShopPage() {
           errorMessage = serverError.details;
         }
       } else if (error.request) {
-        // Request made but no response
         errorMessage = 'Network error. Please check your connection.';
       }
-      
+
       Alert.alert('Error', errorMessage);
     } finally {
       setSubmitting(false);
@@ -114,9 +118,9 @@ export default function CreateShopPage() {
   if (authLoading) {
     return (
       <SafeAreaView style={styles.container}>
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color="#6366F1" />
-          </View>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#6366F1" />
+        </View>
       </SafeAreaView>
     );
   }
@@ -124,69 +128,69 @@ export default function CreateShopPage() {
   if (!userId) {
     return (
       <SafeAreaView style={styles.container}>
-          <View style={styles.center}>
-            <MaterialIcons name="store" size={64} color="#9CA3AF" />
-            <Text style={styles.message}>Please login to create a shop</Text>
-            <TouchableOpacity 
-              style={styles.loginButton}
-              onPress={() => router.push('/(auth)/login')}
-            >
-              <Text style={styles.loginButtonText}>Go to Login</Text>
-            </TouchableOpacity>
-          </View>
+        <View style={styles.center}>
+          <MaterialIcons name="store" size={64} color="#9CA3AF" />
+          <Text style={styles.message}>Please login to create a shop</Text>
+          <TouchableOpacity
+            style={styles.loginButton}
+            onPress={() => router.push('/(auth)/login')}
+          >
+            <Text style={styles.loginButtonText}>Go to Login</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={styles.container}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.keyboardView}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardView}
+      >
+        <ScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
         >
-          <ScrollView 
-            style={styles.scrollView}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.scrollContent}
-          >
-            <View style={styles.header}>
-              <TouchableOpacity 
-                style={styles.backButton}
-                onPress={() => router.back()}
-              >
-                <MaterialIcons name="arrow-back" size={24} color="#374151" />
-              </TouchableOpacity>
-              
-              <View style={styles.headerContent}>
-                <Text style={styles.title}>Create Your Shop</Text>
-                <Text style={styles.subtitle}>
-                  Set up your shop to start selling products
-                </Text>
-              </View>
-            </View>
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => router.back()}
+            >
+              <MaterialIcons name="arrow-back" size={24} color="#374151" />
+            </TouchableOpacity>
 
-            <View style={styles.formContainer}>
-              <CreateShopForm 
-                onSubmit={handleCreateShop}
-                submitting={submitting}
-              />
+            <View style={styles.headerContent}>
+              <Text style={styles.title}>Create Your Shop</Text>
+              <Text style={styles.subtitle}>
+                Set up your shop to start selling products
+              </Text>
             </View>
+          </View>
 
-            <View style={styles.tipsSection}>
-              <MaterialIcons name="lightbulb" size={20} color="#F59E0B" />
-              <View style={styles.tipsContent}>
-                <Text style={styles.tipsTitle}>Tips for a successful shop</Text>
-                <Text style={styles.tipsText}>
-                  • Choose a clear shop name that represents your brand{'\n'}
-                  • Add a high-quality profile picture{'\n'}
-                  • Write a detailed description of what you sell{'\n'}
-                  • Provide accurate contact information{'\n'}
-                  • Complete all required fields marked with *
-                </Text>
-              </View>
+          <View style={styles.formContainer}>
+            <CreateShopForm
+              onSubmit={handleCreateShop}
+              submitting={submitting}
+            />
+          </View>
+
+          <View style={styles.tipsSection}>
+            <MaterialIcons name="lightbulb" size={20} color="#F59E0B" />
+            <View style={styles.tipsContent}>
+              <Text style={styles.tipsTitle}>Tips for a successful shop</Text>
+              <Text style={styles.tipsText}>
+                • Choose a clear shop name that represents your brand{'\n'}
+                • Add a high-quality profile picture{'\n'}
+                • Write a detailed description of what you sell{'\n'}
+                • Provide accurate contact information{'\n'}
+                • Complete all required fields marked with *
+              </Text>
             </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

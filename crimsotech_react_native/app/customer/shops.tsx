@@ -24,7 +24,8 @@ interface Shop {
   id: string;
   name: string;
   description: string;
-  shop_picture?: string;
+  shop_picture_url?: string | null; // ✅ public CDN URL (use this first)
+  shop_picture?: string | null;     // ✅ S3 URL (fallback)
   contact_number: string;
   verified: boolean;
   status: string;
@@ -50,13 +51,20 @@ interface ShopsResponse {
   data_source: string;
 }
 
+// ── Helper ────────────────────────────────────────────────────────────────────
+const isPending = (shop: Shop) =>
+  shop.status === "Pending" || (!shop.verified && shop.status !== "Active");
+
+// ✅ Returns the best available image URI for a shop
+const getShopImageUri = (shop: Shop): string | null =>
+  shop.shop_picture_url || shop.shop_picture || null;
+
 export default function ShopsPage() {
   const { userId, loading: authLoading, userRole } = useAuth();
   const [shops, setShops] = useState<Shop[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const params = useLocalSearchParams();
-
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
   const [selectedLoading, setSelectedLoading] = useState(false);
 
@@ -66,16 +74,12 @@ export default function ShopsPage() {
       setLoading(false);
       return;
     }
-
     try {
       setLoading(true);
       const response = await AxiosInstance.get<ShopsResponse>(
         "/customer-shops/",
-        {
-          params: { customer_id: userId },
-        },
+        { params: { customer_id: userId } }
       );
-
       if (response.data.success) {
         setShops(response.data.shops || []);
       } else {
@@ -83,7 +87,6 @@ export default function ShopsPage() {
       }
     } catch (error: any) {
       console.error("Error fetching shops:", error);
-
       let errorMessage = "Failed to load shops";
       if (error.response?.status === 400) {
         errorMessage = error.response.data?.error || "Customer ID is required";
@@ -92,7 +95,6 @@ export default function ShopsPage() {
       } else if (!error.response) {
         errorMessage = "Network error. Please check your connection.";
       }
-
       Alert.alert("Error", errorMessage);
       setShops([]);
     } finally {
@@ -133,9 +135,23 @@ export default function ShopsPage() {
       .join(", ");
   };
 
-  // Shop Card Component - Edge to Edge
+  // ── Shop Card ───────────────────────────────────────────────────────────────
   const ShopCard = ({ shop }: { shop: Shop }) => {
     const location = getLocationString(shop);
+    const pending = isPending(shop);
+    const imageUri = getShopImageUri(shop); // ✅ resolve best image URL
+
+    const handleManageShop = () => {
+      if (pending) {
+        Alert.alert(
+          "Shop Pending Approval",
+          "Your shop is currently under review by our team. You'll be notified once it's approved.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+      router.push(`/seller/dashboard?shopId=${shop.id}`);
+    };
 
     return (
       <TouchableOpacity
@@ -144,17 +160,18 @@ export default function ShopsPage() {
         onPress={() => setSelectedShop(shop)}
       >
         <View style={styles.shopCardHeader}>
-          {shop.shop_picture ? (
+          {/* ✅ Fixed: use resolved imageUri */}
+          {imageUri ? (
             <Image
-              source={{ uri: shop.shop_picture }}
+              source={{ uri: imageUri }}
               style={styles.shopImage}
+              resizeMode="cover"
             />
           ) : (
             <View style={[styles.shopImage, styles.shopImagePlaceholder]}>
               <MaterialIcons name="store" size={32} color="#6B7280" />
             </View>
           )}
-
           <View style={styles.shopInfo}>
             <View style={styles.shopNameRow}>
               <Text style={styles.shopName} numberOfLines={1}>
@@ -166,28 +183,47 @@ export default function ShopsPage() {
                   <Text style={styles.verifiedText}>Verified</Text>
                 </View>
               )}
+              {pending && (
+                <View style={styles.pendingBadge}>
+                  <MaterialIcons name="hourglass-empty" size={12} color="#fff" />
+                  <Text style={styles.pendingBadgeText}>Pending</Text>
+                </View>
+              )}
             </View>
-
             <Text style={styles.shopStatus}>
               Status:{" "}
               <Text
                 style={[
                   styles.statusText,
                   {
-                    color: shop.status === "Active" ? "#059669" : "#DC2626",
+                    color:
+                      shop.status === "Active"
+                        ? "#059669"
+                        : pending
+                        ? "#D97706"
+                        : "#DC2626",
                   },
                 ]}
               >
                 {shop.status} {shop.is_suspended && "(Suspended)"}
               </Text>
             </Text>
-
             <Text style={styles.shopContact}>
               <MaterialIcons name="phone" size={12} color="#6B7280" />{" "}
               {shop.contact_number}
             </Text>
           </View>
         </View>
+
+        {/* Pending notice banner */}
+        {pending && (
+          <View style={styles.pendingBanner}>
+            <MaterialIcons name="info-outline" size={16} color="#92400E" />
+            <Text style={styles.pendingBannerText}>
+              Your shop is under review. Management will be available once approved.
+            </Text>
+          </View>
+        )}
 
         <Text style={styles.shopDescription} numberOfLines={2}>
           {shop.description}
@@ -209,16 +245,12 @@ export default function ShopsPage() {
             </Text>
             <Text style={styles.statLabel}>Total Sales</Text>
           </View>
-
           <View style={styles.statDivider} />
-
           <View style={styles.statItem}>
             <Text style={styles.statNumber}>{shop.follower_count}</Text>
             <Text style={styles.statLabel}>Followers</Text>
           </View>
-
           <View style={styles.statDivider} />
-
           <View style={styles.statItem}>
             <Text style={styles.statNumber}>{formatDate(shop.created_at)}</Text>
             <Text style={styles.statLabel}>Created</Text>
@@ -226,12 +258,23 @@ export default function ShopsPage() {
         </View>
 
         <TouchableOpacity
-          style={styles.manageButton}
-          activeOpacity={0.9}
-          onPress={() => router.push(`/seller/dashboard?shopId=${shop.id}`)}
+          style={[styles.manageButton, pending && styles.manageButtonDisabled]}
+          activeOpacity={pending ? 1 : 0.9}
+          onPress={handleManageShop}
         >
-          <Text style={styles.manageButtonText}>Manage Shop</Text>
-          <MaterialIcons name="arrow-forward" size={16} color="#111827" />
+          {pending ? (
+            <>
+              <MaterialIcons name="hourglass-empty" size={16} color="#9CA3AF" />
+              <Text style={styles.manageButtonTextDisabled}>
+                Awaiting Approval
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.manageButtonText}>Manage Shop</Text>
+              <MaterialIcons name="arrow-forward" size={16} color="#111827" />
+            </>
+          )}
         </TouchableOpacity>
       </TouchableOpacity>
     );
@@ -302,7 +345,7 @@ export default function ShopsPage() {
           />
         }
       >
-        {/* Header - Edge to Edge */}
+        {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <TouchableOpacity
@@ -311,7 +354,6 @@ export default function ShopsPage() {
             >
               <MaterialIcons name="arrow-back" size={24} color="#111827" />
             </TouchableOpacity>
-
             <View>
               <Text style={styles.title}>My Shops</Text>
               <Text style={styles.subtitle}>
@@ -319,7 +361,6 @@ export default function ShopsPage() {
               </Text>
             </View>
           </View>
-
           <TouchableOpacity
             style={styles.createButton}
             onPress={() => router.push("/customer/create/create-shop")}
@@ -329,7 +370,7 @@ export default function ShopsPage() {
           </TouchableOpacity>
         </View>
 
-        {/* Selected Shop Details - Edge to Edge */}
+        {/* Selected Shop Details */}
         {selectedLoading ? (
           <View style={{ padding: 16 }}>
             <ActivityIndicator size="small" color="#111827" />
@@ -338,41 +379,46 @@ export default function ShopsPage() {
           <View style={styles.selectedShopCard}>
             <Text style={styles.selectedShopTitle}>Selected Shop</Text>
             <View style={styles.selectedShopContent}>
-              {selectedShop.shop_picture ? (
+              {/* ✅ Fixed: use resolved imageUri for selected shop too */}
+              {getShopImageUri(selectedShop) ? (
                 <Image
-                  source={{ uri: selectedShop.shop_picture }}
+                  source={{ uri: getShopImageUri(selectedShop)! }}
                   style={styles.selectedShopImage}
+                  resizeMode="cover"
                 />
               ) : (
                 <View
-                  style={[
-                    styles.selectedShopImage,
-                    styles.shopImagePlaceholder,
-                  ]}
+                  style={[styles.selectedShopImage, styles.shopImagePlaceholder]}
                 >
                   <MaterialIcons name="store" size={28} color="#6B7280" />
                 </View>
               )}
-
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.shopName}>{selectedShop.name}</Text>
                 <Text style={styles.shopDescription} numberOfLines={2}>
                   {selectedShop.description}
                 </Text>
-                <TouchableOpacity
-                  style={styles.viewDetailsButton}
-                  onPress={() =>
-                    router.push(`/customer/shops?shopId=${selectedShop.id}`)
-                  }
-                >
-                  <Text style={styles.viewDetailsText}>View in list</Text>
-                </TouchableOpacity>
+                {!isPending(selectedShop) && (
+                  <TouchableOpacity
+                    style={styles.viewDetailsButton}
+                    onPress={() =>
+                      router.push(`/customer/shops?shopId=${selectedShop.id}`)
+                    }
+                  >
+                    <Text style={styles.viewDetailsText}>View in list</Text>
+                  </TouchableOpacity>
+                )}
+                {isPending(selectedShop) && (
+                  <Text style={styles.pendingNote}>
+                    Awaiting admin approval
+                  </Text>
+                )}
               </View>
             </View>
           </View>
         ) : null}
 
-        {/* No shops state - Edge to Edge */}
+        {/* No shops state */}
         {shops.length === 0 ? (
           <View style={styles.emptyContainer}>
             <MaterialIcons name="storefront" size={80} color="#E5E7EB" />
@@ -389,7 +435,6 @@ export default function ShopsPage() {
             </TouchableOpacity>
           </View>
         ) : (
-          /* Shops List - Edge to Edge cards */
           <View style={styles.shopsList}>
             {shops.map((shop) => (
               <ShopCard key={shop.id} shop={shop} />
@@ -402,25 +447,10 @@ export default function ShopsPage() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F8F9FA",
-  },
-  scrollView: {
-    flex: 1,
-  },
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: "#6B7280",
-  },
-  // Header - Edge to Edge
+  container: { flex: 1, backgroundColor: "#F8F9FA" },
+  scrollView: { flex: 1 },
+  center: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 },
+  loadingText: { marginTop: 12, fontSize: 14, color: "#6B7280" },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -431,18 +461,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
-    // Removed marginHorizontal
   },
-  title: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#6B7280",
-    marginTop: 4,
-  },
+  headerLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+  backButton: { padding: 8, borderRadius: 8, marginRight: 4 },
+  title: { fontSize: 24, fontWeight: "700", color: "#111827" },
+  subtitle: { fontSize: 14, color: "#6B7280", marginTop: 4 },
   createButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -452,57 +475,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     gap: 8,
   },
-  createButtonText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  message: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#374151",
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  subMessage: {
-    fontSize: 14,
-    color: "#6B7280",
-    textAlign: "center",
-    marginBottom: 24,
-  },
-  loginButton: {
-    backgroundColor: "#111827",
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  loginButtonText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  // Empty state - Edge to Edge
-  emptyContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 48,
-    paddingHorizontal: 20,
-    // Removed marginHorizontal
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#374151",
-    marginTop: 20,
-    marginBottom: 8,
-  },
-  emptyText: {
-    fontSize: 15,
-    color: "#6B7280",
-    textAlign: "center",
-    marginBottom: 24,
-    lineHeight: 22,
-  },
+  createButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "600" },
+  message: { fontSize: 18, fontWeight: "600", color: "#374151", marginTop: 16, marginBottom: 8 },
+  subMessage: { fontSize: 14, color: "#6B7280", textAlign: "center", marginBottom: 24 },
+  loginButton: { backgroundColor: "#111827", paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
+  loginButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
+  emptyContainer: { alignItems: "center", justifyContent: "center", paddingVertical: 48, paddingHorizontal: 20 },
+  emptyTitle: { fontSize: 20, fontWeight: "700", color: "#374151", marginTop: 20, marginBottom: 8 },
+  emptyText: { fontSize: 15, color: "#6B7280", textAlign: "center", marginBottom: 24, lineHeight: 22 },
   emptyButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -512,65 +492,24 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     gap: 8,
   },
-  emptyButtonText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  // Shops List container - Edge to Edge
-  shopsList: {
-    padding: 20,
-    // Removed marginHorizontal
-  },
-  // Shop Card - Edge to Edge
+  emptyButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
+  shopsList: { padding: 20 },
   shopCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
-    // Removed marginHorizontal
     ...Platform.select({
-      ios: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 3,
-      },
+      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+      android: { elevation: 3 },
     }),
   },
-  shopCardHeader: {
-    flexDirection: "row",
-    marginBottom: 12,
-  },
-  shopImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    backgroundColor: "#F3F4F6",
-  },
-  shopImagePlaceholder: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  shopInfo: {
-    flex: 1,
-    marginLeft: 12,
-    justifyContent: "center",
-  },
-  shopNameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  shopName: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111827",
-    flex: 1,
-  },
+  shopCardHeader: { flexDirection: "row", marginBottom: 12 },
+  shopImage: { width: 60, height: 60, borderRadius: 8, backgroundColor: "#F3F4F6" },
+  shopImagePlaceholder: { justifyContent: "center", alignItems: "center" },
+  shopInfo: { flex: 1, marginLeft: 12, justifyContent: "center" },
+  shopNameRow: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
+  shopName: { fontSize: 16, fontWeight: "700", color: "#111827", flex: 1 },
   verifiedBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -581,42 +520,36 @@ const styles = StyleSheet.create({
     gap: 4,
     marginLeft: 8,
   },
-  verifiedText: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: "#FFFFFF",
-  },
-  shopStatus: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginBottom: 4,
-  },
-  statusText: {
-    fontWeight: "600",
-  },
-  shopContact: {
-    fontSize: 12,
-    color: "#6B7280",
+  verifiedText: { fontSize: 10, fontWeight: "600", color: "#FFFFFF" },
+  pendingBadge: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "#D97706",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 4,
+    marginLeft: 8,
   },
-  shopDescription: {
-    fontSize: 13,
-    color: "#4B5563",
-    lineHeight: 18,
-    marginBottom: 12,
-  },
-  locationRow: {
+  pendingBadgeText: { fontSize: 10, fontWeight: "600", color: "#FFFFFF" },
+  pendingBanner: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: 8,
+    padding: 10,
     marginBottom: 12,
+    gap: 8,
   },
-  locationText: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginLeft: 6,
-    flex: 1,
-  },
+  pendingBannerText: { flex: 1, fontSize: 12, color: "#92400E", lineHeight: 16 },
+  shopStatus: { fontSize: 12, color: "#6B7280", marginBottom: 4 },
+  statusText: { fontWeight: "600" },
+  shopContact: { fontSize: 12, color: "#6B7280" },
+  shopDescription: { fontSize: 13, color: "#4B5563", lineHeight: 18, marginBottom: 12 },
+  locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+  locationText: { fontSize: 12, color: "#6B7280", marginLeft: 6, flex: 1 },
   shopStats: {
     flexDirection: "row",
     backgroundColor: "#F9FAFB",
@@ -624,24 +557,10 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 12,
   },
-  statItem: {
-    flex: 1,
-    alignItems: "center",
-  },
-  statNumber: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#111827",
-    marginBottom: 2,
-  },
-  statLabel: {
-    fontSize: 10,
-    color: "#6B7280",
-  },
-  statDivider: {
-    width: 1,
-    backgroundColor: "#E5E7EB",
-  },
+  statItem: { flex: 1, alignItems: "center" },
+  statNumber: { fontSize: 12, fontWeight: "700", color: "#111827", marginBottom: 2 },
+  statLabel: { fontSize: 10, color: "#6B7280" },
+  statDivider: { width: 1, backgroundColor: "#E5E7EB" },
   manageButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -651,12 +570,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     gap: 8,
   },
-  manageButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  /* Selected shop highlight - Edge to Edge */
+  manageButtonDisabled: { backgroundColor: "#F9FAFB" },
+  manageButtonText: { fontSize: 14, fontWeight: "600", color: "#111827" },
+  manageButtonTextDisabled: { fontSize: 14, fontWeight: "600", color: "#9CA3AF" },
   selectedShopCard: {
     backgroundColor: "#FFFFFF",
     marginHorizontal: isSmallDevice ? 12 : 20,
@@ -666,30 +582,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
-  selectedShopTitle: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#6B7280",
-    marginBottom: 8,
-  },
-  selectedShopContent: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  selectedShopImage: {
-    width: 64,
-    height: 64,
-    borderRadius: 8,
-    backgroundColor: "#F3F4F6",
-  },
-  viewDetailsButton: {
-    marginTop: 8,
-    paddingVertical: 6,
-  },
-  viewDetailsText: {
-    color: "#111827",
-    fontWeight: "600",
-  },
+  selectedShopTitle: { fontSize: 13, fontWeight: "600", color: "#6B7280", marginBottom: 8 },
+  selectedShopContent: { flexDirection: "row", alignItems: "center" },
+  selectedShopImage: { width: 64, height: 64, borderRadius: 8, backgroundColor: "#F3F4F6" },
+  viewDetailsButton: { marginTop: 8, paddingVertical: 6 },
+  viewDetailsText: { color: "#111827", fontWeight: "600" },
+  pendingNote: { marginTop: 6, fontSize: 12, color: "#D97706", fontWeight: "500" },
   helpSection: {
     flexDirection: "row",
     alignItems: "center",
@@ -701,42 +599,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
-  helpContent: {
-    flex: 1,
-    marginLeft: 12,
-    marginRight: 12,
-  },
-  helpTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 2,
-  },
-  helpText: {
-    fontSize: 12,
-    color: "#6B7280",
-    lineHeight: 16,
-  },
-  helpButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  helpButtonText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#4B5563",
-  },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  backButton: {
-    padding: 8,
-    borderRadius: 8,
-    marginRight: 4,
-  },
+  helpContent: { flex: 1, marginLeft: 12, marginRight: 12 },
+  helpTitle: { fontSize: 14, fontWeight: "600", color: "#111827", marginBottom: 2 },
+  helpText: { fontSize: 12, color: "#6B7280", lineHeight: 16 },
+  helpButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: "#E5E7EB" },
+  helpButtonText: { fontSize: 12, fontWeight: "600", color: "#4B5563" },
 });

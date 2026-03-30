@@ -41,7 +41,8 @@ ALLOWED_HOSTS = [
     '192.168.254.101',
     '192.168.254.102',
     '192.168.254.104',
-    'crimsotechreactnative',  # ✅ Add custom scheme host
+    '192.168.254.108',
+    'crimsotechreactnative',
 ]
 
 # Application definition
