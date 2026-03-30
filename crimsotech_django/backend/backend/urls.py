@@ -57,7 +57,6 @@ router.register(r'personal-refunds', PersonalRefundViewSet, basename='my-refund'
 router.register(r'withdrawal-requests', WithdrawalRequestViewSet, basename='withdrawal-requests')
 
 router.register(r'order-successful', OrderSuccessful, basename='order-successful')
-# router.register(r'user-payment-methods', UserPaymentMethodViewSet, basename='userpaymentmethod')
 router.register(r'user-payment-details', UserPaymentDetailsViewSet, basename='userpaymentdetails')
 router.register(r'arrange-shipment', ArrangeShipment, basename='arrange-shipment')
 router.register(r'rider-orders-active', RiderOrdersActive, basename='rider-orders-active')
@@ -76,7 +75,6 @@ router.register(r'rider-history', RiderOrderHistoryViewSet, basename='rider-hist
 router.register(r'rider-schedule', RiderScheduleViewSet, basename='rider-schedule')
 router.register(r'rider-deivery', RiderDeliveryViewSet, basename='rider-delivery')
 
-
 router.register(r'proof-management', ProofManagementViewSet, basename='proof-management')
 router.register(r'rider-proof', RiderProofViewSet, basename='rider-proof')
 router.register(r'rider-profile', RiderProfileViewSet, basename='rider-profile')
@@ -86,19 +84,67 @@ router.register(r'wallet', UserWalletViewSet, basename='wallet')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/checkout-order/get_order_details/<uuid:order_id>/', CheckoutOrder.as_view({'get': 'get_order_details'}), name='get_order_details'),
-    
-    # ✅ ADD EXPLICIT URLS FOR MAYA ENDPOINTS (both with and without trailing slashes)
-    path('api/checkout-order/initiate_maya_payment', CheckoutOrder.as_view({'post': 'initiate_maya_payment'}), name='initiate-maya-payment'),
-    path('api/checkout-order/initiate_maya_payment/', CheckoutOrder.as_view({'post': 'initiate_maya_payment'}), name='initiate-maya-payment-slash'),
-    path('api/checkout-order/maya-success', CheckoutOrder.as_view({'get': 'maya_success'}), name='maya-success'),
-    path('api/checkout-order/maya-success/', CheckoutOrder.as_view({'get': 'maya_success'}), name='maya-success-slash'),
-    path('api/checkout-order/maya-failure', CheckoutOrder.as_view({'get': 'maya_failure'}), name='maya-failure'),
-    path('api/checkout-order/maya-failure/', CheckoutOrder.as_view({'get': 'maya_failure'}), name='maya-failure-slash'),
-    path('api/checkout-order/maya-cancel', CheckoutOrder.as_view({'get': 'maya_cancel'}), name='maya-cancel'),
-    path('api/checkout-order/maya-cancel/', CheckoutOrder.as_view({'get': 'maya_cancel'}), name='maya-cancel-slash'),
-    
+
+    # ── CheckoutOrder explicit paths ────────────────────────────────────────
+    path('api/checkout-order/get_order_details/<uuid:order_id>/',
+         CheckoutOrder.as_view({'get': 'get_order_details'}),
+         name='get_order_details'),
+
+    path('api/checkout-order/initiate_maya_payment',
+         CheckoutOrder.as_view({'post': 'initiate_maya_payment'}),
+         name='initiate-maya-payment'),
+    path('api/checkout-order/initiate_maya_payment/',
+         CheckoutOrder.as_view({'post': 'initiate_maya_payment'}),
+         name='initiate-maya-payment-slash'),
+
+    path('api/checkout-order/maya-success',
+         CheckoutOrder.as_view({'get': 'maya_success'}),
+         name='maya-success'),
+    path('api/checkout-order/maya-success/',
+         CheckoutOrder.as_view({'get': 'maya_success'}),
+         name='maya-success-slash'),
+
+    path('api/checkout-order/maya-failure',
+         CheckoutOrder.as_view({'get': 'maya_failure'}),
+         name='maya-failure'),
+    path('api/checkout-order/maya-failure/',
+         CheckoutOrder.as_view({'get': 'maya_failure'}),
+         name='maya-failure-slash'),
+
+    path('api/checkout-order/maya-cancel',
+         CheckoutOrder.as_view({'get': 'maya_cancel'}),
+         name='maya-cancel'),
+    path('api/checkout-order/maya-cancel/',
+         CheckoutOrder.as_view({'get': 'maya_cancel'}),
+         name='maya-cancel-slash'),
+
+    # ── SellerOrderList explicit detail paths ───────────────────────────────
+    # These are needed because Order uses a custom PK field name ('order')
+    # which prevents DRF's router from correctly resolving detail routes.
+    path('api/seller-order-list/<uuid:pk>/available_actions/',
+         SellerOrderList.as_view({'get': 'available_actions'}),
+         name='seller-order-available-actions'),
+
+    path('api/seller-order-list/<uuid:pk>/update_status/',
+         SellerOrderList.as_view({'patch': 'update_status'}),
+         name='seller-order-update-status'),
+
+    path('api/seller-order-list/<uuid:pk>/prepare_shipment/',
+         SellerOrderList.as_view({'post': 'prepare_shipment'}),
+         name='seller-order-prepare-shipment'),
+
+    path('api/seller-order-list/<uuid:pk>/generate_waybill/',
+         SellerOrderList.as_view({'get': 'generate_waybill'}),
+         name='seller-order-generate-waybill'),
+
+    path('api/seller-order-list/<uuid:pk>/rider_response/',
+         SellerOrderList.as_view({'post': 'rider_response'}),
+         name='seller-order-rider-response'),
+
+    # ── Router (keep AFTER all explicit paths) ──────────────────────────────
     path('api/', include(router.urls)),
+
+    # ── Remaining explicit paths ────────────────────────────────────────────
     path('', UserView.as_view(), name='user-list'),
     path('api/customer-shops/', CustomerShops.as_view(), name='customer-shops'),
     path('api/customer-favorites/', CustomerFavoritesView.as_view(), name='customer-favorites'),
@@ -106,37 +152,17 @@ urlpatterns = [
     path('api/shops/<uuid:shop_id>/', ViewShopAPIView.as_view(), name='view-shop'),
     path('api/profile/', ProfileView.as_view(), name='profile'),
     path('api/rider-wallet/', RiderWalletView.as_view(), name='rider-wallet'),
-    # path('profile/payment-methods/', UserPaymentMethodsView.as_view(), name='payment-methods'),
-    # path('profile/payment-methods/<uuid:method_id>/', UserPaymentMethodsView.as_view(), name='payment-method-detail'),
 
-
-    # ==================== CART ENDPOINTS ====================
-    
-    # GET all cart items (no item_id in URL)
+    # ── Cart endpoints ──────────────────────────────────────────────────────
     path('api/view-cart/', CartListView.as_view(), name='view-cart'),
-    
-    # PUT for updating cart item quantity
     path('api/view-cart/update/<uuid:item_id>/', CartListView.as_view(), name='update-cart-item'),
-    
-    # DELETE for removing a specific cart item
     path('api/view-cart/delete/<uuid:item_id>/', CartListView.as_view(), name='delete-cart-item'),
-    
-    # GET cart item count (fixes your 404 error)
     path('api/cart/count/', CartCountView.as_view(), name='cart-count'),
-    
-    # GET a single cart item details
     path('api/cart/item/<uuid:item_id>/', CartItemDetailView.as_view(), name='cart-item-detail'),
-    
-    # POST bulk update multiple cart items at once
     path('api/cart/bulk-update/', CartBulkUpdateView.as_view(), name='cart-bulk-update'),
-    
-    # DELETE clear entire cart
     path('api/cart/clear/', CartClearView.as_view(), name='cart-clear'),
 
     path('api/reviews/', ReviewView.as_view(), name='review-list-create'),
-    
-    
-    # ========================================================
 
     path('api/register/', Register.as_view(), name='register'),
     path('api/login/', Login.as_view(), name='login'),

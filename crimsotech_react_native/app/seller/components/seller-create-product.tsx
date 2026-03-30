@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   Alert,
   SafeAreaView,
+  StatusBar,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -35,8 +37,7 @@ interface Category {
 
 export default function CreateProduct() {
   const router = useRouter();
-  const { shopId, productId } = useLocalSearchParams<{ shopId: string; productId?: string }>();
-  const { userId } = useAuth();
+  const { shopId } = useLocalSearchParams<{ shopId: string }>();
   
   const [loading, setLoading] = useState(true);
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
@@ -50,43 +51,26 @@ export default function CreateProduct() {
 
   const fetchInitialData = async () => {
     try {
-      // Fetch shop details
       if (shopId) {
-        try {
-          const shopResponse = await AxiosInstance.get('/shop-add-product/get_shop/', {
-            headers: { 'X-Shop-Id': shopId }
-          });
-          if (shopResponse.data.success) {
-            setSelectedShop(shopResponse.data.shop);
-          }
-        } catch (error) {
-          console.error('Failed to fetch shop:', error);
+        const shopResponse = await AxiosInstance.get('/shop-add-product/get_shop/', {
+          headers: { 'X-Shop-Id': shopId }
+        });
+        if (shopResponse.data.success) {
+          setSelectedShop(shopResponse.data.shop);
         }
       }
 
-      // Fetch global categories
-      try {
-        const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
-        if (categoriesResponse.data.success) {
-          setGlobalCategories(categoriesResponse.data.categories || []);
-        }
-      } catch (error) {
-        console.error('Failed to fetch categories:', error);
+      const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
+      if (categoriesResponse.data.success) {
+        setGlobalCategories(categoriesResponse.data.categories || []);
       }
 
-      // Fetch model classes
-      try {
-        const classesResponse = await AxiosInstance.get('/classes/');
-        if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
-          setModelClasses(classesResponse.data.classes);
-        }
-      } catch (error) {
-        console.error('Failed to fetch model classes:', error);
+      const classesResponse = await AxiosInstance.get('/classes/');
+      if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
+        setModelClasses(classesResponse.data.classes);
       }
-
     } catch (error) {
       console.error('Error fetching initial data:', error);
-      Alert.alert('Error', 'Failed to load required data');
     } finally {
       setLoading(false);
     }
@@ -100,86 +84,70 @@ export default function CreateProduct() {
     }
   };
 
-  if (!shopId) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.topBar}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color="#111827" />
-          </TouchableOpacity>
-          <Text style={styles.topBarTitle}>Create Product</Text>
-          <View style={{ width: 38 }} />
-        </View>
-        <View style={styles.centerContent}>
-          <Ionicons name="storefront-outline" size={64} color="#E2E8F0" />
-          <Text style={styles.noShopTitle}>No Shop Selected</Text>
-          <Text style={styles.noShopText}>Select a shop to create products</Text>
-          <TouchableOpacity 
-            style={styles.shopButton}
-            onPress={() => router.push('/customer/shops')}
-          >
-            <Text style={styles.shopButtonText}>Choose Shop</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.topBar}>
-          <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color="#111827" />
-          </TouchableOpacity>
-          <Text style={styles.topBarTitle}>Create Product</Text>
-          <View style={{ width: 38 }} />
-        </View>
-        <View style={styles.centerContent}>
-          <ActivityIndicator size="large" color="#EA580C" />
-          <Text style={styles.loadingText}>Loading...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const RenderHeader = ({ subtitle }: { subtitle?: string }) => (
+    <View style={styles.topBar}>
+      <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+        <Ionicons name="arrow-back" size={22} color="#111827" />
+      </TouchableOpacity>
+      <View style={styles.topBarCenter}>
+        <Text style={styles.topBarTitle}>Create Product</Text>
+        {subtitle && (
+          <Text style={styles.topBarSubtitle} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        )}
+      </View>
+      <View style={{ width: 38 }} />
+    </View>
+  );
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Top bar - matching the edit product screen */}
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color="#111827" />
-        </TouchableOpacity>
-        <View style={styles.topBarCenter}>
-          <Text style={styles.topBarTitle}>Create Product</Text>
-          {selectedShop && (
-            <Text style={styles.topBarSubtitle} numberOfLines={1}>
-              {selectedShop.name}
-            </Text>
-          )}
-        </View>
-        <View style={{ width: 38 }} />
-      </View>
-
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Single Column Layout */}
-        <View style={styles.formContainer}>
-          <CreateProductForm 
-            selectedShop={selectedShop}
-            globalCategories={globalCategories}
-            modelClasses={modelClasses}
-            errors={errors}
-          />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+    <View style={styles.mainWrapper}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <SafeAreaView style={styles.safeArea}>
+        <RenderHeader subtitle={selectedShop?.name} />
+        
+        {loading ? (
+          <View style={styles.centerContent}>
+            <ActivityIndicator size="large" color="#EA580C" />
+            <Text style={styles.loadingText}>Loading...</Text>
+          </View>
+        ) : !shopId ? (
+          <View style={styles.centerContent}>
+            <Ionicons name="storefront-outline" size={64} color="#E2E8F0" />
+            <Text style={styles.noShopTitle}>No Shop Selected</Text>
+            <TouchableOpacity 
+              style={styles.shopButton}
+              onPress={() => router.push('/customer/shops')}
+            >
+              <Text style={styles.shopButtonText}>Choose Shop</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+            <View style={styles.formContainer}>
+              <CreateProductForm 
+                selectedShop={selectedShop}
+                globalCategories={globalCategories}
+                modelClasses={modelClasses}
+                errors={errors}
+              />
+            </View>
+          </ScrollView>
+        )}
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  mainWrapper: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#FFFFFF', // Matches the header
+  },
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#F9FAFB', // Matches the form background
   },
   topBar: {
     flexDirection: 'row',
@@ -190,6 +158,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
+    // Removed manual paddingTop - SafeAreaView handles this now
   },
   backBtn: {
     width: 38,
@@ -222,36 +191,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
-    gap: 12,
   },
   loadingText: {
     fontSize: 14,
     color: '#6B7280',
     marginTop: 8,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#111827',
-    paddingHorizontal: 16,
-    marginBottom: 16,
-  },
   formContainer: {
-    paddingHorizontal: 16,
+    // Keep internal padding, but remove anything that pushes the header
     paddingBottom: 24,
   },
   noShopTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#111827',
-    marginTop: 16,
-    marginBottom: 6,
-  },
-  noShopText: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 24,
-    textAlign: 'center',
+    marginVertical: 12,
   },
   shopButton: {
     backgroundColor: '#3B82F6',
