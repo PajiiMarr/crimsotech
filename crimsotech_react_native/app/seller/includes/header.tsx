@@ -96,7 +96,7 @@ export default function Header({ shopId }: HeaderProps) {
   };
 
   const handleSwitch = () => {
-    router.push('/customer/shops');
+    router.push('/customer/profile');
   };
 
   // If no shopId is provided, show a simplified header

@@ -29277,7 +29277,8 @@ class RefundViewSet(viewsets.ViewSet):
                                 refund_id=refund,
                                 file_data=file,
                                 file_type=file_type,
-                                uploaded_by=user
+                                uploaded_by=user,
+                                uploaded_by_entity='buyer'
                             )
                         except ValidationError as e:
                             return JsonResponse({'error': str(e)}, status=400)
@@ -29322,6 +29323,7 @@ class RefundViewSet(viewsets.ViewSet):
 
         except Exception as e:
             return JsonResponse({'error': f'Failed to create refund: {str(e)}'}, status=500)
+    
     @action(detail=True, methods=['get'])
     def get_my_refund(self, request, pk=None):
         """
@@ -30493,6 +30495,114 @@ class RefundViewSet(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser, JSONParser])
+    def seller_add_refund_proof(self, request, pk=None):
+        """
+        SELLER VIEW: Upload media files as evidence for refund rejection.
+        Saves to RefundMedia table with uploaded_by_entity='seller'.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Authorization check: seller must own the shop for this refund
+            shop, err = self._resolve_seller_shop_for_refund(request, user, refund)
+            if err:
+                return err
+
+            # Get files from request
+            files = request.FILES.getlist('media_files') or request.FILES.getlist('file_data') or []
+            if not files:
+                single = request.FILES.get('media_file') or request.FILES.get('file')
+                if single:
+                    files = [single]
+
+            if not files:
+                return Response({"error": "No files uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Enforce server-side limit: max 5 media files per refund
+            existing_count = RefundMedia.objects.filter(refund_id=refund).count()
+            if existing_count + len(files) > 5:
+                remaining = max(0, 5 - existing_count)
+                return Response(
+                    {"error": f"Cannot upload: only {remaining} media file(s) remaining"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            created_media = []
+            for file in files:
+                try:
+                    # Validate file type
+                    allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime']
+                    content_type = getattr(file, 'content_type', None)
+                    
+                    if not content_type:
+                        file_name = getattr(file, 'name', '')
+                        if file_name.lower().endswith('.mp4'):
+                            content_type = 'video/mp4'
+                        elif file_name.lower().endswith('.jpg') or file_name.lower().endswith('.jpeg'):
+                            content_type = 'image/jpeg'
+                        elif file_name.lower().endswith('.png'):
+                            content_type = 'image/png'
+                        elif file_name.lower().endswith('.gif'):
+                            content_type = 'image/gif'
+                        else:
+                            content_type = 'image/jpeg'
+                    
+                    if content_type not in allowed_types:
+                        print(f"Skipping file with invalid content type: {content_type}")
+                        continue
+
+                    # Determine file type (image or video)
+                    file_type = 'video' if content_type.startswith('video/') else 'image'
+
+                    # Create RefundMedia record with uploaded_by_entity='seller'
+                    media = RefundMedia.objects.create(
+                        refund_id=refund,
+                        file_data=file,
+                        file_type=file_type,
+                        uploaded_by=user,
+                        uploaded_by_entity='seller'  # <-- ADD THIS LINE
+                    )
+                    created_media.append({
+                        'id': str(media.refundmedia),
+                        'file_url': get_media_url(media.file_data),
+                        'file_type': media.file_type,
+                        'uploaded_at': media.uploaded_at.isoformat(),
+                        'uploaded_by_entity': media.uploaded_by_entity  # Include in response
+                    })
+                    print(f"Successfully saved refund media file: {media.refundmedia}")
+
+                except Exception as e:
+                    print(f'Failed to save refund media: {e}')
+                    import traceback
+                    traceback.print_exc()
+
+            # Get updated refund data
+            data = self._get_refund_details_data(refund, request, user)
+
+            return Response({
+                "message": f"Successfully uploaded {len(created_media)} file(s)",
+                "created_media": created_media,
+                "refund": data
+            }, status=status.HTTP_201_CREATED)
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"Unexpected error in seller_add_refund_proof: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
     @action(detail=True, methods=['post'])
     def update_return_status(self, request, pk=None):
         """
@@ -32171,38 +32281,62 @@ class DisputeViewSet(viewsets.ModelViewSet):
     def start_review(self, request, pk=None):
         try:
             dispute = self.get_object()
+            
+            # Check if dispute can be reviewed
+            if dispute.status not in ['filed', 'pending']:
+                return Response(
+                    {'error': f'Cannot start review for dispute with status: {dispute.status}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
             dispute.status = 'under_review'
             user_id = request.headers.get('X-User-Id')
             resolved_user = None
+            
             if user_id:
-                # sanitize header: trim whitespace and surrounding quotes (including smart quotes)
+                # sanitize header: trim whitespace and surrounding quotes
                 import re
                 user_id = user_id.strip()
                 # remove leading/trailing quotes (', ", and unicode smart quotes)
                 user_id = re.sub(r'^[\'"\u201c\u201d\u2018\u2019]+|[\'"\u201c\u201d\u2018\u2019]+$', '', user_id)
-                # Accept UUID, username, or email; handle non-UUID values gracefully
+                
+                # Try to find user by ID first
                 try:
                     resolved_user = User.objects.get(id=user_id)
                 except (User.DoesNotExist, ValueError):
+                    # If not found by ID, try username
                     try:
                         resolved_user = User.objects.get(username=user_id)
                     except User.DoesNotExist:
+                        # Try email
                         try:
                             resolved_user = User.objects.get(email=user_id)
                         except User.DoesNotExist:
-                            # fallback: if numeric (after stripping quotes), map to first admin user (dev-friendly)
-                            if str(user_id).isdigit():
-                                resolved_user = User.objects.filter(is_admin=True).first()
-                            else:
-                                resolved_user = None
-                if resolved_user:
-                    dispute.processed_by = resolved_user
-
+                            # Last resort: try to get first admin user
+                            resolved_user = User.objects.filter(is_admin=True).first()
+                            if resolved_user:
+                                print(f"Using fallback admin user: {resolved_user.id} - {resolved_user.username}")
+            
+            if resolved_user:
+                dispute.processed_by = resolved_user
+            else:
+                # Even if no user found, we can still update the status
+                # But log this issue
+                print(f"Warning: No user found for X-User-Id: {user_id}")
+            
             dispute.save(update_fields=['status', 'processed_by'])
-            return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
+            
+            return Response(
+                DisputeRequestSerializer(dispute, context={'request': request}).data,
+                status=status.HTTP_200_OK
+            )
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'traceback': traceback.format_exc()},
+                status=status.HTTP_400_BAD_REQUEST
+            )
     @action(detail=True, methods=['post'])
     def partial(self, request, pk=None):
         """Admin marks dispute decision as partial; does not process refund yet"""
