@@ -112,7 +112,7 @@ export default function ReturnRefund() {
   const [refreshing, setRefreshing] = useState(false);
   const [cancellingRefund, setCancellingRefund] = useState<string | null>(null);
 
-  const getRefundsForTab = (tabId: string): RefundItem[] => {
+const getRefundsForTab = (tabId: string): RefundItem[] => {
   if (!refundData) return [];
   const refunds = Array.isArray(refundData) ? refundData : [];
 
@@ -134,6 +134,9 @@ export default function ReturnRefund() {
         
         // KEEP type refund: approved and payment pending
         if (rtype === 'keep' && st === 'approved' && paymentStatus === 'pending') return true;
+        
+        // REPLACE type refund: approved (needs to return item for replacement)
+        if (rtype === 'replace' && st === 'approved') return true;
         
         // RETURN type refund: approved and waiting for buyer to ship
         if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped', 'received', 'inspected', 'approved'].includes(rrStatus))) return true;
@@ -219,16 +222,57 @@ export default function ReturnRefund() {
     }
   };
 
-  const getStatusBadge = (refund: RefundItem) => {
-    let status = refund.status;
-    if (refund.return_request?.status) status = refund.return_request.status;
+const getStatusBadge = (refund: RefundItem) => {
+  let status = refund.status;
+  
+  // For replace type with approved status
+  if (refund.refund_type === 'replace' && refund.status === 'approved') {
+    const config = STATUS_CONFIG.approved;
+    return (
+      <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
+        <Text style={[styles.statusText, { color: config.textColor }]}>Replacement - Approved</Text>
+      </View>
+    );
+  }
+  
+  // For return type with approved status, show return status if available
+  if (refund.refund_type === 'return' && refund.status === 'approved' && refund.return_request?.status) {
+    const returnStatus = refund.return_request.status;
+    const returnStatusMap: Record<string, string> = {
+      'pending': 'Waiting for Shipment',
+      'shipped': 'Shipped',
+      'received': 'Received',
+      'inspected': 'Inspected',
+      'approved': 'Return Accepted',
+      'completed': 'Completed',
+      'rejected': 'Return Rejected'
+    };
+    status = returnStatusMap[returnStatus] || returnStatus;
     const config = STATUS_CONFIG[status] || { label: status, bgColor: '#F3F4F6', textColor: '#1F2937' };
     return (
       <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
         <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
       </View>
     );
-  };
+  }
+  
+  // For negotiation status, use the config directly
+  if (refund.status === 'negotiation') {
+    const config = STATUS_CONFIG.negotiation;
+    return (
+      <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
+        <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
+      </View>
+    );
+  }
+  
+  const config = STATUS_CONFIG[status] || { label: status, bgColor: '#F3F4F6', textColor: '#1F2937' };
+  return (
+    <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
+      <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
+    </View>
+  );
+};
 
   const getTabCount = (tabId: string) => {
     if (!refundData) return 0;

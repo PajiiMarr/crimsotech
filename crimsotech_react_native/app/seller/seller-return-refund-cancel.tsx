@@ -384,39 +384,39 @@ const fetchRefundData = async () => {
         );
 
       case 'to-process':
-        // To Process tab - include refunds that require seller action or are in-progress
-        return refundData.filter(refund => {
-          const st = refund.status;
-          const rtype = refund.refund_type || '';
-          const rrStatus = refund.return_request?.status || '';
-          const paymentStatus = refund.refund_payment_status || '';
+  // To Process tab - include refunds that require seller action or are in-progress
+  return refundData.filter(refund => {
+    const st = refund.status;
+    const rtype = refund.refund_type || '';
+    const rrStatus = refund.return_request?.status || '';
+    const paymentStatus = refund.refund_payment_status || '';
 
-          // Exclude final states
-          if (['completed', 'rejected', 'cancelled', 'failed'].includes(st)) return false;
+    // Exclude final states
+    if (['completed', 'rejected', 'cancelled', 'failed'].includes(st)) return false;
 
-          // Negotiations awaiting buyer response
-          if (st === 'negotiation' && paymentStatus === 'pending') return true;
+    // 1. Negotiation status - waiting for buyer response OR seller to take action
+    if (st === 'negotiation') return true;
 
-          // Awaiting Shipment: approved returns waiting for buyer to ship
-          if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped', 'received'].includes(rrStatus))) return true;
+    // 2. Awaiting Shipment: approved returns waiting for buyer to ship
+    if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped', 'received'].includes(rrStatus))) return true;
 
-          // In Transit (shipped by buyer)
-          if (rtype === 'return' && st === 'approved' && rrStatus === 'shipped') return true;
+    // 3. In Transit (shipped by buyer) - waiting for seller to receive
+    if (rtype === 'return' && st === 'approved' && rrStatus === 'shipped') return true;
 
-          // Received (need inspection)
-          if (rtype === 'return' && st === 'approved' && rrStatus === 'received') return true;
+    // 4. Received (need inspection)
+    if (rtype === 'return' && st === 'approved' && rrStatus === 'received') return true;
 
-          // Inspection complete (seller decision needed)
-          if (rtype === 'return' && st === 'approved' && rrStatus === 'inspected') return true;
+    // 5. Inspection complete (seller decision needed)
+    if (rtype === 'return' && st === 'approved' && rrStatus === 'inspected') return true;
 
-          // Ready to Process Payment
-          if (st === 'approved' && (
-            (rtype === 'keep' && paymentStatus === 'processing') ||
-            (rtype === 'return' && paymentStatus === 'processing' && rrStatus === 'approved')
-          )) return true;
+    // 6. Ready to Process Payment
+    if (st === 'approved' && (
+      (rtype === 'keep' && paymentStatus === 'processing') ||
+      (rtype === 'return' && paymentStatus === 'processing' && rrStatus === 'approved')
+    )) return true;
 
-          return false;
-        });
+    return false;
+  });
 
       case 'disputes':
         return refundData.filter(refund => 
