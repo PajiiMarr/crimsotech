@@ -1,5 +1,5 @@
 // app/seller/view-order.tsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
   View,
@@ -8,6 +8,7 @@ import {
   Image,
   TouchableOpacity,
   ScrollView,
+  Modal,
   Platform,
   ActivityIndicator,
   Alert,
@@ -107,21 +108,93 @@ interface OrderDetails {
   pickup_date?: string;
 }
 
-// Status configuration
-const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string; icon: string }> = {
-  pending_shipment: { label: 'Pending', color: '#F97316', bgColor: '#FFF7ED', icon: 'time-outline' },
-  to_ship: { label: 'Processing', color: '#F97316', bgColor: '#FFF7ED', icon: 'refresh-outline' },
-  processing: { label: 'Processing', color: '#F97316', bgColor: '#FFF7ED', icon: 'refresh-outline' },
-  ready_for_pickup: { label: 'Ready for Pickup', color: '#3B82F6', bgColor: '#EFF6FF', icon: 'storefront-outline' },
-  shipped: { label: 'Shipped', color: '#3B82F6', bgColor: '#EFF6FF', icon: 'car-outline' },
-  in_transit: { label: 'In Transit', color: '#8B5CF6', bgColor: '#F5F3FF', icon: 'car-outline' },
-  out_for_delivery: { label: 'Out for Delivery', color: '#8B5CF6', bgColor: '#F5F3FF', icon: 'car-outline' },
-  completed: { label: 'Completed', color: '#10B981', bgColor: '#ECFDF5', icon: 'checkmark-circle-outline' },
-  cancelled: { label: 'Cancelled', color: '#EF4444', bgColor: '#FEF2F2', icon: 'close-circle-outline' },
-  arrange_shipment: { label: 'Arrange Shipment', color: '#F97316', bgColor: '#FFF7ED', icon: 'hand-left-outline' },
-  pending_offer: { label: 'Pending Offer', color: '#F97316', bgColor: '#FFF7ED', icon: 'chatbubble-outline' },
-  awaiting_payment: { label: 'Awaiting Payment', color: '#F97316', bgColor: '#FFF7ED', icon: 'card-outline' },
-  default: { label: 'Unknown', color: '#6B7280', bgColor: '#F3F4F6', icon: 'help-circle-outline' }
+// Status configuration with display labels and descriptions
+// Status configuration with display labels and descriptions
+const getStatusConfig = (status: string) => {
+  // Normalize status to lowercase for comparison
+  const normalizedStatus = status?.toLowerCase() || 'default';
+  
+  const configs: Record<string, { label: string; color: string; bgColor: string; icon: string; description: string }> = {
+    pending_shipment: {
+      label: 'Pending',
+      color: '#F97316',
+      bgColor: '#FFF7ED',
+      icon: 'time-outline',
+      description: 'The order has been placed and is awaiting confirmation. Please review the order details and confirm to start processing.'
+    },
+    to_ship: {
+      label: 'Confirmed-Processing',
+      color: '#3B82F6',
+      bgColor: '#EFF6FF',
+      icon: 'refresh-outline',
+      description: 'The order has been confirmed. Please prepare the items for shipment. Ensure all items are properly packed and ready for pickup or delivery.'
+    },
+    processing: {
+      label: 'Confirmed-Processing',
+      color: '#3B82F6',
+      bgColor: '#EFF6FF',
+      icon: 'refresh-outline',
+      description: 'The order has been confirmed. Please prepare the items for shipment. Ensure all items are properly packed and ready for pickup or delivery.'
+    },
+    ready_for_pickup: {
+      label: 'Ready for Pickup',
+      color: '#3B82F6',
+      bgColor: '#EFF6FF',
+      icon: 'storefront-outline',
+      description: 'Order is ready for pickup at your store. Customer has been notified and can collect their order.'
+    },
+    shipped: {
+      label: 'Shipped',
+      color: '#3B82F6',
+      bgColor: '#EFF6FF',
+      icon: 'car-outline',
+      description: 'Order has been shipped and is on its way to the customer.'
+    },
+    in_transit: {
+      label: 'In Transit',
+      color: '#8B5CF6',
+      bgColor: '#F5F3FF',
+      icon: 'car-outline',
+      description: 'Order is currently in transit to the delivery address.'
+    },
+    out_for_delivery: {
+      label: 'Out for Delivery',
+      color: '#8B5CF6',
+      bgColor: '#F5F3FF',
+      icon: 'car-outline',
+      description: 'Rider is on the way to deliver the order to the customer.'
+    },
+    completed: {
+      label: 'Completed',
+      color: '#10B981',
+      bgColor: '#ECFDF5',
+      icon: 'checkmark-circle-outline',
+      description: 'Order has been successfully completed. Thank you for your service!'
+    },
+    cancelled: {
+      label: 'Cancelled',
+      color: '#EF4444',
+      bgColor: '#FEF2F2',
+      icon: 'close-circle-outline',
+      description: 'This order has been cancelled. No further action is required.'
+    },
+    arrange_shipment: {
+      label: 'Arrange Shipment',
+      color: '#F97316',
+      bgColor: '#FFF7ED',
+      icon: 'hand-left-outline',
+      description: 'Please arrange shipment for this order.'
+    },
+    default: {
+      label: 'Unknown',
+      color: '#6B7280',
+      bgColor: '#F3F4F6',
+      icon: 'help-circle-outline',
+      description: 'Unable to determine order status.'
+    }
+  };
+  
+  return configs[normalizedStatus] || configs.default;
 };
 
 export default function SellerViewOrder() {
@@ -144,43 +217,46 @@ export default function SellerViewOrder() {
     }
   }, [orderId, shopId]);
 
-  const fetchOrderDetails = async () => {
-    if (!orderId || !shopId) return;
+const fetchOrderDetails = async () => {
+  if (!orderId || !shopId) return;
+  
+  try {
+    const response = await AxiosInstance.get('/seller-order-list/seller_view_order/', {
+      params: { order_id: orderId, shop_id: shopId }
+    });
     
-    try {
-      const response = await AxiosInstance.get('/seller-order-list/seller_view_order/', {
-        params: { order_id: orderId, shop_id: shopId }
-      });
-      
-      if (response.data.success) {
-        setOrder(response.data.data);
-      } else {
-        Alert.alert('Error', response.data.message || 'Failed to load order details');
-      }
-    } catch (error: any) {
-      console.error('Error fetching order details:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to load order details');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+    if (response.data.success) {
+      console.log('Order status from API:', response.data.data.status); // Debug log
+      setOrder(response.data.data);
+    } else {
+      Alert.alert('Error', response.data.message || 'Failed to load order details');
     }
-  };
+  } catch (error: any) {
+    console.error('Error fetching order details:', error);
+    Alert.alert('Error', error.response?.data?.message || 'Failed to load order details');
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+};
 
-  const fetchAvailableActions = async () => {
-    if (!orderId || !shopId) return;
+const fetchAvailableActions = async () => {
+  if (!orderId || !shopId) return;
+  
+  try {
+    const response = await AxiosInstance.get(`/seller-order-list/${orderId}/available_actions/`, {
+      params: { shop_id: shopId }
+    });
     
-    try {
-      const response = await AxiosInstance.get(`/seller-order-list/${orderId}/available_actions/`, {
-        params: { shop_id: shopId }
-      });
-      
-      if (response.data.success) {
-        setAvailableActions(response.data.data.available_actions || []);
-      }
-    } catch (error) {
-      console.error('Error fetching available actions:', error);
+    if (response.data.success) {
+      console.log('Available actions response:', response.data.data); // Debug log
+      console.log('Current status from backend:', response.data.data.current_status); // Debug log
+      setAvailableActions(response.data.data.available_actions || []);
     }
-  };
+  } catch (error) {
+    console.error('Error fetching available actions:', error);
+  }
+};
 
   const handleUpdateStatus = async (actionType: string) => {
     setProcessing(true);
@@ -219,20 +295,6 @@ export default function SellerViewOrder() {
     return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
   };
 
-  const formatShortDate = (dateString?: string) => {
-    if (!dateString) return 'N/A';
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-PH', { 
-        month: '2-digit', 
-        day: '2-digit', 
-        year: 'numeric'
-      });
-    } catch {
-      return 'N/A';
-    }
-  };
-
   const formatFullDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     try {
@@ -256,49 +318,76 @@ export default function SellerViewOrder() {
     return 'https://via.placeholder.com/80';
   };
 
-  const getStatusBadge = () => {
+  const renderStatusCard = () => {
     if (!order) return null;
     
-    let statusKey = (order.status || 'default').toLowerCase();
-    const config = STATUS_CONFIG[statusKey] || STATUS_CONFIG.default;
+    const config = getStatusConfig(order.status);
     
     return (
-      <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
-        <Ionicons name={config.icon as any} size={14} color={config.color} />
-        <Text style={[styles.statusText, { color: config.color }]}>{config.label}</Text>
+      <View style={[styles.statusCard, { backgroundColor: config.bgColor, borderLeftColor: config.color }]}>
+        <View style={styles.statusCardHeader}>
+          <View style={styles.statusRow}>
+            <Ionicons name={config.icon as any} size={22} color={config.color} />
+            <Text style={[styles.statusCardTitle, { color: config.color }]}>
+              {config.label}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.statusCardDescription}>{config.description}</Text>
       </View>
     );
   };
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    Promise.all([fetchOrderDetails(), fetchAvailableActions()]);
+const getActionButtons = () => {
+  if (!order) return { showConfirm: false, showCancel: false, showReadyToShip: false };
+  
+  // Use the status from the order, but check for both 'processing' and 'to_ship'
+  const status = order.status?.toLowerCase();
+  const canConfirm = availableActions.includes('confirm');
+  const canCancel = availableActions.includes('cancel');
+  const canPrepare = availableActions.includes('prepare_shipment');
+  const canReadyPickup = availableActions.includes('ready_for_pickup');
+  
+  // For processing/to_ship status (Confirmed-Processing), show "Ready to Ship" and "Cancel"
+  if (status === 'processing' || status === 'to_ship') {
+    return {
+      showConfirm: false,
+      showCancel: canCancel,
+      showReadyToShip: true,
+      readyToShipAction: canPrepare ? 'prepare_shipment' : (canReadyPickup ? 'ready_for_pickup' : 'complete')
+    };
+  }
+  
+  // For pending status, show "Confirm" and "Cancel"
+  if (status === 'pending_shipment') {
+    return {
+      showConfirm: canConfirm,
+      showCancel: canCancel,
+      showReadyToShip: false
+    };
+  }
+  
+  return {
+    showConfirm: canConfirm,
+    showCancel: canCancel,
+    showReadyToShip: false
   };
-
-  const isPickupOrder = () => {
-    return order?.delivery_method?.toLowerCase().includes('pickup') || false;
-  };
-
-  const hasActions = () => {
-    if (!availableActions.length) return false;
-    const isCompleted = order?.status === 'completed';
-    const isCancelled = order?.status === 'cancelled';
-    return !isCompleted && !isCancelled;
-  };
+};
 
   const renderActionButtons = () => {
-    if (!hasActions()) return null;
+    const isCompleted = order?.status === 'completed';
+    const isCancelled = order?.status === 'cancelled';
     
-    const canConfirm = availableActions.includes('confirm');
-    const canCancel = availableActions.includes('cancel');
+    if (isCompleted || isCancelled) return null;
     
-    // If neither confirm nor cancel is available, don't show buttons
-    if (!canConfirm && !canCancel) return null;
+    const { showConfirm, showCancel, showReadyToShip, readyToShipAction } = getActionButtons();
+    
+    if (!showConfirm && !showCancel && !showReadyToShip) return null;
     
     return (
       <View style={styles.stickyFooter}>
         <View style={styles.buttonContainer}>
-          {canConfirm && (
+          {showConfirm && (
             <TouchableOpacity
               style={[styles.actionButton, styles.confirmButton]}
               onPress={() => showActionConfirmation('confirm', 'Confirm Order', 'Are you sure you want to confirm this order?')}
@@ -308,7 +397,17 @@ export default function SellerViewOrder() {
             </TouchableOpacity>
           )}
           
-          {canCancel && (
+          {showReadyToShip && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.readyToShipButton]}
+              onPress={() => showActionConfirmation(readyToShipAction, 'Ready to Ship', 'Mark this order as ready to ship?')}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Ready to Ship</Text>
+            </TouchableOpacity>
+          )}
+          
+          {showCancel && (
             <TouchableOpacity
               style={[styles.actionButton, styles.cancelButton]}
               onPress={() => showActionConfirmation('cancel', 'Cancel Order', 'Are you sure you want to cancel this order? This action cannot be undone.')}
@@ -322,15 +421,17 @@ export default function SellerViewOrder() {
     );
   };
 
-  const renderConfirmationModal = () => {
-    if (!showConfirmation || !selectedAction) return null;
-    
-    return (
-      <TouchableOpacity
-        style={styles.modalOverlay}
-        activeOpacity={1}
-        onPress={() => setShowConfirmation(false)}
-      >
+const renderConfirmationModal = () => {
+  if (!showConfirmation || !selectedAction) return null;
+  
+  return (
+    <Modal
+      visible={showConfirmation}
+      transparent={true}
+      animationType="none"
+      onRequestClose={() => setShowConfirmation(false)}
+    >
+      <View style={styles.modalOverlay}>
         <View style={styles.confirmationModal}>
           <View style={styles.confirmationIcon}>
             <Ionicons 
@@ -345,6 +446,7 @@ export default function SellerViewOrder() {
             <TouchableOpacity
               style={[styles.confirmationButton, styles.cancelConfirmButton]}
               onPress={() => setShowConfirmation(false)}
+              activeOpacity={0.7}
             >
               <Text style={styles.cancelConfirmButtonText}>Cancel</Text>
             </TouchableOpacity>
@@ -352,6 +454,7 @@ export default function SellerViewOrder() {
               style={[styles.confirmationButton, styles.confirmActionButton]}
               onPress={executeAction}
               disabled={processing}
+              activeOpacity={0.7}
             >
               {processing ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
@@ -363,8 +466,23 @@ export default function SellerViewOrder() {
             </TouchableOpacity>
           </View>
         </View>
-      </TouchableOpacity>
-    );
+      </View>
+    </Modal>
+  );
+};
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    Promise.all([fetchOrderDetails(), fetchAvailableActions()]);
+  };
+
+  const isPickupOrder = () => {
+    return order?.delivery_method?.toLowerCase().includes('pickup') || false;
+  };
+
+  const hasActions = () => {
+    const { showConfirm, showCancel, showReadyToShip } = getActionButtons();
+    return showConfirm || showCancel || showReadyToShip;
   };
 
   if (loading) {
@@ -398,7 +516,6 @@ export default function SellerViewOrder() {
 
   // Calculate summary
   const subtotal = order.items.reduce((sum, item) => sum + item.total_amount, 0);
-  const shippingFee = 0; // Will be calculated from backend if available
   const total = order.total_amount;
 
   return (
@@ -410,7 +527,7 @@ export default function SellerViewOrder() {
             <Ionicons name="arrow-back" size={24} color="#111827" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Order Details</Text>
-          <View style={styles.headerRight}>{getStatusBadge()}</View>
+          <View style={styles.headerRight} />
         </View>
       </SafeAreaView>
 
@@ -426,6 +543,9 @@ export default function SellerViewOrder() {
           />
         }
       >
+        {/* Status Card - Edge to Edge */}
+        {renderStatusCard()}
+
         {/* Delivery Address & Buyer Info */}
         <View style={styles.infoCard}>
           <View style={styles.cardHeader}>
@@ -569,7 +689,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
-    paddingTop: Platform.OS === 'ios' ? 10 : 30,
+    paddingTop: Platform.OS === 'ios' ? 44 : 40,
   },
   header: {
     flexDirection: 'row',
@@ -595,7 +715,6 @@ const styles = StyleSheet.create({
   },
   headerRight: {
     width: 40,
-    alignItems: 'flex-end',
   },
   scrollView: {
     flex: 1,
@@ -640,9 +759,35 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  // Status Card Styles - Edge to Edge
+  statusCard: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderLeftWidth: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  statusCardHeader: {
+    marginBottom: 8,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  statusCardTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  statusCardDescription: {
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
+    marginTop: 4,
+  },
   infoCard: {
     backgroundColor: '#FFFFFF',
-    marginTop: 8,
+    marginTop: 0,
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
@@ -700,7 +845,7 @@ const styles = StyleSheet.create({
   },
   itemsCard: {
     backgroundColor: '#FFFFFF',
-    marginTop: 8,
+    marginTop: 0,
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
@@ -755,7 +900,7 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     backgroundColor: '#FFFFFF',
-    marginTop: 8,
+    marginTop: 0,
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
@@ -799,36 +944,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#F97316',
   },
-  paymentStatusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-  },
-  paymentStatusLabel: {
-    fontSize: 13,
-    color: '#8E8E93',
-  },
-  paymentStatusValue: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-    gap: 4,
-    minWidth: 80, 
-    justifyContent: 'center',
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
   stickyFooter: {
     position: 'absolute',
     bottom: 0,
@@ -837,12 +952,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#F0F0F0',
-    paddingBottom: Platform.OS === 'ios' ? 10 : 5,
+    paddingBottom: Platform.OS === 'ios' ? 8 : 5,
   },
   buttonContainer: {
     flexDirection: 'row',
     width: '100%',
-  
   },
   actionButton: {
     flex: 1,
@@ -852,6 +966,9 @@ const styles = StyleSheet.create({
   },
   confirmButton: {
     backgroundColor: '#10B981',
+  },
+  readyToShipButton: {
+    backgroundColor: '#3B82F6',
   },
   cancelButton: {
     backgroundColor: '#EF4444',
@@ -864,19 +981,7 @@ const styles = StyleSheet.create({
   footerPadding: {
     height: 70,
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  confirmationModal: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 24,
-    width: width - 48,
-    alignItems: 'center',
-  },
+
   confirmationIcon: {
     marginBottom: 16,
   },
@@ -920,4 +1025,26 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#FFFFFF',
   },
+  modalOverlay: {
+  flex: 1,
+  backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+confirmationModal: {
+  backgroundColor: '#FFFFFF',
+  borderRadius: 20,
+  padding: 24,
+  width: width - 48,
+  alignItems: 'center',
+  // Add shadow for better visibility
+  shadowColor: '#000',
+  shadowOffset: {
+    width: 0,
+    height: 2,
+  },
+  shadowOpacity: 0.25,
+  shadowRadius: 4,
+  elevation: 5,
+},
 });
