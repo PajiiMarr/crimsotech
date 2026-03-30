@@ -10,9 +10,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   TextInput,
-  Modal,
   Alert,
-  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -134,19 +132,6 @@ export default function Orders() {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<string>('all');
   const [availableActions, setAvailableActions] = useState<Record<string, string[]>>({});
-  const [loadingActions, setLoadingActions] = useState<Record<string, boolean>>({});
-
-  // Modal states
-  const [actionModalVisible, setActionModalVisible] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [confirmationModal, setConfirmationModal] = useState({
-    visible: false,
-    type: 'confirm' as 'confirm' | 'cancel' | 'prepare' | null,
-    orderId: null as string | null,
-    title: '',
-    description: '',
-    confirmText: '',
-  });
 
   useEffect(() => {
     if (shopId && userId) {
@@ -197,8 +182,7 @@ export default function Orders() {
   };
 
   const loadAvailableActions = async (orderId: string) => {
-    if (!shopId || loadingActions[orderId]) return;
-    setLoadingActions(prev => ({ ...prev, [orderId]: true }));
+    if (!shopId) return;
     try {
       const response = await AxiosInstance.get(
         `/seller-order-list/${orderId}/available_actions/`,
@@ -210,111 +194,6 @@ export default function Orders() {
       }
     } catch (error) {
       console.error('Error loading available actions:', error);
-    } finally {
-      setLoadingActions(prev => ({ ...prev, [orderId]: false }));
-    }
-  };
-
-  const handleUpdateStatus = async (orderId: string, actionType: string) => {
-    try {
-      const response = await AxiosInstance.patch(
-        `/seller-order-list/${orderId}/update_status/`,
-        { action_type: actionType },
-        { params: { shop_id: shopId } }
-      );
-      if (response.data.success) {
-        const { updated_order, updated_available_actions } = response.data.data;
-        setOrders(prevOrders =>
-          prevOrders.map(order =>
-            order.order_id === orderId
-              ? { ...updated_order, order_id: orderId }
-              : order
-          )
-        );
-        if (updated_available_actions) {
-          setAvailableActions(prev => ({ ...prev, [orderId]: updated_available_actions }));
-        }
-        if (actionType === 'confirm' && !isPickupOrder(orders.find(o => o.order_id === orderId)!)) {
-          triggerRiderAssignment(orderId);
-        }
-        Alert.alert('Success', 'Order status updated successfully');
-        setActionModalVisible(false);
-        setConfirmationModal(prev => ({ ...prev, visible: false }));
-      }
-    } catch (error: any) {
-      console.error('Error updating order status:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to update order status');
-    }
-  };
-
-  const handleCancelOrder = async (orderId: string) => {
-    try {
-      const response = await AxiosInstance.patch(
-        `/seller-order-list/${orderId}/update_status/`,
-        { action_type: 'cancel' },
-        { params: { shop_id: shopId } }
-      );
-      if (response.data.success) {
-        await fetchOrders();
-        await loadAvailableActions(orderId);
-        Alert.alert('Success', 'Order cancelled successfully');
-        setActionModalVisible(false);
-        setConfirmationModal(prev => ({ ...prev, visible: false }));
-      }
-    } catch (error: any) {
-      console.error('Error cancelling order:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to cancel order');
-    }
-  };
-
-  const handlePrepareShipment = async (orderId: string) => {
-    try {
-      setLoadingActions(prev => ({ ...prev, [orderId]: true }));
-      const response = await AxiosInstance.post(
-        `/seller-order-list/${orderId}/prepare_shipment/`,
-        {},
-        { params: { shop_id: shopId } }
-      );
-      if (response.data.success) {
-        const { updated_order, updated_available_actions } = response.data.data;
-        setOrders(prevOrders =>
-          prevOrders.map(order =>
-            order.order_id === orderId
-              ? { ...updated_order, order_id: orderId }
-              : order
-          )
-        );
-        if (updated_available_actions) {
-          setAvailableActions(prev => ({ ...prev, [orderId]: updated_available_actions }));
-        }
-        Alert.alert('Success', response.data.message || 'Order prepared for shipment');
-        setActionModalVisible(false);
-        setConfirmationModal(prev => ({ ...prev, visible: false }));
-      }
-    } catch (error: any) {
-      console.error('Error preparing shipment:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to prepare shipment');
-    } finally {
-      setLoadingActions(prev => ({ ...prev, [orderId]: false }));
-    }
-  };
-
-  const triggerRiderAssignment = async (orderId: string) => {
-    try {
-      await AxiosInstance.post('/seller-order-list/assign_deliveries/', {}, {
-        params: { order_id: orderId }
-      });
-      setTimeout(async () => {
-        try {
-          await AxiosInstance.post('/seller-order-list/check_delivery_responses/', {}, {
-            params: { order_id: orderId }
-          });
-        } catch (error) {
-          console.error('Error checking delivery responses:', error);
-        }
-      }, 2000);
-    } catch (error) {
-      console.error('Error triggering rider assignment:', error);
     }
   };
 
@@ -391,10 +270,6 @@ export default function Orders() {
     order.delivery_info?.status === 'pending_offer' &&
     !!order.delivery_info?.rider_name;
 
-  // An order is awaiting Maya payment when:
-  // - payment method is Maya
-  // - backend did NOT return 'confirm' in available_actions (meaning payment not yet received)
-  // - order is still in pending_shipment
   const isAwaitingMayaPayment = (order: Order): boolean => {
     const isMaya = order.payment_method?.toLowerCase() === 'maya';
     const isPendingShipment = order.status?.toLowerCase() === 'pending_shipment';
@@ -459,170 +334,6 @@ export default function Orders() {
     completed: orders.filter(o => o.status?.toLowerCase() === 'completed').length,
     cancelled: orders.filter(o => o.status?.toLowerCase() === 'cancelled').length,
   };
-
-  const ActionModal = () => {
-    const order = selectedOrder;
-    if (!order) return null;
-
-    const isCancelled = isCancelledOrder(order);
-    const actions = availableActions[order.order_id] || [];
-    const isLoading = loadingActions[order.order_id];
-    const awaitingMaya = isAwaitingMayaPayment(order);
-    const canCancel = !isCancelled && !['cancelled', 'completed', 'refunded'].includes(order.status?.toLowerCase() || '');
-
-    return (
-      <Modal
-        visible={actionModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setActionModalVisible(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setActionModalVisible(false)}
-        >
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Order Actions</Text>
-              <TouchableOpacity onPress={() => setActionModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.actionList}>
-              {/* Awaiting Maya Payment notice */}
-              {awaitingMaya && (
-                <View style={styles.mayaNotice}>
-                  <Ionicons name="card-outline" size={16} color="#f97316" />
-                  <Text style={styles.mayaNoticeText}>
-                    Awaiting Maya payment from customer. You can confirm this order once payment is completed.
-                  </Text>
-                </View>
-              )}
-
-              {/* View Details */}
-              <TouchableOpacity
-                style={styles.actionItem}
-                onPress={() => {
-                  setActionModalVisible(false);
-                  // router.push(`/seller/order/${order.order_id}?shopId=${shopId}`);
-                }}
-              >
-                <Ionicons name="eye-outline" size={20} color="#3b82f6" />
-                <Text style={styles.actionItemText}>View Details</Text>
-              </TouchableOpacity>
-
-              {/* Confirm Order — shown only when backend includes 'confirm' in actions */}
-              {actions.includes('confirm') && (
-                <TouchableOpacity
-                  style={styles.actionItem}
-                  onPress={() => {
-                    setActionModalVisible(false);
-                    setConfirmationModal({
-                      visible: true,
-                      type: 'confirm',
-                      orderId: order.order_id,
-                      title: 'Confirm Order',
-                      description: 'Are you sure you want to confirm this order?',
-                      confirmText: 'Yes, Confirm'
-                    });
-                  }}
-                >
-                  <Ionicons name="checkmark-circle-outline" size={20} color="#10b981" />
-                  <Text style={styles.actionItemText}>Confirm Order</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Prepare Shipment — shown only when backend includes 'prepare_shipment' in actions */}
-              {actions.includes('prepare_shipment') && (
-                <TouchableOpacity
-                  style={styles.actionItem}
-                  onPress={() => {
-                    setActionModalVisible(false);
-                    setConfirmationModal({
-                      visible: true,
-                      type: 'prepare',
-                      orderId: order.order_id,
-                      title: 'Prepare Shipment',
-                      description: 'Prepare this order for shipment?',
-                      confirmText: 'Yes, Prepare'
-                    });
-                  }}
-                >
-                  <Ionicons name="cube-outline" size={20} color="#3b82f6" />
-                  <Text style={styles.actionItemText}>Prepare Shipment</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Cancel Order */}
-              {canCancel && (
-                <TouchableOpacity
-                  style={[styles.actionItem, styles.actionItemDestructive]}
-                  onPress={() => {
-                    setActionModalVisible(false);
-                    setConfirmationModal({
-                      visible: true,
-                      type: 'cancel',
-                      orderId: order.order_id,
-                      title: 'Cancel Order',
-                      description: 'Are you sure you want to cancel this order? This action cannot be undone.',
-                      confirmText: 'Yes, Cancel'
-                    });
-                  }}
-                >
-                  <Ionicons name="close-circle-outline" size={20} color="#ef4444" />
-                  <Text style={[styles.actionItemText, styles.actionItemTextDestructive]}>Cancel Order</Text>
-                </TouchableOpacity>
-              )}
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-    );
-  };
-
-  const ConfirmationModal = () => (
-    <Modal
-      visible={confirmationModal.visible}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setConfirmationModal(prev => ({ ...prev, visible: false }))}
-    >
-      <TouchableOpacity
-        style={styles.modalOverlay}
-        activeOpacity={1}
-        onPress={() => setConfirmationModal(prev => ({ ...prev, visible: false }))}
-      >
-        <View style={[styles.modalContent, styles.confirmationModal]}>
-          <Text style={styles.confirmationTitle}>{confirmationModal.title}</Text>
-          <Text style={styles.confirmationDescription}>{confirmationModal.description}</Text>
-          <View style={styles.confirmationButtons}>
-            <TouchableOpacity
-              style={[styles.confirmationButton, styles.cancelButton]}
-              onPress={() => setConfirmationModal(prev => ({ ...prev, visible: false }))}
-            >
-              <Text style={styles.cancelButtonText}>No, Keep</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.confirmationButton, styles.confirmButton]}
-              onPress={() => {
-                if (confirmationModal.type === 'confirm' && confirmationModal.orderId) {
-                  handleUpdateStatus(confirmationModal.orderId, 'confirm');
-                } else if (confirmationModal.type === 'cancel' && confirmationModal.orderId) {
-                  handleCancelOrder(confirmationModal.orderId);
-                } else if (confirmationModal.type === 'prepare' && confirmationModal.orderId) {
-                  handlePrepareShipment(confirmationModal.orderId);
-                }
-              }}
-            >
-              <Text style={styles.confirmButtonText}>{confirmationModal.confirmText}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </TouchableOpacity>
-    </Modal>
-  );
 
   if (!shopId) {
     return (
@@ -774,8 +485,7 @@ export default function Orders() {
                     key={order.order_id}
                     style={[styles.orderCard, { borderLeftColor: borderColor, borderLeftWidth: 4 }]}
                     onPress={() => {
-                      setSelectedOrder(order);
-                      setActionModalVisible(true);
+                      router.push(`/seller/view-order?orderId=${order.order_id}&shopId=${shopId}`);
                     }}
                     activeOpacity={0.7}
                   >
@@ -866,9 +576,8 @@ export default function Orders() {
                       </View>
                     </ScrollView>
 
-                    {/* Footer */}
+                    {/* Footer - Removed tap hint, just showing chevron */}
                     <View style={styles.cardFooter}>
-                      <Text style={styles.tapHint}>Tap for more actions</Text>
                       <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
                     </View>
                   </TouchableOpacity>
@@ -878,10 +587,6 @@ export default function Orders() {
           </View>
         </View>
       </ScrollView>
-
-      {/* Modals */}
-      <ActionModal />
-      <ConfirmationModal />
     </View>
   );
 }
@@ -1187,15 +892,11 @@ const styles = StyleSheet.create({
   },
   cardFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
-  },
-  tapHint: {
-    fontSize: 10,
-    color: '#94A3B8',
   },
   emptyContainer: {
     alignItems: 'center',
@@ -1247,110 +948,5 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '500',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 20,
-    maxHeight: '80%',
-  },
-  confirmationModal: {
-    margin: 20,
-    borderRadius: 12,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  actionList: {
-    gap: 8,
-  },
-  mayaNotice: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#fff7ed',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: '#fed7aa',
-  },
-  mayaNoticeText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#c2410c',
-    lineHeight: 18,
-  },
-  actionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    gap: 12,
-  },
-  actionItemText: {
-    fontSize: 14,
-    color: '#111827',
-  },
-  actionItemDestructive: {
-    marginTop: 4,
-  },
-  actionItemTextDestructive: {
-    color: '#ef4444',
-  },
-  confirmationTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 8,
-  },
-  confirmationDescription: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 20,
-  },
-  confirmationButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  confirmationButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#F3F4F6',
-  },
-  cancelButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6B7280',
-  },
-  confirmButton: {
-    backgroundColor: '#3b82f6',
-  },
-  confirmButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#FFFFFF',
   },
 });

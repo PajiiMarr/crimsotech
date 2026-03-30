@@ -16,7 +16,8 @@ const FULLSCREEN_ROUTES = [
   'seller-create-gift-form',
   'view-refund-details',
   'view-product',
-  'return-address'
+  'return-address',
+  'view-order'
 ];
 
 export default function SellerLayout() {
