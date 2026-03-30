@@ -143,6 +143,8 @@ const NegotiationStatus = ({ refund, formatCurrency }: { refund: any; formatCurr
 };
 
 // ========== 3. REJECTED STATUS ==========
+// ========== 3. REJECTED STATUS ==========
+// ========== 3. REJECTED STATUS ==========
 const RejectedStatus = ({ refund, formatCurrency, onDispute }: { refund: any; formatCurrency: (amount: string | number) => string; onDispute?: () => void }) => {
   const latestCounter = refund?.counter_requests?.[0];
   if (latestCounter && latestCounter.status === 'rejected') {
@@ -161,25 +163,35 @@ const RejectedStatus = ({ refund, formatCurrency, onDispute }: { refund: any; fo
             <Text style={styles.disputeHint}>Use the actions card to file a dispute for this case.</Text>
           </View>
         </View>
-        {onDispute && <TouchableOpacity style={styles.disputeBtn} onPress={onDispute}><Text style={styles.disputeBtnText}>File a Dispute</Text></TouchableOpacity>}
+        {/* REMOVE THIS BUTTON - it's duplicated */}
+        {/* {onDispute && <TouchableOpacity style={styles.disputeBtn} onPress={onDispute}><Text style={styles.disputeBtnText}>File a Dispute</Text></TouchableOpacity>} */}
       </View>
     );
   }
+  
+  // Get the readable rejection reason
+  const rejectCode = refund.reject_reason_code;
+  const readableReason = getReadableRejectionReason(rejectCode);
+  const detailedReason = refund.reject_reason_details;
+  
   return (
     <View style={styles.statusSection}>
       <View style={styles.statusRow}>
         <XCircle size={24} color="#EF4444" fill="#FEE2E2" />
         <View style={styles.statusTextContainer}>
           <Text style={styles.statusTitle}>Refund Rejected</Text>
-          <Text style={styles.statusSubtitle}>{refund.seller_response || 'No specific reason provided by seller'}</Text>
+          <Text style={styles.statusSubtitle}>
+            {readableReason}
+            {detailedReason ? `: ${detailedReason}` : ''}
+          </Text>
           <Text style={styles.disputeHint}>Use the actions card to file a dispute for this case.</Text>
         </View>
       </View>
-      {onDispute && <TouchableOpacity style={styles.disputeBtn} onPress={onDispute}><Text style={styles.disputeBtnText}>File a Dispute</Text></TouchableOpacity>}
+      {/* REMOVE THIS BUTTON - it's duplicated */}
+      {/* {onDispute && <TouchableOpacity style={styles.disputeBtn} onPress={onDispute}><Text style={styles.disputeBtnText}>File a Dispute</Text></TouchableOpacity>} */}
     </View>
   );
 };
-
 // ========== 4. APPROVED STATUS ==========
 const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDate, shopReturnAddress, onOpenProofViewer }: { refund: any; onOpenTrackingDialog?: () => void; formatCurrency: (amount: string | number) => string; formatDate: (dateString: string) => string; shopReturnAddress?: any; onOpenProofViewer?: (urls: string[], index?: number) => void }) => {
   const isReturnItem = refund.refund_type === 'return';
@@ -822,6 +834,19 @@ const DefaultActions = ({ onBack }: { onBack: () => void }) => (
   </TouchableOpacity>
 );
 
+  // Helper function to convert rejection code to readable format
+const getReadableRejectionReason = (rejectReasonCode: string): string => {
+  const reasonMap: Record<string, string> = {
+    'invalid_request': 'Invalid request',
+    'insufficient_evidence': 'Insufficient evidence',
+    'buyer_fault': 'Buyer at fault',
+    'good_condition_handed': 'Item was in good condition when handed to rider',
+    'order_handed_to_rider': 'Properly handed the order to the rider',
+    'fraud': 'Suspicious or fraudulent',
+    'other': 'Other'
+  };
+  return reasonMap[rejectReasonCode] || rejectReasonCode;
+};
 // ========== MAIN PAGE ==========
 export default function ViewRefundPage() {
   const { user } = useAuth();
@@ -1002,6 +1027,9 @@ useEffect(() => {
       }}
     ]);
   };
+
+
+  
   const handleAcceptOffer = async () => {
     if (!refund) return;
     const method = (refund.seller_suggested_method || '').toString().toLowerCase().trim();
@@ -1514,35 +1542,39 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
         </View>
 
         {/* Additional Information */}
-        {(customerNote || rejectReason || sellerNote || adminNote) && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Additional Information</Text>
-            {customerNote ? (
-              <View style={styles.noteItem}>
-                <Text style={styles.noteLabel}>Customer Note:</Text>
-                <Text style={styles.noteText}>{customerNote}</Text>
-              </View>
-            ) : null}
-            {rejectReason ? (
-              <View style={styles.noteItem}>
-                <Text style={styles.noteLabel}>Rejection Reason:</Text>
-                <Text style={styles.noteText}>{rejectReason}</Text>
-              </View>
-            ) : null}
-            {sellerNote ? (
-              <View style={styles.noteItem}>
-                <Text style={styles.noteLabel}>Seller Note:</Text>
-                <Text style={styles.noteText}>{sellerNote}</Text>
-              </View>
-            ) : null}
-            {adminNote ? (
-              <View style={styles.noteItem}>
-                <Text style={styles.noteLabel}>Admin Note:</Text>
-                <Text style={styles.noteText}>{adminNote}</Text>
-              </View>
-            ) : null}
-          </View>
-        )}
+       {/* Additional Information */}
+{(customerNote || rejectReason || sellerNote || adminNote) && (
+  <View style={styles.section}>
+    <Text style={styles.sectionTitle}>Additional Information</Text>
+    {customerNote ? (
+      <View style={styles.noteItem}>
+        <Text style={styles.noteLabel}>Customer Note:</Text>
+        <Text style={styles.noteText}>{customerNote}</Text>
+      </View>
+    ) : null}
+    {rejectReason ? (
+      <View style={styles.noteItem}>
+        <Text style={styles.noteLabel}>Rejection Reason:</Text>
+        <Text style={styles.noteText}>
+          {getReadableRejectionReason(refund.reject_reason_code)}
+          {refund.reject_reason_details ? `: ${refund.reject_reason_details}` : ''}
+        </Text>
+      </View>
+    ) : null}
+    {sellerNote ? (
+      <View style={styles.noteItem}>
+        <Text style={styles.noteLabel}>Seller Note:</Text>
+        <Text style={styles.noteText}>{sellerNote}</Text>
+      </View>
+    ) : null}
+    {adminNote ? (
+      <View style={styles.noteItem}>
+        <Text style={styles.noteLabel}>Admin Note:</Text>
+        <Text style={styles.noteText}>{adminNote}</Text>
+      </View>
+    ) : null}
+  </View>
+)}
 
         {/* Evidence */}
         {medias.length > 0 && (

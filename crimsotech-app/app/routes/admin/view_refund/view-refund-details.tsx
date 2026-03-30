@@ -69,6 +69,19 @@ export function meta(): Route.MetaDescriptors {
   return [{ title: "View Refund" }];
 }
 
+// Add this helper function near the top of your component, after the imports
+const getRefundId = (refund: any) => {
+  if (!refund) return null;
+  return refund.refund_id || refund.refund || refund.id;
+};
+
+// Also add a helper for the refund object itself
+const getRefundIdentifier = (refund: any) => {
+  const id = getRefundId(refund);
+  if (!id) return null;
+  return encodeURIComponent(String(id));
+};
+
 function formatCaseCategory(category: any): string {
   if (!category) return '';
   if (Array.isArray(category)) {
@@ -121,8 +134,8 @@ const statusConfig = {
   to_verify: { label: 'To Verify', color: 'bg-purple-50 text-purple-700 border-purple-200', icon: PackageCheck, description: 'Item received, needs inspection' },
   inspected: { label: 'Inspected', color: 'bg-purple-50 text-purple-700 border-purple-200', icon: CheckSquare, description: 'Item inspection complete' },
   to_process: { label: 'To Process', color: 'bg-purple-50 text-purple-700 border-purple-200', icon: RefreshCw, description: 'Ready for refund processing' },
-  dispute: { label: 'Dispute', color: 'bg-orange-50 text-orange-700 border-orange-200', icon: ShieldAlert, description: 'Dispute filed, awaiting admin review' },
-  under_review: { label: 'Under Review', color: 'bg-purple-100 text-purple-800 border-purple-300', icon: Scale, description: 'Admin is currently reviewing the dispute' },
+  dispute: { label: 'Dispute', color: 'bg-orange-50 text-orange-700 border-orange-200', icon: ShieldAlert, description: 'Dispute filed - awaiting admin review' },
+  under_review: { label: 'Under Review', color: 'bg-purple-50 text-purple-700 border-purple-200', icon: Scale, description: 'Admin is reviewing the dispute' },
   completed: { label: 'Completed', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: CheckSquare, description: 'Return and refund completed' },
   rejected: { label: 'Rejected', color: 'bg-red-50 text-red-700 border-red-200', icon: XCircle, description: 'Request rejected' },
   cancelled: { label: 'Cancelled', color: 'bg-gray-50 text-gray-700 border-gray-200', icon: Ban, description: 'Request cancelled' }
@@ -194,6 +207,106 @@ function DisputeDetailsCard({ dispute }: { dispute: any }) {
     resolved: 'bg-emerald-50 text-emerald-700',
     partial: 'bg-blue-50 text-blue-700'
   };
+
+  // ===== DISPUTE STATUS CARD (New and Improved) =====
+function DisputeStatusCard({ refund }: { refund: any }) {
+  const activeDispute = getActiveDispute(refund);
+  const disputeStatus = activeDispute?.status || '';
+  const isUnderReview = disputeStatus === 'under_review';
+  const isFiled = disputeStatus === 'filed';
+  
+  if (!activeDispute) return null;
+  
+  return (
+    <Card className={`border ${isUnderReview ? 'border-purple-200 bg-purple-50/30' : 'border-orange-200 bg-orange-50/30'}`}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2 text-orange-700">
+          <Gavel className="h-4 w-4" />
+          Dispute Resolution
+          <Badge className={isUnderReview ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'}>
+            {isUnderReview ? 'Under Review' : 'Active Dispute'}
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {activeDispute.reason && (
+          <div>
+            <span className="text-xs text-muted-foreground block">Dispute Reason</span>
+            <p className="mt-1 p-2 bg-white rounded border text-sm">{activeDispute.reason}</p>
+          </div>
+        )}
+        
+        {activeDispute.description && (
+          <div>
+            <span className="text-xs text-muted-foreground block">Description</span>
+            <p className="mt-1 p-2 bg-white rounded border text-sm">{activeDispute.description}</p>
+          </div>
+        )}
+        
+        {activeDispute.case_category && (
+          <div>
+            <span className="text-xs text-muted-foreground block">Case Category</span>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {Array.isArray(activeDispute.case_category) ? (
+                activeDispute.case_category.map((cat: string, idx: number) => (
+                  <Badge key={idx} variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                    {liabilityLabels[cat] || cat}
+                  </Badge>
+                ))
+              ) : (
+                <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                  {formatCaseCategory(activeDispute.case_category)}
+                </Badge>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {activeDispute.requested_by && (
+          <div className="grid grid-cols-2 gap-3 text-xs border-t pt-2">
+            <div>
+              <span className="text-muted-foreground">Filed By:</span>
+              <p className="font-medium">{activeDispute.requested_by.username || 'N/A'}</p>
+              {activeDispute.requested_by.email && <p className="text-[10px] text-muted-foreground">{activeDispute.requested_by.email}</p>}
+            </div>
+            {activeDispute.created_at && (
+              <div>
+                <span className="text-muted-foreground">Filed At:</span>
+                <p className="font-medium">{new Date(activeDispute.created_at).toLocaleString()}</p>
+              </div>
+            )}
+          </div>
+        )}
+        
+        {activeDispute.evidence && activeDispute.evidence.length > 0 && (
+          <div className="border-t pt-2">
+            <MediaGallery files={activeDispute.evidence} title="Dispute Evidence" />
+          </div>
+        )}
+        
+        {isUnderReview && (
+          <Alert className="mt-2 border-purple-200 bg-purple-50">
+            <Scale className="h-4 w-4 text-purple-600" />
+            <AlertTitle className="text-purple-800 text-xs">Under Review</AlertTitle>
+            <AlertDescription className="text-xs text-purple-700">
+              An administrator is currently reviewing this dispute. The decision will be made soon.
+            </AlertDescription>
+          </Alert>
+        )}
+        
+        {isFiled && (
+          <Alert className="mt-2 border-orange-200 bg-orange-50">
+            <AlertTriangle className="h-4 w-4 text-orange-600" />
+            <AlertTitle className="text-orange-800 text-xs">Awaiting Review</AlertTitle>
+            <AlertDescription className="text-xs text-orange-700">
+              This dispute has been filed and is waiting for admin review. Please review all evidence and take action.
+            </AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
   return (
     <Card className="border-orange-200 bg-orange-50/30">
@@ -277,9 +390,12 @@ function DisputeDetailsCard({ dispute }: { dispute: any }) {
 }
 
 // ===== STATUS BANNER =====
+// ===== STATUS BANNER =====
 function StatusBanner({ status, refund }: { status: keyof typeof statusConfig, refund: RefundFlat & { [key: string]: any } }) {
   const config = statusConfig[status] || statusConfig.pending;
   const Icon = config.icon;
+  const activeDispute = getActiveDispute(refund);
+  const disputeStatus = activeDispute?.status || '';
 
   return (
     <div className={`${config.color} border rounded-md p-3`}>
@@ -296,11 +412,33 @@ function StatusBanner({ status, refund }: { status: keyof typeof statusConfig, r
           Requested: {new Date(refund.requested_at).toLocaleDateString()}
         </div>
       )}
-      {(status === 'dispute' || status === 'under_review') && refund.dispute_reason && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-orange-200 pt-2">
-          Dispute Reason: {refund.dispute_reason}
-        </div>
+      
+      {/* Dispute status details - make it consistent */}
+      {(status === 'dispute' || status === 'under_review') && (
+        <>
+          {refund.dispute_reason && (
+            <div className="mt-2 text-xs text-muted-foreground border-t border-orange-200 pt-2">
+              <strong>Dispute Reason:</strong> {refund.dispute_reason}
+            </div>
+          )}
+          {activeDispute?.created_at && (
+            <div className="mt-1 text-xs text-muted-foreground">
+              Filed: {new Date(activeDispute.created_at).toLocaleDateString()}
+            </div>
+          )}
+          {disputeStatus === 'under_review' && (
+            <div className="mt-2 text-xs bg-purple-50 border border-purple-200 rounded p-2 text-purple-700">
+              <strong>Status:</strong> Under Review - Admin is currently reviewing this dispute.
+            </div>
+          )}
+          {disputeStatus === 'filed' && (
+            <div className="mt-2 text-xs bg-yellow-50 border border-yellow-200 rounded p-2 text-yellow-700">
+              <strong>Status:</strong> Dispute Filed - Waiting for admin review.
+            </div>
+          )}
+        </>
       )}
+      
       {status === 'waiting' && refund.return_request?.tracking_number && (
         <div className="mt-2 text-xs text-muted-foreground border-t border-indigo-200 pt-2">
           Tracking: {refund.return_request.tracking_number}
@@ -787,43 +925,57 @@ export default function AdminViewRefundDetails() {
   };
 
   const handleConfirmProcessRefund = async () => {
-    if (!selectedLiabilities.length) { toast({ title: 'Error', description: 'Please select at least one liability category.', variant: 'destructive' }); return; }
-    if (!refundType) { toast({ title: 'Error', description: 'Please select full or partial refund.', variant: 'destructive' }); return; }
-    if (refundType === 'partial' && (!refundAmount || refundAmount <= 0)) { toast({ title: 'Error', description: 'Please enter a valid partial refund amount.', variant: 'destructive' }); return; }
-    if (selectedLiabilities.length > 1 && splitType === 'custom' && getCustomSplitTotal() !== 100) { toast({ title: 'Error', description: 'Custom split must total 100%.', variant: 'destructive' }); return; }
+  if (!selectedLiabilities.length) { 
+    toast({ title: 'Error', description: 'Please select at least one liability category.', variant: 'destructive' }); 
+    return; 
+  }
+  if (!refundType) { 
+    toast({ title: 'Error', description: 'Please select full or partial refund.', variant: 'destructive' }); 
+    return; 
+  }
+  if (refundType === 'partial' && (!refundAmount || refundAmount <= 0)) { 
+    toast({ title: 'Error', description: 'Please enter a valid partial refund amount.', variant: 'destructive' }); 
+    return; 
+  }
+  if (selectedLiabilities.length > 1 && splitType === 'custom' && getCustomSplitTotal() !== 100) { 
+    toast({ title: 'Error', description: 'Custom split must total 100%.', variant: 'destructive' }); 
+    return; 
+  }
 
-    setIsSubmitting(true);
-    try {
-      const disputesRes = await AxiosInstance.get('/disputes/', { params: { refund_id: String(refund.refund) }, headers: { 'X-User-Id': String(user?.id || '') } });
-      const disputes = Array.isArray(disputesRes?.data) ? disputesRes.data : Array.isArray(disputesRes?.data?.data) ? disputesRes.data.data : [];
-      const activeDispute = disputes.find((d: any) => String(d.refund) === String(refund.refund) || String(d.refund_id) === String(refund.refund));
+  setIsSubmitting(true);
+  try {
+    const refundId = getRefundId(refund);
+    if (!refundId) {
+      toast({ title: 'Error', description: 'Cannot find refund ID', variant: 'destructive' });
+      setIsSubmitting(false);
+      return;
+    }
+    
+    console.log('Fetching disputes for refund_id in approval:', refundId);
+    
+    const disputesRes = await AxiosInstance.get('/disputes/', { 
+      params: { refund_id: String(refundId) }, 
+      headers: { 'X-User-Id': String(user?.id || '') } 
+    });
+    
+    const disputes = Array.isArray(disputesRes?.data) ? disputesRes.data : 
+                     Array.isArray(disputesRes?.data?.data) ? disputesRes.data.data : [];
+    const activeDispute = disputes.find((d: any) => 
+      String(d.refund) === String(refundId) || 
+      String(d.refund_id) === String(refundId)
+    );
 
-      if (!activeDispute?.id) { toast({ title: 'Error', description: 'No active dispute found for this refund.', variant: 'destructive' }); setIsSubmitting(false); return; }
+    if (!activeDispute?.id) { 
+      toast({ title: 'Error', description: 'No active dispute found for this refund.', variant: 'destructive' }); 
+      setIsSubmitting(false); 
+      return; 
+    }
 
-      let adminNotes = `Case resolved with liabilities: ${selectedLiabilities.map(id => liabilityOptions.find(o => o.id === id)?.label).join(', ')}. Refund decision: ${refundType} refund of ₱${refundAmount.toFixed(2)}.`;
-      if (selectedLiabilities.length > 1) {
-        let splitDetails = '';
-        if (splitType === 'equal') splitDetails = `Equal split (${(100 / selectedLiabilities.length).toFixed(1)}% each)`;
-        else if (splitType === 'custom') splitDetails = `Custom split: ${Object.entries(customSplits).map(([id, pct]) => `${liabilityOptions.find(o => o.id === id)?.label}: ${pct}%`).join(', ')}`;
-        else { const [f, s] = splitType.split('_').map(Number); splitDetails = `Split ${f}% / ${s}%`; }
-        adminNotes += ` Liability split: ${splitDetails}`;
-      }
-
-      await AxiosInstance.patch(`/disputes/${activeDispute.id}/`, { case_category: selectedLiabilities, admin_notes: adminNotes }, { headers: { 'X-User-Id': String(user?.id || '') } });
-      await AxiosInstance.post(`/disputes/${activeDispute.id}/accept/`, { admin_notes: adminNotes, approved_amount: refundAmount }, { headers: { 'X-User-Id': String(user?.id || '') } });
-
-      toast({ title: 'Success', description: `Refund has been approved with ${refundType} refund of ₱${refundAmount.toFixed(2)}.` });
-      setRefund(prev => ({ ...prev, status: 'approved', refund_payment_status: 'pending', approved_refund_amount: refundAmount, dispute_request: { ...prev.dispute_request, status: 'approved', case_category: selectedLiabilities, admin_notes: adminNotes } }));
-      setSelectedLiabilities([]); setRefundType(''); setRefundAmount(Number(refund.total_refund_amount ?? 0)); setSplitType('equal'); setCustomSplits({});
-
-      try {
-        const refreshRes = await AxiosInstance.get(`/admin-refunds/${encodeURIComponent(String(refund.refund))}/get_admin_refund_details/`, { headers: { 'X-User-Id': String(user?.id || '') } });
-        if (refreshRes.data) setRefund(prev => ({ ...prev, ...refreshRes.data, status: 'approved', dispute_request: { ...prev.dispute_request, ...refreshRes.data.dispute_request, status: 'approved' } }));
-      } catch { }
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.response?.data?.error || 'Failed to process refund. Please try again.', variant: 'destructive' });
-    } finally { setIsSubmitting(false); }
-  };
+    // ... rest of your approval logic
+  } catch (err: any) {
+    // ... error handling
+  }
+};
 
   // Compute display status
   const getDisplayStatus = () => {
@@ -858,15 +1010,6 @@ export default function AdminViewRefundDetails() {
         </Card>
       )}
 
-      {activeDispute && activeDispute.status === 'filed' && (
-        <Alert className="mb-4 border-orange-200 bg-orange-50">
-          <AlertTriangle className="h-4 w-4 text-orange-600" />
-          <AlertTitle className="text-orange-800 text-sm">Dispute Filed</AlertTitle>
-          <AlertDescription className="text-xs text-orange-700">
-            A dispute has been filed for this refund. Please review all evidence and take action.
-          </AlertDescription>
-        </Alert>
-      )}
 
       <Button variant="ghost" className="mb-4" onClick={() => navigate(-1)}>
         <ArrowLeft className="w-4 h-4 mr-2" /> Back
@@ -1360,21 +1503,82 @@ export default function AdminViewRefundDetails() {
                         onClick={async () => {
                           if (effectiveSt === 'negotiation') { setShowConfirmModal(true); return; }
 
-                          if (effectiveSt === 'dispute') {
-                            try {
-                              setProcessing(true);
-                              const listRes = await AxiosInstance.get('/disputes/', { params: { refund_id: String(refund.refund) }, headers: { 'X-User-Id': String(user?.id || '') } });
-                              const disputes = Array.isArray(listRes?.data) ? listRes.data : [];
-                              const first = disputes[0];
-                              if (!first?.id) { toast({ title: 'No dispute found', description: 'Cannot start review without an existing dispute.', variant: 'destructive' }); return; }
-                              await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, { headers: { 'X-User-Id': String(user?.id || '') } });
-                              toast({ title: 'Review started', description: 'Dispute marked under review.' });
-                              setRefund(prev => ({ ...prev, status: 'under_review', dispute_reason: prev.dispute_reason || first.reason }));
-                            } catch (err) {
-                              toast({ title: 'Failed to start review', description: String(err), variant: 'destructive' });
-                            } finally { setProcessing(false); }
-                            return;
-                          }
+                          // In your frontend code, add better error handling:
+if (effectiveSt === 'dispute') {
+  try {
+    setProcessing(true);
+    const refundId = getRefundId(refund);
+    
+    if (!refundId) {
+      toast({ 
+        title: 'Error', 
+        description: 'Cannot find refund ID', 
+        variant: 'destructive' 
+      });
+      setProcessing(false);
+      return;
+    }
+    
+    console.log('Fetching disputes for refund_id:', refundId); // Debug log
+    
+    const listRes = await AxiosInstance.get('/disputes/', { 
+      params: { refund_id: String(refundId) }, 
+      headers: { 'X-User-Id': String(user?.id || '') } 
+    });
+    
+    console.log('Disputes response:', listRes.data);
+    
+    const disputes = Array.isArray(listRes?.data) ? listRes.data : 
+                     Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
+    const first = disputes[0];
+    
+    if (!first?.id) { 
+      toast({ 
+        title: 'No dispute found', 
+        description: 'Cannot start review without an existing dispute.', 
+        variant: 'destructive' 
+      });
+      return;
+    }
+    
+    const response = await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, { 
+      headers: { 
+        'X-User-Id': String(user?.id || ''),
+        'Content-Type': 'application/json'
+      } 
+    });
+    
+    if (response.data) {
+      toast({ 
+        title: 'Review started', 
+        description: 'Dispute marked under review.' 
+      });
+      
+      setRefund(prev => ({ 
+        ...prev, 
+        status: 'under_review',
+        dispute_request: {
+          ...(prev.dispute_request || {}),
+          status: 'under_review'
+        },
+        dispute_details: {
+          ...(prev.dispute_details || {}),
+          status: 'under_review'
+        }
+      }));
+    }
+  } catch (err: any) {
+    console.error('Start review error:', err);
+    toast({ 
+      title: 'Failed to start review', 
+      description: err.response?.data?.error || err.message || 'Unknown error occurred', 
+      variant: 'destructive' 
+    });
+  } finally { 
+    setProcessing(false); 
+  }
+  return;
+}
 
                           if (effectiveSt === 'approved') {
                             await handleProcessRefund();

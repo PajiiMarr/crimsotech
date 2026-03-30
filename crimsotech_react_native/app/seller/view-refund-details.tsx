@@ -246,6 +246,8 @@ export default function ViewRefundDetails() {
   const [proofFiles, setProofFiles] = useState<any[]>([]);
   const [proofNotes, setProofNotes] = useState('');
 
+  const [existingRefundMedia, setExistingRefundMedia] = useState<any[]>([]);
+
   useEffect(() => {
     if (refundId && userId && effectiveShopId) fetchDetail();
     else if (refundId) {
@@ -258,20 +260,33 @@ export default function ViewRefundDetails() {
   }, [refundId, userId, effectiveShopId]);
 
   
-  const fetchDetail = async () => {
-    try {
-      setLoading(true);
-      const res = await AxiosInstance.get(`/return-refund/${refundId}/get_seller_refund_details/`, {
-        headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
-      });
-      setRefund(res.data);
-    } catch (err: any) {
-      console.error('Error fetching refund details:', err);
-      Alert.alert('Error', err?.response?.data?.error || 'Failed to load refund details');
-    } finally {
-      setLoading(false);
-    }
-  };
+const fetchDetail = async () => {
+  try {
+    setLoading(true);
+    const res = await AxiosInstance.get(`/return-refund/${refundId}/get_seller_refund_details/`, {
+      headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
+    });
+    setRefund(res.data);
+    
+    // Extract refund media from the response and filter by entity
+    const allMedia = res.data?.refund_media || res.data?.evidence || [];
+    
+    // Filter media by who uploaded it
+    const buyerMedia = allMedia.filter((m: any) => m.uploaded_by_entity === 'buyer');
+    const sellerMedia = allMedia.filter((m: any) => m.uploaded_by_entity === 'seller');
+    
+    setExistingRefundMedia(sellerMedia); // Store seller media for reject modal
+    
+    // You might want to store buyer media separately if needed
+    // setBuyerRefundMedia(buyerMedia);
+    
+  } catch (err: any) {
+    console.error('Error fetching refund details:', err);
+    Alert.alert('Error', err?.response?.data?.error || 'Failed to load refund details');
+  } finally {
+    setLoading(false);
+  }
+};
 
   // ========== API ACTIONS ==========
   const handleApprove = async () => {
@@ -293,40 +308,86 @@ export default function ViewRefundDetails() {
     }
   };
 
-
-  const handleReject = async () => {
-    if (!rejectReasonCode || !rejectReasonDetail.trim()) {
-      Alert.alert('Required', 'Please select a reason and provide details');
-      return;
+// Add this new handler function
+const handleAddRefundProof = async (files: any[]) => {
+  try {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append('media_files', file);
     }
-    try {
-      setActionLoading(true);
-      const formData = new FormData();
-      formData.append('action', 'reject');
-      formData.append('reason_code', rejectReasonCode);
-      formData.append('notes', rejectReasonDetail);
-      if (rejectFiles.length) {
-        rejectFiles.forEach((file) => {
-          formData.append('file_data', file);
-        });
+    
+    const response = await AxiosInstance.post(
+      `/return-refund/${refundId}/seller_add_refund_proof/`,
+      formData,
+      {
+        headers: {
+          'X-User-Id': userId || '',
+          'X-Shop-Id': effectiveShopId || '',
+          'Content-Type': 'multipart/form-data'
+        }
       }
-      await AxiosInstance.post(`/return-refund/${refundId}/seller_respond_to_refund/`, formData, {
-        headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '', 'Content-Type': 'multipart/form-data' },
-      });
-      Alert.alert('Success', 'Refund rejected');
-      setShowRejectModal(false);
-      setRejectReasonCode('');
-      setRejectReasonDetail('');
-      setRejectFiles([]);
-      setRejectFilePreviews([]);
-      fetchDetail();
-    } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.error || 'Failed to reject refund');
-    } finally {
-      setActionLoading(false);
-    }
-  };
+    );
+    
+    console.log('Refund proof uploaded:', response.data);
+    return response.data;
+  } catch (err: any) {
+    console.error('Error uploading refund proof:', err);
+    throw err;
+  }
+};
 
+// Update the handleReject function to upload to the new endpoint
+const handleReject = async () => {
+  if (!rejectReasonCode || !rejectReasonDetail.trim()) {
+    Alert.alert('Required', 'Please select a reason and provide details');
+    return;
+  }
+  try {
+    setActionLoading(true);
+    
+    // First, upload any evidence files to RefundMedia
+    let uploadedMedia = [];
+    if (rejectFiles.length > 0) {
+      try {
+        const uploadResult = await handleAddRefundProof(rejectFiles);
+        uploadedMedia = uploadResult.created_media || [];
+        console.log('Uploaded refund media:', uploadedMedia);
+      } catch (uploadErr) {
+        console.error('Error uploading evidence:', uploadErr);
+        Alert.alert('Warning', 'Failed to upload evidence files, but will still reject the refund.');
+      }
+    }
+    
+    // Then reject the refund with the reason
+    const formData = new FormData();
+    formData.append('action', 'reject');
+    formData.append('reason_code', rejectReasonCode);
+    formData.append('notes', rejectReasonDetail);
+    
+    // Also include the media IDs in the notes (optional)
+    if (uploadedMedia.length > 0) {
+      const mediaIds = uploadedMedia.map(m => m.id).join(', ');
+      formData.append('media_note', `Evidence uploaded: ${mediaIds}`);
+    }
+    
+    await AxiosInstance.post(`/return-refund/${refundId}/seller_respond_to_refund/`, formData, {
+      headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '', 'Content-Type': 'multipart/form-data' },
+    });
+    
+    Alert.alert('Success', 'Refund rejected');
+    setShowRejectModal(false);
+    setRejectReasonCode('');
+    setRejectReasonDetail('');
+    setRejectFiles([]);
+    setRejectFilePreviews([]);
+    fetchDetail();
+  } catch (err: any) {
+    Alert.alert('Error', err?.response?.data?.error || 'Failed to reject refund');
+  } finally {
+    setActionLoading(false);
+  }
+};
+  
  const handleNegotiate = async () => {
   // Send the actual counter type without mapping
   const typeToSend = counterType;
@@ -531,32 +592,43 @@ const handleDeclineReturn = async () => {
     }
   };
 
-  const handleUploadProofs = async () => {
-    if (!proofFiles.length) {
-      Alert.alert('Required', 'Please select at least one file');
-      return;
+const handleUploadProofs = async () => {
+  if (!proofFiles.length) {
+    Alert.alert('Required', 'Please select at least one file');
+    return;
+  }
+  try {
+    setUploadingProofs(true);
+    
+    // Always use seller_add_refund_proof endpoint for seller evidence
+    const formData = new FormData();
+    for (const file of proofFiles) {
+      formData.append('media_files', file);
     }
-    try {
-      setUploadingProofs(true);
-      const formData = new FormData();
-      for (const file of proofFiles) {
-        formData.append('file_data', file);
+    
+    await AxiosInstance.post(
+      `/return-refund/${refundId}/seller_add_refund_proof/`,
+      formData,
+      {
+        headers: {
+          'X-User-Id': userId || '',
+          'X-Shop-Id': effectiveShopId || '',
+          'Content-Type': 'multipart/form-data'
+        }
       }
-      if (proofNotes) formData.append('notes', proofNotes);
-      await AxiosInstance.post(`/return-refund/${refundId}/add_proof/`, formData, {
-        headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '', 'Content-Type': 'multipart/form-data' },
-      });
-      Alert.alert('Success', 'Proofs uploaded');
-      setShowProofModal(false);
-      setProofFiles([]);
-      setProofNotes('');
-      fetchDetail();
-    } catch (err: any) {
-      Alert.alert('Error', err?.response?.data?.error || 'Failed to upload proofs');
-    } finally {
-      setUploadingProofs(false);
-    }
-  };
+    );
+    Alert.alert('Success', 'Additional proof uploaded successfully');
+    
+    setShowProofModal(false);
+    setProofFiles([]);
+    setProofNotes('');
+    fetchDetail();
+  } catch (err: any) {
+    Alert.alert('Error', err?.response?.data?.error || 'Failed to upload proofs');
+  } finally {
+    setUploadingProofs(false);
+  }
+};
 
   // ========== UI HELPERS ==========
   const pickImage = async (setter: Function) => {
@@ -736,7 +808,6 @@ const renderActionButtons = () => {
     ];
   } else if (isReturn && status === 'approved') {
     // Show "Provide Tracking" button ONLY when return status is 'pending' (not yet shipped)
-    // NOT when it's 'approved' (already accepted)
     if (returnStatus === 'pending') {
       buttons.push(
         <TouchableOpacity key="tracking" style={[styles.actionBtn, styles.trackingBtn]} onPress={() => setShowTrackingModal(true)} disabled={actionLoading}>
@@ -793,18 +864,31 @@ const renderActionButtons = () => {
         </View>
       );
     }
-    
-    // When returnStatus is 'approved' - NO buttons should show (dead end, admin handles payment)
-    // No buttons added for returnStatus === 'approved'
+  } else if (status === 'rejected') {
+    // For rejected status, show "Add More Proof" button to upload additional evidence
+    buttons.push(
+      <TouchableOpacity 
+        key="addMoreProof" 
+        style={[styles.actionBtn, { backgroundColor: '#6B7280' }]} 
+        onPress={() => {
+          setShowProofModal(true);
+        }} 
+        disabled={uploadingProofs}
+      >
+        <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
+        <Text style={styles.actionBtnText}>Add More Proof</Text>
+      </TouchableOpacity>
+    );
   }
 
-  // Only show Upload Proofs for non-pending and non-approved statuses
-  const shouldShowProofs = status !== 'pending' && status !== 'approved';
-  if (shouldShowProofs) {
+  // REMOVED: Only show Upload Proofs for other statuses - now all use Add More Proof
+  // Only show Add More Proof for any status that needs evidence upload
+  const shouldShowAddProof = status !== 'pending' && status !== 'approved' && status !== 'rejected';
+  if (shouldShowAddProof) {
     buttons.push(
-      <TouchableOpacity key="proofs" style={[styles.actionBtn, styles.proofBtn]} onPress={() => setShowProofModal(true)} disabled={uploadingProofs}>
+      <TouchableOpacity key="addMoreProof" style={[styles.actionBtn, { backgroundColor: '#6B7280' }]} onPress={() => setShowProofModal(true)} disabled={uploadingProofs}>
         <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
-        <Text style={styles.actionBtnText}>Upload Proofs</Text>
+        <Text style={styles.actionBtnText}>Add More Proof</Text>
       </TouchableOpacity>
     );
   }
@@ -907,55 +991,103 @@ const renderActionButtons = () => {
 </Modal>
 
       {/* Reject Modal */}
-      <Modal visible={showRejectModal} transparent={true} animationType="none" onRequestClose={() => setShowRejectModal(false)}>
-        <View style={styles.centeredModalOverlay}>
-          <View style={styles.centeredModalBox}>
-            <Text style={styles.modalTitle}>Reject Refund</Text>
-            <TouchableOpacity onPress={() => setShowReasonPicker(true)} style={styles.input}>
-              <Text style={rejectReasonCode ? styles.inputText : styles.placeholderText}>
-                {REASON_CODES.find(r => r.id === rejectReasonCode)?.label || 'Select reason'}
-              </Text>
-            </TouchableOpacity>
-            <TextInput
-              style={styles.textArea}
-              placeholder="Detailed reason"
-              multiline
-              numberOfLines={3}
-              value={rejectReasonDetail}
-              onChangeText={setRejectReasonDetail}
-            />
-            <Text style={styles.label}>Evidence (optional, up to 4 files)</Text>
-            <TouchableOpacity style={styles.uploadBtn} onPress={() => pickDocument(setRejectFiles, setRejectFilePreviews)}>
-              <Ionicons name="cloud-upload-outline" size={20} color="#EE4D2D" />
-              <Text style={styles.uploadText}>Select files</Text>
-            </TouchableOpacity>
-            {rejectFiles.length > 0 && (
-              <ScrollView horizontal style={styles.previewScroll}>
-                {rejectFilePreviews.map((uri, idx) => (
-                  <View key={idx} style={styles.previewItem}>
-                    <Image source={{ uri }} style={styles.previewImage} />
-                    <TouchableOpacity onPress={() => {
-                      const newFiles = rejectFiles.filter((_, i) => i !== idx);
-                      setRejectFiles(newFiles);
-                      setRejectFilePreviews(newFiles.map(f => f.uri));
-                    }} style={styles.removePreview}>
-                      <Ionicons name="close-circle" size={20} color="#EF4444" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </ScrollView>
-            )}
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.modalCancel} onPress={() => setShowRejectModal(false)}>
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalConfirm, { backgroundColor: '#DC2626' }]} onPress={handleReject} disabled={actionLoading}>
-                {actionLoading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalConfirmText}>Reject</Text>}
+ 
+<Modal visible={showRejectModal} transparent={true} animationType="none" onRequestClose={() => setShowRejectModal(false)}>
+  <View style={styles.centeredModalOverlay}>
+    <View style={styles.centeredModalBox}>
+      <Text style={styles.modalTitle}>Reject Refund</Text>
+      
+      {/* ADD THIS NOTICE SECTION */}
+      <View style={styles.noticeContainer}>
+        <Ionicons name="information-circle-outline" size={20} color="#0284C7" />
+        <Text style={styles.noticeText}>
+          Please note: Rejecting this refund may result in the buyer opening a dispute. 
+          Make sure you have valid evidence to support your decision.
+        </Text>
+      </View>
+      
+      {/* Existing Refund Media Section */}
+      {existingRefundMedia.length > 0 && (
+        <View style={styles.existingProofsSection}>
+          <Text style={styles.label}>Existing Evidence</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.existingProofsScroll}>
+            {existingRefundMedia.map((media, idx) => {
+              const fileUrl = media.file_url;
+              const isVideo = media.file_type === 'video';
+              
+              return (
+                <TouchableOpacity
+                  key={idx}
+                  style={styles.existingProofItem}
+                  onPress={() => openMediaViewer(fileUrl, media.file_type)}
+                >
+                  {isVideo ? (
+                    <View style={[styles.existingProofImage, styles.videoProofPlaceholder]}>
+                      <Ionicons name="play-circle" size={30} color="#fff" />
+                    </View>
+                  ) : (
+                    <Image source={{ uri: fileUrl }} style={styles.existingProofImage} />
+                  )}
+                  <Text style={styles.existingProofLabel}>
+                    {isVideo ? 'Video' : 'Image'} {idx + 1}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+      
+      {/* Reason Selection */}
+      <TouchableOpacity onPress={() => setShowReasonPicker(true)} style={styles.input}>
+        <Text style={rejectReasonCode ? styles.inputText : styles.placeholderText}>
+          {REASON_CODES.find(r => r.id === rejectReasonCode)?.label || 'Select reason'}
+        </Text>
+      </TouchableOpacity>
+      
+      <TextInput
+        style={styles.textArea}
+        placeholder="Detailed reason"
+        multiline
+        numberOfLines={3}
+        value={rejectReasonDetail}
+        onChangeText={setRejectReasonDetail}
+      />
+      
+      <Text style={styles.label}>Add New Evidence (optional, up to 4 files)</Text>
+      <TouchableOpacity style={styles.uploadBtn} onPress={() => pickDocument(setRejectFiles, setRejectFilePreviews)}>
+        <Ionicons name="cloud-upload-outline" size={20} color="#EE4D2D" />
+        <Text style={styles.uploadText}>Select files</Text>
+      </TouchableOpacity>
+      
+      {rejectFiles.length > 0 && (
+        <ScrollView horizontal style={styles.previewScroll}>
+          {rejectFilePreviews.map((uri, idx) => (
+            <View key={idx} style={styles.previewItem}>
+              <Image source={{ uri }} style={styles.previewImage} />
+              <TouchableOpacity onPress={() => {
+                const newFiles = rejectFiles.filter((_, i) => i !== idx);
+                setRejectFiles(newFiles);
+                setRejectFilePreviews(newFiles.map(f => f.uri));
+              }} style={styles.removePreview}>
+                <Ionicons name="close-circle" size={20} color="#EF4444" />
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </Modal>
+          ))}
+        </ScrollView>
+      )}
+      
+      <View style={styles.modalBtns}>
+        <TouchableOpacity style={styles.modalCancel} onPress={() => setShowRejectModal(false)}>
+          <Text style={styles.modalCancelText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.modalConfirm, { backgroundColor: '#DC2626' }]} onPress={handleReject} disabled={actionLoading}>
+          {actionLoading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalConfirmText}>Reject</Text>}
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
 
       {/* Reason Picker Modal */}
       <Modal visible={showReasonPicker} transparent={true} animationType="none" onRequestClose={() => setShowReasonPicker(false)}>
@@ -1200,33 +1332,31 @@ const renderActionButtons = () => {
       </Modal>
 
       {/* Upload Proofs Modal */}
-      <Modal visible={showProofModal} transparent={true} animationType="none" onRequestClose={() => setShowProofModal(false)}>
-        <View style={styles.centeredModalOverlay}>
-          <View style={styles.centeredModalBox}>
-            <Text style={styles.modalTitle}>Upload Proofs</Text>
-            <TouchableOpacity style={styles.uploadBtn} onPress={() => pickDocument(setProofFiles)}>
-              <Ionicons name="cloud-upload-outline" size={20} color="#EE4D2D" />
-              <Text style={styles.uploadText}>Select files</Text>
-            </TouchableOpacity>
-            {proofFiles.length > 0 && <Text style={styles.fileCount}>{proofFiles.length} file(s) selected</Text>}
-            <TextInput
-              style={styles.textArea}
-              placeholder="Notes (optional)"
-              multiline
-              value={proofNotes}
-              onChangeText={setProofNotes}
-            />
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.modalCancel} onPress={() => setShowProofModal(false)}>
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalConfirm} onPress={handleUploadProofs} disabled={uploadingProofs}>
-                {uploadingProofs ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalConfirmText}>Upload</Text>}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {/* Upload Proofs Modal */}
+{/* Upload Proofs Modal */}
+<Modal visible={showProofModal} transparent={true} animationType="none" onRequestClose={() => setShowProofModal(false)}>
+  <View style={styles.centeredModalOverlay}>
+    <View style={styles.centeredModalBox}>
+      <Text style={styles.modalTitle}>Add More Proof</Text>
+      <Text style={styles.modalSubtitle}>
+        Upload additional evidence to support your case.
+      </Text>
+      <TouchableOpacity style={styles.uploadBtn} onPress={() => pickDocument(setProofFiles)}>
+        <Ionicons name="cloud-upload-outline" size={20} color="#EE4D2D" />
+        <Text style={styles.uploadText}>Select files</Text>
+      </TouchableOpacity>
+      {proofFiles.length > 0 && <Text style={styles.fileCount}>{proofFiles.length} file(s) selected</Text>}
+      <View style={styles.modalBtns}>
+        <TouchableOpacity style={styles.modalCancel} onPress={() => setShowProofModal(false)}>
+          <Text style={styles.modalCancelText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.modalConfirm} onPress={handleUploadProofs} disabled={uploadingProofs}>
+          {uploadingProofs ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.modalConfirmText}>Upload</Text>}
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
 
       {/* Media Viewer Modal */}
       <Modal visible={mediaModalVisible} transparent animationType="none" onRequestClose={() => setMediaModalVisible(false)}>
@@ -1492,12 +1622,27 @@ const renderActionButtons = () => {
 
         {/* Evidence (buyer) */}
         {/* Evidence (buyer) */}
-        {(() => {
-  if (refund.refund_media && refund.refund_media.length > 0) {
-    console.log('Evidence found, rendering...');
-    return renderMedia(refund.refund_media, 'Evidence (Buyer)');
+        {/* Evidence (buyer) */}
+{(() => {
+  const allMedia = refund?.refund_media || refund?.evidence || [];
+  const buyerMedia = allMedia.filter((m: any) => m.uploaded_by_entity === 'buyer');
+  
+  if (buyerMedia.length > 0) {
+    console.log('Buyer evidence found, rendering...');
+    return renderMedia(buyerMedia, 'Evidence (Buyer)');
   }
-  console.log('No evidence found');
+  console.log('No buyer evidence found');
+  return null;
+})()}
+
+{/* Evidence (Seller) */}
+{(() => {
+  const allMedia = refund?.refund_media || refund?.evidence || [];
+  const sellerMedia = allMedia.filter((m: any) => m.uploaded_by_entity === 'seller');
+  
+  if (sellerMedia.length > 0 && refund.status === 'rejected') {
+    return renderMedia(sellerMedia, 'Seller Evidence (Rejection Proof)');
+  }
   return null;
 })()}
 
@@ -1740,4 +1885,50 @@ const styles = StyleSheet.create({
     width: SCREEN_WIDTH,
     height: SCREEN_WIDTH,
   },
+  existingProofsSection: {
+  marginBottom: 16,
+},
+existingProofsScroll: {
+  flexDirection: 'row',
+  marginTop: 8,
+},
+existingProofItem: {
+  marginRight: 12,
+  alignItems: 'center',
+  width: 80,
+},
+existingProofImage: {
+  width: 70,
+  height: 70,
+  borderRadius: 8,
+  backgroundColor: '#F3F4F6',
+},
+videoProofPlaceholder: {
+  backgroundColor: '#4B5563',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+existingProofLabel: {
+  fontSize: 10,
+  color: '#6B7280',
+  marginTop: 4,
+  textAlign: 'center',
+},
+noticeContainer: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#EFF6FF',
+  borderWidth: 1,
+  borderColor: '#BFDBFE',
+  borderRadius: 8,
+  padding: 12,
+  marginBottom: 16,
+  gap: 10,
+},
+noticeText: {
+  flex: 1,
+  fontSize: 12,
+  color: '#1E40AF',
+  lineHeight: 16,
+},
 });
