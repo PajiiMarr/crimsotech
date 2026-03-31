@@ -198,6 +198,38 @@ function MediaGallery({ files, title }: { files: any[], title: string }) {
   );
 }
 
+// ===== DELIVERY MEDIA CARD =====
+function DeliveryMediaCard({ proofs }: { proofs: any[] }) {
+  const deliveryProofs = proofs.filter(p => p.proof_type === 'delivery');
+  if (deliveryProofs.length === 0) return null;
+  
+  return (
+    <div className="mt-2 pt-2 border-t">
+      <span className="text-xs font-medium flex items-center gap-1 mb-2">
+        <Camera className="h-3 w-3" /> Delivery Proof Media ({deliveryProofs.length})
+      </span>
+      <div className="grid grid-cols-4 gap-2">
+        {deliveryProofs.map((proof, idx) => (
+          <div key={proof.id || idx} className="relative aspect-square rounded-md overflow-hidden border cursor-pointer" onClick={() => window.open(proof.file_url, '_blank')}>
+            {proof.file_url && proof.file_url.match(/\.(jpeg|jpg|png|gif|webp)$/i) ? (
+              <img src={proof.file_url} alt={`Delivery Proof ${idx + 1}`} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                <FileIcon className="h-6 w-6 text-gray-400" />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 text-[10px] text-muted-foreground">
+        {deliveryProofs.map((proof, idx) => (
+          <div key={idx}>Uploaded: {formatDateTime(proof.uploaded_at)}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ===== BUYER REQUEST CARD =====
 function BuyerRequestCard({ refundMedia, refundDetails }: { refundMedia: any[], refundDetails: any }) {
   const buyerMedia = refundMedia.filter(m => m.uploaded_by_entity === 'buyer' || m.uploaded_by_entity === 'Buyer');
@@ -265,7 +297,6 @@ function BuyerRequestCard({ refundMedia, refundDetails }: { refundMedia: any[], 
 function SellerResponseCard({ refundMedia, refundDetails }: { refundMedia: any[], refundDetails: any }) {
   const sellerMedia = refundMedia.filter(m => m.uploaded_by_entity === 'seller' || m.uploaded_by_entity === 'Seller');
   
-  // Check if seller has responded (rejected or provided evidence)
   const hasSellerResponse = refundDetails?.status === 'rejected' || 
                             refundDetails?.reject_reason_code || 
                             sellerMedia.length > 0;
@@ -1098,7 +1129,6 @@ export default function AdminViewRefundDetails() {
   const productItems = refund.product_details || refund.products || [];
   const orderInfo = refund.order_details || refund.order;
 
-  // Get refund details for buyer/seller cards
   const refundDetails = {
     reason: refund.reason,
     detailed_reason: refund.detailed_reason,
@@ -1415,7 +1445,7 @@ export default function AdminViewRefundDetails() {
                   </Card>
                 )}
 
-                {/* ===== 5. DELIVERY INFORMATION ===== */}
+                {/* ===== 5. DELIVERY INFORMATION (WITH MEDIA) ===== */}
                 {orderDeliveries.length > 0 && (
                   <Card>
                     <CardHeader className="pb-2">
@@ -1516,18 +1546,23 @@ export default function AdminViewRefundDetails() {
                               <p className="text-xs mt-1 italic">{delivery.notes}</p>
                             </div>
                           )}
+                          
+                          {/* Delivery Media/Proofs */}
+                          {delivery.proofs && delivery.proofs.length > 0 && (
+                            <DeliveryMediaCard proofs={delivery.proofs} />
+                          )}
                         </div>
                       ))}
                     </CardContent>
                   </Card>
                 )}
 
-                {/* ===== 6. PROOF OF DELIVERY MEDIA ===== */}
+                {/* ===== 6. PROOF OF DELIVERY MEDIA (Legacy - kept for backward compatibility) ===== */}
                 {proofMedia.length > 0 && (
                   <Card>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm flex items-center gap-2">
-                        <Camera className="h-4 w-4" /> Proof of Delivery Media
+                        <Camera className="h-4 w-4" /> All Delivery Proofs
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
