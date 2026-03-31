@@ -13,13 +13,13 @@ class Command(BaseCommand):
         self.stdout.write(f"[{timezone.now()}] Starting delivery assignment...")
         
         # Get all orders that need delivery assignment
-        # Orders with status 'processing' (which maps to 'to_ship' in UI) 
-        # and no active delivery or rejected deliveries
+        # Orders with status 'ready_to_ship' (seller marked as ready) or 'waiting_for_rider' (arrange shipment clicked)
+        # and no active delivery
         pending_orders = Order.objects.filter(
-            status='processing',  # processing maps to to_ship
+            Q(status='ready_to_ship') | Q(status='waiting_for_rider'),
             delivery_method__icontains='delivery'  # Not pickup orders
         ).exclude(
-            delivery__status='accepted'  # Exclude orders with accepted deliveries
+            delivery__status__in=['accepted', 'picked_up', 'delivered', 'in_progress']  # Exclude orders with active deliveries
         ).distinct()
         
         self.stdout.write(f"Found {pending_orders.count()} orders pending delivery assignment")
@@ -43,8 +43,7 @@ class Command(BaseCommand):
         
         # Check if there's already a pending delivery for this order
         existing_delivery = Delivery.objects.filter(
-            order=order,
-            status__in=['pending', 'pending_offer']
+            order=order, status__in=['pending', 'pending_offer', 'accepted', 'picked_up', 'in_progress']
         ).first()
         
         if existing_delivery:
@@ -84,7 +83,10 @@ class Command(BaseCommand):
             order=order,
             rider=selected_rider,
             status='pending_offer',
-            created_at=timezone.now()
+            created_at=timezone.now(),
+            delivery_fee=50,
+            distance_km=5.0,
+            estimated_minutes=30
         )
         
         # Create notification for the rider
@@ -101,4 +103,3 @@ class Command(BaseCommand):
                 f"Assigned rider {selected_rider.rider.username} to order {order.order}"
             )
         )
-

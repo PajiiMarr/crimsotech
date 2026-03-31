@@ -21709,7 +21709,7 @@ class SellerOrderList(viewsets.ViewSet):
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found", "data": []}, status=status.HTTP_404_NOT_FOUND)
             
-            # Get orders that have checkouts with cart_item (normal flow) OR direct product data
+            # Get ALL orders that have checkouts with cart_item (normal flow) OR direct product data
             orders = Order.objects.filter(
                 Q(checkout__cart_item__product__shop=shop) |
                 Q(checkout__direct_shop_id=str(shop.id))
@@ -21724,19 +21724,25 @@ class SellerOrderList(viewsets.ViewSet):
             ).distinct().order_by('-created_at')
             
             orders_data = [self._prepare_order_response(order, shop) for order in orders]
+            
+            # Log for debugging
+            print(f"Total orders found for shop {shop.name}: {orders.count()}")
+            print(f"Orders by status: {orders.values_list('status', flat=True)}")
+            
             return Response({
                 "success": True,
                 "message": "Orders retrieved successfully",
                 "data": orders_data,
-                "data_source": "database"
+                "data_source": "database",
+                "total_count": orders.count()
             }, status=status.HTTP_200_OK)
         except Exception as e:
+            print(f"Error retrieving orders: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response({"success": False, "message": f"Error retrieving orders: {str(e)}", "data": []}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def _get_shipping_status(self, order_status, delivery_status=None):
-        # Delivery flow: pending -> processing -> ready_to_ship -> waiting_for_rider -> shipped -> to_deliver -> delivered -> completed
-        # Pickup flow: pending -> processing -> ready_to_pick -> picked_up -> completed
-        
         status_mapping = {
             'pending': 'pending_shipment',
             'processing': 'processing',
@@ -21750,17 +21756,19 @@ class SellerOrderList(viewsets.ViewSet):
             'ready_for_pickup': 'ready_for_pickup',
             'picked_up': 'picked_up',
         }
-        
-        if delivery_status == 'pending':
+
+        # Both 'pending' (API) and 'pending_offer' (management command) mean waiting for rider
+        if delivery_status in ('pending', 'pending_offer'):
             return 'waiting_for_rider'
+
         if delivery_status:
             delivery_map = {
-                'pending': 'waiting_for_rider',
                 'accepted': 'shipped',
                 'picked_up': 'to_deliver',
-                'delivered': 'delivered'
+                'delivered': 'delivered',
             }
             return delivery_map.get(delivery_status, status_mapping.get(order_status, 'pending_shipment'))
+
         return status_mapping.get(order_status, 'pending_shipment')
 
     def _get_estimated_delivery(self, delivery):
@@ -21796,7 +21804,7 @@ class SellerOrderList(viewsets.ViewSet):
             if not has_shop_items:
                 return Response({"success": False, "message": "Order not found or doesn't belong to your shop"}, status=status.HTTP_403_FORBIDDEN)
 
-            has_pending_offer = Delivery.objects.filter(order=order, status='pending').exists()
+            has_pending_offer = Delivery.objects.filter(order=order, status__in=['pending', 'pending_offer']).exists()
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                     for keyword in ['pickup', 'store', 'collect'])
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
@@ -21934,6 +21942,31 @@ class SellerOrderList(viewsets.ViewSet):
                     return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'waiting_for_rider'
                 message = "Waiting for rider assignment"
+                
+                # Create delivery assignments for available riders
+                available_riders = Rider.objects.filter(
+                    verified=True, 
+                    availability_status='available', 
+                    is_accepting_deliveries=True
+                ).select_related('rider')
+                
+                if available_riders.exists():
+                    for rider in available_riders[:5]:
+                        delivery = Delivery.objects.create(
+                            order=order, 
+                            rider=rider, 
+                            status='pending',
+                            delivery_fee=50, 
+                            distance_km=5.0, 
+                            estimated_minutes=30
+                        )
+                        Notification.objects.create(
+                            user=rider.rider,
+                            title='New Delivery Assignment',
+                            type='delivery',
+                            message=f'You have a new delivery assignment for order #{str(order.order)[:8]}',
+                            is_read=False
+                        )
                 
             elif action_type == 'shipped':
                 if is_pickup:
@@ -22145,6 +22178,7 @@ class SellerOrderList(viewsets.ViewSet):
             
             if not checkouts.exists():
                 return Response({'success': False, 'message': 'No items found for this shop in the order'}, status=status.HTTP_404_NOT_FOUND)
+            
             delivery_info = None
             try:
                 delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
@@ -22152,12 +22186,15 @@ class SellerOrderList(viewsets.ViewSet):
                     delivery_info = {
                         'delivery_id': str(delivery.id),
                         'rider_name': f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery.rider else None,
+                        'rider_phone': delivery.rider.rider.contact_number if delivery.rider else None,
                         'status': delivery.status,
                         'estimated_delivery': self._get_estimated_delivery(delivery),
-                        'submitted_at': delivery.created_at.isoformat() if delivery.created_at else None
+                        'submitted_at': delivery.created_at.isoformat() if delivery.created_at else None,
+                        'tracking_number': f"TRK-{str(delivery.id)[:10]}" if delivery.status != 'pending' else None
                     }
             except Delivery.DoesNotExist:
                 pass
+                
             items = []
             total_amount = 0
             for checkout in checkouts:
@@ -23152,6 +23189,7 @@ class CheckoutOrder(viewsets.ViewSet):
         shipping_address_id = request.data.get("shipping_address_id")
         voucher_id = request.data.get("voucher_id")
         remarks = request.data.get("remarks")
+        pickup_date = request.data.get("pickup_date")
 
         if not user_id:
             return Response(
@@ -23213,7 +23251,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     direct_variant = get_object_or_404(Variants, id=variant_id, is_active=True)
                     direct_quantity = int(quantity)
                     
-                    # No cart items to fetch
                     cart_items = []
                     
                 except Product.DoesNotExist:
@@ -23341,16 +23378,27 @@ class CheckoutOrder(viewsets.ViewSet):
             delivery_fee = Decimal('0') if shipping_method.lower() == "pickup" else Decimal('50.00')
             total_amount = subtotal + delivery_fee - discount_amount
 
+            # Determine initial order status based on payment method
+            # For pickup orders: pending_shipment
+            # For delivery orders: pending_shipment
+            initial_status = 'pending'
+            
             # Create order
             order = Order.objects.create(
                 user=user,
                 shipping_address=shipping_address,
-                status='pending',
+                status=initial_status,
                 total_amount=total_amount,
                 payment_method=payment_method,
                 delivery_method=shipping_method,
                 delivery_address_text=delivery_address_text
             )
+            
+            # Store pickup date in metadata for cash on pickup orders
+            if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() and pickup_date:
+                order.metadata = order.metadata or {}
+                order.metadata['pickup_date'] = pickup_date
+                order.save(update_fields=['metadata'])
 
             cart_item_ids = []
             checkout_items = []
@@ -23375,13 +23423,12 @@ class CheckoutOrder(viewsets.ViewSet):
 
                 checkout_item = Checkout.objects.create(
                     order=order,
-                    cart_item=None,  # No cart item for direct checkout
+                    cart_item=None,
                     voucher=voucher,
                     quantity=direct_quantity,
                     total_amount=checkout_total,
                     status='pending',
                     remarks=remarks[:500] if remarks else None,
-                    # Store product snapshot data
                     direct_product_id=direct_product.id,
                     direct_variant_id=direct_variant.id,
                     direct_product_name=direct_product.name,
@@ -23464,6 +23511,19 @@ class CheckoutOrder(viewsets.ViewSet):
                     cart_item.is_ordered = True
                     cart_item.save()
 
+            # If payment method is Maya, initiate payment
+            if payment_method.lower() == 'maya':
+                # Maya payment will be initiated separately
+                payment_status = 'pending'
+            else:
+                # For COD/Cash on Pickup, create payment record as pending
+                Payment.objects.create(
+                    order=order,
+                    amount=total_amount,
+                    method=payment_method,
+                    status='pending'
+                )
+
             return Response({
                 "success": True,
                 "message": "Order created successfully. Waiting for seller confirmation.",
@@ -23475,9 +23535,10 @@ class CheckoutOrder(viewsets.ViewSet):
                 "delivery_fee": float(delivery_fee),
                 "discount_applied": float(discount_amount),
                 "voucher_used": voucher.code if voucher else None,
-                "status": "pending",
+                "status": "pending_shipment",
                 "payment_method": payment_method,
-                "shipping_method": shipping_method
+                "shipping_method": shipping_method,
+                "pickup_date": pickup_date if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() else None
             })
 
         except Exception as e:
@@ -23493,10 +23554,17 @@ class CheckoutOrder(viewsets.ViewSet):
     def get_order_details(self, request, order_id=None):
         try:
             order = get_object_or_404(Order, order=order_id)
+            
+            # Get latest delivery status for proper shipping status
+            latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
+            
+            # Determine shipping status based on order status and delivery status
+            shipping_status = self._get_shipping_status(order.status, latest_delivery.status if latest_delivery else None)
 
             order_data = {
                 'order_id': str(order.order),
-                'status': order.status,
+                'status': shipping_status,
+                'original_status': order.status,
                 'approval': order.approval,
                 'total_amount': str(order.total_amount),
                 'payment_method': order.payment_method,
@@ -23510,7 +23578,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     'email': order.user.email,
                     'first_name': order.user.first_name,
                     'last_name': order.user.last_name,
-                }
+                },
+                'pickup_date': order.metadata.get('pickup_date') if order.metadata else None
             }
 
             if order.shipping_address:
@@ -23533,6 +23602,35 @@ class CheckoutOrder(viewsets.ViewSet):
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    def _get_shipping_status(self, order_status, delivery_status=None):
+        status_mapping = {
+            'pending': 'pending_shipment',
+            'processing': 'processing',
+            'ready_to_ship': 'ready_to_ship',
+            'waiting_for_rider': 'waiting_for_rider',
+            'shipped': 'shipped',
+            'to_deliver': 'to_deliver',
+            'delivered': 'delivered',
+            'completed': 'completed',
+            'cancelled': 'cancelled',
+            'ready_for_pickup': 'ready_for_pickup',
+            'picked_up': 'picked_up',
+        }
+
+        # Both 'pending' (API) and 'pending_offer' (management command) mean waiting for rider
+        if delivery_status in ('pending', 'pending_offer'):
+            return 'waiting_for_rider'
+
+        if delivery_status:
+            delivery_map = {
+                'accepted': 'shipped',
+                'picked_up': 'to_deliver',
+                'delivered': 'delivered',
+            }
+            return delivery_map.get(delivery_status, status_mapping.get(order_status, 'pending_shipment'))
+
+        return status_mapping.get(order_status, 'pending_shipment')
 
     @action(detail=False, methods=['POST'], url_path='add_receipt')
     def add_receipt(self, request):
@@ -24213,7 +24311,6 @@ class CheckoutOrder(viewsets.ViewSet):
 
         except Exception as e:
             logger.error(f"Error processing seller payments: {str(e)}")
-
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
