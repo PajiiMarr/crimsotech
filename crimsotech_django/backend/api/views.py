@@ -8587,6 +8587,410 @@ class AdminRefunds(viewsets.ViewSet):
             logger.exception(f"Unexpected error in admin_process_refund for refund {pk}: {e}")
             return Response({'error': 'Internal server error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['get'], url_path='full-details')
+    def get_full_refund_details(self, request, pk=None):
+        """
+        Get COMPLETE refund details for admin including:
+        - Product details (name, variant name/title, price, image, condition, shop name, is_refundable, description, refund_days, compare price, purchase date, usage period, original price, proof image)
+        - Order details (order, user, shipping_address, total amount, payment method, delivery method, delivery_address_text, created_at, completed_at, quantity, total_amount, status, direct_product_id, direct_variant_id, direct_product_name, direct_product_price, direct_product_image, direct_shop_id, direct_shop_name)
+        - Delivery details (id, order, rider, status, delivery rating, picked_at, delivered_at, scheduled_pickup_time, scheduled_delivery_time)
+        - Proof of delivery media
+        - Refund details (refund_id, reason, detailed_reason, buyer_preferred_refund_method, refund_type, status, customer_note, final_refund_type, total_refund_amount, approved_refund_amount, final_refund_method, refund_payment_status, requested_at, processed_at, order-id, processed_by, requested_by, reject_reason_code, reject_reason_details, payment_detail, refund_fee)
+        - Refund media (refundmedia, uploaded_by_entity)
+        - Payment details (id, user_id, payment_method, bank_name, account_name, account_number, is_default)
+        - Dispute request (id, refund_id, requested_by, reason, status, processed_by)
+        - Dispute evidence media
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not (user.is_admin or user.is_moderator):
+            return Response({"error": "Admin or moderator access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            # Fetch refund with all related data in one go
+            refund = Refund.objects.select_related(
+                'order_id',
+                'order_id__user',
+                'order_id__shipping_address',
+                'requested_by',
+                'processed_by',
+                'payment_detail',
+            ).prefetch_related(
+                # Order checkouts for product details
+                Prefetch(
+                    'order_id__checkout_set',
+                    queryset=Checkout.objects.select_related(
+                        'cart_item__product',
+                        'cart_item__variant',
+                    ).prefetch_related(
+                        'cart_item__product__productmedia_set',
+                        'cart_item__product__shop',
+                    ),
+                    to_attr='prefetched_checkouts'
+                ),
+                # Refund media
+                Prefetch(
+                    'medias',
+                    queryset=RefundMedia.objects.select_related('uploaded_by'),
+                    to_attr='prefetched_medias'
+                ),
+                # Refund proofs
+                Prefetch(
+                    'proofs',
+                    queryset=RefundProof.objects.select_related('uploaded_by'),
+                    to_attr='prefetched_proofs'
+                ),
+                # Dispute with evidence
+                Prefetch(
+                    'dispute',
+                    queryset=DisputeRequest.objects.select_related(
+                        'requested_by',
+                        'processed_by'
+                    ).prefetch_related(
+                        Prefetch('evidences', queryset=DisputeEvidence.objects.all())
+                    ),
+                    to_attr='prefetched_dispute'
+                ),
+                # Deliveries with proofs
+                Prefetch(
+                    'order_id__delivery_set',
+                    queryset=Delivery.objects.select_related('rider__rider').prefetch_related(
+                        Prefetch('proof_set', queryset=Proof.objects.all())
+                    ),
+                    to_attr='prefetched_deliveries'
+                ),
+            ).get(refund_id=pk)
+            
+        except Refund.DoesNotExist:
+            return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # ========== 1. REFUND DETAILS ==========
+        refund_details = {
+            "refund_id": str(refund.refund_id),
+            "reason": refund.reason,
+            "detailed_reason": refund.detailed_reason,
+            "buyer_preferred_refund_method": refund.buyer_preferred_refund_method,
+            "refund_type": refund.refund_type,
+            "status": refund.status,
+            "customer_note": refund.customer_note,
+            "final_refund_type": refund.final_refund_type,
+            "total_refund_amount": float(refund.total_refund_amount) if refund.total_refund_amount else None,
+            "approved_refund_amount": float(refund.approved_refund_amount) if refund.approved_refund_amount else None,
+            "final_refund_method": refund.final_refund_method,
+            "refund_payment_status": refund.refund_payment_status,
+            "requested_at": refund.requested_at.isoformat() if refund.requested_at else None,
+            "processed_at": refund.processed_at.isoformat() if refund.processed_at else None,
+            "order_id": str(refund.order_id.order) if refund.order_id else None,
+            "processed_by": {
+                "id": str(refund.processed_by.id) if refund.processed_by else None,
+                "username": refund.processed_by.username if refund.processed_by else None,
+            } if refund.processed_by else None,
+            "requested_by": {
+                "id": str(refund.requested_by.id) if refund.requested_by else None,
+                "username": refund.requested_by.username if refund.requested_by else None,
+                "email": refund.requested_by.email if refund.requested_by else None,
+                "contact_number": refund.requested_by.contact_number if refund.requested_by else None,
+            } if refund.requested_by else None,
+            "reject_reason_code": refund.reject_reason_code,
+            "reject_reason_details": refund.reject_reason_details,
+            "refund_fee": float(refund.refund_fee) if refund.refund_fee else None,
+        }
+        
+        # ========== 2. ORDER DETAILS ==========
+        order = refund.order_id
+        order_details = None
+        if order:
+            order_details = {
+                "order": str(order.order),
+                "user": {
+                    "id": str(order.user.id) if order.user else None,
+                    "username": order.user.username if order.user else None,
+                    "email": order.user.email if order.user else None,
+                    "contact_number": order.user.contact_number if order.user else None,
+                    "street": order.user.street if order.user else None,
+                    "barangay": order.user.barangay if order.user else None,
+                    "city": order.user.city if order.user else None,
+                    "province": order.user.province if order.user else None,
+                    "zip_code": order.user.zip_code if order.user else None,
+                },
+                "shipping_address": {
+                    "id": str(order.shipping_address.id) if order.shipping_address else None,
+                    "recipient_name": order.shipping_address.recipient_name if order.shipping_address else None,
+                    "recipient_phone": order.shipping_address.recipient_phone if order.shipping_address else None,
+                    "street": order.shipping_address.street if order.shipping_address else None,
+                    "barangay": order.shipping_address.barangay if order.shipping_address else None,
+                    "city": order.shipping_address.city if order.shipping_address else None,
+                    "province": order.shipping_address.province if order.shipping_address else None,
+                    "zip_code": order.shipping_address.zip_code if order.shipping_address else None,
+                    "full_address": order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
+                } if order.shipping_address else {"full_address": order.delivery_address_text},
+                "total_amount": float(order.total_amount) if order.total_amount else 0,
+                "payment_method": order.payment_method,
+                "delivery_method": order.delivery_method,
+                "delivery_address_text": order.delivery_address_text,
+                "created_at": order.created_at.isoformat() if order.created_at else None,
+                "completed_at": order.completed_at.isoformat() if order.completed_at else None,
+                "status": order.status,
+                "approval_status": order.approval,
+            }
+        
+        # ========== 3. PRODUCT DETAILS ==========
+        product_details = []
+        checkouts = getattr(refund.order_id, 'prefetched_checkouts', [])
+        if not checkouts and refund.order_id:
+            checkouts = Checkout.objects.filter(order_id=refund.order_id).select_related(
+                'cart_item__product',
+                'cart_item__variant',
+            ).prefetch_related(
+                'cart_item__product__productmedia_set',
+                'cart_item__product__shop',
+            )
+        
+        for checkout in checkouts:
+            cart_item = checkout.cart_item
+            
+            if not cart_item:
+                # Direct product (non-cart items)
+                product_data = {
+                    "name": checkout.direct_product_name,
+                    "variant_name": None,
+                    "price": float(checkout.direct_product_price) if checkout.direct_product_price else None,
+                    "image": checkout.direct_product_image,
+                    "condition": None,
+                    "shop_name": checkout.direct_shop_name,
+                    "is_refundable": None,
+                    "description": None,
+                    "refund_days": None,
+                    "compare_price": None,
+                    "purchase_date": None,
+                    "usage_period": None,
+                    "original_price": None,
+                    "proof_image": None,
+                    "quantity": checkout.quantity,
+                    "total_amount": float(checkout.total_amount) if checkout.total_amount else 0,
+                    "direct_product_id": str(checkout.direct_product_id) if checkout.direct_product_id else None,
+                    "direct_variant_id": str(checkout.direct_variant_id) if checkout.direct_variant_id else None,
+                    "direct_shop_id": str(checkout.direct_shop_id) if checkout.direct_shop_id else None,
+                }
+                product_details.append(product_data)
+                continue
+            
+            product = cart_item.product
+            variant = cart_item.variant
+            
+            if not product:
+                continue
+            
+            # Get product images
+            product_images = []
+            for media in product.productmedia_set.all():
+                product_images.append(get_media_url(media.file_data))
+            
+            product_data = {
+                "name": product.name,
+                "variant_name": variant.title if variant else None,
+                "price": float(variant.price) if variant and variant.price else None,
+                "image": get_media_url(variant.image) if variant and variant.image else (product_images[0] if product_images else None),
+                "condition": product.condition,
+                "shop_name": product.shop.name if product.shop else None,
+                "is_refundable": product.is_refundable if product.is_refundable is not None else (variant.is_refundable if variant else False),
+                "description": product.description,
+                "refund_days": product.refund_days if product.refund_days else (variant.refund_days if variant else 0),
+                "compare_price": float(variant.compare_price) if variant and variant.compare_price else None,
+                "purchase_date": variant.purchase_date.isoformat() if variant and variant.purchase_date else None,
+                "usage_period": variant.usage_period if variant else None,
+                "original_price": float(variant.original_price) if variant and variant.original_price else None,
+                "proof_image": get_media_url(variant.proof_image) if variant and variant.proof_image else None,
+                "quantity": checkout.quantity,
+                "item_total_amount": float(checkout.total_amount) if checkout.total_amount else 0,
+                "product_id": str(product.id),
+                "variant_id": str(variant.id) if variant else None,
+                "shop_id": str(product.shop.id) if product.shop else None,
+                "product_images": product_images,
+            }
+            product_details.append(product_data)
+        
+        # ========== 4. DELIVERY DETAILS ==========
+        delivery_details = []
+        order_deliveries = getattr(refund.order_id, 'prefetched_deliveries', [])
+        if not order_deliveries and refund.order_id:
+            order_deliveries = Delivery.objects.filter(order=refund.order_id).select_related('rider__rider')
+        
+        for delivery in order_deliveries:
+            delivery_data = {
+                "id": str(delivery.id),
+                "order": str(delivery.order.order) if delivery.order else None,
+                "rider": {
+                    "id": str(delivery.rider.rider.id) if delivery.rider and delivery.rider.rider else None,
+                    "username": delivery.rider.rider.username if delivery.rider and delivery.rider.rider else None,
+                    "contact_number": delivery.rider.rider.contact_number if delivery.rider and delivery.rider.rider else None,
+                } if delivery.rider else None,
+                "status": delivery.status,
+                "delivery_rating": delivery.delivery_rating,
+                "picked_at": delivery.picked_at.isoformat() if delivery.picked_at else None,
+                "delivered_at": delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                "scheduled_pickup_time": delivery.scheduled_pickup_time.isoformat() if delivery.scheduled_pickup_time else None,
+                "scheduled_delivery_time": delivery.scheduled_delivery_time.isoformat() if delivery.scheduled_delivery_time else None,
+            }
+            delivery_details.append(delivery_data)
+        
+        # ========== 5. PROOF OF DELIVERY MEDIA ==========
+        proof_media = []
+        for delivery in order_deliveries:
+            for proof in delivery.proof_set.all():
+                proof_data = {
+                    "id": str(proof.id),
+                    "delivery_id": str(proof.delivery.id),
+                    "proof_type": proof.proof_type,
+                    "file_url": get_media_url(proof.file_data),
+                    "file_type": proof.file_type,
+                    "uploaded_at": proof.uploaded_at.isoformat() if proof.uploaded_at else None,
+                }
+                proof_media.append(proof_data)
+        
+        # ========== 6. REFUND MEDIA ==========
+        refund_media_list = []
+        refund_medias = getattr(refund, 'prefetched_medias', [])
+        for media in refund_medias:
+            media_data = {
+                "refundmedia": str(media.refundmedia) if hasattr(media, 'refundmedia') else None,
+                "file_url": get_media_url(media.file_data),
+                "file_type": media.file_type,
+                "uploaded_by_entity": media.uploaded_by_entity,
+                "uploaded_by": {
+                    "id": str(media.uploaded_by.id) if media.uploaded_by else None,
+                    "username": media.uploaded_by.username if media.uploaded_by else None,
+                } if media.uploaded_by else None,
+                "uploaded_at": media.uploaded_at.isoformat() if media.uploaded_at else None,
+            }
+            refund_media_list.append(media_data)
+        
+        # Also include refund proofs as media
+        refund_proofs = getattr(refund, 'prefetched_proofs', [])
+        for proof in refund_proofs:
+            proof_data = {
+                "refundmedia": None,
+                "file_url": get_media_url(proof.file_data),
+                "file_type": proof.file_type,
+                "uploaded_by_entity": "admin" if proof.uploaded_by and (proof.uploaded_by.is_admin or proof.uploaded_by.is_moderator) else "system",
+                "uploaded_by": {
+                    "id": str(proof.uploaded_by.id) if proof.uploaded_by else None,
+                    "username": proof.uploaded_by.username if proof.uploaded_by else None,
+                } if proof.uploaded_by else None,
+                "uploaded_at": proof.created_at.isoformat() if proof.created_at else None,
+                "notes": proof.notes,
+                "is_proof": True,
+            }
+            refund_media_list.append(proof_data)
+        
+        # ========== 7. PAYMENT DETAILS ==========
+        payment_details = None
+        if refund.payment_detail:
+            payment_details = {
+                "id": str(refund.payment_detail.payment_id),
+                "user_id": str(refund.payment_detail.user.id) if refund.payment_detail.user else None,
+                "payment_method": refund.payment_detail.payment_method,
+                "bank_name": refund.payment_detail.bank_name,
+                "account_name": refund.payment_detail.account_name,
+                "account_number": refund.payment_detail.account_number,
+                "masked_account_number": self._mask_account_number(refund.payment_detail.account_number),
+                "is_default": refund.payment_detail.is_default,
+                "verified_by": {
+                    "id": str(refund.payment_detail.verified_by.id) if refund.payment_detail.verified_by else None,
+                    "username": refund.payment_detail.verified_by.username if refund.payment_detail.verified_by else None,
+                } if refund.payment_detail.verified_by else None,
+            }
+        elif refund.requested_by:
+            default_payment = UserPaymentDetail.objects.filter(
+                user=refund.requested_by,
+                is_default=True
+            ).first()
+            if default_payment:
+                payment_details = {
+                    "id": str(default_payment.payment_id),
+                    "user_id": str(default_payment.user.id) if default_payment.user else None,
+                    "payment_method": default_payment.payment_method,
+                    "bank_name": default_payment.bank_name,
+                    "account_name": default_payment.account_name,
+                    "account_number": default_payment.account_number,
+                    "masked_account_number": self._mask_account_number(default_payment.account_number),
+                    "is_default": True,
+                    "note": "Using user's default payment method (not associated with refund)",
+                }
+        
+        # ========== 8. DISPUTE REQUEST & EVIDENCE ==========
+        dispute_details = None
+        dispute = getattr(refund, 'prefetched_dispute', None)
+        if not dispute and hasattr(refund, 'dispute'):
+            dispute = refund.dispute
+        
+        if dispute:
+            # Get evidence media
+            evidence_media = []
+            for evidence in dispute.evidences.all():
+                evidence_media.append({
+                    "id": str(evidence.id),
+                    "file_url": get_media_url(evidence.file_data),
+                    "file_type": evidence.file_type,
+                    "uploaded_by": {
+                        "id": str(evidence.uploaded_by.id) if evidence.uploaded_by else None,
+                        "username": evidence.uploaded_by.username if evidence.uploaded_by else None,
+                    } if evidence.uploaded_by else None,
+                    "created_at": evidence.created_at.isoformat() if evidence.created_at else None,
+                })
+            
+            dispute_details = {
+                "id": str(dispute.id),
+                "refund_id": str(dispute.refund_id.refund_id) if dispute.refund_id else None,
+                "requested_by": {
+                    "id": str(dispute.requested_by.id) if dispute.requested_by else None,
+                    "username": dispute.requested_by.username if dispute.requested_by else None,
+                } if dispute.requested_by else None,
+                "reason": dispute.reason,
+                "status": dispute.status,
+                "processed_by": {
+                    "id": str(dispute.processed_by.id) if dispute.processed_by else None,
+                    "username": dispute.processed_by.username if dispute.processed_by else None,
+                } if dispute.processed_by else None,
+                "admin_notes": dispute.admin_notes,
+                "case_category": dispute.case_category,
+                "resolved_at": dispute.resolved_at.isoformat() if dispute.resolved_at else None,
+                "created_at": dispute.created_at.isoformat() if dispute.created_at else None,
+                "updated_at": dispute.updated_at.isoformat() if dispute.updated_at else None,
+                "evidences": evidence_media,
+            }
+        
+        # ========== FINAL RESPONSE ==========
+        response_data = {
+            "refund_id": str(refund.refund_id),
+            "refund_details": refund_details,
+            "order_details": order_details,
+            "product_details": product_details,
+            "delivery_details": delivery_details,
+            "proof_media": proof_media,
+            "refund_media": refund_media_list,
+            "payment_details": payment_details,
+            "dispute_details": dispute_details,
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    def _mask_account_number(self, account_number):
+        """Mask account number for security - show only last 4 digits"""
+        if not account_number:
+            return None
+        account_str = str(account_number)
+        if len(account_str) <= 4:
+            return "*" * len(account_str)
+        return "*" * (len(account_str) - 4) + account_str[-4:]
+
 class AdminUsers(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
