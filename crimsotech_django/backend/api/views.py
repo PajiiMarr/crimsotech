@@ -46225,6 +46225,7 @@ class SellerVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class UserPaymentDetailsViewSet(viewsets.ViewSet):
     """
     User's saved payment details (e-wallets, bank accounts, etc.)
@@ -46385,3 +46386,4 @@ class UserPaymentDetailsViewSet(viewsets.ViewSet):
                 {"error": "Failed to set default"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
