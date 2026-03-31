@@ -16959,7 +16959,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     "error": "Invalid refund_days value"
                 }, status=status.HTTP_400_BAD_REQUEST)
         elif product_data['is_refundable']:
-            product_data['refund_days'] = 30  # Default value
+            product_data['refund_days'] = 3  # Default value
             
         product_data['customer'] = seller.customer_id
         
@@ -17152,9 +17152,9 @@ class SellerProducts(viewsets.ModelViewSet):
                                 raise ValidationError("Refund days cannot exceed 365")
                             variant_fields['refund_days'] = refund_days_int
                         except (ValueError, TypeError):
-                            variant_fields['refund_days'] = 30
+                            variant_fields['refund_days'] = 3
                     else:
-                        variant_fields['refund_days'] = 30
+                        variant_fields['refund_days'] = 3
                 else:
                     variant_fields['refund_days'] = 0
                 
@@ -18895,9 +18895,9 @@ class CustomerProducts(viewsets.ModelViewSet):
                         try:
                             variant_fields['refund_days'] = int(refund_days)
                         except (ValueError, TypeError):
-                            variant_fields['refund_days'] = 30
+                            variant_fields['refund_days'] = 3
                     else:
-                        variant_fields['refund_days'] = 30
+                        variant_fields['refund_days'] = 3
                 else:
                     variant_fields['refund_days'] = 0
                 
