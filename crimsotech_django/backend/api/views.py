@@ -21909,7 +21909,7 @@ class SellerOrderList(viewsets.ViewSet):
                     accepted_delivery = delivery
                 responses.append(response_info)
             if accepted_delivery:
-                order.status = 'processing'
+                order.status = 'ready_to_ship'
                 order.save()
                 Delivery.objects.filter(order=order, status='pending').exclude(id=accepted_delivery.id).update(status='cancelled')
             return Response({
@@ -21965,17 +21965,62 @@ class SellerOrderList(viewsets.ViewSet):
         )
         is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                   for keyword in ['pickup', 'store', 'collect'])
+        
+        # Get checkouts for this shop (both cart_item and direct)
         shop_checkouts = Checkout.objects.filter(
-            order=order, cart_item__product__shop=shop
+            order=order
+        ).filter(
+            Q(cart_item__product__shop=shop) | Q(direct_shop_id=str(shop.id))
         ).select_related(
             'cart_item__product__shop', 'cart_item__variant'
         ).prefetch_related('cart_item__product__productmedia_set')
+        
         order_items = []
         total_amount = 0
+        
         for checkout in shop_checkouts:
+            # Handle direct product checkout (no cart_item)
+            if checkout.direct_product_id and not checkout.cart_item:
+                price = float(checkout.direct_product_price or 0)
+                product_data = {
+                    "id": checkout.direct_product_id,
+                    "name": checkout.direct_product_name or "Unknown Product",
+                    "price": price,
+                    "variant": "Standard",
+                    "shop": {"id": str(shop.id), "name": shop.name},
+                    "media": [],
+                    "primary_image": {"url": checkout.direct_product_image} if checkout.direct_product_image else None
+                }
+                if checkout.direct_product_image:
+                    product_data["variant_image"] = checkout.direct_product_image
+                
+                order_items.append({
+                    "id": str(checkout.id),
+                    "cart_item": {
+                        "id": None,
+                        "product": product_data,
+                        "quantity": checkout.quantity,
+                        "variant_id": checkout.direct_variant_id
+                    },
+                    "quantity": checkout.quantity,
+                    "total_amount": float(checkout.total_amount),
+                    "status": shipping_status,
+                    "created_at": checkout.created_at.isoformat() if checkout.created_at else None,
+                    "shipping_status": shipping_status,
+                    "is_shipped": shipping_status in ['shipped', 'to_deliver', 'delivered', 'completed'],
+                    "is_processed": shipping_status not in ['pending_shipment'],
+                    "tracking_number": None,
+                    "shipping_method": None,
+                    "estimated_delivery": None
+                })
+                total_amount += float(checkout.total_amount)
+                continue
+            
+            # Handle normal cart_item checkout
             cart_item = checkout.cart_item
             if not cart_item or not cart_item.product:
                 continue
+                
             product = cart_item.product
             variant = cart_item.variant
             price = 0
@@ -21983,7 +22028,7 @@ class SellerOrderList(viewsets.ViewSet):
                 price = float(variant.price)
             elif hasattr(product, 'price'):
                 price = float(product.price)
-            variant_title = variant.title if variant else product.condition
+            variant_title = variant.title if variant else str(product.condition)
             product_media = self._get_product_media(product)
             variant_image_url = self._get_variant_media(variant)
             tracking_number = None
@@ -22017,18 +22062,20 @@ class SellerOrderList(viewsets.ViewSet):
                 "status": shipping_status,
                 "created_at": checkout.created_at.isoformat() if checkout.created_at else None,
                 "shipping_status": shipping_status,
-                "is_shipped": shipping_status in ['shipped', 'in_transit', 'out_for_delivery', 'completed'],
+                "is_shipped": shipping_status in ['shipped', 'to_deliver', 'delivered', 'completed'],
                 "is_processed": shipping_status not in ['pending_shipment'],
                 "tracking_number": tracking_number,
                 "shipping_method": shipping_method,
                 "estimated_delivery": estimated_delivery
             })
             total_amount += float(checkout.total_amount)
+        
         delivery_address = None
         if order.shipping_address:
             delivery_address = order.shipping_address.get_full_address()
         elif order.delivery_address_text:
             delivery_address = order.delivery_address_text
+        
         order_data = {
             "order_id": str(order.order),
             "user": {
@@ -22049,6 +22096,7 @@ class SellerOrderList(viewsets.ViewSet):
             "updated_at": order.updated_at.isoformat() if order.updated_at else None,
             "items": order_items,
             "is_pickup": is_pickup,
+            "pickup_date": order.metadata.get('pickup_date') if order.metadata else None,
         }
         if delivery_info:
             order_data["delivery_info"] = delivery_info
@@ -22064,17 +22112,21 @@ class SellerOrderList(viewsets.ViewSet):
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found", "data": []}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get orders that have checkouts with cart_item (normal flow) OR direct product data
             orders = Order.objects.filter(
-                checkout__cart_item__product__shop=shop
+                Q(checkout__cart_item__product__shop=shop) |
+                Q(checkout__direct_shop_id=str(shop.id))
             ).select_related('user', 'shipping_address').prefetch_related(
                 Prefetch('delivery_set', queryset=Delivery.objects.select_related('rider__rider'), to_attr='deliveries'),
                 Prefetch(
                     'checkout_set',
                     queryset=Checkout.objects.filter(
-                        cart_item__product__shop=shop
+                        Q(cart_item__product__shop=shop) | Q(direct_shop_id=str(shop.id))
                     ).select_related('cart_item__product__shop', 'cart_item__variant').prefetch_related('cart_item__product__productmedia_set')
                 )
             ).distinct().order_by('-created_at')
+            
             orders_data = [self._prepare_order_response(order, shop) for order in orders]
             return Response({
                 "success": True,
@@ -22086,25 +22138,31 @@ class SellerOrderList(viewsets.ViewSet):
             return Response({"success": False, "message": f"Error retrieving orders: {str(e)}", "data": []}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def _get_shipping_status(self, order_status, delivery_status=None):
+        # Delivery flow: pending -> processing -> ready_to_ship -> waiting_for_rider -> shipped -> to_deliver -> delivered -> completed
+        # Pickup flow: pending -> processing -> ready_to_pick -> picked_up -> completed
+        
         status_mapping = {
             'pending': 'pending_shipment',
-            'processing': 'to_ship',
-            'ready_for_pickup': 'ready_for_pickup',
+            'processing': 'processing',
+            'ready_to_ship': 'ready_to_ship',
+            'waiting_for_rider': 'waiting_for_rider',
             'shipped': 'shipped',
-            'out_for_delivery': 'out_for_delivery',
+            'to_deliver': 'to_deliver',
+            'delivered': 'delivered',
             'completed': 'completed',
             'cancelled': 'cancelled',
-            'picked_up': 'completed',
-            'arrange_shipment': 'arrange_shipment'
+            'ready_for_pickup': 'ready_for_pickup',
+            'picked_up': 'picked_up',
         }
+        
         if delivery_status == 'pending':
-            return 'arrange_shipment'
+            return 'waiting_for_rider'
         if delivery_status:
             delivery_map = {
-                'pending': 'to_ship',
-                'accepted': 'to_ship',
-                'picked_up': 'in_transit',
-                'delivered': 'completed'
+                'pending': 'waiting_for_rider',
+                'accepted': 'shipped',
+                'picked_up': 'to_deliver',
+                'delivered': 'delivered'
             }
             return delivery_map.get(delivery_status, status_mapping.get(order_status, 'pending_shipment'))
         return status_mapping.get(order_status, 'pending_shipment')
@@ -22134,7 +22192,11 @@ class SellerOrderList(viewsets.ViewSet):
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
 
-            has_shop_items = Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists()
+            has_shop_items = Checkout.objects.filter(
+                Q(order=order, cart_item__product__shop=shop) |
+                Q(order=order, direct_shop_id=str(shop.id))
+            ).exists()
+            
             if not has_shop_items:
                 return Response({"success": False, "message": "Order not found or doesn't belong to your shop"}, status=status.HTTP_403_FORBIDDEN)
 
@@ -22147,46 +22209,54 @@ class SellerOrderList(viewsets.ViewSet):
                 latest_delivery.status if latest_delivery else None
             )
 
-            # ── Payment gate ──────────────────────────────────────────────────────
-            # For Maya orders, the seller can only confirm once payment is verified.
+            # Payment gate - For Maya orders, the seller can only confirm once payment is verified.
             is_maya = order.payment_method and order.payment_method.lower() == 'maya'
             is_paid = Payment.objects.filter(order=order, status='success').exists()
-            can_confirm = not is_maya or is_paid  # COD / other methods: always ok; Maya: only if paid
-            # ─────────────────────────────────────────────────────────────────────
+            can_confirm = not is_maya or is_paid
 
             available_actions = []
+            
             if current_shipping_status == 'pending_shipment':
-                if can_confirm:                      # ← gate added here
+                if can_confirm:
                     if is_pickup:
                         available_actions = ['confirm']
                     else:
-                        available_actions = ['confirm', 'prepare_shipment']
-                # If can_confirm is False, no confirm/prepare actions are exposed
-            elif current_shipping_status == 'to_ship':
+                        available_actions = ['confirm']
+                        
+            elif current_shipping_status == 'processing':
                 if is_pickup:
                     available_actions = ['ready_for_pickup']
                 else:
-                    available_actions = ['arrange_shipment']
-                    if has_pending_offer:
-                        available_actions.append('view_offer')
-            elif current_shipping_status == 'arrange_shipment':
+                    available_actions = ['ready_to_ship']
+                    
+            elif current_shipping_status == 'ready_to_ship':
+                available_actions = ['arrange_shipment']
+                if has_pending_offer:
+                    available_actions.append('view_offer')
+                    
+            elif current_shipping_status == 'waiting_for_rider':
                 if has_pending_offer:
                     available_actions = ['view_offer']
-                else:
-                    available_actions = ['arrange_shipment_nav']
+                    
+            elif current_shipping_status == 'shipped':
+                available_actions = ['to_deliver']
+                
+            elif current_shipping_status == 'to_deliver':
+                available_actions = ['delivered']
+                
+            elif current_shipping_status == 'delivered':
+                available_actions = ['complete']
+                
             elif current_shipping_status == 'ready_for_pickup':
                 available_actions = ['picked_up']
-            elif current_shipping_status == 'shipped':
-                available_actions = ['out_for_delivery', 'complete']
-            elif current_shipping_status == 'out_for_delivery':
-                available_actions = ['complete']
-            elif current_shipping_status == 'in_transit':
+                
+            elif current_shipping_status == 'picked_up':
                 available_actions = ['complete']
 
-            if order.status == 'processing' and latest_delivery and latest_delivery.status == 'accepted':
+            if order.status == 'ready_to_ship' and latest_delivery and latest_delivery.status == 'accepted':
                 available_actions.append('print_waybill')
 
-            if current_shipping_status not in ['completed', 'cancelled', 'picked_up']:
+            if current_shipping_status not in ['completed', 'cancelled', 'picked_up', 'delivered']:
                 available_actions.append('cancel')
 
             available_actions.append('view_details')
@@ -22199,7 +22269,8 @@ class SellerOrderList(viewsets.ViewSet):
                     "is_pickup": is_pickup,
                     "has_pending_offer": has_pending_offer,
                     "available_actions": available_actions,
-                    "can_confirm": can_confirm,          # ← expose for debugging / future use
+                    "can_confirm": can_confirm,
+                    "pickup_date": order.metadata.get('pickup_date') if order.metadata else None,
                 }
             }, status=status.HTTP_200_OK)
         except Exception as e:
@@ -22222,18 +22293,24 @@ class SellerOrderList(viewsets.ViewSet):
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
-            has_shop_items = Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists()
+            
+            has_shop_items = Checkout.objects.filter(
+                Q(order=order, cart_item__product__shop=shop) |
+                Q(order=order, direct_shop_id=str(shop.id))
+            ).exists()
+            
             if not has_shop_items:
                 return Response({"success": False, "message": "Order does not contain items from your shop"}, status=status.HTTP_403_FORBIDDEN)
+            
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                       for keyword in ['pickup', 'store', 'collect'])
             original_status = order.status
 
             if action_type == 'confirm':
                 order.status = 'processing'
-                message = "Pickup order confirmed" if is_pickup else "Delivery order confirmed"
+                message = "Pickup order confirmed" if is_pickup else "Order confirmed"
 
-                # ── PICKUP DATE: only for Cash on Pickup orders ──────────────
+                # PICKUP DATE: only for Cash on Pickup orders
                 is_cash_on_pickup = (
                     is_pickup and
                     order.payment_method and
@@ -22244,37 +22321,65 @@ class SellerOrderList(viewsets.ViewSet):
                     try:
                         from datetime import datetime as dt
                         pickup_dt = dt.fromisoformat(pickup_date_str)
-                        # Store in metadata (JSONField already added to Order model)
                         order.metadata = order.metadata or {}
                         order.metadata['pickup_date'] = pickup_date_str
                         message = f"Pickup order confirmed. Customer pickup scheduled for {pickup_dt.strftime('%b %d, %Y %I:%M %p')}."
                     except (ValueError, TypeError):
-                        pass  # Invalid datetime string — ignore and proceed
-                # ─────────────────────────────────────────────────────────────
-
+                        pass
+                        
+            elif action_type == 'ready_to_ship':
+                if is_pickup:
+                    return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
+                order.status = 'ready_to_ship'
+                message = "Order marked as ready to ship"
+                
+            elif action_type == 'arrange_shipment':
+                if is_pickup:
+                    return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
+                order.status = 'waiting_for_rider'
+                message = "Waiting for rider assignment"
+                
+            elif action_type == 'shipped':
+                if is_pickup:
+                    return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
+                order.status = 'shipped'
+                Delivery.objects.filter(order=order).update(status='accepted', picked_at=timezone.now())
+                message = "Order marked as shipped"
+                
+            elif action_type == 'to_deliver':
+                if is_pickup:
+                    return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
+                order.status = 'to_deliver'
+                message = "Order is out for delivery"
+                
+            elif action_type == 'delivered':
+                if is_pickup:
+                    return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
+                order.status = 'delivered'
+                message = "Order marked as delivered"
+                
+            elif action_type == 'complete':
+                if is_pickup and order.status != 'picked_up':
+                    return Response({"success": False, "message": "Pickup order must be marked as picked up first"}, status=status.HTTP_400_BAD_REQUEST)
+                order.status = 'completed'
+                if not is_pickup:
+                    Delivery.objects.filter(order=order).update(status='delivered', delivered_at=timezone.now())
+                order.completed_at = timezone.now()
+                message = "Order completed"
+                
             elif action_type == 'ready_for_pickup':
                 if not is_pickup:
                     return Response({"success": False, "message": "This action is only for pickup orders"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'ready_for_pickup'
-                message = "Order marked as ready for pickup"
+                message = "Order ready for pickup"
+                
             elif action_type == 'picked_up':
                 if not is_pickup:
                     return Response({"success": False, "message": "This action is only for pickup orders"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'picked_up'
-                Delivery.objects.filter(order=order).update(status='picked_up', picked_at=timezone.now())
                 order.completed_at = timezone.now()
-                message = "Order marked as picked up"
-            elif action_type == 'shipped':
-                order.status = 'shipped'
-                Delivery.objects.filter(order=order).update(status='picked_up')
-                message = "Order marked as shipped"
-            elif action_type == 'out_for_delivery':
-                order.status = 'out_for_delivery'
-                message = "Order marked as out for delivery"
-            elif action_type == 'complete':
-                order.status = 'completed'
-                Delivery.objects.filter(order=order).update(status='delivered', delivered_at=timezone.now())
-                message = "Order marked as delivered"
+                message = "Order picked up"
+                
             elif action_type == 'cancel':
                 order.status = 'cancelled'
                 message = "Order cancelled"
@@ -22285,7 +22390,7 @@ class SellerOrderList(viewsets.ViewSet):
             order.save()
             order.refresh_from_db()
 
-            # Notify customer — include pickup datetime if available
+            # Notify customer
             notif_message = f'Your order status has been updated to: {order.status}'
             if action_type == 'confirm' and order.metadata and order.metadata.get('pickup_date'):
                 try:
@@ -22315,26 +22420,36 @@ class SellerOrderList(viewsets.ViewSet):
             )
             has_pending_offer = Delivery.objects.filter(order=order, status='pending').exists()
             updated_available_actions = []
+            
             if current_shipping_status == 'pending_shipment':
-                updated_available_actions = ['confirm'] if is_pickup else ['confirm', 'prepare_shipment']
-            elif current_shipping_status == 'to_ship':
+                updated_available_actions = ['confirm']
+            elif current_shipping_status == 'processing':
                 if is_pickup:
                     updated_available_actions = ['ready_for_pickup']
                 else:
-                    updated_available_actions = ['arrange_shipment']
-                    if has_pending_offer:
-                        updated_available_actions.append('view_offer')
-            elif current_shipping_status == 'arrange_shipment':
-                updated_available_actions = ['view_offer'] if has_pending_offer else ['arrange_shipment_nav']
+                    updated_available_actions = ['ready_to_ship']
+            elif current_shipping_status == 'ready_to_ship':
+                updated_available_actions = ['arrange_shipment']
+                if has_pending_offer:
+                    updated_available_actions.append('view_offer')
+            elif current_shipping_status == 'waiting_for_rider':
+                if has_pending_offer:
+                    updated_available_actions = ['view_offer']
+            elif current_shipping_status == 'shipped':
+                updated_available_actions = ['to_deliver']
+            elif current_shipping_status == 'to_deliver':
+                updated_available_actions = ['delivered']
+            elif current_shipping_status == 'delivered':
+                updated_available_actions = ['complete']
             elif current_shipping_status == 'ready_for_pickup':
                 updated_available_actions = ['picked_up']
-            elif current_shipping_status == 'shipped':
-                updated_available_actions = ['out_for_delivery', 'complete']
-            elif current_shipping_status in ['out_for_delivery', 'in_transit']:
+            elif current_shipping_status == 'picked_up':
                 updated_available_actions = ['complete']
-            if current_shipping_status not in ['completed', 'cancelled', 'picked_up']:
+                
+            if current_shipping_status not in ['completed', 'cancelled', 'picked_up', 'delivered']:
                 updated_available_actions.append('cancel')
             updated_available_actions.append('view_details')
+            
             return Response({
                 "success": True,
                 "message": message,
@@ -22365,21 +22480,28 @@ class SellerOrderList(viewsets.ViewSet):
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
                 return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
-            has_shop_items = Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists()
+            
+            has_shop_items = Checkout.objects.filter(
+                Q(order=order, cart_item__product__shop=shop) |
+                Q(order=order, direct_shop_id=str(shop.id))
+            ).exists()
+            
             if not has_shop_items:
                 return Response({"success": False, "message": "Order does not contain items from your shop"}, status=status.HTTP_403_FORBIDDEN)
+            
             current_shipping_status = self._get_shipping_status(order.status)
-            if current_shipping_status != 'pending_shipment':
-                return Response({"success": False, "message": "Order is not in pending shipment status"}, status=status.HTTP_400_BAD_REQUEST)
+            if current_shipping_status != 'ready_to_ship':
+                return Response({"success": False, "message": "Order is not ready to ship"}, status=status.HTTP_400_BAD_REQUEST)
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                       for keyword in ['pickup', 'store', 'collect'])
             if is_pickup:
                 return Response({"success": False, "message": "This order is for pickup, not delivery"}, status=status.HTTP_400_BAD_REQUEST)
             original_status = order.status
-            order.status = 'processing'
+            order.status = 'waiting_for_rider'
             order.updated_at = timezone.now()
             order.save()
             order.refresh_from_db()
+            
             Notification.objects.create(
                 user=request.user,
                 title='Order Prepared for Shipment',
@@ -22395,14 +22517,14 @@ class SellerOrderList(viewsets.ViewSet):
                 is_read=False
             )
             updated_order_data = self._prepare_order_response(order, shop)
-            updated_available_actions = ['arrange_shipment', 'cancel', 'view_details']
+            updated_available_actions = ['view_offer', 'cancel', 'view_details'] if Delivery.objects.filter(order=order, status='pending').exists() else ['arrange_shipment_nav', 'cancel', 'view_details']
             return Response({
                 "success": True,
                 "message": "Order prepared for shipment successfully",
                 "data": {
                     "order_id": pk,
                     "original_status": original_status,
-                    "new_status": "to_ship",
+                    "new_status": "waiting_for_rider",
                     "updated_order": updated_order_data,
                     "updated_available_actions": updated_available_actions
                 }
@@ -22419,9 +22541,12 @@ class SellerOrderList(viewsets.ViewSet):
         try:
             shop = Shop.objects.get(id=shop_id)
             order = Order.objects.select_related('user', 'shipping_address').get(order=order_id)
+            
             checkouts = Checkout.objects.filter(
-                order=order, cart_item__product__shop=shop
+                Q(order=order, cart_item__product__shop=shop) |
+                Q(order=order, direct_shop_id=str(shop.id))
             ).select_related('cart_item__product', 'cart_item__variant').prefetch_related('cart_item__product__productmedia_set')
+            
             if not checkouts.exists():
                 return Response({'success': False, 'message': 'No items found for this shop in the order'}, status=status.HTTP_404_NOT_FOUND)
             delivery_info = None
@@ -22440,6 +22565,34 @@ class SellerOrderList(viewsets.ViewSet):
             items = []
             total_amount = 0
             for checkout in checkouts:
+                # Handle direct product checkout
+                if checkout.direct_product_id and not checkout.cart_item:
+                    price = float(checkout.direct_product_price or 0)
+                    item_total = price * checkout.quantity
+                    total_amount += item_total
+                    items.append({
+                        'id': str(checkout.id),
+                        'cart_item': {
+                            'id': None,
+                            'product': {
+                                "id": checkout.direct_product_id,
+                                "name": checkout.direct_product_name or "Unknown Product",
+                                "price": price,
+                                "variant": "Standard",
+                                "shop": {"id": str(shop.id), "name": shop.name},
+                                "media": [],
+                                "primary_image": {"url": checkout.direct_product_image} if checkout.direct_product_image else None
+                            },
+                            'quantity': checkout.quantity,
+                            'variant_id': checkout.direct_variant_id
+                        },
+                        'quantity': checkout.quantity,
+                        'total_amount': item_total,
+                        'status': checkout.status if hasattr(checkout, 'status') else 'pending',
+                    })
+                    continue
+                
+                # Handle normal cart_item checkout
                 cart_item = checkout.cart_item
                 if not cart_item or not cart_item.product:
                     continue
@@ -22513,7 +22666,6 @@ class SellerOrderList(viewsets.ViewSet):
                     'completed_at': order.completed_at.isoformat() if order.completed_at else None,
                     'items': items,
                     'delivery_info': delivery_info,
-                    # Include pickup_date from metadata if set
                     'pickup_date': order.metadata.get('pickup_date') if order.metadata else None,
                 }
             }, status=status.HTTP_200_OK)
@@ -22551,13 +22703,22 @@ class SellerOrderList(viewsets.ViewSet):
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found"}, status=404)
-            has_shop_items = Checkout.objects.filter(order=order, cart_item__product__shop=shop).exists()
+            
+            has_shop_items = Checkout.objects.filter(
+                Q(order=order, cart_item__product__shop=shop) |
+                Q(order=order, direct_shop_id=str(shop.id))
+            ).exists()
+            
             if not has_shop_items:
                 return Response({"success": False, "message": "No items from your shop"}, status=403)
+            
             delivery = Delivery.objects.filter(order=order).select_related('rider__rider').first()
+            
             checkout_items = Checkout.objects.filter(
-                order=order, cart_item__product__shop=shop
+                Q(order=order, cart_item__product__shop=shop) |
+                Q(order=order, direct_shop_id=str(shop.id))
             ).select_related('cart_item__product', 'cart_item__variant')
+            
             buffer = io.BytesIO()
             STICKER_WIDTH = 4.25 * inch
             STICKER_HEIGHT = 5.5 * inch
@@ -22671,17 +22832,26 @@ class SellerOrderList(viewsets.ViewSet):
                 Paragraph("<b>Price</b>", bold_small)
             ]]
             for checkout in checkout_items[:3]:
-                cart_item = checkout.cart_item
-                if not cart_item or not cart_item.product:
-                    continue
-                product = cart_item.product
-                name = product.name[:18] + '..' if len(product.name) > 18 else product.name
-                price = float(checkout.total_amount or 0)
-                items_data.append([
-                    Paragraph(name, small_style),
-                    Paragraph(str(checkout.quantity), small_style),
-                    Paragraph(f"₱{price:,.0f}", small_style)
-                ])
+                if checkout.direct_product_id and not checkout.cart_item:
+                    name = (checkout.direct_product_name or "Unknown Product")[:18] + '..' if len(checkout.direct_product_name or "") > 18 else (checkout.direct_product_name or "Unknown Product")
+                    price = float(checkout.total_amount or 0)
+                    items_data.append([
+                        Paragraph(name, small_style),
+                        Paragraph(str(checkout.quantity), small_style),
+                        Paragraph(f"₱{price:,.0f}", small_style)
+                    ])
+                else:
+                    cart_item = checkout.cart_item
+                    if not cart_item or not cart_item.product:
+                        continue
+                    product = cart_item.product
+                    name = product.name[:18] + '..' if len(product.name) > 18 else product.name
+                    price = float(checkout.total_amount or 0)
+                    items_data.append([
+                        Paragraph(name, small_style),
+                        Paragraph(str(checkout.quantity), small_style),
+                        Paragraph(f"₱{price:,.0f}", small_style)
+                    ])
             if len(checkout_items) > 3:
                 items_data.append([Paragraph(f"+{len(checkout_items)-3} more items", small_style), Paragraph("", small_style), Paragraph("", small_style)])
             items_table = Table(items_data, colWidths=[2.2*inch, 0.5*inch, 0.8*inch])
@@ -22742,7 +22912,7 @@ class SellerOrderList(viewsets.ViewSet):
             import traceback
             print(traceback.format_exc())
             return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)
-
+        
 class CheckoutOrder(viewsets.ViewSet):
     
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')

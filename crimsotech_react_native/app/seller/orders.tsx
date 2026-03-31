@@ -90,32 +90,36 @@ interface Order {
   is_pickup?: boolean;
   delivery_info?: DeliveryInfo;
   receipt_url?: string | null;
+  pickup_date?: string | null;
 }
 
-// Status configuration
+// Status configuration - Updated with new flow
 const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string; icon: keyof typeof Ionicons.glyphMap }> = {
   pending_shipment: { label: 'Pending', color: '#f59e0b', bgColor: '#fffbeb', icon: 'time-outline' },
-  to_ship: { label: 'Processing', color: '#f59e0b', bgColor: '#fffbeb', icon: 'refresh-outline' },
   processing: { label: 'Processing', color: '#f59e0b', bgColor: '#fffbeb', icon: 'refresh-outline' },
-  ready_for_pickup: { label: 'Ready for Pickup', color: '#3b82f6', bgColor: '#eff6ff', icon: 'storefront-outline' },
+  ready_to_ship: { label: 'Ready to Ship', color: '#3b82f6', bgColor: '#eff6ff', icon: 'cube-outline' },
+  waiting_for_rider: { label: 'Waiting Rider', color: '#f97316', bgColor: '#fff7ed', icon: 'person-outline' },
   shipped: { label: 'Shipped', color: '#3b82f6', bgColor: '#eff6ff', icon: 'car-outline' },
-  in_transit: { label: 'In Transit', color: '#8b5cf6', bgColor: '#f5f3ff', icon: 'car-outline' },
-  out_for_delivery: { label: 'Out for Delivery', color: '#8b5cf6', bgColor: '#f5f3ff', icon: 'car-outline' },
+  to_deliver: { label: 'Out for Delivery', color: '#8b5cf6', bgColor: '#f5f3ff', icon: 'car-outline' },
+  delivered: { label: 'Delivered', color: '#10b981', bgColor: '#ecfdf5', icon: 'checkmark-circle-outline' },
   completed: { label: 'Completed', color: '#10b981', bgColor: '#ecfdf5', icon: 'checkmark-circle-outline' },
+  ready_for_pickup: { label: 'Ready for Pickup', color: '#3b82f6', bgColor: '#eff6ff', icon: 'storefront-outline' },
+  picked_up: { label: 'Picked Up', color: '#10b981', bgColor: '#ecfdf5', icon: 'checkmark-circle-outline' },
   cancelled: { label: 'Cancelled', color: '#ef4444', bgColor: '#fef2f2', icon: 'close-circle-outline' },
-  arrange_shipment: { label: 'Arrange Shipment', color: '#f97316', bgColor: '#fff7ed', icon: 'hand-left-outline' },
   pending_offer: { label: 'Pending Offer', color: '#f59e0b', bgColor: '#fffbeb', icon: 'chatbubble-outline' },
   awaiting_payment: { label: 'Awaiting Payment', color: '#f97316', bgColor: '#fff7ed', icon: 'card-outline' },
   default: { label: 'Unknown', color: '#6b7280', bgColor: '#f3f4f6', icon: 'help-circle-outline' }
 };
 
-// Tabs configuration
+// Tabs configuration - Updated with new statuses
 const STATUS_TABS = [
   { id: 'all', label: 'All', icon: 'list-outline' },
   { id: 'pending_shipment', label: 'Pending', icon: 'time-outline' },
-  { id: 'to_ship', label: 'To Process', icon: 'refresh-outline' },
-  { id: 'waiting_rider', label: 'Waiting Rider', icon: 'person-outline' },
+  { id: 'processing', label: 'Processing', icon: 'refresh-outline' },
+  { id: 'waiting_for_rider', label: 'Waiting Rider', icon: 'person-outline' },
   { id: 'shipped', label: 'Shipped', icon: 'car-outline' },
+  { id: 'to_deliver', label: 'Out for Delivery', icon: 'car-outline' },
+  { id: 'delivered', label: 'Delivered', icon: 'checkmark-circle-outline' },
   { id: 'completed', label: 'Completed', icon: 'checkmark-circle-outline' },
   { id: 'cancelled', label: 'Cancelled', icon: 'close-circle-outline' }
 ];
@@ -213,29 +217,29 @@ export default function Orders() {
     });
 
     if (activeTab !== 'all') {
-      switch (activeTab) {
-        case 'pending_shipment':
-          filtered = filtered.filter(order => order.status?.toLowerCase() === 'pending_shipment');
-          break;
-        case 'to_ship':
-          filtered = filtered.filter(order => order.status?.toLowerCase() === 'to_ship');
-          break;
-        case 'waiting_rider':
-          filtered = filtered.filter(order => isWaitingForRider(order));
-          break;
-        case 'shipped':
-          filtered = filtered.filter(order => {
-            const s = order.status?.toLowerCase();
-            return ['shipped', 'in_transit', 'out_for_delivery'].includes(s || '');
-          });
-          break;
-        case 'completed':
-          filtered = filtered.filter(order => order.status?.toLowerCase() === 'completed');
-          break;
-        case 'cancelled':
-          filtered = filtered.filter(order => order.status?.toLowerCase() === 'cancelled');
-          break;
-      }
+      filtered = filtered.filter(order => {
+        const status = order.status?.toLowerCase() || '';
+        switch (activeTab) {
+          case 'pending_shipment':
+            return status === 'pending_shipment';
+          case 'processing':
+            return status === 'processing';
+          case 'waiting_for_rider':
+            return status === 'waiting_for_rider';
+          case 'shipped':
+            return status === 'shipped';
+          case 'to_deliver':
+            return status === 'to_deliver';
+          case 'delivered':
+            return status === 'delivered';
+          case 'completed':
+            return status === 'completed';
+          case 'cancelled':
+            return status === 'cancelled';
+          default:
+            return true;
+        }
+      });
     }
     setFilteredOrders(filtered);
   };
@@ -263,12 +267,10 @@ export default function Orders() {
   const isCancelledOrder = (order: Order) => order.status?.toLowerCase() === 'cancelled';
 
   const hasPendingDeliveryOffer = (order: Order): boolean =>
-    order.delivery_info?.status === 'pending_offer';
+    order.delivery_info?.status === 'pending' || order.delivery_info?.is_pending_offer === true;
 
   const isWaitingForRider = (order: Order): boolean =>
-    order.status?.toLowerCase() === 'to_ship' &&
-    order.delivery_info?.status === 'pending_offer' &&
-    !!order.delivery_info?.rider_name;
+    order.status?.toLowerCase() === 'waiting_for_rider';
 
   const isAwaitingMayaPayment = (order: Order): boolean => {
     const isMaya = order.payment_method?.toLowerCase() === 'maya';
@@ -278,15 +280,15 @@ export default function Orders() {
     return isMaya && isPendingShipment && !canConfirm;
   };
 
-  const getStatusBadge = (status: string, order: Order) => {
+  const getStatusBadge = (order: Order) => {
+    const status = order.status?.toLowerCase() || 'default';
     const isPickup = isPickupOrder(order);
     const hasPendingOffer = hasPendingDeliveryOffer(order);
     const awaitingMaya = isAwaitingMayaPayment(order);
 
-    let statusKey = (status || 'default').toLowerCase();
+    let statusKey = status;
     if (awaitingMaya) statusKey = 'awaiting_payment';
-    else if (hasPendingOffer) statusKey = 'pending_offer';
-    else if (isPickup && statusKey === 'pending_shipment') statusKey = 'ready_for_pickup';
+    else if (hasPendingOffer && status === 'waiting_for_rider') statusKey = 'pending_offer';
 
     const config = STATUS_CONFIG[statusKey] || STATUS_CONFIG.default;
     return (
@@ -306,16 +308,14 @@ export default function Orders() {
 
   const getBorderColor = (order: Order): string => {
     const awaitingMaya = isAwaitingMayaPayment(order);
-    const waitingForRider = isWaitingForRider(order);
     const isPickup = isPickupOrder(order);
     const hasPendingOffer = hasPendingDeliveryOffer(order);
     const isCancelled = isCancelledOrder(order);
+    const status = order.status?.toLowerCase() || 'default';
 
-    let statusKey = (order.status || 'default').toLowerCase();
+    let statusKey = status;
     if (awaitingMaya) statusKey = 'awaiting_payment';
-    else if (hasPendingOffer) statusKey = 'pending_offer';
-    else if (waitingForRider) statusKey = 'pending_offer';
-    else if (isPickup && statusKey === 'pending_shipment') statusKey = 'ready_for_pickup';
+    else if (hasPendingOffer && status === 'waiting_for_rider') statusKey = 'pending_offer';
     else if (isCancelled) statusKey = 'cancelled';
 
     const config = STATUS_CONFIG[statusKey] || STATUS_CONFIG.default;
@@ -325,12 +325,11 @@ export default function Orders() {
   const counts = {
     all: orders.length,
     pending_shipment: orders.filter(o => o.status?.toLowerCase() === 'pending_shipment').length,
-    to_ship: orders.filter(o => o.status?.toLowerCase() === 'to_ship').length,
-    waiting_rider: orders.filter(o => isWaitingForRider(o)).length,
-    shipped: orders.filter(o => {
-      const s = o.status?.toLowerCase();
-      return ['shipped', 'in_transit', 'out_for_delivery'].includes(s || '');
-    }).length,
+    processing: orders.filter(o => o.status?.toLowerCase() === 'processing').length,
+    waiting_for_rider: orders.filter(o => o.status?.toLowerCase() === 'waiting_for_rider').length,
+    shipped: orders.filter(o => o.status?.toLowerCase() === 'shipped').length,
+    to_deliver: orders.filter(o => o.status?.toLowerCase() === 'to_deliver').length,
+    delivered: orders.filter(o => o.status?.toLowerCase() === 'delivered').length,
     completed: orders.filter(o => o.status?.toLowerCase() === 'completed').length,
     cancelled: orders.filter(o => o.status?.toLowerCase() === 'cancelled').length,
   };
@@ -394,16 +393,24 @@ export default function Orders() {
                 <Text style={styles.statLabel}>Pending</Text>
               </View>
               <View style={styles.statCard}>
-                <Text style={[styles.statValue, { color: '#f59e0b' }]}>{counts.to_ship}</Text>
-                <Text style={styles.statLabel}>To Process</Text>
+                <Text style={[styles.statValue, { color: '#f59e0b' }]}>{counts.processing}</Text>
+                <Text style={styles.statLabel}>Processing</Text>
               </View>
               <View style={styles.statCard}>
-                <Text style={[styles.statValue, { color: '#f97316' }]}>{counts.waiting_rider}</Text>
+                <Text style={[styles.statValue, { color: '#f97316' }]}>{counts.waiting_for_rider}</Text>
                 <Text style={styles.statLabel}>Waiting Rider</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statValue, { color: '#3b82f6' }]}>{counts.shipped}</Text>
                 <Text style={styles.statLabel}>Shipped</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={[styles.statValue, { color: '#8b5cf6' }]}>{counts.to_deliver}</Text>
+                <Text style={styles.statLabel}>Out for Delivery</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={[styles.statValue, { color: '#10b981' }]}>{counts.delivered}</Text>
+                <Text style={styles.statLabel}>Delivered</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statValue, { color: '#10b981' }]}>{counts.completed}</Text>
@@ -465,9 +472,11 @@ export default function Orders() {
                 <Text style={styles.emptyText}>
                   {activeTab === 'all' ? 'No orders found' :
                    activeTab === 'pending_shipment' ? 'No pending orders' :
-                   activeTab === 'to_ship' ? 'No orders to process' :
-                   activeTab === 'waiting_rider' ? 'No orders waiting for rider' :
+                   activeTab === 'processing' ? 'No orders in processing' :
+                   activeTab === 'waiting_for_rider' ? 'No orders waiting for rider' :
                    activeTab === 'shipped' ? 'No shipped orders' :
+                   activeTab === 'to_deliver' ? 'No orders out for delivery' :
+                   activeTab === 'delivered' ? 'No delivered orders' :
                    activeTab === 'completed' ? 'No completed orders' :
                    'No cancelled orders'}
                 </Text>
@@ -479,6 +488,7 @@ export default function Orders() {
                 const waitingForRider = isWaitingForRider(order);
                 const awaitingMaya = isAwaitingMayaPayment(order);
                 const borderColor = getBorderColor(order);
+                const hasPendingOffer = hasPendingDeliveryOffer(order);
 
                 return (
                   <TouchableOpacity
@@ -498,11 +508,11 @@ export default function Orders() {
                     )}
 
                     {/* Waiting for rider notice */}
-                    {waitingForRider && (
+                    {waitingForRider && hasPendingOffer && (
                       <View style={styles.statusNote}>
                         <Ionicons name="person-outline" size={12} color="#f97316" />
                         <Text style={styles.statusNoteText}>
-                          Waiting for rider {order.delivery_info?.rider_name} to accept
+                          Waiting for rider {order.delivery_info?.rider_name || ''} to accept
                         </Text>
                       </View>
                     )}
@@ -523,7 +533,7 @@ export default function Orders() {
                           <Text style={styles.orderDate}>{formatDate(order.created_at)}</Text>
                         </View>
                       </View>
-                      {getStatusBadge(order.status, order)}
+                      {getStatusBadge(order)}
                     </View>
 
                     {/* Customer Info */}
@@ -538,6 +548,12 @@ export default function Orders() {
                         <>
                           <Ionicons name="storefront-outline" size={10} color="#64748B" />
                           <Text style={styles.deliveryText}>Pickup</Text>
+                          {order.pickup_date && (
+                            <>
+                              <Text style={styles.metaDot}>•</Text>
+                              <Text style={styles.deliveryText}>Pickup: {new Date(order.pickup_date).toLocaleDateString()}</Text>
+                            </>
+                          )}
                         </>
                       ) : (
                         <>
@@ -576,7 +592,7 @@ export default function Orders() {
                       </View>
                     </ScrollView>
 
-                    {/* Footer - Removed tap hint, just showing chevron */}
+                    {/* Footer */}
                     <View style={styles.cardFooter}>
                       <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
                     </View>

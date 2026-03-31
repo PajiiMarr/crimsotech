@@ -1212,14 +1212,16 @@ class Delivery(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE)
     rider = models.ForeignKey(Rider, on_delete=models.SET_NULL, null=True)
     status = models.CharField(max_length=20, choices=[
-        ('pending','Pending'),
-        ('picked_up','Picked Up'),
-        ('in_progress','In Progress'),
-        ('delivered','Delivered'),
-        ('cancelled','Cancelled'),
-        ('declined','Declined'),
-        ('accepted','Accepted'),
-
+        ('pending', 'Pending'),                  # used by SellerOrderList API
+        ('pending_offer', 'Pending Offer'),       # used by management commands
+        ('accepted', 'Accepted'),
+        ('in_progress', 'In Progress'),
+        ('picked_up', 'Picked Up'),
+        ('delivered', 'Delivered'),
+        ('cancelled', 'Cancelled'),
+        ('declined', 'Declined'),
+        ('rejected', 'Rejected'),                 # used by rider_response endpoint
+        ('expired', 'Expired'),                   # used by check_delivery_responses
     ], default='pending')
     distance_km = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     estimated_minutes = models.IntegerField(null=True, blank=True)
@@ -1247,7 +1249,7 @@ class Delivery(models.Model):
 
     def __str__(self):
         return f"Delivery {self.id} for Order {self.order.order}"
-
+    
 class Proof(models.Model):
     PROOF_TYPE_CHOICES = [
         ('delivery', 'Delivery'),
