@@ -2,7 +2,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import CustomerLayout from "./CustomerLayout";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   Alert,
   Dimensions,
@@ -16,17 +16,17 @@ import {
   RefreshControl,
   Image,
   SafeAreaView,
+  TextInput,
+  Modal,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import AxiosInstance from "../../contexts/axios";
 import { getUserShops } from "../../utils/api";
-import { LinearGradient } from "expo-linear-gradient";
 
 const { width } = Dimensions.get("window");
-const isSmallDevice = width < 375;
-const isLargeDevice = width > 414;
 
-// Types based on your Django API response
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 interface UserProfile {
   id: string;
   username: string;
@@ -88,21 +88,6 @@ interface ShopData {
   is_following: boolean;
   is_active: boolean;
   location: string;
-  orders_count?: number;
-  products_count?: number;
-  customer_count?: number;
-  total_orders?: number;
-  shop_headers?: {
-    has_shop: boolean;
-    is_shop_owner: boolean;
-    can_manage_shop: boolean;
-    shop_created?: string;
-    shop_age_days?: number;
-    is_eligible_for_promotions?: boolean;
-    needs_attention?: boolean;
-    shop_performance?: string;
-    has_unread_notifications?: boolean;
-  };
 }
 
 interface ProfileResponse {
@@ -112,25 +97,157 @@ interface ProfileResponse {
     customer: CustomerData;
     shop: ShopData | null;
   };
-  headers?: {
-    timestamp: string;
-    api_version: string;
-    requires_shop: boolean;
-    user_type: string;
-    has_active_session: boolean;
-    can_switch_mode: boolean;
-    available_routes: {
-      seller_dashboard: boolean;
-      customer_dashboard: boolean;
-      create_shop: boolean;
-      manage_products: boolean;
-      view_orders: boolean;
-    };
-  };
 }
 
+interface WalletData {
+  wallet_id: string;
+  available_balance: number;
+  pending_balance: number;
+  total_balance: number;
+  lifetime_earnings: number;
+  lifetime_withdrawals: number;
+  pending_withdrawals: number;
+}
+
+interface Transaction {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  type: "credit" | "debit";
+  status: "completed" | "pending" | "failed";
+  source_type: string;
+  shop_id?: string;
+  shop_name?: string;
+  order_id?: string;
+}
+
+interface WithdrawalRequest {
+  withdrawal_id: string;
+  amount: number;
+  status: "pending" | "approved" | "rejected" | "processing" | "completed";
+  requested_at: string;
+}
+
+interface PaymentMethod {
+  payment_id: string;
+  payment_method: string;
+  bank_name?: string;
+  account_name: string;
+  account_number: string;
+  is_default: boolean;
+}
+
+interface MonthlyData {
+  month: string;
+  credits: number;
+  debits: number;
+  net: number;
+}
+
+interface ShopFilter {
+  id: string;
+  name: string;
+  shop_picture?: string | null;
+}
+
+// ─── Tab type ─────────────────────────────────────────────────────────────────
+type ActiveTab = "profile" | "addresses" | "payments" | "finance";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const formatCurrency = (amount: number) => {
+  const num = isNaN(amount) ? 0 : amount;
+  return `₱${num.toFixed(2).replace(/\d(?=(\d{3})+\.)/g, "$&,")}`;
+};
+
+const formatDate = (dateString: string) => {
+  if (!dateString) return "N/A";
+  return new Date(dateString).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+};
+
+const formatDateTime = (dateString: string) => {
+  if (!dateString) return "N/A";
+  const d = new Date(dateString);
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const getInitials = (name?: string, email?: string, username?: string) => {
+  if (name && name.trim()) {
+    const names = name.trim().split(" ");
+    if (names.length > 1)
+      return (
+        names[0].charAt(0) + names[names.length - 1].charAt(0)
+      ).toUpperCase();
+    return names[0].charAt(0).toUpperCase();
+  }
+  if (email) return email.charAt(0).toUpperCase();
+  if (username) return username.charAt(0).toUpperCase();
+  return "U";
+};
+
+// ─── Simple Bar Graph ─────────────────────────────────────────────────────────
+
+function BarGraph({ data }: { data: MonthlyData[] }) {
+  if (!data.length)
+    return (
+      <View style={styles.barGraphEmpty}>
+        <Text style={styles.barGraphEmptyText}>No data available</Text>
+      </View>
+    );
+
+  const maxVal = Math.max(...data.map((d) => d.credits), 0.01);
+
+  return (
+    <View style={styles.barGraphContainer}>
+      {data.map((item, index) => (
+        <View key={index} style={styles.barCol}>
+          <View style={styles.barWrapper}>
+            <View
+              style={[
+                styles.bar,
+                { height: Math.max(4, (item.credits / maxVal) * 80) },
+              ]}
+            />
+          </View>
+          <Text style={styles.barLabel}>{item.month}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// ─── Status Badge ─────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, { bg: string; text: string; label: string }> = {
+    pending: { bg: "#FEF9C3", text: "#A16207", label: "Pending" },
+    processing: { bg: "#DBEAFE", text: "#1D4ED8", label: "Processing" },
+    approved: { bg: "#EDE9FE", text: "#7C3AED", label: "Approved" },
+    completed: { bg: "#D1FAE5", text: "#065F46", label: "Completed" },
+    rejected: { bg: "#FEE2E2", text: "#991B1B", label: "Rejected" },
+    failed: { bg: "#FEE2E2", text: "#991B1B", label: "Failed" },
+  };
+  const cfg = map[status] || { bg: "#F3F4F6", text: "#374151", label: status };
+  return (
+    <View style={[styles.badge, { backgroundColor: cfg.bg }]}>
+      <Text style={[styles.badgeText, { color: cfg.text }]}>{cfg.label}</Text>
+    </View>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export default function ProfileScreen() {
-  // Use the new AuthContext
   const {
     userId,
     shopId,
@@ -141,182 +258,389 @@ export default function ProfileScreen() {
     clearAuthData,
   } = useAuth();
 
+  // ── Profile state
   const [profile, setProfile] = useState<ProfileResponse["profile"] | null>(
-    null,
-  );
-  const [headers, setHeaders] = useState<ProfileResponse["headers"] | null>(
     null,
   );
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [orderCounts, setOrderCounts] = useState({
-    processing: 0,
-    shipped: 0,
-    rate: 0,
-    returns: 0,
-  });
-  const [loadingCounts, setLoadingCounts] = useState(false);
-
-  // Shop fallback states
   const [hasShop, setHasShop] = useState<boolean | null>(null);
   const [loadingShop, setLoadingShop] = useState(false);
 
-  // Helper to avoid strict typed route errors
+  // ── Tab state
+  const [activeTab, setActiveTab] = useState<ActiveTab>("profile");
+
+  // ── Wallet state
+  const [wallet, setWallet] = useState<WalletData | null>(null);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [filteredTransactions, setFilteredTransactions] = useState<
+    Transaction[]
+  >([]);
+  const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
+  const [loadingWallet, setLoadingWallet] = useState(false);
+  const [showBalance, setShowBalance] = useState(true);
+  const [shopFilters, setShopFilters] = useState<ShopFilter[]>([]);
+  const [selectedFilter, setSelectedFilter] = useState("all");
+
+  // ── Withdrawal state
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
+  const [withdrawalRequests, setWithdrawalRequests] = useState<
+    WithdrawalRequest[]
+  >([]);
+  const [submittingWithdraw, setSubmittingWithdraw] = useState(false);
+
+  // ── Payment methods
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+
+  // ── Success / error
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const showSuccess = (msg: string) => {
+    setSuccessMsg(msg);
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+  const showError = (msg: string) => {
+    setErrorMsg(msg);
+    setTimeout(() => setErrorMsg(null), 4000);
+  };
+
   const pushRoute = (path: string) => router.push(path as any);
 
-  // Fetch profile data from API
+  // ─── Profile helpers ─────────────────────────────────────────────────────
+
+  const getUserDisplayName = () => {
+    if (profile?.user?.full_name) return profile.user.full_name;
+    if (profile?.user?.first_name && profile?.user?.last_name)
+      return `${profile.user.first_name} ${profile.user.last_name}`;
+    if (profile?.user?.first_name) return profile.user.first_name;
+    if (profile?.user?.username) return profile.user.username;
+    if (username) return username;
+    return "User";
+  };
+
+  const getUserEmail = () => {
+    if (profile?.user?.email) return profile.user.email;
+    if (email) return email;
+    return "user@example.com";
+  };
+
+  const effectiveHasShop = !!(profile?.shop || hasShop);
+
+  // ─── Fetch profile ────────────────────────────────────────────────────────
+
   const fetchProfile = async () => {
     if (!userId) {
-      console.log("No user ID available");
       setLoadingProfile(false);
       return;
     }
-
     try {
       setLoadingProfile(true);
       const response = await AxiosInstance.get("/profile/", {
-        headers: {
-          "X-User-Id": userId,
-          "Content-Type": "application/json",
-        },
+        headers: { "X-User-Id": userId, "Content-Type": "application/json" },
       });
-
-      console.log("Profile API Response:", response.data);
-
       if (response.data.success) {
         setProfile(response.data.profile);
-        setHeaders(response.data.headers || null);
-      } else {
-        Alert.alert("Error", response.data.error || "Failed to load profile");
+        const methods = response.data.profile?.payment_methods || [];
+        setPaymentMethods(methods);
       }
     } catch (error: any) {
       console.error("Error fetching profile:", error);
-      console.error("Response data:", error.response?.data);
-
-      let errorMessage = "Failed to load profile data.";
-      const status = error.response?.status;
-      const serverData = error.response?.data;
-
-      if (status === 404) {
-        errorMessage = "User profile not found.";
-      } else if (status === 400) {
-        errorMessage = "Invalid request. Please login again.";
-      } else if (status === 500) {
-        // Try a known alternative endpoint as a fallback
-        try {
-          console.log("Attempting fallback endpoint /profile/get");
-          const fallback = await AxiosInstance.get("/profile/get", {
-            headers: {
-              "X-User-Id": userId,
-              "Content-Type": "application/json",
-            },
-          });
-
-          console.log("Fallback response:", fallback.data);
-          if (fallback.data?.success) {
-            setProfile(fallback.data.profile);
-            setHeaders(fallback.data.headers || null);
-            setHasShop(fallback.data.profile?.shop ? true : false);
-            return; // Success — skip showing an error alert
-          }
-
-          errorMessage =
-            fallback.data?.error ||
-            serverData?.error ||
-            "Server error. Please try again.";
-        } catch (fallbackError: any) {
-          console.error("Fallback profile fetch failed:", fallbackError);
-          if (!fallbackError.response) {
-            errorMessage = "Network error. Please check your connection.";
-          } else {
-            errorMessage =
-              fallbackError.response?.data?.error ||
-              `Server error (${fallbackError.response.status})`;
-          }
-        }
-      } else if (!error.response) {
-        errorMessage = "Network error. Please check your connection.";
-      } else if (serverData?.error) {
-        // Use server-provided message when available
-        errorMessage = serverData.error;
-      }
-
-      // Try fallback shop check if profile could not be fetched and we haven't checked shops yet
-      if (userId && hasShop === null) {
-        checkUserShops();
-      }
-
-      Alert.alert("Error", errorMessage, [
-        { text: "Retry", onPress: () => fetchProfile() },
-        { text: "Close", style: "cancel" },
-      ]);
     } finally {
       setLoadingProfile(false);
       setRefreshing(false);
     }
   };
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchProfile();
-    fetchOrderCounts();
-  };
+  // ─── Fetch wallet ─────────────────────────────────────────────────────────
 
-  // Fetch order counts per status to show badges
-  const fetchOrderCounts = async () => {
+  const fetchWalletData = async () => {
     if (!userId) return;
-
     try {
-      setLoadingCounts(true);
-      const response = await AxiosInstance.get(
-        "/purchases-buyer/status-counts/",
-        {
-          headers: { "X-User-Id": userId },
-        },
-      );
+      setLoadingWallet(true);
 
-      // Expecting response.data to be an object like { processing: 1, shipped: 2, rate: 0, returns: 1 }
-      if (response?.data) {
-        const data = response.data;
-        // normalize keys
-        setOrderCounts({
-          processing: Number(data.processing || data.pending || 0),
-          shipped: Number(data.shipped || 0),
-          rate: Number(data.rate || data.completed || 0),
-          returns: Number(data.returns || data.cancelled || 0),
+      const [balRes, txRes, summaryRes] = await Promise.allSettled([
+        AxiosInstance.get("/wallet/balance/", {
+          headers: { "X-User-Id": userId },
+        }),
+        AxiosInstance.get("/wallet/transactions/?limit=100", {
+          headers: { "X-User-Id": userId },
+        }),
+        AxiosInstance.get("/wallet/transaction_summary/", {
+          headers: { "X-User-Id": userId },
+        }),
+      ]);
+
+      if (balRes.status === "fulfilled" && balRes.value.data.success) {
+        const d = balRes.value.data;
+        setWallet({
+          wallet_id: d.wallet_id || "",
+          available_balance: d.available_balance || 0,
+          pending_balance: d.pending_balance || 0,
+          total_balance: d.total_balance || 0,
+          lifetime_earnings: d.lifetime_earnings || 0,
+          lifetime_withdrawals: d.lifetime_withdrawals || 0,
+          pending_withdrawals: d.pending_withdrawals || 0,
         });
       }
-    } catch (err: any) {
-      console.error("Error fetching order counts:", err);
-      // Do not fallback to /user_purchases_summary/ (server may return 500). Keep counts unchanged on error.
+
+      if (txRes.status === "fulfilled" && txRes.value.data.success) {
+        const raw: any[] = txRes.value.data.transactions || [];
+        const formatted: Transaction[] = raw.map((tx) => {
+          let description = "";
+          if (tx.source_type === "personal_sale")
+            description = "Personal Listing Sale";
+          else if (tx.source_type === "shop_sale")
+            description = tx.shop_name
+              ? `Sale from ${tx.shop_name}`
+              : "Shop Sale";
+          else if (tx.source_type === "withdrawal") description = "Withdrawal";
+          else if (tx.source_type === "refund") description = "Refund";
+          else if (tx.source_type === "release")
+            description = "Released from Pending";
+          else description = tx.source_type || "Transaction";
+
+          return {
+            id: tx.transaction_id,
+            date: tx.created_at,
+            description,
+            amount: parseFloat(tx.amount),
+            type: tx.transaction_type,
+            status: tx.status || "completed",
+            source_type: tx.source_type,
+            shop_id: tx.shop_id,
+            shop_name: tx.shop_name,
+            order_id: tx.order_id,
+          };
+        });
+        setTransactions(formatted);
+        setFilteredTransactions(formatted);
+
+        // Build shop filters from transactions
+        const shopMap = new Map<string, ShopFilter>();
+        formatted.forEach((t) => {
+          if (t.shop_id && t.shop_name)
+            shopMap.set(t.shop_id, { id: t.shop_id, name: t.shop_name });
+        });
+        setShopFilters(Array.from(shopMap.values()));
+      }
+
+      if (summaryRes.status === "fulfilled" && summaryRes.value.data.success) {
+        const monthly = summaryRes.value.data.summary?.monthly_data || [];
+        setMonthlyData(monthly);
+      }
+    } catch (err) {
+      console.error("Error fetching wallet:", err);
     } finally {
-      setLoadingCounts(false);
+      setLoadingWallet(false);
     }
   };
 
-  // Check user shops fallback (if profile does not contain shop but user is a customer)
+  // ─── Fetch withdrawals ────────────────────────────────────────────────────
+
+  const fetchWithdrawals = async () => {
+    if (!userId) return;
+    try {
+      const res = await AxiosInstance.get("/wallet/withdrawal_history/", {
+        headers: { "X-User-Id": userId },
+      });
+      if (res.data.success) setWithdrawalRequests(res.data.withdrawals || []);
+    } catch (err) {
+      console.error("Error fetching withdrawals:", err);
+    }
+  };
+
+  // ─── Submit withdrawal ────────────────────────────────────────────────────
+
+  const handleWithdraw = async () => {
+    const amount = parseFloat(withdrawAmount);
+    if (isNaN(amount) || amount <= 0) {
+      showError("Enter a valid amount");
+      return;
+    }
+    if (amount < 100) {
+      showError("Minimum withdrawal is ₱100.00");
+      return;
+    }
+    if (amount > (wallet?.available_balance || 0)) {
+      showError(
+        `Exceeds available balance (${formatCurrency(wallet?.available_balance || 0)})`,
+      );
+      return;
+    }
+    if (!selectedPaymentMethod) {
+      showError("Select a payment method");
+      return;
+    }
+
+    try {
+      setSubmittingWithdraw(true);
+      const res = await AxiosInstance.post(
+        "/wallet/request_withdrawal/",
+        { amount, payment_method_id: selectedPaymentMethod },
+        { headers: { "X-User-Id": userId } },
+      );
+      if (res.data.success) {
+        showSuccess("Withdrawal request submitted!");
+        setShowWithdrawModal(false);
+        setWithdrawAmount("");
+        setSelectedPaymentMethod("");
+        await Promise.all([fetchWalletData(), fetchWithdrawals()]);
+      } else {
+        showError(res.data.error || "Failed to submit withdrawal");
+      }
+    } catch (error: any) {
+      showError(error.response?.data?.error || "Failed to submit withdrawal");
+    } finally {
+      setSubmittingWithdraw(false);
+    }
+  };
+
+  // ─── Filter transactions ──────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!transactions.length) return;
+    if (selectedFilter === "all") {
+      setFilteredTransactions(transactions);
+      return;
+    }
+    if (selectedFilter === "personal") {
+      setFilteredTransactions(
+        transactions.filter((t) => t.source_type === "personal_sale"),
+      );
+      return;
+    }
+    if (selectedFilter.startsWith("shop_")) {
+      const shopId = selectedFilter.replace("shop_", "");
+      setFilteredTransactions(transactions.filter((t) => t.shop_id === shopId));
+    }
+  }, [selectedFilter, transactions]);
+
+  // ─── Profile picture helpers ──────────────────────────────────────────────
+
+  const uploadProfilePicture = async (asset: any) => {
+    if (!userId) return;
+    try {
+      setUploadingImage(true);
+      const uriParts = asset.uri.split(".");
+      const fileType = uriParts[uriParts.length - 1];
+      const formData = new FormData();
+      formData.append("profile_picture", {
+        uri: asset.uri,
+        type: `image/${fileType}`,
+        name: `profile_${Date.now()}.${fileType}`,
+      } as any);
+      formData.append("action", "update_profile_picture");
+      const response = await AxiosInstance.post("/profile/", formData, {
+        headers: { "X-User-Id": userId, "Content-Type": "multipart/form-data" },
+      });
+      if (response.data.success) {
+        showSuccess("Profile picture updated!");
+        fetchProfile();
+      } else {
+        showError(response.data.error || "Failed to upload picture");
+      }
+    } catch (err: any) {
+      showError(err.response?.data?.error || "Failed to upload picture");
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handlePickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets[0])
+      await uploadProfilePicture(result.assets[0]);
+  };
+
+  const handleTakePhoto = async () => {
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets[0])
+      await uploadProfilePicture(result.assets[0]);
+  };
+
+  const showProfilePictureOptions = () => {
+    Alert.alert("Profile Picture", "Choose an option", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Take Photo", onPress: handleTakePhoto },
+      { text: "Choose from Gallery", onPress: handlePickImage },
+      ...(profile?.user?.has_profile_picture
+        ? [
+            {
+              text: "Remove Photo",
+              style: "destructive" as const,
+              onPress: handleRemoveProfilePicture,
+            },
+          ]
+        : []),
+    ]);
+  };
+
+  const handleRemoveProfilePicture = async () => {
+    if (!userId) return;
+    Alert.alert("Remove Profile Picture", "Are you sure?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            setUploadingImage(true);
+            const res = await AxiosInstance.post(
+              "/profile/",
+              { action: "remove_profile_picture" },
+              {
+                headers: {
+                  "X-User-Id": userId,
+                  "Content-Type": "application/json",
+                },
+              },
+            );
+            if (res.data.success) {
+              showSuccess("Photo removed");
+              fetchProfile();
+            } else showError(res.data.error || "Failed to remove");
+          } catch (err: any) {
+            showError(err.response?.data?.error || "Failed to remove");
+          } finally {
+            setUploadingImage(false);
+          }
+        },
+      },
+    ]);
+  };
+
+  // ─── Shop fallback ────────────────────────────────────────────────────────
+
   const checkUserShops = async () => {
     if (!userId) {
       setHasShop(false);
       return;
     }
-
     try {
       setLoadingShop(true);
       const response = await getUserShops(userId);
-      console.log("getUserShops response:", response);
       if (
-        response &&
-        response.success &&
+        response?.success &&
         Array.isArray(response.shops) &&
         response.shops.length > 0
       ) {
         setHasShop(true);
         const rawShop = response.shops[0];
-
-        // Normalize shop fields to match profile.shop shape created by ProfileView
-        const normalizedShop = {
+        const normalized = {
           ...rawShop,
           is_active:
             (rawShop.status === "Active" || rawShop.status === "active") &&
@@ -327,287 +651,60 @@ export default function ProfileScreen() {
             typeof rawShop.total_sales === "number"
               ? rawShop.total_sales.toFixed(2)
               : String(rawShop.total_sales ?? "0.00"),
-          created_at: rawShop.created_at || null,
         } as any;
-
         setProfile((prev) =>
           prev
-            ? { ...prev, shop: normalizedShop }
-            : {
-                user: null as any,
-                customer: {
-                  customer: null as any,
-                  product_limit: 0,
-                  current_product_count: 0,
-                  is_customer: true,
-                  can_add_product: false,
-                  products_remaining: 0,
-                },
-                shop: normalizedShop,
-              },
+            ? { ...prev, shop: normalized }
+            : { user: null as any, customer: null as any, shop: normalized },
         );
       } else {
         setHasShop(false);
       }
-    } catch (err: any) {
-      console.error("Error checking user shops:", err);
+    } catch (err) {
       setHasShop(false);
-      // Notify user when network error occurs so they can take action
-      const msg = err?.message || "Failed to check shop status";
-      if (msg.includes("Cannot connect to server") || msg.includes("Network")) {
-        Alert.alert("Network Error", msg, [
-          { text: "Retry", onPress: () => checkUserShops() },
-          { text: "OK", style: "cancel" },
-        ]);
-      }
     } finally {
       setLoadingShop(false);
     }
   };
 
-  // Handle picking image from gallery
-  const handlePickImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        await uploadProfilePicture(result.assets[0]);
-      }
-    } catch (error) {
-      console.error("Error picking image:", error);
-      Alert.alert("Error", "Failed to pick image");
-    }
-  };
-
-  // Handle taking photo with camera
-  const handleTakePhoto = async () => {
-    try {
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        await uploadProfilePicture(result.assets[0]);
-      }
-    } catch (error) {
-      console.error("Error taking photo:", error);
-      Alert.alert("Error", "Failed to take photo");
-    }
-  };
-
-  // Upload profile picture to server
-  const uploadProfilePicture = async (asset: any) => {
-    if (!userId) return;
-
-    try {
-      setUploadingImage(true);
-
-      // Create form data
-      const formData = new FormData();
-      
-      // Get file name and type from URI
-      const uriParts = asset.uri.split('.');
-      const fileType = uriParts[uriParts.length - 1];
-      const fileName = `profile_${Date.now()}.${fileType}`;
-
-      // Append the file - React Native handles the file reading automatically
-      formData.append('profile_picture', {
-        uri: asset.uri,
-        type: `image/${fileType}`,
-        name: fileName,
-      } as any);
-
-      formData.append('action', 'update_profile_picture');
-
-      // Upload to server
-      const response = await AxiosInstance.post('/profile/', formData, {
-        headers: {
-          'X-User-Id': userId,
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      if (response.data.success) {
-        Alert.alert("Success", "Profile picture updated successfully");
-        // Refresh profile to get updated data
-        fetchProfile();
-      } else {
-        Alert.alert("Error", response.data.error || "Failed to upload profile picture");
-      }
-    } catch (error: any) {
-      console.error("Error uploading profile picture:", error);
-      Alert.alert(
-        "Error", 
-        error.response?.data?.error || "Failed to upload profile picture"
-      );
-    } finally {
-      setUploadingImage(false);
-    }
-  };
-
-  // Handle remove profile picture
-  const handleRemoveProfilePicture = async () => {
-    if (!userId) return;
-
-    Alert.alert(
-      "Remove Profile Picture",
-      "Are you sure you want to remove your profile picture?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              setUploadingImage(true);
-              
-              const response = await AxiosInstance.post('/profile/', {
-                action: 'remove_profile_picture'
-              }, {
-                headers: {
-                  'X-User-Id': userId,
-                  'Content-Type': 'application/json',
-                },
-              });
-
-              if (response.data.success) {
-                Alert.alert("Success", "Profile picture removed successfully");
-                // Refresh profile to get updated data
-                fetchProfile();
-              } else {
-                Alert.alert("Error", response.data.error || "Failed to remove profile picture");
-              }
-            } catch (error: any) {
-              console.error("Error removing profile picture:", error);
-              Alert.alert(
-                "Error", 
-                error.response?.data?.error || "Failed to remove profile picture"
-              );
-            } finally {
-              setUploadingImage(false);
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  // Show options for profile picture
-  const showProfilePictureOptions = () => {
-    Alert.alert(
-      "Profile Picture",
-      "Choose an option",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Take Photo", onPress: handleTakePhoto },
-        { text: "Choose from Gallery", onPress: handlePickImage },
-        ...(profile?.user?.has_profile_picture ? [{ text: "Remove Photo", style: "destructive" as const, onPress: handleRemoveProfilePicture }] : [])
-      ]
-    );
-  };
+  // ─── Lifecycle ────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!authLoading && userId) {
       fetchProfile();
-      fetchOrderCounts();
+      fetchWalletData();
+      fetchWithdrawals();
     }
   }, [authLoading, userId]);
 
-  // When profile is loaded but lacks shop, query the older endpoint to find shop(s)
   useEffect(() => {
-    if (profile && profile.customer?.is_customer && !profile.shop) {
-      // Only run check when we haven't already decided
-      if (hasShop === null) {
-        checkUserShops();
-      }
+    if (
+      profile &&
+      profile.customer?.is_customer &&
+      !profile.shop &&
+      hasShop === null
+    ) {
+      checkUserShops();
     }
   }, [profile]);
 
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchProfile();
+    fetchWalletData();
+    fetchWithdrawals();
+  };
+
+  // ─── Shop navigation ──────────────────────────────────────────────────────
+
   const handleSwitchToShop = () => {
-    // Navigate to the public shops list. If user has a shop, pass its ID so the page can load its details.
     const shopIdToOpen = profile?.shop?.id;
-    if (shopIdToOpen) {
-      pushRoute(`/customer/shops?shopId=${shopIdToOpen}`);
-    } else {
-      pushRoute("/customer/shops");
-    }
+    if (shopIdToOpen) pushRoute(`/customer/shops?shopId=${shopIdToOpen}`);
+    else pushRoute("/customer/shops");
   };
 
-  const formatCurrency = (amount: string) => {
-    const num = parseFloat(amount);
-    if (isNaN(num)) return "₱0.00";
-    return `₱${num.toFixed(2).replace(/\d(?=(\d{3})+\.)/g, "$&,")}`;
-  };
+  // ─── Loading / not logged in ──────────────────────────────────────────────
 
-  const formatDate = (dateString: string) => {
-    if (!dateString) return "N/A";
-    return new Date(dateString).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  };
-
-  const getInitials = (name?: string, email?: string, username?: string) => {
-    if (name && name.trim()) {
-      const names = name.trim().split(" ");
-      if (names.length > 1) {
-        return (
-          names[0].charAt(0) + names[names.length - 1].charAt(0)
-        ).toUpperCase();
-      }
-      return names[0].charAt(0).toUpperCase();
-    }
-    if (email) {
-      return email.charAt(0).toUpperCase();
-    }
-    if (username) {
-      return username.charAt(0).toUpperCase();
-    }
-    return "U";
-  };
-
-  const getUserDisplayName = () => {
-    if (profile?.user?.full_name) {
-      return profile.user.full_name;
-    }
-    if (profile?.user?.first_name && profile?.user?.last_name) {
-      return `${profile.user.first_name} ${profile.user.last_name}`;
-    }
-    if (profile?.user?.first_name) {
-      return profile.user.first_name;
-    }
-    if (profile?.user?.username) {
-      return profile.user.username;
-    }
-    if (username) {
-      return username;
-    }
-    return "User";
-  };
-
-  const getUserEmail = () => {
-    if (profile?.user?.email) {
-      return profile.user.email;
-    }
-    if (email) {
-      return email;
-    }
-    return "user@example.com";
-  };
-
-  // Derived shop presence used across the component (falls back to hasShop if profile lacks shop)
-  const effectiveHasShop: boolean = !!(profile?.shop || hasShop);
-
-  // Loading state
   if (authLoading || (loadingProfile && !refreshing)) {
     return (
       <View style={styles.container}>
@@ -619,14 +716,11 @@ export default function ProfileScreen() {
     );
   }
 
-  // Not logged in state
   if (!userId) {
     return (
       <View style={styles.container}>
         <View style={styles.notLoggedInContainer}>
-          <View style={styles.notLoggedInIconContainer}>
-            <MaterialIcons name="person-off" size={64} color="#DC2626" />
-          </View>
+          <MaterialIcons name="person-off" size={64} color="#DC2626" />
           <Text style={styles.notLoggedInTitle}>Not Logged In</Text>
           <Text style={styles.notLoggedInText}>
             Please login to view your profile
@@ -641,6 +735,8 @@ export default function ProfileScreen() {
       </View>
     );
   }
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <SafeAreaView style={styles.container}>
@@ -657,91 +753,133 @@ export default function ProfileScreen() {
             />
           }
         >
-          {/* Modern Profile Header */}
-          <View style={styles.gradientHeaderContainer}>
-            <View style={styles.gradientHeader}>
-              <View style={styles.headerContent}>
-                <View style={styles.avatarContainer}>
-                  <TouchableOpacity 
-                    style={styles.avatarWrapper}
-                    onPress={showProfilePictureOptions}
-                    disabled={uploadingImage}
+          {/* ── Profile Header ── */}
+          <View style={styles.gradientHeader}>
+            <View style={styles.headerContent}>
+              <TouchableOpacity
+                style={styles.avatarWrapper}
+                onPress={showProfilePictureOptions}
+                disabled={uploadingImage}
+              >
+                {uploadingImage ? (
+                  <View style={[styles.avatar, { backgroundColor: "#F3F4F6" }]}>
+                    <ActivityIndicator size="small" color="#DC2626" />
+                  </View>
+                ) : profile?.user?.profile_picture_url ? (
+                  <Image
+                    source={{ uri: profile.user.profile_picture_url }}
+                    style={styles.avatarImage}
+                  />
+                ) : (
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarText}>
+                      {getInitials(
+                        profile?.user?.full_name,
+                        profile?.user?.email,
+                        profile?.user?.username,
+                      )}
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.cameraIconContainer}>
+                  <MaterialIcons name="camera-alt" size={14} color="#FFFFFF" />
+                </View>
+              </TouchableOpacity>
+
+              <View style={styles.headerTextContainer}>
+                <Text style={styles.userName}>{getUserDisplayName()}</Text>
+                <Text style={styles.userEmail}>{getUserEmail()}</Text>
+                <View style={styles.shopBadgeContainer}>
+                  <View
+                    style={[
+                      styles.modernShopBadge,
+                      { backgroundColor: "#F97316" },
+                    ]}
                   >
-                    {uploadingImage ? (
-                      <View style={[styles.avatar, styles.avatarUploading]}>
-                        <ActivityIndicator size="small" color="#DC2626" />
-                      </View>
-                    ) : profile?.user?.profile_picture_url ? (
-                      <Image 
-                        source={{ uri: profile.user.profile_picture_url }} 
-                        style={styles.avatarImage}
-                      />
-                    ) : (
-                      <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>
-                          {getInitials(
-                            profile?.user?.full_name,
-                            profile?.user?.email,
-                            profile?.user?.username,
-                          )}
-                        </Text>
-                      </View>
-                    )}
-                    <View style={styles.avatarGlow} />
-                    <View style={styles.cameraIconContainer}>
-                      <MaterialIcons name="camera-alt" size={16} color="#FFFFFF" />
-                    </View>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.headerTextContainer}>
-                  <View style={styles.nameRow}>
-                    <Text style={styles.userName}>{getUserDisplayName()}</Text>
-                    {profile?.shop && (
-                      <View style={styles.verifiedBadge}>
-                        <MaterialIcons name="store" size={16} color="#F97316" />
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.userEmail}>{getUserEmail()}</Text>
-
-                  <View style={styles.shopBadgeContainer}>
-                    <View
-                      style={[
-                        styles.modernShopBadge,
-                        { backgroundColor: "#F97316" },
-                      ]}
-                    >
-                      <MaterialIcons name="store" size={14} color="#fff" />
-                      <Text style={styles.modernShopBadgeText}>
-                        {profile?.shop ? "Shop Owner" : "No Shop Yet"}
-                      </Text>
-                    </View>
+                    <MaterialIcons name="store" size={12} color="#fff" />
+                    <Text style={styles.modernShopBadgeText}>
+                      {profile?.shop ? "Shop Owner" : "No Shop Yet"}
+                    </Text>
                   </View>
                 </View>
-
-                <TouchableOpacity
-                  style={styles.editProfileButton}
-                  onPress={() => pushRoute("/customer/account-profile")}
-                >
-                  <MaterialIcons name="edit" size={20} color="#374151" />
-                </TouchableOpacity>
               </View>
+
+              <TouchableOpacity
+                style={styles.editProfileButton}
+                onPress={() => pushRoute("/customer/account-profile")}
+              >
+                <MaterialIcons name="edit" size={18} color="#374151" />
+              </TouchableOpacity>
             </View>
           </View>
 
-          {/* Shop Management Card - Modern Design - Edge to Edge */}
-          {profile?.customer?.is_customer && (
-            <TouchableOpacity
-              style={styles.modernShopCard}
-              onPress={handleSwitchToShop}
-              disabled={loadingProfile}
-              activeOpacity={0.7}
-            >
-              <View style={styles.shopCardGradient}>
-                <View style={styles.shopCardContent}>
+          {/* ── Success / Error banners ── */}
+          {successMsg && (
+            <View style={styles.successBanner}>
+              <MaterialIcons name="check-circle" size={16} color="#065F46" />
+              <Text style={styles.successBannerText}>{successMsg}</Text>
+            </View>
+          )}
+          {errorMsg && (
+            <View style={styles.errorBanner}>
+              <MaterialIcons name="error-outline" size={16} color="#991B1B" />
+              <Text style={styles.errorBannerText}>{errorMsg}</Text>
+            </View>
+          )}
+
+          {/* ── Tab Bar ── */}
+          <View style={styles.tabBar}>
+            {(
+              ["profile", "addresses", "payments", "finance"] as ActiveTab[]
+            ).map((tab) => {
+              const icons: Record<ActiveTab, any> = {
+                profile: "person",
+                addresses: "location-on",
+                payments: "credit-card",
+                finance: "account-balance-wallet",
+              };
+              const labels: Record<ActiveTab, string> = {
+                profile: "Profile",
+                addresses: "Addresses",
+                payments: "Payments",
+                finance: "Finance",
+              };
+              const isActive = activeTab === tab;
+              return (
+                <TouchableOpacity
+                  key={tab}
+                  style={[styles.tabItem, isActive && styles.tabItemActive]}
+                  onPress={() => setActiveTab(tab)}
+                >
+                  <MaterialIcons
+                    name={icons[tab]}
+                    size={18}
+                    color={isActive ? "#F97316" : "#9CA3AF"}
+                  />
+                  <Text
+                    style={[styles.tabLabel, isActive && styles.tabLabelActive]}
+                  >
+                    {labels[tab]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* ══════════════════════════════════════════
+              PROFILE TAB
+          ══════════════════════════════════════════ */}
+          {activeTab === "profile" && (
+            <View style={styles.tabContent}>
+              {/* Shop Management Card */}
+              {profile?.customer?.is_customer && (
+                <TouchableOpacity
+                  style={styles.shopCard}
+                  onPress={handleSwitchToShop}
+                  activeOpacity={0.7}
+                >
                   <View style={styles.shopIconCircle}>
-                    <MaterialIcons name="store" size={28} color="#374151" />
+                    <MaterialIcons name="store" size={26} color="#374151" />
                   </View>
                   <View style={styles.shopCardText}>
                     <Text style={styles.shopCardTitle}>
@@ -759,101 +897,661 @@ export default function ProfileScreen() {
                   </View>
                   <MaterialIcons
                     name="arrow-forward"
-                    size={24}
-                    color="#374151"
+                    size={22}
+                    color="#9CA3AF"
                   />
-                </View>
-              </View>
-            </TouchableOpacity>
-          )}
+                </TouchableOpacity>
+              )}
 
-          {/* My Account - Modern Grid - Edge to Edge */}
-          <View style={styles.modernCard}>
-            <View style={styles.cardHeader}>
-              <View style={styles.cardTitleRow}>
-                <View style={styles.cardIconWrapper}>
+              {/* My Account grid */}
+              <View style={styles.card}>
+                <View style={styles.cardHeader}>
                   <MaterialIcons
                     name="account-circle"
-                    size={20}
+                    size={18}
                     color="#F97316"
                   />
+                  <Text style={styles.cardTitle}>My Account</Text>
                 </View>
-                <Text style={styles.cardTitle}>My Account</Text>
+                <View style={styles.accountGrid}>
+                  {[
+                    {
+                      label: "Profile",
+                      icon: "person",
+                      route: "/customer/account-profile",
+                    },
+                    {
+                      label: "Vouchers",
+                      icon: "local-offer",
+                      route: "/customer/my-vouchers",
+                    },
+                  ].map((item) => (
+                    <TouchableOpacity
+                      key={item.label}
+                      style={styles.accountGridItem}
+                      onPress={() => pushRoute(item.route)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.accountIconBg}>
+                        <MaterialIcons
+                          name={item.icon as any}
+                          size={22}
+                          color="#374151"
+                        />
+                      </View>
+                      <Text style={styles.accountGridLabel}>{item.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
             </View>
+          )}
 
-            <View style={styles.accountGrid}>
-              <TouchableOpacity
-                style={styles.accountGridItem}
-                onPress={() => pushRoute("/customer/account-profile")}
-                activeOpacity={0.7}
-              >
-                <View
-                  style={[styles.accountIconBg, { backgroundColor: "#F5F5F4" }]}
-                >
-                  <MaterialIcons name="person" size={22} color="#374151" />
+          {/* ══════════════════════════════════════════
+              ADDRESSES TAB
+          ══════════════════════════════════════════ */}
+          {activeTab === "addresses" && (
+            <View style={styles.tabContent}>
+              <View style={styles.card}>
+                <View style={styles.cardHeaderRow}>
+                  <View>
+                    <Text style={styles.cardTitle}>Shipping Addresses</Text>
+                    <Text style={styles.cardSubtitle}>
+                      Manage your delivery addresses
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.smallButton}
+                    onPress={() =>
+                      pushRoute("/customer/components/shipping-address")
+                    }
+                  >
+                    <MaterialIcons name="add" size={16} color="#374151" />
+                    <Text style={styles.smallButtonText}>Manage</Text>
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.accountGridLabel}>Profile</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.accountGridItem}
-                onPress={() =>
-                  pushRoute("/customer/components/shipping-address")
-                }
-                activeOpacity={0.7}
-              >
-                <View
-                  style={[styles.accountIconBg, { backgroundColor: "#F5F5F4" }]}
-                >
-                  <MaterialIcons name="location-on" size={22} color="#374151" />
+                <View style={styles.emptyState}>
+                  <MaterialIcons name="location-on" size={40} color="#D1D5DB" />
+                  <Text style={styles.emptyStateText}>
+                    Open Addresses to manage your delivery locations
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.linkBtn}
+                    onPress={() =>
+                      pushRoute("/customer/components/shipping-address")
+                    }
+                  >
+                    <Text style={styles.linkBtnText}>Go to Addresses →</Text>
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.accountGridLabel}>Addresses</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.accountGridItem}
-                onPress={() => pushRoute("/customer/wallet")}
-                activeOpacity={0.7}
-              >
-                <View
-                  style={[styles.accountIconBg, { backgroundColor: "#F5F5F4" }]}
-                >
-                  <MaterialIcons name="account-balance-wallet" size={22} color="#374151" />
-                </View>
-                <Text style={styles.accountGridLabel}>Wallet</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.accountGridItem}
-                onPress={() => pushRoute("/customer/my-vouchers")}
-                activeOpacity={0.7}
-              >
-                <View
-                  style={[styles.accountIconBg, { backgroundColor: "#F5F5F4" }]}
-                >
-                  <MaterialIcons name="local-offer" size={22} color="#374151" />
-                </View>
-                <Text style={styles.accountGridLabel}>Vouchers</Text>
-              </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          )}
+
+          {/* ══════════════════════════════════════════
+              PAYMENTS TAB
+          ══════════════════════════════════════════ */}
+          {activeTab === "payments" && (
+            <View style={styles.tabContent}>
+              <View style={styles.card}>
+                <View style={styles.cardHeaderRow}>
+                  <View>
+                    <Text style={styles.cardTitle}>Payment Methods</Text>
+                    <Text style={styles.cardSubtitle}>
+                      Manage your payout options
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.smallButton}
+                    onPress={() => pushRoute("/customer/wallet")}
+                  >
+                    <MaterialIcons name="add" size={16} color="#374151" />
+                    <Text style={styles.smallButtonText}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {paymentMethods.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <MaterialIcons
+                      name="credit-card"
+                      size={40}
+                      color="#D1D5DB"
+                    />
+                    <Text style={styles.emptyStateText}>
+                      No payment methods added yet
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.linkBtn}
+                      onPress={() => pushRoute("/customer/wallet")}
+                    >
+                      <Text style={styles.linkBtnText}>
+                        Add a payment method →
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={styles.paymentList}>
+                    {paymentMethods.map((m) => (
+                      <View key={m.payment_id} style={styles.paymentItem}>
+                        <View style={styles.paymentIconBg}>
+                          <MaterialIcons
+                            name={
+                              m.payment_method === "bank"
+                                ? "account-balance"
+                                : "smartphone"
+                            }
+                            size={20}
+                            color="#374151"
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 6,
+                            }}
+                          >
+                            <Text style={styles.paymentMethodName}>
+                              {m.payment_method}
+                            </Text>
+                            {m.is_default && (
+                              <View style={styles.defaultBadge}>
+                                <Text style={styles.defaultBadgeText}>
+                                  Default
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                          {m.bank_name && (
+                            <Text style={styles.paymentDetail}>
+                              {m.bank_name}
+                            </Text>
+                          )}
+                          <Text style={styles.paymentDetail}>
+                            {m.account_name} • {m.account_number}
+                          </Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* ══════════════════════════════════════════
+              FINANCE TAB
+          ══════════════════════════════════════════ */}
+          {activeTab === "finance" && (
+            <View style={styles.tabContent}>
+              {/* ── Filter chips ── */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.filterScroll}
+              >
+                {[
+                  { key: "all", label: "All" },
+                  { key: "personal", label: "Personal Listings" },
+                  ...shopFilters.map((s) => ({
+                    key: `shop_${s.id}`,
+                    label: s.name,
+                  })),
+                ].map((f) => (
+                  <TouchableOpacity
+                    key={f.key}
+                    style={[
+                      styles.filterChip,
+                      selectedFilter === f.key && styles.filterChipActive,
+                    ]}
+                    onPress={() => setSelectedFilter(f.key)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        selectedFilter === f.key && styles.filterChipTextActive,
+                      ]}
+                    >
+                      {f.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* ── Balance cards ── */}
+              <View style={styles.balanceGrid}>
+                {/* Available */}
+                <View style={[styles.balanceCard, { flex: 1.2 }]}>
+                  <View style={styles.balanceCardHeader}>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      <MaterialIcons
+                        name="account-balance-wallet"
+                        size={16}
+                        color="#2563EB"
+                      />
+                      <Text style={styles.balanceCardLabel}>Available</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => setShowBalance(!showBalance)}
+                    >
+                      <MaterialIcons
+                        name={showBalance ? "visibility-off" : "visibility"}
+                        size={16}
+                        color="#9CA3AF"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={[styles.balanceAmount, { color: "#059669" }]}>
+                    {showBalance
+                      ? formatCurrency(wallet?.available_balance || 0)
+                      : "••••••"}
+                  </Text>
+                  <Text style={styles.balanceCardSub}>Ready to withdraw</Text>
+                </View>
+
+                {/* Pending */}
+                <View style={[styles.balanceCard, { flex: 1 }]}>
+                  <View style={styles.balanceCardHeader}>
+                    <MaterialIcons
+                      name="hourglass-empty"
+                      size={16}
+                      color="#D97706"
+                    />
+                    <Text style={styles.balanceCardLabel}>Pending</Text>
+                  </View>
+                  <Text style={[styles.balanceAmount, { color: "#D97706" }]}>
+                    {showBalance
+                      ? formatCurrency(wallet?.pending_balance || 0)
+                      : "••••••"}
+                  </Text>
+                  <Text style={styles.balanceCardSub}>Awaiting release</Text>
+                </View>
+              </View>
+
+              <View style={styles.balanceGrid}>
+                {/* Total */}
+                <View style={[styles.balanceCard, { flex: 1 }]}>
+                  <View style={styles.balanceCardHeader}>
+                    <MaterialIcons
+                      name="trending-up"
+                      size={16}
+                      color="#059669"
+                    />
+                    <Text style={styles.balanceCardLabel}>Total</Text>
+                  </View>
+                  <Text style={styles.balanceAmount}>
+                    {showBalance
+                      ? formatCurrency(wallet?.total_balance || 0)
+                      : "••••••"}
+                  </Text>
+                  <Text style={styles.balanceCardSub}>
+                    Lifetime:{" "}
+                    {showBalance
+                      ? formatCurrency(wallet?.lifetime_earnings || 0)
+                      : "••••"}
+                  </Text>
+                </View>
+
+                {/* Withdrawals */}
+                <View style={[styles.balanceCard, { flex: 1 }]}>
+                  <View style={styles.balanceCardHeader}>
+                    <MaterialIcons
+                      name="trending-down"
+                      size={16}
+                      color="#DC2626"
+                    />
+                    <Text style={styles.balanceCardLabel}>Withdrawn</Text>
+                  </View>
+                  <Text style={[styles.balanceAmount, { color: "#DC2626" }]}>
+                    {showBalance
+                      ? formatCurrency(wallet?.lifetime_withdrawals || 0)
+                      : "••••••"}
+                  </Text>
+                  <Text style={styles.balanceCardSub}>All time</Text>
+                </View>
+              </View>
+
+              {/* ── Withdraw button ── */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Withdraw Funds</Text>
+                <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>
+                  Request a payout to your payment method
+                </Text>
+                <TouchableOpacity
+                  style={[
+                    styles.primaryButton,
+                    (!wallet?.available_balance ||
+                      wallet.available_balance < 100) &&
+                      styles.primaryButtonDisabled,
+                  ]}
+                  onPress={() => setShowWithdrawModal(true)}
+                  disabled={
+                    !wallet?.available_balance || wallet.available_balance < 100
+                  }
+                >
+                  <MaterialIcons name="upload" size={18} color="#fff" />
+                  <Text style={styles.primaryButtonText}>
+                    Request Withdrawal
+                  </Text>
+                </TouchableOpacity>
+                {(!wallet?.available_balance ||
+                  wallet.available_balance < 100) && (
+                  <Text style={styles.hintText}>
+                    Minimum withdrawal is ₱100.00
+                  </Text>
+                )}
+              </View>
+
+              {/* ── Withdrawal history ── */}
+              {withdrawalRequests.length > 0 && (
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Withdrawal History</Text>
+                  <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>
+                    Recent requests
+                  </Text>
+                  <View style={styles.txList}>
+                    {withdrawalRequests.slice(0, 5).map((req) => (
+                      <View key={req.withdrawal_id} style={styles.txItem}>
+                        <View>
+                          <Text style={styles.txAmount}>
+                            {formatCurrency(req.amount)}
+                          </Text>
+                          <Text style={styles.txDate}>
+                            {formatDateTime(req.requested_at)}
+                          </Text>
+                        </View>
+                        <StatusBadge status={req.status} />
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* ── Monthly graph + stats ── */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Money Flow</Text>
+                <Text style={[styles.cardSubtitle, { marginBottom: 8 }]}>
+                  Last 6 months
+                </Text>
+                <BarGraph data={monthlyData} />
+                {monthlyData.length > 0 && (
+                  <View style={styles.graphStats}>
+                    <View style={styles.graphStatItem}>
+                      <Text style={styles.graphStatLabel}>Average</Text>
+                      <Text style={styles.graphStatValue}>
+                        {formatCurrency(
+                          monthlyData.reduce((s, m) => s + m.credits, 0) /
+                            monthlyData.length,
+                        )}
+                      </Text>
+                    </View>
+                    <View style={styles.graphStatItem}>
+                      <Text style={styles.graphStatLabel}>Highest</Text>
+                      <Text
+                        style={[styles.graphStatValue, { color: "#059669" }]}
+                      >
+                        {formatCurrency(
+                          Math.max(...monthlyData.map((m) => m.credits)),
+                        )}
+                      </Text>
+                    </View>
+                    <View style={styles.graphStatItem}>
+                      <Text style={styles.graphStatLabel}>Lowest</Text>
+                      <Text
+                        style={[styles.graphStatValue, { color: "#DC2626" }]}
+                      >
+                        {formatCurrency(
+                          Math.min(...monthlyData.map((m) => m.credits)),
+                        )}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+
+              {/* ── Transaction history ── */}
+              <View style={styles.card}>
+                <View style={styles.cardHeaderRow}>
+                  <View>
+                    <Text style={styles.cardTitle}>Transaction History</Text>
+                    <Text style={styles.cardSubtitle}>
+                      {selectedFilter === "all"
+                        ? "All transactions"
+                        : selectedFilter === "personal"
+                          ? "Personal listings"
+                          : shopFilters.find(
+                              (s) => `shop_${s.id}` === selectedFilter,
+                            )?.name || "Shop"}
+                    </Text>
+                  </View>
+                </View>
+
+                {loadingWallet ? (
+                  <ActivityIndicator
+                    size="small"
+                    color="#F97316"
+                    style={{ marginVertical: 20 }}
+                  />
+                ) : filteredTransactions.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <MaterialIcons name="receipt" size={40} color="#D1D5DB" />
+                    <Text style={styles.emptyStateText}>
+                      No transactions found
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.txList}>
+                    {filteredTransactions.map((tx) => (
+                      <View key={tx.id} style={styles.txRow}>
+                        <View
+                          style={[
+                            styles.txIcon,
+                            {
+                              backgroundColor:
+                                tx.type === "credit" ? "#D1FAE5" : "#FEE2E2",
+                            },
+                          ]}
+                        >
+                          <MaterialIcons
+                            name={
+                              tx.type === "credit"
+                                ? "arrow-downward"
+                                : "arrow-upward"
+                            }
+                            size={16}
+                            color={tx.type === "credit" ? "#059669" : "#DC2626"}
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.txDescription}>
+                            {tx.description}
+                          </Text>
+                          <View
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 6,
+                              marginTop: 2,
+                            }}
+                          >
+                            <Text style={styles.txDate}>
+                              {formatDateTime(tx.date)}
+                            </Text>
+                            {tx.shop_name && (
+                              <View style={styles.shopTag}>
+                                <Text style={styles.shopTagText}>
+                                  {tx.shop_name}
+                                </Text>
+                              </View>
+                            )}
+                            <StatusBadge status={tx.status} />
+                          </View>
+                          {tx.order_id && (
+                            <Text style={styles.orderIdText}>
+                              Order: {tx.order_id.slice(0, 8)}…
+                            </Text>
+                          )}
+                        </View>
+                        <Text
+                          style={[
+                            styles.txAmountBig,
+                            {
+                              color:
+                                tx.type === "credit" ? "#059669" : "#DC2626",
+                            },
+                          ]}
+                        >
+                          {tx.type === "credit" ? "+" : "-"}
+                          {formatCurrency(tx.amount)}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
 
           <View style={{ height: 40 }} />
         </ScrollView>
+
+        {/* ══════════════════════════════════════════
+            WITHDRAW MODAL
+        ══════════════════════════════════════════ */}
+        <Modal
+          visible={showWithdrawModal}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setShowWithdrawModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Withdraw Funds</Text>
+              <Text style={styles.modalSubtitle}>
+                Available: {formatCurrency(wallet?.available_balance || 0)}
+              </Text>
+
+              <Text style={styles.fieldLabel}>Amount (₱)</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="0.00"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="decimal-pad"
+                value={withdrawAmount}
+                onChangeText={setWithdrawAmount}
+              />
+              <Text style={styles.hintText}>Minimum withdrawal: ₱100.00</Text>
+
+              <Text style={[styles.fieldLabel, { marginTop: 16 }]}>
+                Payment Method
+              </Text>
+              {paymentMethods.length === 0 ? (
+                <View style={styles.noPaymentHint}>
+                  <MaterialIcons
+                    name="info-outline"
+                    size={16}
+                    color="#D97706"
+                  />
+                  <Text style={styles.noPaymentHintText}>
+                    Add a payment method in the Payments tab first.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.paymentPickerList}>
+                  {paymentMethods.map((m) => (
+                    <TouchableOpacity
+                      key={m.payment_id}
+                      style={[
+                        styles.paymentPickerItem,
+                        selectedPaymentMethod === m.payment_id &&
+                          styles.paymentPickerItemSelected,
+                      ]}
+                      onPress={() => setSelectedPaymentMethod(m.payment_id)}
+                    >
+                      <MaterialIcons
+                        name={
+                          m.payment_method === "bank"
+                            ? "account-balance"
+                            : "smartphone"
+                        }
+                        size={18}
+                        color="#374151"
+                      />
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={styles.paymentPickerName}>
+                          {m.payment_method}
+                          {m.bank_name ? ` – ${m.bank_name}` : ""}
+                          {m.is_default ? "  (Default)" : ""}
+                        </Text>
+                        <Text style={styles.paymentPickerDetail}>
+                          {m.account_name} • {m.account_number}
+                        </Text>
+                      </View>
+                      {selectedPaymentMethod === m.payment_id && (
+                        <MaterialIcons
+                          name="check-circle"
+                          size={20}
+                          color="#F97316"
+                        />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={[styles.primaryButton, { flex: 1 }]}
+                  onPress={handleWithdraw}
+                  disabled={
+                    submittingWithdraw ||
+                    !selectedPaymentMethod ||
+                    !withdrawAmount
+                  }
+                >
+                  {submittingWithdraw ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <>
+                      <MaterialIcons name="upload" size={18} color="#fff" />
+                      <Text style={styles.primaryButtonText}>Submit</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.outlineButton, { flex: 1 }]}
+                  onPress={() => {
+                    setShowWithdrawModal(false);
+                    setWithdrawAmount("");
+                    setSelectedPaymentMethod("");
+                  }}
+                >
+                  <Text style={styles.outlineButtonText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </CustomerLayout>
     </SafeAreaView>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F9FAFB",
-  },
-  scrollContainer: {
-    flex: 1,
-  },
+  container: { flex: 1, backgroundColor: "#F9FAFB" },
+  scrollContainer: { flex: 1 },
+
+  // Loading / not logged in
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -870,223 +1568,163 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    minHeight: 400,
     padding: 24,
   },
-  notLoggedInIconContainer: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: "#FEE2E2",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 24,
-  },
   notLoggedInTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "700",
     color: "#111827",
+    marginTop: 16,
     marginBottom: 8,
   },
   notLoggedInText: {
-    fontSize: 16,
+    fontSize: 15,
     color: "#6B7280",
     textAlign: "center",
-    marginBottom: 32,
+    marginBottom: 24,
   },
   loginButton: {
     backgroundColor: "#F97316",
-    paddingHorizontal: 40,
-    paddingVertical: 16,
+    paddingHorizontal: 36,
+    paddingVertical: 14,
     borderRadius: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: "#F97316",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
   },
-  loginButtonText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "600",
-  },
+  loginButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
 
-  // Modern Gradient Header
-  gradientHeaderContainer: {
-    marginBottom: 20,
-  },
+  // Header
   gradientHeader: {
-    paddingTop: 24,
-    paddingBottom: 32,
-    paddingHorizontal: 20,
     backgroundColor: "#FFFFFF",
+    paddingTop: 20,
+    paddingBottom: 24,
+    paddingHorizontal: 20,
+    marginBottom: 0,
   },
-  headerContent: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  avatarContainer: {
-    marginRight: 16,
-  },
-  avatarWrapper: {
-    position: "relative",
-  },
+  headerContent: { flexDirection: "row", alignItems: "center" },
+  avatarWrapper: { position: "relative", marginRight: 14 },
   avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     backgroundColor: "#F5F5F4",
     justifyContent: "center",
     alignItems: "center",
-    borderWidth: 3,
+    borderWidth: 2,
     borderColor: "#E5E7EB",
   },
   avatarImage: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 3,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    borderWidth: 2,
     borderColor: "#E5E7EB",
   },
-  avatarUploading: {
-    backgroundColor: "rgba(0,0,0,0.1)",
-  },
-  avatarGlow: {
-    position: "absolute",
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: "rgba(0, 0, 0, 0.05)",
-    top: 0,
-    left: 0,
-  },
-  avatarText: {
-    fontSize: 28,
-    color: "#374151",
-    fontWeight: "700",
-  },
+  avatarText: { fontSize: 26, color: "#374151", fontWeight: "700" },
   cameraIconContainer: {
     position: "absolute",
     bottom: 0,
     right: 0,
     backgroundColor: "#F97316",
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#FFFFFF",
   },
-  headerTextContainer: {
-    flex: 1,
-  },
-  nameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 4,
-  },
+  headerTextContainer: { flex: 1 },
   userName: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: "700",
     color: "#374151",
-    marginRight: 8,
+    marginBottom: 2,
   },
-  verifiedBadge: {
-    backgroundColor: "#F5F5F4",
-    borderRadius: 12,
-    padding: 4,
-  },
-  userEmail: {
-    fontSize: 14,
-    color: "#374151",
-    marginBottom: 8,
-  },
-  shopBadgeContainer: {
-    flexDirection: "row",
-  },
+  userEmail: { fontSize: 13, color: "#6B7280", marginBottom: 6 },
+  shopBadgeContainer: { flexDirection: "row" },
   modernShopBadge: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 20,
-    gap: 6,
+    gap: 4,
   },
-  modernShopBadgeText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "600",
-  },
+  modernShopBadgeText: { color: "#fff", fontSize: 11, fontWeight: "600" },
   editProfileButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: "#F5F5F4",
     justifyContent: "center",
     alignItems: "center",
   },
 
-  // Modern Shop Card - Edge to Edge
-  modernShopCard: {
-    marginBottom: 20,
-    borderRadius: 0,
-    overflow: "hidden",
-    ...Platform.select({
-      ios: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 12,
-      },
-      android: {
-        elevation: 5,
-      },
-    }),
-  },
-  shopCardGradient: {
-    padding: 20,
-    backgroundColor: "#FFFFFF",
-  },
-  shopCardContent: {
+  // Banners
+  successBanner: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
+    backgroundColor: "#D1FAE5",
+    margin: 12,
+    marginTop: 0,
+    padding: 12,
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: "#059669",
   },
-  shopIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#F5F5F4",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 16,
-  },
-  shopCardText: {
+  successBannerText: {
+    color: "#065F46",
+    fontSize: 13,
+    fontWeight: "500",
     flex: 1,
   },
-  shopCardTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#374151",
-    marginBottom: 4,
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#FEE2E2",
+    margin: 12,
+    marginTop: 0,
+    padding: 12,
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: "#DC2626",
   },
-  shopCardSubtitle: {
-    fontSize: 14,
-    color: "#374151",
+  errorBannerText: {
+    color: "#991B1B",
+    fontSize: 13,
+    fontWeight: "500",
+    flex: 1,
   },
 
-  // Modern Card Design - Edge to Edge
-  modernCard: {
+  // Tab bar
+  tabBar: {
+    flexDirection: "row",
     backgroundColor: "#FFFFFF",
-    marginBottom: 20,
-    padding: 20,
-    borderRadius: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+  },
+  tabItem: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 10,
+    gap: 3,
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
+  },
+  tabItemActive: { borderBottomColor: "#F97316" },
+  tabLabel: { fontSize: 10, color: "#9CA3AF", fontWeight: "500" },
+  tabLabelActive: { color: "#F97316", fontWeight: "600" },
+
+  // Tab content
+  tabContent: { padding: 12, gap: 12 },
+
+  // Card
+  card: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 16,
+    gap: 0,
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -1094,114 +1732,387 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.06,
         shadowRadius: 8,
       },
-      android: {
-        elevation: 2,
-      },
+      android: { elevation: 2 },
     }),
   },
   cardHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
+    gap: 8,
+    marginBottom: 16,
   },
-  cardTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  cardIconWrapper: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: "#ffffff",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#374151",
-  },
-  viewAllButton: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  viewAllText: {
-    fontSize: 14,
-    color: "#374151",
-    fontWeight: "600",
-    marginRight: 4,
-  },
-
-  // Orders Grid
-  ordersGrid: {
+  cardHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 14,
   },
-  modernOrderItem: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 12,
-  },
-  orderIconContainer: {
-    position: "relative",
-    marginBottom: 12,
-  },
-  orderIconBg: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modernBadge: {
-    position: "absolute",
-    top: -6,
-    right: -6,
-    backgroundColor: "#F97316",
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 6,
-    borderWidth: 2,
-    borderColor: "#fff",
-  },
-  modernBadgeText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  orderItemLabel: {
-    fontSize: 13,
-    color: "#374151",
-    fontWeight: "500",
-    textAlign: "center",
-  },
+  cardTitle: { fontSize: 14, fontWeight: "700", color: "#374151" },
+  cardSubtitle: { fontSize: 12, color: "#6B7280", marginTop: 2 },
 
-  // Account Grid
+  // Shop card
+  shopCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 10,
+      },
+      android: { elevation: 3 },
+    }),
+  },
+  shopIconCircle: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "#F5F5F4",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  shopCardText: { flex: 1 },
+  shopCardTitle: { fontSize: 15, fontWeight: "700", color: "#374151" },
+  shopCardSubtitle: { fontSize: 12, color: "#6B7280", marginTop: 2 },
+
+  // Account grid
+  // Account grid — centers items regardless of count
   accountGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
+    justifyContent: "center", // ← centers 2 items instead of left-aligning
+    marginTop: 4,
+    gap: 8,
   },
   accountGridItem: {
-    width: "25%",
+    width: 90, // ← fixed width instead of "25%" so 2 items look balanced
     alignItems: "center",
-    marginBottom: 16,
+    paddingVertical: 14,
+    gap: 8,
+    backgroundColor: "#F9FAFB",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
   },
   accountIconBg: {
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     borderRadius: 16,
+    backgroundColor: "#FFFFFF",
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
   },
   accountGridLabel: {
-    fontSize: 14,
+    fontSize: 12,
     color: "#374151",
     fontWeight: "600",
     textAlign: "center",
   },
+  // Small button
+  smallButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#F9FAFB",
+  },
+  smallButtonText: { fontSize: 12, fontWeight: "600", color: "#374151" },
+
+  // Empty state
+  emptyState: { alignItems: "center", paddingVertical: 24, gap: 8 },
+  emptyStateText: {
+    fontSize: 13,
+    color: "#9CA3AF",
+    textAlign: "center",
+    maxWidth: 220,
+  },
+  linkBtn: { marginTop: 4 },
+  linkBtnText: { fontSize: 13, color: "#F97316", fontWeight: "600" },
+
+  // Payment methods
+  paymentList: { gap: 10 },
+  paymentItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 8,
+  },
+  paymentIconBg: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: "#F5F5F4",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  paymentMethodName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#374151",
+    textTransform: "capitalize",
+  },
+  paymentDetail: { fontSize: 11, color: "#6B7280" },
+  defaultBadge: {
+    backgroundColor: "#D1FAE5",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  defaultBadgeText: { fontSize: 10, color: "#065F46", fontWeight: "600" },
+
+  // Finance: filter scroll
+  filterScroll: { marginBottom: 4 },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#FFFFFF",
+    marginRight: 8,
+  },
+  filterChipActive: { backgroundColor: "#F97316", borderColor: "#F97316" },
+  filterChipText: { fontSize: 12, color: "#374151", fontWeight: "500" },
+  filterChipTextActive: { color: "#FFFFFF", fontWeight: "600" },
+
+  // Finance: balance grid
+  balanceGrid: { flexDirection: "row", gap: 10 },
+  balanceCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 14,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+      },
+      android: { elevation: 2 },
+    }),
+  },
+  balanceCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+    marginBottom: 8,
+  },
+  balanceCardLabel: { fontSize: 11, color: "#6B7280", fontWeight: "500" },
+  balanceAmount: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#374151",
+    marginBottom: 4,
+  },
+  balanceCardSub: { fontSize: 10, color: "#9CA3AF" },
+
+  // Buttons
+  primaryButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#F97316",
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  primaryButtonDisabled: { backgroundColor: "#D1D5DB" },
+  primaryButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "600" },
+  outlineButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  outlineButtonText: { color: "#374151", fontSize: 14, fontWeight: "600" },
+  hintText: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    marginTop: 6,
+    textAlign: "center",
+  },
+
+  // Transactions
+  txList: { gap: 10, marginTop: 4 },
+  txItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  txAmount: { fontSize: 14, fontWeight: "600", color: "#374151" },
+  txDate: { fontSize: 11, color: "#9CA3AF" },
+  txRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  txIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 2,
+  },
+  txDescription: { fontSize: 13, fontWeight: "600", color: "#374151" },
+  txAmountBig: { fontSize: 13, fontWeight: "700", marginTop: 2 },
+  shopTag: {
+    backgroundColor: "#DBEAFE",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  shopTagText: { fontSize: 9, color: "#1D4ED8", fontWeight: "600" },
+  orderIdText: { fontSize: 10, color: "#D1D5DB", marginTop: 2 },
+
+  // Bar graph
+  barGraphContainer: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    height: 110,
+    gap: 4,
+    paddingBottom: 4,
+  },
+  barCol: { flex: 1, alignItems: "center", justifyContent: "flex-end" },
+  barWrapper: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    height: 90,
+  },
+  bar: {
+    width: "80%",
+    backgroundColor: "#3B82F6",
+    borderRadius: 4,
+    minHeight: 4,
+  },
+  barLabel: {
+    fontSize: 9,
+    color: "#9CA3AF",
+    marginTop: 4,
+    textAlign: "center",
+  },
+  barGraphEmpty: {
+    height: 110,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  barGraphEmptyText: { fontSize: 12, color: "#D1D5DB" },
+
+  // Graph stats
+  graphStats: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+  },
+  graphStatItem: { alignItems: "center", flex: 1 },
+  graphStatLabel: { fontSize: 11, color: "#9CA3AF", marginBottom: 4 },
+  graphStatValue: { fontSize: 13, fontWeight: "600", color: "#374151" },
+
+  // Badge
+  badge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  badgeText: { fontSize: 9, fontWeight: "600" },
+
+  // Withdraw Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  modalSheet: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 32,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 16,
+      },
+      android: { elevation: 16 },
+    }),
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 4,
+  },
+  modalSubtitle: { fontSize: 13, color: "#6B7280", marginBottom: 20 },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 6,
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 15,
+    color: "#374151",
+    backgroundColor: "#F9FAFB",
+  },
+  noPaymentHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#FEF9C3",
+    padding: 12,
+    borderRadius: 10,
+  },
+  noPaymentHintText: { fontSize: 12, color: "#A16207", flex: 1 },
+  paymentPickerList: { gap: 8, marginBottom: 8 },
+  paymentPickerItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 10,
+    backgroundColor: "#F9FAFB",
+  },
+  paymentPickerItemSelected: {
+    borderColor: "#F97316",
+    backgroundColor: "#FFF7ED",
+  },
+  paymentPickerName: { fontSize: 13, fontWeight: "600", color: "#374151" },
+  paymentPickerDetail: { fontSize: 11, color: "#6B7280", marginTop: 2 },
+  modalActions: { flexDirection: "row", gap: 10, marginTop: 20 },
 });
