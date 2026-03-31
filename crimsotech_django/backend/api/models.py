@@ -1213,13 +1213,11 @@ class Delivery(models.Model):
     rider = models.ForeignKey(Rider, on_delete=models.SET_NULL, null=True)
     status = models.CharField(max_length=20, choices=[
         ('pending','Pending'),
-        ('picked_up','Picked Up'),
         ('in_progress','In Progress'),
         ('delivered','Delivered'),
         ('cancelled','Cancelled'),
         ('declined','Declined'),
         ('accepted','Accepted'),
-
     ], default='pending')
     distance_km = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     estimated_minutes = models.IntegerField(null=True, blank=True)
