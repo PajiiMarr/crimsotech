@@ -31,8 +31,8 @@ interface RefundFlat {
   tracking_number?: string;
   has_media?: boolean;
   media_count?: number;
-  order?: any; // includes shipping_address and delivery
-  default_shipping_address?: any; // NEW: buyer's default shipping address
+  order?: any;
+  default_shipping_address?: any;
   [key: string]: any;
 }
 
@@ -52,7 +52,11 @@ import {
   FileText, ShoppingBag, CreditCard, DollarSign, Shield, Camera,
   Scale, Gavel, Search, Loader2, Send, AlertCircle, Info,
   MapPin, Phone, Mail, Store, Bike, Package as PackageIcon,
-  Image as ImageIcon, File as FileIcon, Download, ExternalLink
+  Image as ImageIcon, File as FileIcon, Download, ExternalLink,
+  History, Tag, Receipt, Building, Globe, Star, ThumbsUp, ThumbsDown,
+  Flag, HelpCircle, ClipboardList, Box, Layers, Truck as TruckIcon,
+  UserCheck, UserX, ShieldCheck, Timer, DollarSign as MoneyIcon,
+  MessageSquare, Store as StoreIcon, User as UserIcon, ImagePlus
 } from 'lucide-react';
 import type { Route } from './+types/view-refund-details';
 
@@ -66,20 +70,12 @@ const liabilityLabels: Record<string, string> = {
 };
 
 export function meta(): Route.MetaDescriptors {
-  return [{ title: "View Refund" }];
+  return [{ title: "View Refund - Admin Investigation" }];
 }
 
-// Add this helper function near the top of your component, after the imports
 const getRefundId = (refund: any) => {
   if (!refund) return null;
   return refund.refund_id || refund.refund || refund.id;
-};
-
-// Also add a helper for the refund object itself
-const getRefundIdentifier = (refund: any) => {
-  const id = getRefundId(refund);
-  if (!id) return null;
-  return encodeURIComponent(String(id));
 };
 
 function formatCaseCategory(category: any): string {
@@ -105,8 +101,8 @@ function formatCaseCategory(category: any): string {
 }
 
 function getActiveDispute(refund: RefundFlat & { [key: string]: any }) {
-  if (refund.dispute_request && Object.keys(refund.dispute_request).length > 0) return refund.dispute_request;
   if (refund.dispute_details && Object.keys(refund.dispute_details).length > 0) return refund.dispute_details;
+  if (refund.dispute_request && Object.keys(refund.dispute_request).length > 0) return refund.dispute_request;
   if (Array.isArray(refund.disputes) && refund.disputes.length > 0) {
     return refund.disputes.sort((a: any, b: any) =>
       new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
@@ -121,6 +117,15 @@ const formatMoney = (value: unknown) => {
     if (!Number.isFinite(num)) return '—';
     return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(num);
   } catch { return '—'; }
+};
+
+const formatDateTime = (dateStr: string | null | undefined) => {
+  if (!dateStr) return 'N/A';
+  try {
+    return new Date(dateStr).toLocaleString();
+  } catch {
+    return dateStr;
+  }
 };
 
 // ===== STATUS CONFIGURATION =====
@@ -193,6 +198,191 @@ function MediaGallery({ files, title }: { files: any[], title: string }) {
   );
 }
 
+// ===== BUYER REQUEST CARD =====
+function BuyerRequestCard({ refundMedia, refundDetails }: { refundMedia: any[], refundDetails: any }) {
+  const buyerMedia = refundMedia.filter(m => m.uploaded_by_entity === 'buyer' || m.uploaded_by_entity === 'Buyer');
+  
+  if (buyerMedia.length === 0 && !refundDetails?.detailed_reason && !refundDetails?.reason) return null;
+  
+  return (
+    <Card className="border-blue-200 bg-blue-50/30">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2 text-blue-700">
+          <UserIcon className="h-4 w-4" />
+          Buyer's Refund Request
+          <Badge className="bg-blue-100 text-blue-700 text-[10px]">Customer Evidence</Badge>
+        </CardTitle>
+        <CardDescription className="text-xs">The buyer's initial refund request and supporting evidence</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div>
+            <span className="text-muted-foreground">Refund Reason:</span>
+            <p className="font-medium mt-0.5">{refundDetails?.reason || 'N/A'}</p>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Requested Amount:</span>
+            <p className="font-medium mt-0.5 text-blue-600">{formatMoney(refundDetails?.total_refund_amount)}</p>
+          </div>
+        </div>
+        {refundDetails?.detailed_reason && (
+          <div>
+            <span className="text-xs text-muted-foreground block">Detailed Explanation:</span>
+            <p className="text-sm mt-1 p-2 bg-white rounded border">{refundDetails.detailed_reason}</p>
+          </div>
+        )}
+        {refundDetails?.customer_note && (
+          <div>
+            <span className="text-xs text-muted-foreground block">Additional Note:</span>
+            <p className="text-sm mt-1 p-2 bg-white rounded border italic">{refundDetails.customer_note}</p>
+          </div>
+        )}
+        {refundDetails?.preferred_refund_method && (
+          <div>
+            <span className="text-xs text-muted-foreground block">Preferred Refund Method:</span>
+            <p className="font-medium capitalize">{refundDetails.preferred_refund_method}</p>
+          </div>
+        )}
+        {buyerMedia.length > 0 && (
+          <div className="border-t pt-2 mt-1">
+            <span className="text-xs font-medium flex items-center gap-1 mb-2">
+              <ImagePlus className="h-3 w-3" /> Buyer's Evidence ({buyerMedia.length})
+            </span>
+            <MediaGallery files={buyerMedia} title="Buyer Evidence" />
+            <div className="mt-1 text-[10px] text-muted-foreground">
+              {buyerMedia.map((m, idx) => (
+                <div key={idx}>Uploaded: {formatDateTime(m.uploaded_at)}</div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===== SELLER RESPONSE CARD =====
+function SellerResponseCard({ refundMedia, refundDetails }: { refundMedia: any[], refundDetails: any }) {
+  const sellerMedia = refundMedia.filter(m => m.uploaded_by_entity === 'seller' || m.uploaded_by_entity === 'Seller');
+  
+  // Check if seller has responded (rejected or provided evidence)
+  const hasSellerResponse = refundDetails?.status === 'rejected' || 
+                            refundDetails?.reject_reason_code || 
+                            sellerMedia.length > 0;
+  
+  if (!hasSellerResponse) {
+    return (
+      <Card className="border-gray-200 bg-gray-50/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2 text-gray-600">
+            <StoreIcon className="h-4 w-4" />
+            Seller's Response
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground italic">Seller has not responded to this refund request yet.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+  
+  return (
+    <Card className="border-orange-200 bg-orange-50/30">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2 text-orange-700">
+          <StoreIcon className="h-4 w-4" />
+          Seller's Response
+          <Badge className="bg-orange-100 text-orange-700 text-[10px]">Seller Evidence</Badge>
+        </CardTitle>
+        <CardDescription className="text-xs">The seller's response to the refund request</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {refundDetails?.status === 'rejected' && (
+          <div className="bg-red-50 border border-red-200 rounded p-2">
+            <div className="flex items-center gap-2">
+              <XCircle className="h-4 w-4 text-red-600" />
+              <span className="text-xs font-medium text-red-700">Refund Request Rejected by Seller</span>
+            </div>
+          </div>
+        )}
+        {refundDetails?.reject_reason_code && (
+          <div>
+            <span className="text-xs text-muted-foreground block">Rejection Code:</span>
+            <p className="text-sm mt-1 font-medium">{refundDetails.reject_reason_code}</p>
+            {refundDetails.reject_reason_details && (
+              <p className="text-sm mt-1 p-2 bg-white rounded border">{refundDetails.reject_reason_details}</p>
+            )}
+          </div>
+        )}
+        {sellerMedia.length > 0 && (
+          <div className="border-t pt-2 mt-1">
+            <span className="text-xs font-medium flex items-center gap-1 mb-2">
+              <ImagePlus className="h-3 w-3" /> Seller's Evidence ({sellerMedia.length})
+            </span>
+            <MediaGallery files={sellerMedia} title="Seller Evidence" />
+            <div className="mt-1 text-[10px] text-muted-foreground">
+              {sellerMedia.map((m, idx) => (
+                <div key={idx}>Uploaded: {formatDateTime(m.uploaded_at)}</div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===== INVESTIGATION TIMELINE =====
+function InvestigationTimeline({ refund }: { refund: any }) {
+  const timelineEvents = [];
+  
+  if (refund.requested_at) {
+    timelineEvents.push({ date: refund.requested_at, title: 'Refund Requested', description: `Reason: ${refund.reason || 'N/A'}`, icon: FileText });
+  }
+  if (refund.dispute_details?.created_at) {
+    timelineEvents.push({ date: refund.dispute_details.created_at, title: 'Dispute Filed', description: refund.dispute_details.reason, icon: ShieldAlert });
+  }
+  if (refund.dispute_details?.status === 'under_review' && refund.dispute_details?.updated_at) {
+    timelineEvents.push({ date: refund.dispute_details.updated_at, title: 'Under Review', description: 'Admin review started', icon: Scale });
+  }
+  if (refund.processed_at) {
+    timelineEvents.push({ date: refund.processed_at, title: 'Refund Processed', description: `By: ${refund.processed_by?.username || 'Admin'}`, icon: CheckSquare });
+  }
+  if (refund.dispute_details?.resolved_at) {
+    timelineEvents.push({ date: refund.dispute_details.resolved_at, title: 'Dispute Resolved', description: `Status: ${refund.dispute_details.status}`, icon: Gavel });
+  }
+  
+  timelineEvents.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  
+  if (timelineEvents.length === 0) return null;
+  
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <History className="h-4 w-4" /> Investigation Timeline
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="relative pl-4 border-l-2 border-gray-200 space-y-4">
+          {timelineEvents.map((event, idx) => (
+            <div key={idx} className="relative">
+              <div className="absolute -left-[23px] mt-1">
+                <div className="w-3 h-3 rounded-full bg-blue-500 border-2 border-white"></div>
+              </div>
+              <div className="text-xs">
+                <p className="font-medium">{event.title}</p>
+                <p className="text-muted-foreground text-[10px]">{formatDateTime(event.date)}</p>
+                {event.description && <p className="text-[11px] mt-0.5">{event.description}</p>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ===== DISPUTE DETAILS CARD =====
 function DisputeDetailsCard({ dispute }: { dispute: any }) {
   if (!dispute) return null;
@@ -208,110 +398,10 @@ function DisputeDetailsCard({ dispute }: { dispute: any }) {
     partial: 'bg-blue-50 text-blue-700'
   };
 
-  // ===== DISPUTE STATUS CARD (New and Improved) =====
-function DisputeStatusCard({ refund }: { refund: any }) {
-  const activeDispute = getActiveDispute(refund);
-  const disputeStatus = activeDispute?.status || '';
-  const isUnderReview = disputeStatus === 'under_review';
-  const isFiled = disputeStatus === 'filed';
-  
-  if (!activeDispute) return null;
-  
   return (
-    <Card className={`border ${isUnderReview ? 'border-purple-200 bg-purple-50/30' : 'border-orange-200 bg-orange-50/30'}`}>
+    <Card className="border-purple-200 bg-purple-50/30">
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2 text-orange-700">
-          <Gavel className="h-4 w-4" />
-          Dispute Resolution
-          <Badge className={isUnderReview ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'}>
-            {isUnderReview ? 'Under Review' : 'Active Dispute'}
-          </Badge>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        {activeDispute.reason && (
-          <div>
-            <span className="text-xs text-muted-foreground block">Dispute Reason</span>
-            <p className="mt-1 p-2 bg-white rounded border text-sm">{activeDispute.reason}</p>
-          </div>
-        )}
-        
-        {activeDispute.description && (
-          <div>
-            <span className="text-xs text-muted-foreground block">Description</span>
-            <p className="mt-1 p-2 bg-white rounded border text-sm">{activeDispute.description}</p>
-          </div>
-        )}
-        
-        {activeDispute.case_category && (
-          <div>
-            <span className="text-xs text-muted-foreground block">Case Category</span>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {Array.isArray(activeDispute.case_category) ? (
-                activeDispute.case_category.map((cat: string, idx: number) => (
-                  <Badge key={idx} variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                    {liabilityLabels[cat] || cat}
-                  </Badge>
-                ))
-              ) : (
-                <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                  {formatCaseCategory(activeDispute.case_category)}
-                </Badge>
-              )}
-            </div>
-          </div>
-        )}
-        
-        {activeDispute.requested_by && (
-          <div className="grid grid-cols-2 gap-3 text-xs border-t pt-2">
-            <div>
-              <span className="text-muted-foreground">Filed By:</span>
-              <p className="font-medium">{activeDispute.requested_by.username || 'N/A'}</p>
-              {activeDispute.requested_by.email && <p className="text-[10px] text-muted-foreground">{activeDispute.requested_by.email}</p>}
-            </div>
-            {activeDispute.created_at && (
-              <div>
-                <span className="text-muted-foreground">Filed At:</span>
-                <p className="font-medium">{new Date(activeDispute.created_at).toLocaleString()}</p>
-              </div>
-            )}
-          </div>
-        )}
-        
-        {activeDispute.evidence && activeDispute.evidence.length > 0 && (
-          <div className="border-t pt-2">
-            <MediaGallery files={activeDispute.evidence} title="Dispute Evidence" />
-          </div>
-        )}
-        
-        {isUnderReview && (
-          <Alert className="mt-2 border-purple-200 bg-purple-50">
-            <Scale className="h-4 w-4 text-purple-600" />
-            <AlertTitle className="text-purple-800 text-xs">Under Review</AlertTitle>
-            <AlertDescription className="text-xs text-purple-700">
-              An administrator is currently reviewing this dispute. The decision will be made soon.
-            </AlertDescription>
-          </Alert>
-        )}
-        
-        {isFiled && (
-          <Alert className="mt-2 border-orange-200 bg-orange-50">
-            <AlertTriangle className="h-4 w-4 text-orange-600" />
-            <AlertTitle className="text-orange-800 text-xs">Awaiting Review</AlertTitle>
-            <AlertDescription className="text-xs text-orange-700">
-              This dispute has been filed and is waiting for admin review. Please review all evidence and take action.
-            </AlertDescription>
-          </Alert>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-  return (
-    <Card className="border-orange-200 bg-orange-50/30">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2 text-orange-700">
+        <CardTitle className="text-sm flex items-center gap-2 text-purple-700">
           <ShieldAlert className="h-4 w-4" />
           Dispute Information
           <Badge className={`${statusColors[disputeStatus] || 'bg-gray-50'} text-xs ml-2`}>
@@ -350,38 +440,32 @@ function DisputeStatusCard({ refund }: { refund: any }) {
             <p className="mt-1 p-2 bg-white rounded border text-sm italic">{dispute.admin_notes}</p>
           </div>
         )}
-        {dispute.requested_by && (
-          <div className="grid grid-cols-2 gap-3 text-xs border-t pt-2">
-            <div>
-              <span className="text-muted-foreground">Filed By:</span>
-              <p className="font-medium">{dispute.requested_by.username || 'N/A'}</p>
-              {dispute.requested_by.email && <p className="text-[10px] text-muted-foreground">{dispute.requested_by.email}</p>}
-            </div>
-            {dispute.created_at && (
-              <div>
-                <span className="text-muted-foreground">Filed At:</span>
-                <p className="font-medium">{new Date(dispute.created_at).toLocaleString()}</p>
-              </div>
-            )}
+        <div className="grid grid-cols-2 gap-3 text-xs border-t pt-2">
+          <div>
+            <span className="text-muted-foreground">Filed By:</span>
+            <p className="font-medium">{dispute.requested_by?.username || 'N/A'}</p>
+            {dispute.requested_by?.email && <p className="text-[10px] text-muted-foreground">{dispute.requested_by.email}</p>}
           </div>
-        )}
-        {dispute.processed_by && (
-          <div className="grid grid-cols-2 gap-3 text-xs border-t pt-2">
-            <div>
-              <span className="text-muted-foreground">Resolved By:</span>
-              <p className="font-medium">{dispute.processed_by.username || 'N/A'}</p>
-            </div>
-            {dispute.resolved_at && (
+          <div>
+            <span className="text-muted-foreground">Filed At:</span>
+            <p className="font-medium">{formatDateTime(dispute.created_at)}</p>
+          </div>
+          {dispute.processed_by && (
+            <>
+              <div>
+                <span className="text-muted-foreground">Resolved By:</span>
+                <p className="font-medium">{dispute.processed_by.username || 'N/A'}</p>
+              </div>
               <div>
                 <span className="text-muted-foreground">Resolved At:</span>
-                <p className="font-medium">{new Date(dispute.resolved_at).toLocaleString()}</p>
+                <p className="font-medium">{formatDateTime(dispute.resolved_at)}</p>
               </div>
-            )}
-          </div>
-        )}
-        {dispute.evidence && dispute.evidence.length > 0 && (
+            </>
+          )}
+        </div>
+        {dispute.evidences && dispute.evidences.length > 0 && (
           <div className="border-t pt-2">
-            <MediaGallery files={dispute.evidence} title="Dispute Evidence" />
+            <MediaGallery files={dispute.evidences} title="Dispute Evidence" />
           </div>
         )}
       </CardContent>
@@ -389,7 +473,6 @@ function DisputeStatusCard({ refund }: { refund: any }) {
   );
 }
 
-// ===== STATUS BANNER =====
 // ===== STATUS BANNER =====
 function StatusBanner({ status, refund }: { status: keyof typeof statusConfig, refund: RefundFlat & { [key: string]: any } }) {
   const config = statusConfig[status] || statusConfig.pending;
@@ -406,14 +489,12 @@ function StatusBanner({ status, refund }: { status: keyof typeof statusConfig, r
         <span className="text-xs">{config.description}</span>
       </div>
 
-      {/* Status-specific contextual detail */}
       {status === 'pending' && refund.requested_at && (
         <div className="mt-2 text-xs text-muted-foreground border-t border-yellow-200 pt-2">
           Requested: {new Date(refund.requested_at).toLocaleDateString()}
         </div>
       )}
       
-      {/* Dispute status details - make it consistent */}
       {(status === 'dispute' || status === 'under_review') && (
         <>
           {refund.dispute_reason && (
@@ -444,34 +525,9 @@ function StatusBanner({ status, refund }: { status: keyof typeof statusConfig, r
           Tracking: {refund.return_request.tracking_number}
         </div>
       )}
-      {status === 'shipped' && refund.return_request?.shipped_at && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-blue-200 pt-2">
-          Shipped: {new Date(refund.return_request.shipped_at).toLocaleDateString()}
-        </div>
-      )}
-      {status === 'received' && refund.return_request?.received_at && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-green-200 pt-2">
-          Received: {new Date(refund.return_request.received_at).toLocaleDateString()}
-        </div>
-      )}
-      {status === 'to_process' && refund.total_refund_amount && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-purple-200 pt-2">
-          Amount: {formatMoney(refund.total_refund_amount)}
-        </div>
-      )}
       {status === 'completed' && refund.processed_at && (
         <div className="mt-2 text-xs text-muted-foreground border-t border-emerald-200 pt-2">
           Completed: {new Date(refund.processed_at).toLocaleDateString()}
-        </div>
-      )}
-      {status === 'approved' && refund.approved_refund_amount && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-green-200 pt-2">
-          Approved Amount: {formatMoney(refund.approved_refund_amount)}
-        </div>
-      )}
-      {status === 'rejected' && refund.processed_at && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-red-200 pt-2">
-          Rejected: {new Date(refund.processed_at).toLocaleDateString()}
         </div>
       )}
     </div>
@@ -500,13 +556,8 @@ function ProcessingUI({
   const [uploadingProofs, setUploadingProofs] = useState(false);
   const [adminNotes, setAdminNotes] = useState('');
 
-  // Debug: log payment details
-  console.log('refund.payment_detail:', refund.payment_detail);
+  const getPaymentDetail = () => refund.payment_details;
 
-  // Helper to get the payment detail
-  const getPaymentDetail = () => refund.payment_detail;
-
-  // Render selected payment details (if any)
   const renderSelectedPaymentDetails = () => {
     const pd = getPaymentDetail();
     if (!pd) return null;
@@ -524,7 +575,7 @@ function ProcessingUI({
           </div>
           <div>
             <span className="text-muted-foreground text-[10px]">Account Number</span>
-            <p className="font-medium">{pd.account_number || 'N/A'}</p>
+            <p className="font-medium">{pd.masked_account_number || pd.account_number || 'N/A'}</p>
           </div>
           {pd.bank_name && (
             <div>
@@ -538,30 +589,12 @@ function ProcessingUI({
               <p className="font-medium">{pd.is_default ? 'Yes' : 'No'}</p>
             </div>
           )}
-          {pd.verified_by && (
-            <div>
-              <span className="text-muted-foreground text-[10px]">Verified By</span>
-              <p className="font-medium">{pd.verified_by.username || 'N/A'}</p>
-            </div>
-          )}
-          {pd.created_at && (
-            <div>
-              <span className="text-muted-foreground text-[10px]">Created At</span>
-              <p className="font-medium">{new Date(pd.created_at).toLocaleDateString()}</p>
-            </div>
-          )}
-          {pd.updated_at && (
-            <div>
-              <span className="text-muted-foreground text-[10px]">Last Updated</span>
-              <p className="font-medium">{new Date(pd.updated_at).toLocaleDateString()}</p>
-            </div>
-          )}
         </div>
       </div>
     );
   };
 
-  const hasProofs = () => (refund?.proofs || []).length > 0 || selectedProofFiles.length > 0;
+  const hasProofs = () => (refund?.refund_media || []).filter((m: any) => m.is_proof).length > 0 || selectedProofFiles.length > 0;
 
   const handleProofFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
@@ -581,7 +614,7 @@ function ProcessingUI({
   };
 
   const handleCompleteRefund = async () => {
-    const id = refund?.refund || refund?.refund_id;
+    const id = refund?.refund_id;
     if (!id) { toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' }); return; }
     if (!hasProofs()) { toast({ title: 'Proof Required', description: 'Please upload proof of refund before completing', variant: 'destructive' }); return; }
 
@@ -601,7 +634,6 @@ function ProcessingUI({
         toast({ title: 'Success', description: 'Refund marked as completed' });
         setSelectedProofFiles([]); setProofPreviews([]); setProofNotes(''); setAdminNotes('');
         onComplete();
-        if (response.data.refund) setRefund(response.data.refund);
       }
     } catch (err: any) {
       toast({ title: 'Error', description: err.response?.data?.error || err.message || 'Failed to complete refund', variant: 'destructive' });
@@ -609,7 +641,7 @@ function ProcessingUI({
   };
 
   const handleMarkAsFailed = async () => {
-    const id = refund?.refund || refund?.refund_id;
+    const id = refund?.refund_id;
     if (!id) { toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' }); return; }
     setIsSubmitting(true);
     try {
@@ -623,7 +655,7 @@ function ProcessingUI({
 
       if (response.data) {
         toast({ title: 'Success', description: 'Refund marked as failed' });
-        setRefund((prev: any) => ({ ...prev, refund_payment_status: 'failed' }));
+        setRefund((prev: any) => ({ ...prev, refund_details: { ...prev.refund_details, refund_payment_status: 'failed' } }));
         onCancel();
       }
     } catch (err: any) {
@@ -631,11 +663,10 @@ function ProcessingUI({
     } finally { setIsSubmitting(false); }
   };
 
-  const refundMethod = refund.final_refund_method || refund.preferred_refund_method || refund.refund_method || 'Not specified';
+  const refundMethod = refund.refund_details?.final_refund_method || refund.refund_details?.buyer_preferred_refund_method || 'Not specified';
 
   return (
     <div className="space-y-4">
-      {/* Refund Summary */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2 text-blue-700">
@@ -646,7 +677,7 @@ function ProcessingUI({
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
               <span className="text-xs text-muted-foreground block">Approved Amount</span>
-              <p className="text-lg font-semibold text-green-600">{formatMoney(refund.approved_refund_amount || refund.total_refund_amount)}</p>
+              <p className="text-lg font-semibold text-green-600">{formatMoney(refund.refund_details?.approved_refund_amount || refund.refund_details?.total_refund_amount)}</p>
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Refund Method</span>
@@ -658,7 +689,6 @@ function ProcessingUI({
         </CardContent>
       </Card>
 
-      {/* Selected Payment Details (from buyer's saved payment method) */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2 text-blue-700">
@@ -666,7 +696,7 @@ function ProcessingUI({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {getPaymentDetail() ? (
+          {refund.payment_details ? (
             renderSelectedPaymentDetails()
           ) : (
             <p className="text-xs text-muted-foreground italic">No saved payment method selected for this refund.</p>
@@ -674,7 +704,6 @@ function ProcessingUI({
         </CardContent>
       </Card>
 
-      {/* Proof Upload */}
       <Card className={!hasProofs() ? "border-red-300" : ""}>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
@@ -699,11 +728,11 @@ function ProcessingUI({
               ))}
             </div>
           )}
-          {refund?.proofs && refund.proofs.length > 0 && (
+          {(refund.refund_media || []).filter((m: any) => m.is_proof).length > 0 && (
             <div>
-              <p className="text-xs font-medium mb-2">Uploaded Proofs ({refund.proofs.length})</p>
+              <p className="text-xs font-medium mb-2">Uploaded Proofs ({(refund.refund_media || []).filter((m: any) => m.is_proof).length})</p>
               <div className="flex flex-wrap gap-2">
-                {refund.proofs.map((proof: any, index: number) => (
+                {(refund.refund_media || []).filter((m: any) => m.is_proof).map((proof: any, index: number) => (
                   <div key={proof.id || index} className="relative w-16 h-16">
                     {proof.file_url?.match(/\.(jpeg|jpg|png|gif)$/i) ? (
                       <img src={proof.file_url} alt={`Proof ${index + 1}`} className="w-full h-full object-cover rounded border" />
@@ -726,7 +755,6 @@ function ProcessingUI({
         </CardContent>
       </Card>
 
-      {/* Admin Notes */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
@@ -774,6 +802,58 @@ export async function loader({ request, context, params }: any) {
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
   try {
+    const detailRes = await fetch(`${API_BASE_URL}/admin-refunds/${encodeURIComponent(String(refundId))}/full-details/`, {
+      method: 'GET',
+      headers: { Accept: 'application/json', 'X-User-Id': String(userId) },
+      credentials: 'include'
+    });
+
+    if (detailRes.ok) {
+      const fullDetails = await detailRes.json();
+      
+      const transformedRefund = {
+        refund_id: fullDetails.refund_id,
+        refund: fullDetails.refund_id,
+        ...fullDetails.refund_details,
+        order_id: fullDetails.order_details?.order,
+        order_total_amount: fullDetails.order_details?.total_amount,
+        order: fullDetails.order_details,
+        products: fullDetails.product_details,
+        delivery_details: fullDetails.delivery_details,
+        proof_media: fullDetails.proof_media,
+        refund_media: fullDetails.refund_media,
+        payment_details: fullDetails.payment_details,
+        dispute_details: fullDetails.dispute_details,
+        dispute_request: fullDetails.dispute_details,
+        customer: fullDetails.order_details?.user,
+        requested_by_username: fullDetails.order_details?.user?.username,
+        requested_by_email: fullDetails.order_details?.user?.email,
+        default_shipping_address: fullDetails.order_details?.shipping_address,
+        status: fullDetails.refund_details?.status,
+        refund_payment_status: fullDetails.refund_details?.refund_payment_status,
+        requested_at: fullDetails.refund_details?.requested_at,
+        processed_at: fullDetails.refund_details?.processed_at,
+        total_refund_amount: fullDetails.refund_details?.total_refund_amount,
+        approved_refund_amount: fullDetails.refund_details?.approved_refund_amount,
+        preferred_refund_method: fullDetails.refund_details?.buyer_preferred_refund_method,
+        final_refund_method: fullDetails.refund_details?.final_refund_method,
+        reason: fullDetails.refund_details?.reason,
+        detailed_reason: fullDetails.refund_details?.detailed_reason,
+        customer_note: fullDetails.refund_details?.customer_note,
+        refund_type: fullDetails.refund_details?.refund_type,
+        reject_reason_code: fullDetails.refund_details?.reject_reason_code,
+        reject_reason_details: fullDetails.refund_details?.reject_reason_details,
+        refund_fee: fullDetails.refund_details?.refund_fee,
+        processed_by: fullDetails.refund_details?.processed_by,
+      };
+      
+      return { user: { id: userId, isAdmin: true }, refund: transformedRefund };
+    }
+  } catch (err) {
+    console.error('Failed to fetch full details', err);
+  }
+
+  try {
     const detailRes = await fetch(`${API_BASE_URL}/admin-refunds/${encodeURIComponent(String(refundId))}/get_admin_refund_details/`, {
       method: 'GET',
       headers: { Accept: 'application/json', 'X-User-Id': String(userId) },
@@ -782,36 +862,12 @@ export async function loader({ request, context, params }: any) {
 
     if (detailRes.ok) {
       const details = await detailRes.json();
-      let enrichedRefund = details;
-
-      try {
-        const disputesRes = await fetch(`${API_BASE_URL}/disputes/?refund_id=${encodeURIComponent(String(refundId))}`, {
-          method: 'GET',
-          headers: { Accept: 'application/json', 'X-User-Id': String(userId) },
-          credentials: 'include'
-        });
-        if (disputesRes.ok) {
-          const disputesData = await disputesRes.json();
-          const disputes = Array.isArray(disputesData) ? disputesData : Array.isArray(disputesData?.data) ? disputesData.data : [];
-          const activeDispute = disputes.find((d: any) => String(d.refund) === String(refundId) || String(d.refund_id) === String(refundId));
-          if (activeDispute) {
-            const dStatus = String(activeDispute.status).toLowerCase();
-            if (['under_review', 'investigating', 'in_review'].includes(dStatus)) {
-              enrichedRefund = { ...enrichedRefund, status: 'under_review', dispute_reason: enrichedRefund.dispute_reason || activeDispute.reason, dispute_details: activeDispute, dispute_request: activeDispute };
-            } else {
-              enrichedRefund = { ...enrichedRefund, dispute_request: activeDispute, dispute_details: activeDispute, dispute_reason: enrichedRefund.dispute_reason || activeDispute.reason };
-            }
-          }
-        }
-      } catch (err) { console.error('Failed to fetch disputes', err); }
-
-      return { user: { id: userId, isAdmin: true }, refund: enrichedRefund };
+      return { user: { id: userId, isAdmin: true }, refund: details };
     }
   } catch (err) {
     console.error('Failed to fetch admin details', err);
   }
 
-  // Fallback to list
   const res = await fetch(`${API_BASE_URL}/admin-refunds/refund_list/`, {
     method: 'GET',
     headers: { Accept: 'application/json', 'X-User-Id': String(userId) },
@@ -876,43 +932,51 @@ export default function AdminViewRefundDetails() {
   const getCustomSplitTotal = () => Object.values(customSplits).reduce((s, v) => s + (Number(v) || 0), 0);
 
   const handleProcessRefund = async () => {
-  const id = refund?.refund || refund?.refund_id;
-  if (!id) {
-    toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' });
-    setProcessing(false);
-    return;
-  }
-
-  setProcessing(true);
-  try {
-    const response = await AxiosInstance.post(
-      `/admin-refunds/${encodeURIComponent(String(id))}/admin_process_refund/`,
-      { set_status: 'processing' },
-      { headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' } }
-    );
-    if (response.data.success) {
-      toast({ title: 'Success', description: 'Refund payment status set to processing.' });
-      setRefund(prev => ({ ...prev, refund_payment_status: 'processing' }));
-      try {
-        const refreshRes = await AxiosInstance.get(
-          `/admin-refunds/${encodeURIComponent(String(id))}/get_admin_refund_details/`,
-          { headers: { 'X-User-Id': String(user?.id || '') } }
-        );
-        if (refreshRes.data) {
-          setRefund(prev => ({
-            ...prev,
-            ...refreshRes.data,
-            refund: prev.refund || refreshRes.data.refund_id,
-          }));
-        }
-      } catch { }
-    } else {
-      toast({ title: 'Error', description: response.data.error || 'Failed to set refund to processing', variant: 'destructive' });
+    const id = refund?.refund_id;
+    if (!id) {
+      toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' });
+      setProcessing(false);
+      return;
     }
-  } catch (err: any) {
-    toast({ title: 'Error', description: err.response?.data?.error || err.response?.data?.message || 'Failed to set refund to processing', variant: 'destructive' });
-  } finally { setProcessing(false); }
-};
+
+    setProcessing(true);
+    try {
+      const response = await AxiosInstance.post(
+        `/admin-refunds/${encodeURIComponent(String(id))}/admin_process_refund/`,
+        { set_status: 'processing' },
+        { headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' } }
+      );
+      if (response.data.success) {
+        toast({ title: 'Success', description: 'Refund payment status set to processing.' });
+        setRefund(prev => ({ ...prev, refund_payment_status: 'processing', refund_details: { ...prev.refund_details, refund_payment_status: 'processing' } }));
+        try {
+          const refreshRes = await AxiosInstance.get(
+            `/admin-refunds/${encodeURIComponent(String(id))}/full-details/`,
+            { headers: { 'X-User-Id': String(user?.id || '') } }
+          );
+          if (refreshRes.data) {
+            const fullDetails = refreshRes.data;
+            setRefund(prev => ({
+              ...prev,
+              refund_id: fullDetails.refund_id,
+              ...fullDetails.refund_details,
+              order_details: fullDetails.order_details,
+              product_details: fullDetails.product_details,
+              delivery_details: fullDetails.delivery_details,
+              proof_media: fullDetails.proof_media,
+              refund_media: fullDetails.refund_media,
+              payment_details: fullDetails.payment_details,
+              dispute_details: fullDetails.dispute_details,
+            }));
+          }
+        } catch { }
+      } else {
+        toast({ title: 'Error', description: response.data.error || 'Failed to set refund to processing', variant: 'destructive' });
+      }
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.response?.data?.error || err.response?.data?.message || 'Failed to set refund to processing', variant: 'destructive' });
+    } finally { setProcessing(false); }
+  };
 
   const handleCompleteRefund = () => {
     setRefund(prev => ({ ...prev, status: 'completed', refund_payment_status: 'completed', processed_at: new Date().toISOString() }));
@@ -925,80 +989,129 @@ export default function AdminViewRefundDetails() {
   };
 
   const handleConfirmProcessRefund = async () => {
-  if (!selectedLiabilities.length) { 
-    toast({ title: 'Error', description: 'Please select at least one liability category.', variant: 'destructive' }); 
-    return; 
-  }
-  if (!refundType) { 
-    toast({ title: 'Error', description: 'Please select full or partial refund.', variant: 'destructive' }); 
-    return; 
-  }
-  if (refundType === 'partial' && (!refundAmount || refundAmount <= 0)) { 
-    toast({ title: 'Error', description: 'Please enter a valid partial refund amount.', variant: 'destructive' }); 
-    return; 
-  }
-  if (selectedLiabilities.length > 1 && splitType === 'custom' && getCustomSplitTotal() !== 100) { 
-    toast({ title: 'Error', description: 'Custom split must total 100%.', variant: 'destructive' }); 
-    return; 
-  }
-
-  setIsSubmitting(true);
-  try {
-    const refundId = getRefundId(refund);
-    if (!refundId) {
-      toast({ title: 'Error', description: 'Cannot find refund ID', variant: 'destructive' });
-      setIsSubmitting(false);
-      return;
+    if (!selectedLiabilities.length) { 
+      toast({ title: 'Error', description: 'Please select at least one liability category.', variant: 'destructive' }); 
+      return; 
     }
-    
-    console.log('Fetching disputes for refund_id in approval:', refundId);
-    
-    const disputesRes = await AxiosInstance.get('/disputes/', { 
-      params: { refund_id: String(refundId) }, 
-      headers: { 'X-User-Id': String(user?.id || '') } 
-    });
-    
-    const disputes = Array.isArray(disputesRes?.data) ? disputesRes.data : 
-                     Array.isArray(disputesRes?.data?.data) ? disputesRes.data.data : [];
-    const activeDispute = disputes.find((d: any) => 
-      String(d.refund) === String(refundId) || 
-      String(d.refund_id) === String(refundId)
-    );
-
-    if (!activeDispute?.id) { 
-      toast({ title: 'Error', description: 'No active dispute found for this refund.', variant: 'destructive' }); 
-      setIsSubmitting(false); 
+    if (!refundType) { 
+      toast({ title: 'Error', description: 'Please select full or partial refund.', variant: 'destructive' }); 
+      return; 
+    }
+    if (refundType === 'partial' && (!refundAmount || refundAmount <= 0)) { 
+      toast({ title: 'Error', description: 'Please enter a valid partial refund amount.', variant: 'destructive' }); 
+      return; 
+    }
+    if (selectedLiabilities.length > 1 && splitType === 'custom' && getCustomSplitTotal() !== 100) { 
+      toast({ title: 'Error', description: 'Custom split must total 100%.', variant: 'destructive' }); 
       return; 
     }
 
-    // ... rest of your approval logic
-  } catch (err: any) {
-    // ... error handling
-  }
-};
+    setIsSubmitting(true);
+    try {
+      const refundId = refund?.refund_id;
+      if (!refundId) {
+        toast({ title: 'Error', description: 'Cannot find refund ID', variant: 'destructive' });
+        setIsSubmitting(false);
+        return;
+      }
+      
+      const disputesRes = await AxiosInstance.get('/disputes/', { 
+        params: { refund_id: String(refundId) }, 
+        headers: { 'X-User-Id': String(user?.id || '') } 
+      });
+      
+      const disputes = Array.isArray(disputesRes?.data) ? disputesRes.data : 
+                       Array.isArray(disputesRes?.data?.data) ? disputesRes.data.data : [];
+      const activeDispute = disputes.find((d: any) => 
+        String(d.refund) === String(refundId) || 
+        String(d.refund_id) === String(refundId)
+      );
 
-  // Compute display status
+      if (!activeDispute?.id) { 
+        toast({ title: 'Error', description: 'No active dispute found for this refund.', variant: 'destructive' }); 
+        setIsSubmitting(false); 
+        return; 
+      }
+
+      let distribution: Record<string, number> = {};
+      if (selectedLiabilities.length === 1) {
+        distribution[selectedLiabilities[0]] = 100;
+      } else if (splitType === 'equal') {
+        const equalShare = 100 / selectedLiabilities.length;
+        selectedLiabilities.forEach(id => { distribution[id] = equalShare; });
+      } else if (splitType === '70_30' && selectedLiabilities.length === 2) {
+        distribution[selectedLiabilities[0]] = 70;
+        distribution[selectedLiabilities[1]] = 30;
+      } else if (splitType === '30_70' && selectedLiabilities.length === 2) {
+        distribution[selectedLiabilities[0]] = 30;
+        distribution[selectedLiabilities[1]] = 70;
+      } else if (splitType === 'custom') {
+        distribution = customSplits;
+      }
+
+      const approveData = {
+        refund_id: refundId,
+        dispute_id: activeDispute.id,
+        decision: 'approve',
+        refund_type: refundType,
+        refund_amount: refundAmount,
+        liability_distribution: distribution,
+        admin_notes: `Approved ${refundType} refund of ₱${refundAmount.toFixed(2)}. Liability: ${JSON.stringify(distribution)}`
+      };
+
+      const response = await AxiosInstance.post('/disputes/approve_refund/', approveData, {
+        headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' }
+      });
+
+      if (response.data) {
+        toast({ title: 'Success', description: `Refund ${refundType === 'full' ? 'fully' : 'partially'} approved.` });
+        setRefund(prev => ({ 
+          ...prev, 
+          status: 'approved',
+          refund_details: { ...prev.refund_details, status: 'approved', approved_refund_amount: refundAmount }
+        }));
+      }
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.response?.data?.error || 'Failed to approve refund', variant: 'destructive' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const getDisplayStatus = () => {
-    const s = String(refund.status || '').toLowerCase();
-    const disputeStatus = String(refund.dispute?.status || (Array.isArray(refund.disputes) && refund.disputes[0]?.status) || refund.dispute_details?.status || refund.dispute_request?.status || '').toLowerCase();
+    const s = String(refund.status || refund.refund_details?.status || '').toLowerCase();
+    const disputeStatus = String(refund.dispute_details?.status || refund.dispute_request?.status || '').toLowerCase();
     if (['under_review', 'investigating', 'in_review'].includes(disputeStatus) && s === 'dispute') return 'under_review';
     return s;
   };
 
   const st = getDisplayStatus();
-  const getPaymentStatusLower = () => String(refund.refund_payment_status || refund.payment_refund_status || refund.payment_status || refund.paymentRefundStatus || '').toLowerCase();
+  const getPaymentStatusLower = () => String(refund.refund_payment_status || refund.refund_details?.refund_payment_status || '').toLowerCase();
   const isProcessing = getPaymentStatusLower() === 'processing' && String(refund.status || '').toLowerCase() === 'approved';
   const activeDispute = getActiveDispute(refund);
-
-  // Determine the effective display status (completed if payment done)
   const effectiveSt = (getPaymentStatusLower() === 'completed' && st === 'approved') ? 'completed' : st;
+  
+  const shippingAddress = refund.default_shipping_address || refund.order_details?.shipping_address;
+  const orderDeliveries = refund.delivery_details || [];
+  const proofMedia = refund.proof_media || [];
+  const refundMedia = refund.refund_media || [];
+  const productItems = refund.product_details || refund.products || [];
+  const orderInfo = refund.order_details || refund.order;
 
-  // Determine the shipping address to display (default shipping address first, then order's shipping address)
-  const shippingAddress = refund.default_shipping_address || refund.order?.shipping_address;
+  // Get refund details for buyer/seller cards
+  const refundDetails = {
+    reason: refund.reason,
+    detailed_reason: refund.detailed_reason,
+    customer_note: refund.customer_note,
+    total_refund_amount: refund.total_refund_amount,
+    preferred_refund_method: refund.preferred_refund_method,
+    status: refund.status,
+    reject_reason_code: refund.reject_reason_code,
+    reject_reason_details: refund.reject_reason_details,
+  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-      {/* Debug panel */}
       {String(searchParams.get('debug')) === '1' && (
         <Card className="mb-4 border-blue-200 bg-blue-50/30">
           <CardHeader>
@@ -1010,7 +1123,6 @@ export default function AdminViewRefundDetails() {
         </Card>
       )}
 
-
       <Button variant="ghost" className="mb-4" onClick={() => navigate(-1)}>
         <ArrowLeft className="w-4 h-4 mr-2" /> Back
       </Button>
@@ -1021,7 +1133,7 @@ export default function AdminViewRefundDetails() {
             <div>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Eye className="w-4 h-4" />
-                Refund {refund?.refund ? String(refund.refund).slice(0, 8) : 'N/A'}
+                Refund {refund?.refund_id ? String(refund.refund_id).slice(0, 8) : 'N/A'}
                 <StatusBadge status={effectiveSt} />
                 {activeDispute?.status === 'under_review' && (
                   <Badge variant="outline" className="bg-purple-100 text-purple-700 border-purple-300 ml-2">
@@ -1029,11 +1141,11 @@ export default function AdminViewRefundDetails() {
                   </Badge>
                 )}
               </CardTitle>
-              <CardDescription className="text-xs">Admin view — refund details and actions</CardDescription>
+              <CardDescription className="text-xs">Admin investigation view — complete refund details for case review</CardDescription>
             </div>
             <div className="text-right text-xs text-muted-foreground">
-              <div>Requested: {refund.requested_at ? new Date(refund.requested_at).toLocaleDateString() : 'N/A'}</div>
-              {refund.processed_at && <div>Processed: {new Date(refund.processed_at).toLocaleDateString()}</div>}
+              <div>Requested: {formatDateTime(refund.requested_at)}</div>
+              {refund.processed_at && <div>Processed: {formatDateTime(refund.processed_at)}</div>}
             </div>
           </div>
         </CardHeader>
@@ -1043,31 +1155,38 @@ export default function AdminViewRefundDetails() {
             <ProcessingUI refund={refund} onComplete={handleCompleteRefund} onCancel={handleCancelProcessing} user={user} setRefund={setRefund} />
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* ===== LEFT: Main Details (always shown) ===== */}
+              {/* ===== LEFT: Main Investigation Details ===== */}
               <div className="lg:col-span-2 space-y-4">
 
-                {/* 1. Status Banner */}
                 <StatusBanner status={effectiveSt as keyof typeof statusConfig} refund={refund} />
 
-                {/* 2. Dispute info (if any) */}
+                {/* ===== BUYER REQUEST (TOP - MOST IMPORTANT) ===== */}
+                <BuyerRequestCard refundMedia={refundMedia} refundDetails={refundDetails} />
+
+                {/* ===== SELLER RESPONSE (TOP - MOST IMPORTANT) ===== */}
+                <SellerResponseCard refundMedia={refundMedia} refundDetails={refundDetails} />
+
+                {/* Investigation Timeline */}
+                <InvestigationTimeline refund={refund} />
+
                 {activeDispute && <DisputeDetailsCard dispute={activeDispute} />}
 
-                {/* 3. Refund Details */}
+                {/* ===== 1. REFUND DETAILS ===== */}
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm flex items-center gap-2">
-                      <FileText className="h-4 w-4" /> Refund Details
+                      <Receipt className="h-4 w-4" /> Refund Details
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3 text-sm">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <span className="text-xs text-muted-foreground block">Refund ID</span>
-                        <p className="font-medium font-mono text-xs">{refund.refund || 'N/A'}</p>
+                        <p className="font-medium font-mono text-xs">{refund.refund_id || 'N/A'}</p>
                       </div>
                       <div>
                         <span className="text-xs text-muted-foreground block">Order ID</span>
-                        <p className="font-medium">{refund.order_id || 'N/A'}</p>
+                        <p className="font-medium">{orderInfo?.order || refund.order_id || 'N/A'}</p>
                       </div>
                       <div>
                         <span className="text-xs text-muted-foreground block">Reason</span>
@@ -1075,13 +1194,11 @@ export default function AdminViewRefundDetails() {
                       </div>
                       <div>
                         <span className="text-xs text-muted-foreground block">Refund Type</span>
-                        <p className="font-medium capitalize">
-                          {refund.refund_type || refund.type || refund.request_type || refund.refund_request_type || 'N/A'}
-                        </p>
+                        <p className="font-medium capitalize">{refund.refund_type || 'N/A'}</p>
                       </div>
                       <div>
                         <span className="text-xs text-muted-foreground block">Order Total</span>
-                        <p className="font-medium">{formatMoney(refund.order_total_amount)}</p>
+                        <p className="font-medium">{formatMoney(orderInfo?.total_amount || refund.order_total_amount)}</p>
                       </div>
                       <div>
                         <span className="text-xs text-muted-foreground block">Requested Refund</span>
@@ -1103,108 +1220,89 @@ export default function AdminViewRefundDetails() {
                       </div>
                       <div>
                         <span className="text-xs text-muted-foreground block">Payment Status</span>
-                        <p className="font-medium capitalize">{refund.refund_payment_status || refund.payment_refund_status || 'N/A'}</p>
+                        <p className="font-medium capitalize">{refund.refund_payment_status || 'N/A'}</p>
                       </div>
+                      {refund.refund_fee && (
+                        <div>
+                          <span className="text-xs text-muted-foreground block">Refund Fee</span>
+                          <p className="font-medium">{formatMoney(refund.refund_fee)}</p>
+                        </div>
+                      )}
                     </div>
+                    {refund.detailed_reason && (
+                      <div className="border-t pt-2">
+                        <span className="text-xs text-muted-foreground block">Detailed Reason</span>
+                        <p className="text-sm mt-1">{refund.detailed_reason}</p>
+                      </div>
+                    )}
+                    {refund.customer_note && (
+                      <div className="border-t pt-2">
+                        <span className="text-xs text-muted-foreground block">Customer Note</span>
+                        <p className="text-sm mt-1 italic">{refund.customer_note}</p>
+                      </div>
+                    )}
+                    {refund.reject_reason_code && (
+                      <div className="border-t pt-2">
+                        <span className="text-xs text-muted-foreground block">Rejection Code</span>
+                        <p className="text-sm mt-1">{refund.reject_reason_code}: {refund.reject_reason_details}</p>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
-                {/* 4. Customer Info */}
+                {/* ===== 2. CUSTOMER INFO ===== */}
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm flex items-center gap-2">
-                      <User className="h-4 w-4" /> Customer (Profile)
+                      <User className="h-4 w-4" /> Customer Information
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <span className="text-xs text-muted-foreground block">Name</span>
-                      <p className="font-medium">
-                        {refund.customer?.username
-                          || (refund.customer?.first_name || refund.customer?.last_name
-                              ? `${refund.customer.first_name || ''} ${refund.customer.last_name || ''}`.trim()
-                              : null)
-                          || refund.requested_by_username
-                          || 'N/A'}
-                      </p>
+                      <span className="text-xs text-muted-foreground block">Username</span>
+                      <p className="font-medium">{orderInfo?.user?.username || refund.requested_by_username || 'N/A'}</p>
                     </div>
                     <div>
                       <span className="text-xs text-muted-foreground block">Email</span>
                       <p className="font-medium flex items-center gap-1">
                         <Mail className="h-3 w-3" />
-                        {refund.customer?.email || refund.requested_by_email || 'N/A'}
+                        {orderInfo?.user?.email || refund.requested_by_email || 'N/A'}
                       </p>
                     </div>
                     <div>
                       <span className="text-xs text-muted-foreground block">Contact Number</span>
                       <p className="font-medium flex items-center gap-1">
                         <Phone className="h-3 w-3" />
-                        {refund.customer?.contact_number || 'N/A'}
+                        {orderInfo?.user?.contact_number || 'N/A'}
                       </p>
                     </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground block">User ID</span>
+                      <p className="font-mono text-xs">{orderInfo?.user?.id || 'N/A'}</p>
+                    </div>
                     <div className="col-span-2">
-                      <span className="text-xs text-muted-foreground block">Profile Address</span>
+                      <span className="text-xs text-muted-foreground block">Registered Address</span>
                       <p className="font-medium text-xs">
-                        {refund.customer?.address
-                          ? [
-                              refund.customer.address.street,
-                              refund.customer.address.barangay,
-                              refund.customer.address.city,
-                              refund.customer.address.province,
-                              refund.customer.address.zip_code
-                            ].filter(Boolean).join(', ') || 'N/A'
+                        {orderInfo?.user?.street && orderInfo?.user?.city 
+                          ? `${orderInfo.user.street}, ${orderInfo.user.barangay || ''}, ${orderInfo.user.city}, ${orderInfo.user.province || ''}, ${orderInfo.user.zip_code || ''}`
                           : 'N/A'}
                       </p>
                     </div>
+                    {orderInfo?.user?.created_at && (
+                      <div className="col-span-2 border-t pt-2 mt-1">
+                        <span className="text-xs text-muted-foreground block">Customer Since</span>
+                        <p className="text-xs">{formatDateTime(orderInfo.user.created_at)}</p>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
-                {/* 5. Seller / Shop Info */}
-                {(refund.seller || refund.shop) && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Store className="h-4 w-4" /> Seller
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid grid-cols-2 gap-3 text-sm">
-                      {refund.seller && (
-                        <>
-                          <div>
-                            <span className="text-xs text-muted-foreground block">Seller Name</span>
-                            <p className="font-medium">{refund.seller.username || 'N/A'}</p>
-                          </div>
-                          <div>
-                            <span className="text-xs text-muted-foreground block">Email</span>
-                            <p className="font-medium flex items-center gap-1"><Mail className="h-3 w-3" />{refund.seller.email || 'N/A'}</p>
-                          </div>
-                        </>
-                      )}
-                      {refund.shop && (
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Shop Name</span>
-                          <p className="font-medium">{refund.shop.name || 'N/A'}</p>
-                        </div>
-                      )}
-                      {refund.shop?.address && (
-                        <div className="col-span-2">
-                          <span className="text-xs text-muted-foreground block">Shop Address</span>
-                          <p className="text-xs flex items-start gap-1">
-                            <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                            {[refund.shop.address.street, refund.shop.address.barangay, refund.shop.address.city, refund.shop.address.province, refund.shop.address.zip_code].filter(Boolean).join(', ')}
-                          </p>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* ===== SHIPPING ADDRESS CARD ===== */}
+                {/* ===== 3. SHIPPING ADDRESS ===== */}
                 {shippingAddress && (
                   <Card>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm flex items-center gap-2">
-                        <MapPin className="h-4 w-4" /> Shipping Address (Default)
+                        <MapPin className="h-4 w-4" /> Shipping Address
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2 text-sm">
@@ -1221,17 +1319,9 @@ export default function AdminViewRefundDetails() {
                           </p>
                         </div>
                         <div className="col-span-2">
-                          <span className="text-xs text-muted-foreground block">Address</span>
-                          <p className="text-sm">
-                            {shippingAddress.full_address ||
-                              [
-                                shippingAddress.street,
-                                shippingAddress.barangay,
-                                shippingAddress.city,
-                                shippingAddress.province,
-                                shippingAddress.zip_code,
-                                shippingAddress.country
-                              ].filter(Boolean).join(', ')}
+                          <span className="text-xs text-muted-foreground block">Full Address</span>
+                          <p className="text-sm">{shippingAddress.full_address || 
+                            `${shippingAddress.street || ''} ${shippingAddress.barangay || ''} ${shippingAddress.city || ''} ${shippingAddress.province || ''} ${shippingAddress.zip_code || ''}`.trim() || 'N/A'}
                           </p>
                         </div>
                       </div>
@@ -1239,217 +1329,85 @@ export default function AdminViewRefundDetails() {
                   </Card>
                 )}
 
-                {/* ===== DELIVERY INFORMATION CARD ===== */}
-                {refund.order?.delivery && (
+                {/* ===== 4. PRODUCT DETAILS ===== */}
+                {productItems.length > 0 && (
                   <Card>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm flex items-center gap-2">
-                        <Truck className="h-4 w-4" /> Delivery Information
+                        <ShoppingBag className="h-4 w-4" /> Product Details ({productItems.length})
                       </CardTitle>
                     </CardHeader>
-                    <CardContent className="space-y-3 text-sm">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Status</span>
-                          <p className="font-medium capitalize">{refund.order.delivery.status || 'N/A'}</p>
-                        </div>
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Delivery Fee</span>
-                          <p className="font-medium">{formatMoney(refund.order.delivery.delivery_fee)}</p>
-                        </div>
-                        {refund.order.delivery.tracking_number && (
-                          <div className="col-span-2">
-                            <span className="text-xs text-muted-foreground block">Tracking #</span>
-                            <p className="font-medium">{refund.order.delivery.tracking_number}</p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Rider info if available */}
-                      {refund.order.delivery.rider && (
-                        <div className="border-t pt-2">
-                          <span className="text-xs text-muted-foreground block mb-2">Rider Details</span>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div>
-                              <span className="text-muted-foreground">Name</span>
-                              <p className="font-medium">
-                                {refund.order.delivery.rider.user?.first_name} {refund.order.delivery.rider.user?.last_name}
-                              </p>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Phone</span>
-                              <p className="font-medium flex items-center gap-1">
-                                <Phone className="h-3 w-3" />
-                                {refund.order.delivery.rider.user?.contact_number || 'N/A'}
-                              </p>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Vehicle</span>
-                              <p className="font-medium">{refund.order.delivery.rider.vehicle_type || 'N/A'}</p>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Plate #</span>
-                              <p className="font-medium">{refund.order.delivery.rider.plate_number || 'N/A'}</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Delivery timeline */}
-                      <div className="border-t pt-2">
-                        <span className="text-xs text-muted-foreground block mb-2">Timeline</span>
-                        <div className="space-y-1 text-xs">
-                          {refund.order.delivery.picked_at && (
-                            <div className="flex justify-between">
-                              <span>Picked Up:</span>
-                              <span className="font-medium">{new Date(refund.order.delivery.picked_at).toLocaleString()}</span>
-                            </div>
-                          )}
-                          {refund.order.delivery.delivered_at && (
-                            <div className="flex justify-between">
-                              <span>Delivered:</span>
-                              <span className="font-medium">{new Date(refund.order.delivery.delivered_at).toLocaleString()}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Proof of delivery */}
-                      {refund.order.delivery.proofs && refund.order.delivery.proofs.length > 0 && (
-                        <div className="border-t pt-2">
-                          <MediaGallery files={refund.order.delivery.proofs} title="Proof of Delivery" />
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* 6. Return / Shipping Info (original return tracking) */}
-                {(refund.return_request || refund.logistic_service || refund.tracking_number) && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Truck className="h-4 w-4" /> Return Shipment
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid grid-cols-2 gap-3 text-sm">
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Logistics</span>
-                        <p className="font-medium">{refund.return_request?.logistic_service || refund.logistic_service || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Tracking #</span>
-                        <p className="font-medium">{refund.return_request?.tracking_number || refund.tracking_number || 'N/A'}</p>
-                      </div>
-                      {refund.return_request?.return_method && (
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Return Method</span>
-                          <p className="font-medium">{refund.return_request.return_method}</p>
-                        </div>
-                      )}
-                      {refund.return_request?.shipped_at && (
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Shipped At</span>
-                          <p className="font-medium">{new Date(refund.return_request.shipped_at).toLocaleString()}</p>
-                        </div>
-                      )}
-                      {refund.return_request?.received_at && (
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Received At</span>
-                          <p className="font-medium">{new Date(refund.return_request.received_at).toLocaleString()}</p>
-                        </div>
-                      )}
-                      {refund.return_request?.tracking_url && (
-                        <div className="col-span-2">
-                          <a href={refund.return_request.tracking_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs">
-                            Track Package →
-                          </a>
-                        </div>
-                      )}
-                      {refund.return_request?.medias && refund.return_request.medias.length > 0 && (
-                        <div className="col-span-2 border-t pt-2">
-                          <MediaGallery files={refund.return_request.medias} title="Return Photos" />
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* 7. Refund Method Details (if available) */}
-                {refund.refund_method_details && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Wallet className="h-4 w-4" /> Refund Payment Details
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="bg-blue-50/50 rounded-md p-3 border border-blue-100">
-                        {(() => {
-                          const d = refund.refund_method_details;
-                          if (d.type === 'wallet') return (
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                              <div><span className="text-muted-foreground text-[10px]">Provider</span><p className="font-medium">{d.provider || 'N/A'}</p></div>
-                              <div><span className="text-muted-foreground text-[10px]">Account Name</span><p className="font-medium">{d.account_name || 'N/A'}</p></div>
-                              <div><span className="text-muted-foreground text-[10px]">Account Number</span><p className="font-medium">{d.account_number || 'N/A'}</p></div>
-                              <div><span className="text-muted-foreground text-[10px]">Contact</span><p className="font-medium">{d.contact_number || 'N/A'}</p></div>
-                            </div>
-                          );
-                          if (d.type === 'bank') return (
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                              <div><span className="text-muted-foreground text-[10px]">Bank</span><p className="font-medium">{d.bank_name || 'N/A'}</p></div>
-                              <div><span className="text-muted-foreground text-[10px]">Account Name</span><p className="font-medium">{d.account_name || 'N/A'}</p></div>
-                              <div><span className="text-muted-foreground text-[10px]">Account Number</span><p className="font-medium">{d.account_number || 'N/A'}</p></div>
-                              <div><span className="text-muted-foreground text-[10px]">Type</span><p className="font-medium capitalize">{d.account_type || 'N/A'}</p></div>
-                              <div className="col-span-2"><span className="text-muted-foreground text-[10px]">Branch</span><p className="font-medium">{d.branch || 'N/A'}</p></div>
-                            </div>
-                          );
-                          if (d.type === 'remittance') {
-                            const name = [d.first_name, d.middle_name, d.last_name].filter(Boolean).join(' ');
-                            const addr = d.address ? [d.address.street, d.address.barangay, d.address.city, d.address.province, d.address.country].filter(Boolean).join(', ') : '';
-                            return (
-                              <div className="space-y-2 text-xs">
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                                  <div><span className="text-muted-foreground text-[10px]">Provider</span><p className="font-medium">{d.provider || 'N/A'}</p></div>
-                                  <div><span className="text-muted-foreground text-[10px]">Full Name</span><p className="font-medium">{name || 'N/A'}</p></div>
-                                  <div className="col-span-2"><span className="text-muted-foreground text-[10px]">Contact</span><p className="font-medium">{d.contact_number || 'N/A'}</p></div>
-                                </div>
-                                {addr && <div className="border-t pt-2"><span className="text-muted-foreground text-[10px]">Address</span><p className="font-medium">{addr}</p></div>}
-                                {d.valid_id && <div className="border-t pt-2 grid grid-cols-2 gap-2"><div><span className="text-muted-foreground text-[10px]">ID Type</span><p className="font-medium">{d.valid_id.type || 'N/A'}</p></div><div><span className="text-muted-foreground text-[10px]">ID Number</span><p className="font-medium">{d.valid_id.number || 'N/A'}</p></div></div>}
-                              </div>
-                            );
-                          }
-                          return null;
-                        })()}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* 8. Refund Items / Products */}
-                {refund.products && refund.products.length > 0 && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <ShoppingBag className="h-4 w-4" /> Refund Items ({refund.products.length})
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      {refund.products.map((item: any, idx: number) => (
+                    <CardContent className="space-y-4">
+                      {productItems.map((item: any, idx: number) => (
                         <div key={idx} className="flex gap-3 border-b pb-3 last:border-0">
-                          {item.product_image && (
-                            <div className="w-12 h-12 rounded overflow-hidden border bg-gray-50 flex-shrink-0">
-                              <img src={item.product_image} alt={item.product_name} className="w-full h-full object-cover" />
+                          {item.image && (
+                            <div className="w-16 h-16 rounded overflow-hidden border bg-gray-50 flex-shrink-0">
+                              <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                             </div>
                           )}
-                          <div className="flex-1">
-                            <p className="text-sm font-medium">{item.product_name}</p>
-                            {item.variant_title && <p className="text-xs text-muted-foreground">Variant: {item.variant_title}</p>}
-                            <div className="grid grid-cols-3 gap-2 text-xs mt-1">
+                          <div className="flex-1 space-y-1">
+                            <p className="text-sm font-medium">{item.name}</p>
+                            {item.variant_name && <p className="text-xs text-muted-foreground">Variant: {item.variant_name}</p>}
+                            {item.variant_sku && <p className="text-xs font-mono text-muted-foreground">SKU: {item.variant_sku}</p>}
+                            
+                            <div className="grid grid-cols-3 gap-2 text-xs">
                               <div><span className="text-muted-foreground">Qty:</span> {item.quantity}</div>
-                              <div><span className="text-muted-foreground">Unit:</span> {formatMoney(item.price)}</div>
-                              <div><span className="text-muted-foreground">Total:</span> {formatMoney(item.total_amount)}</div>
+                              <div><span className="text-muted-foreground">Unit Price:</span> {formatMoney(item.price)}</div>
+                              <div><span className="text-muted-foreground">Total:</span> {formatMoney(item.item_total_amount || item.total_amount)}</div>
                             </div>
+                            
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              {item.condition && (
+                                <div><span className="text-muted-foreground">Condition:</span> {item.condition}/5</div>
+                              )}
+                              {item.is_refundable !== undefined && (
+                                <div><span className="text-muted-foreground">Refundable:</span> {item.is_refundable ? 'Yes' : 'No'}</div>
+                              )}
+                              {item.refund_days > 0 && (
+                                <div><span className="text-muted-foreground">Refund Period:</span> {item.refund_days} days</div>
+                              )}
+                              {item.compare_price && (
+                                <div><span className="text-muted-foreground">Compare Price:</span> {formatMoney(item.compare_price)}</div>
+                              )}
+                              {item.original_price && (
+                                <div><span className="text-muted-foreground">Original Price:</span> {formatMoney(item.original_price)}</div>
+                              )}
+                              {item.purchase_date && (
+                                <div><span className="text-muted-foreground">Purchase Date:</span> {formatDateTime(item.purchase_date)}</div>
+                              )}
+                              {item.usage_period && (
+                                <div><span className="text-muted-foreground">Usage Period:</span> {item.usage_period} {item.usage_unit}</div>
+                              )}
+                            </div>
+                            
+                            {item.description && (
+                              <div className="text-xs mt-1">
+                                <span className="text-muted-foreground">Description:</span> {item.description}
+                              </div>
+                            )}
+                            
+                            {item.shop && (
+                              <div className="flex items-center gap-2 text-xs pt-1 border-t mt-1">
+                                <Store className="h-3 w-3" />
+                                <span>{item.shop.name}</span>
+                                {item.shop.verified && <Badge variant="outline" className="text-[8px]">Verified</Badge>}
+                              </div>
+                            )}
+                            
+                            {item.proof_image && (
+                              <div className="mt-1">
+                                <span className="text-xs text-muted-foreground">Proof Image:</span>
+                                <a href={item.proof_image} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline text-xs ml-2">
+                                  <ExternalLink className="h-3 w-3 inline" /> View
+                                </a>
+                              </div>
+                            )}
+                            
+                            {item.product_images && item.product_images.length > 0 && (
+                              <div className="mt-1">
+                                <MediaGallery files={item.product_images.map((url: string, i: number) => ({ id: i, file_url: url }))} title="Product Images" />
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -1457,30 +1415,231 @@ export default function AdminViewRefundDetails() {
                   </Card>
                 )}
 
-                {/* 9. Proofs (if any uploaded) */}
-                {refund.proofs && refund.proofs.length > 0 && (
+                {/* ===== 5. DELIVERY INFORMATION ===== */}
+                {orderDeliveries.length > 0 && (
                   <Card>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm flex items-center gap-2">
-                        <Camera className="h-4 w-4" /> Refund Proofs
+                        <Truck className="h-4 w-4" /> Delivery Information
                       </CardTitle>
                     </CardHeader>
-                    <CardContent>
-                      <MediaGallery files={refund.proofs} title="Proof of Refund" />
+                    <CardContent className="space-y-3 text-sm">
+                      {orderDeliveries.map((delivery: any, idx: number) => (
+                        <div key={idx} className={idx > 0 ? "border-t pt-3" : ""}>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <span className="text-xs text-muted-foreground block">Delivery ID</span>
+                              <p className="font-mono text-xs">{delivery.id || 'N/A'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-muted-foreground block">Status</span>
+                              <p className="font-medium capitalize">{delivery.status || 'N/A'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-muted-foreground block">Delivery Rating</span>
+                              <p className="font-medium">{delivery.delivery_rating ? `${delivery.delivery_rating}/5` : 'N/A'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-muted-foreground block">Distance</span>
+                              <p className="font-medium">{delivery.distance_km ? `${delivery.distance_km} km` : 'N/A'}</p>
+                            </div>
+                            {delivery.delivery_fee && (
+                              <div>
+                                <span className="text-xs text-muted-foreground block">Delivery Fee</span>
+                                <p className="font-medium">{formatMoney(delivery.delivery_fee)}</p>
+                              </div>
+                            )}
+                          </div>
+                          
+                          {delivery.rider && (
+                            <div className="mt-2 pt-2 border-t">
+                              <span className="text-xs font-medium flex items-center gap-1 mb-2"><Bike className="h-3 w-3" /> Rider Details</span>
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                  <span className="text-muted-foreground">Name</span>
+                                  <p className="font-medium">{delivery.rider.username || 'N/A'}</p>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Contact</span>
+                                  <p className="font-medium flex items-center gap-1">
+                                    <Phone className="h-3 w-3" />
+                                    {delivery.rider.contact_number || 'N/A'}
+                                  </p>
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Rider ID</span>
+                                  <p className="font-mono text-xs">{delivery.rider.id || 'N/A'}</p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          
+                          <div className="mt-2 pt-2 border-t">
+                            <span className="text-xs font-medium mb-2 block">Timeline</span>
+                            <div className="space-y-1 text-xs">
+                              {delivery.picked_at && (
+                                <div className="flex justify-between">
+                                  <span>Picked Up:</span>
+                                  <span className="font-medium">{formatDateTime(delivery.picked_at)}</span>
+                                </div>
+                              )}
+                              {delivery.delivered_at && (
+                                <div className="flex justify-between">
+                                  <span>Delivered:</span>
+                                  <span className="font-medium">{formatDateTime(delivery.delivered_at)}</span>
+                                </div>
+                              )}
+                              {delivery.scheduled_pickup_time && (
+                                <div className="flex justify-between">
+                                  <span>Scheduled Pickup:</span>
+                                  <span className="font-medium">{formatDateTime(delivery.scheduled_pickup_time)}</span>
+                                </div>
+                              )}
+                              {delivery.scheduled_delivery_time && (
+                                <div className="flex justify-between">
+                                  <span>Scheduled Delivery:</span>
+                                  <span className="font-medium">{formatDateTime(delivery.scheduled_delivery_time)}</span>
+                                </div>
+                              )}
+                              {delivery.created_at && (
+                                <div className="flex justify-between">
+                                  <span>Delivery Created:</span>
+                                  <span className="font-medium">{formatDateTime(delivery.created_at)}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          
+                          {delivery.notes && (
+                            <div className="mt-2 pt-2 border-t">
+                              <span className="text-xs text-muted-foreground block">Delivery Notes</span>
+                              <p className="text-xs mt-1 italic">{delivery.notes}</p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </CardContent>
                   </Card>
                 )}
 
-                {/* 10. Admin Notes (read-only display) */}
-                {refund.admin_notes && (
+                {/* ===== 6. PROOF OF DELIVERY MEDIA ===== */}
+                {proofMedia.length > 0 && (
                   <Card>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm flex items-center gap-2">
-                        <FileText className="h-4 w-4" /> Admin Notes
+                        <Camera className="h-4 w-4" /> Proof of Delivery Media
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-sm p-2 bg-gray-50 rounded border">{refund.admin_notes}</p>
+                      <MediaGallery files={proofMedia} title="Delivery Proofs" />
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* ===== 7. OTHER REFUND MEDIA (Admin/System) ===== */}
+                {refundMedia.filter((m: any) => !m.is_proof && m.uploaded_by_entity !== 'buyer' && m.uploaded_by_entity !== 'seller').length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <ImageIcon className="h-4 w-4" /> Other Refund Media
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <MediaGallery files={refundMedia.filter((m: any) => !m.is_proof && m.uploaded_by_entity !== 'buyer' && m.uploaded_by_entity !== 'seller')} title="Other Media" />
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* ===== 8. PAYMENT DETAILS ===== */}
+                {refund.payment_details && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <CreditCard className="h-4 w-4" /> Payment Details
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="bg-blue-50/50 rounded-md p-3 border border-blue-100 space-y-2">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                          <div>
+                            <span className="text-muted-foreground text-[10px]">Payment ID</span>
+                            <p className="font-mono text-xs">{refund.payment_details.id || 'N/A'}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground text-[10px]">Payment Method</span>
+                            <p className="font-medium capitalize">{refund.payment_details.payment_method || 'N/A'}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground text-[10px]">Account Name</span>
+                            <p className="font-medium">{refund.payment_details.account_name || 'N/A'}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground text-[10px]">Account Number</span>
+                            <p className="font-mono">{refund.payment_details.masked_account_number || refund.payment_details.account_number || 'N/A'}</p>
+                          </div>
+                          {refund.payment_details.bank_name && (
+                            <div>
+                              <span className="text-muted-foreground text-[10px]">Bank Name</span>
+                              <p className="font-medium">{refund.payment_details.bank_name}</p>
+                            </div>
+                          )}
+                          <div>
+                            <span className="text-muted-foreground text-[10px]">Default</span>
+                            <p className="font-medium">{refund.payment_details.is_default ? 'Yes' : 'No'}</p>
+                          </div>
+                          {refund.payment_details.verified_by && (
+                            <div className="col-span-2">
+                              <span className="text-muted-foreground text-[10px]">Verified By</span>
+                              <p className="font-medium">{refund.payment_details.verified_by.username}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* ===== 9. ORDER SUMMARY ===== */}
+                {orderInfo && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <ClipboardList className="h-4 w-4" /> Order Summary
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="text-xs text-muted-foreground block">Order ID</span>
+                        <p className="font-mono text-xs">{orderInfo.order || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted-foreground block">Order Status</span>
+                        <p className="font-medium capitalize">{orderInfo.status || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted-foreground block">Payment Method</span>
+                        <p className="font-medium">{orderInfo.payment_method || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted-foreground block">Delivery Method</span>
+                        <p className="font-medium">{orderInfo.delivery_method || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted-foreground block">Created At</span>
+                        <p className="text-xs">{formatDateTime(orderInfo.created_at)}</p>
+                      </div>
+                      {orderInfo.completed_at && (
+                        <div>
+                          <span className="text-xs text-muted-foreground block">Completed At</span>
+                          <p className="text-xs">{formatDateTime(orderInfo.completed_at)}</p>
+                        </div>
+                      )}
+                      {orderInfo.approval_status && (
+                        <div>
+                          <span className="text-xs text-muted-foreground block">Approval Status</span>
+                          <p className="font-medium capitalize">{orderInfo.approval_status}</p>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 )}
@@ -1494,7 +1653,6 @@ export default function AdminViewRefundDetails() {
                   </CardHeader>
                   <CardContent className="p-3 pt-0 space-y-2">
 
-                    {/* Action button for pending/negotiation/dispute/approved */}
                     {effectiveSt !== 'completed' && effectiveSt !== 'under_review' && effectiveSt !== 'rejected' && effectiveSt !== 'cancelled' && (
                       <Button
                         size="sm"
@@ -1503,82 +1661,44 @@ export default function AdminViewRefundDetails() {
                         onClick={async () => {
                           if (effectiveSt === 'negotiation') { setShowConfirmModal(true); return; }
 
-                          // In your frontend code, add better error handling:
-if (effectiveSt === 'dispute') {
-  try {
-    setProcessing(true);
-    const refundId = getRefundId(refund);
-    
-    if (!refundId) {
-      toast({ 
-        title: 'Error', 
-        description: 'Cannot find refund ID', 
-        variant: 'destructive' 
-      });
-      setProcessing(false);
-      return;
-    }
-    
-    console.log('Fetching disputes for refund_id:', refundId); // Debug log
-    
-    const listRes = await AxiosInstance.get('/disputes/', { 
-      params: { refund_id: String(refundId) }, 
-      headers: { 'X-User-Id': String(user?.id || '') } 
-    });
-    
-    console.log('Disputes response:', listRes.data);
-    
-    const disputes = Array.isArray(listRes?.data) ? listRes.data : 
-                     Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
-    const first = disputes[0];
-    
-    if (!first?.id) { 
-      toast({ 
-        title: 'No dispute found', 
-        description: 'Cannot start review without an existing dispute.', 
-        variant: 'destructive' 
-      });
-      return;
-    }
-    
-    const response = await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, { 
-      headers: { 
-        'X-User-Id': String(user?.id || ''),
-        'Content-Type': 'application/json'
-      } 
-    });
-    
-    if (response.data) {
-      toast({ 
-        title: 'Review started', 
-        description: 'Dispute marked under review.' 
-      });
-      
-      setRefund(prev => ({ 
-        ...prev, 
-        status: 'under_review',
-        dispute_request: {
-          ...(prev.dispute_request || {}),
-          status: 'under_review'
-        },
-        dispute_details: {
-          ...(prev.dispute_details || {}),
-          status: 'under_review'
-        }
-      }));
-    }
-  } catch (err: any) {
-    console.error('Start review error:', err);
-    toast({ 
-      title: 'Failed to start review', 
-      description: err.response?.data?.error || err.message || 'Unknown error occurred', 
-      variant: 'destructive' 
-    });
-  } finally { 
-    setProcessing(false); 
-  }
-  return;
-}
+                          if (effectiveSt === 'dispute') {
+                            try {
+                              setProcessing(true);
+                              const refundId = refund?.refund_id;
+                              
+                              if (!refundId) {
+                                toast({ title: 'Error', description: 'Cannot find refund ID', variant: 'destructive' });
+                                setProcessing(false);
+                                return;
+                              }
+                              
+                              const listRes = await AxiosInstance.get('/disputes/', { 
+                                params: { refund_id: String(refundId) }, 
+                                headers: { 'X-User-Id': String(user?.id || '') } 
+                              });
+                              
+                              const disputes = Array.isArray(listRes?.data) ? listRes.data : 
+                                               Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
+                              const first = disputes[0];
+                              
+                              if (!first?.id) { 
+                                toast({ title: 'No dispute found', description: 'Cannot start review without an existing dispute.', variant: 'destructive' });
+                                return;
+                              }
+                              
+                              const response = await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, { 
+                                headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' } 
+                              });
+                              
+                              if (response.data) {
+                                toast({ title: 'Review started', description: 'Dispute marked under review.' });
+                                setRefund(prev => ({ ...prev, status: 'under_review', dispute_details: { ...prev.dispute_details, status: 'under_review' } }));
+                              }
+                            } catch (err: any) {
+                              toast({ title: 'Failed to start review', description: err.response?.data?.error || err.message || 'Unknown error occurred', variant: 'destructive' });
+                            } finally { setProcessing(false); }
+                            return;
+                          }
 
                           if (effectiveSt === 'approved') {
                             await handleProcessRefund();
@@ -1596,7 +1716,6 @@ if (effectiveSt === 'dispute') {
                       </Button>
                     )}
 
-                    {/* Under Review: liability + approve/reject */}
                     {effectiveSt === 'under_review' && (
                       <>
                         <div className="space-y-2 mb-3">
@@ -1719,7 +1838,7 @@ if (effectiveSt === 'dispute') {
                     {refund.processed_by?.username && (
                       <div className="text-[10px] text-muted-foreground mt-2 pt-2 border-t">
                         Processed by: {refund.processed_by.username}
-                        {refund.processed_at && ` • ${new Date(refund.processed_at).toLocaleDateString()}`}
+                        {refund.processed_at && ` • ${formatDateTime(refund.processed_at)}`}
                       </div>
                     )}
                   </CardContent>
@@ -1751,9 +1870,9 @@ if (effectiveSt === 'dispute') {
                         try {
                           if (authAction === 'reject') {
                             setProcessing(true);
-                            const listRes = await AxiosInstance.get('/disputes/', { params: { refund_id: String(refund.refund) }, headers: { 'X-User-Id': String(user?.id || '') } });
+                            const listRes = await AxiosInstance.get('/disputes/', { params: { refund_id: String(refund.refund_id) }, headers: { 'X-User-Id': String(user?.id || '') } });
                             const disputes = Array.isArray(listRes?.data) ? listRes.data : Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
-                            const active = disputes.find((d: any) => String(d.refund) === String(refund.refund) || String(d.refund_id) === String(refund.refund));
+                            const active = disputes.find((d: any) => String(d.refund) === String(refund.refund_id) || String(d.refund_id) === String(refund.refund_id));
                             if (!active?.id) { toast({ title: 'No dispute found', variant: 'destructive' }); return; }
                             await AxiosInstance.post(`/disputes/${active.id}/reject/`, { admin_notes: 'Rejected by admin' }, { headers: { 'X-User-Id': String(user?.id || '') } });
                             toast({ title: 'Rejected', description: 'Dispute has been rejected.' });
@@ -1776,7 +1895,6 @@ if (effectiveSt === 'dispute') {
         </CardContent>
       </Card>
 
-      {/* Negotiation bypass confirm */}
       <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
