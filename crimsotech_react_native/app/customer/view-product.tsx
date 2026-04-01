@@ -18,6 +18,7 @@ import {
   Modal,
   FlatList,
   Dimensions,
+  TouchableWithoutFeedback,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -25,7 +26,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import AxiosInstance from "../../contexts/axios";
 import { useAuth } from "../../contexts/AuthContext";
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 type Variant = {
   id: string;
@@ -165,14 +166,6 @@ const CONDITION_SCALE: Record<
   },
 };
 
-const statusColor = (status?: string) => {
-  const value = String(status || "").toLowerCase();
-  if (value === "published") return "#16A34A";
-  if (value === "draft") return "#D97706";
-  if (value === "archived") return "#64748B";
-  return "#475569";
-};
-
 const resolveMediaUrl = (item: MediaItem): string | null => {
   return item.file_url || item.file_data || null;
 };
@@ -198,7 +191,10 @@ const formatCurrency = (amount?: string | number | null) => {
   if (!amount && amount !== 0) return null;
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
   if (isNaN(num)) return null;
-  return `₱${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `₱${num.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 };
 
 const StarRow = ({ count }: { count: number }) => (
@@ -322,6 +318,365 @@ const ImageGalleryModal = ({
             </Text>
           </View>
         )}
+      </View>
+    </Modal>
+  );
+};
+
+// ─── Variant Selection Drawer Modal ──────────────────────────────────────────
+const VariantSelectionModal = ({
+  visible,
+  variants,
+  selectedVariant,
+  quantity,
+  onSelectVariant,
+  onQuantityChange,
+  onConfirm,
+  onClose,
+  productName,
+}: {
+  visible: boolean;
+  variants: Variant[];
+  selectedVariant: Variant | null;
+  quantity: number;
+  onSelectVariant: (variant: Variant) => void;
+  onQuantityChange: (quantity: number) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+  productName: string;
+}) => {
+  const [tempQuantity, setTempQuantity] = useState(quantity);
+  const [tempSelectedVariant, setTempSelectedVariant] = useState<Variant | null>(
+    selectedVariant,
+  );
+
+  useEffect(() => {
+    if (visible) {
+      setTempQuantity(quantity);
+      setTempSelectedVariant(selectedVariant);
+    }
+  }, [visible, quantity, selectedVariant]);
+
+  const handleConfirm = () => {
+    if (tempSelectedVariant) {
+      onSelectVariant(tempSelectedVariant);
+      onQuantityChange(tempQuantity);
+      onConfirm();
+    } else {
+      Alert.alert("Error", "Please select a variant");
+    }
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <TouchableWithoutFeedback onPress={onClose}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }} />
+      </TouchableWithoutFeedback>
+      <View
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: "#FFFFFF",
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          maxHeight: SCREEN_HEIGHT * 0.85,
+        }}
+      >
+        {/* Header */}
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            paddingHorizontal: 20,
+            paddingVertical: 16,
+            borderBottomWidth: 1,
+            borderBottomColor: "#F3F4F6",
+          }}
+        >
+          <Text style={{ fontSize: 18, fontWeight: "700", color: "#111827" }}>
+            Select Option
+          </Text>
+          <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+            <Ionicons name="close" size={24} color="#6B7280" />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 20 }}
+        >
+          {/* Product Info */}
+          <View style={{ flexDirection: "row", gap: 12, marginBottom: 20 }}>
+            {tempSelectedVariant && resolveVariantImageUrl(tempSelectedVariant) ? (
+              <Image
+                source={{ uri: resolveVariantImageUrl(tempSelectedVariant)! }}
+                style={{ width: 80, height: 80, borderRadius: 8 }}
+              />
+            ) : (
+              <View
+                style={{
+                  width: 80,
+                  height: 80,
+                  backgroundColor: "#F3F4F6",
+                  borderRadius: 8,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Ionicons name="cube-outline" size={32} color="#9CA3AF" />
+              </View>
+            )}
+            <View style={{ flex: 1, justifyContent: "center" }}>
+              <Text
+                style={{ fontSize: 16, fontWeight: "700", color: "#111827" }}
+                numberOfLines={2}
+              >
+                {productName}
+              </Text>
+              {tempSelectedVariant && (
+                <Text
+                  style={{
+                    fontSize: 20,
+                    fontWeight: "700",
+                    color: "#EA580C",
+                    marginTop: 4,
+                  }}
+                >
+                  {formatCurrency(tempSelectedVariant.price) ?? "₱0.00"}
+                </Text>
+              )}
+            </View>
+          </View>
+
+          {/* Variant Options */}
+          <Text
+            style={{
+              fontSize: 14,
+              fontWeight: "600",
+              color: "#374151",
+              marginBottom: 12,
+            }}
+          >
+            Select Variant
+          </Text>
+          {variants.map((variant) => (
+            <TouchableOpacity
+              key={variant.id}
+              onPress={() => {
+                setTempSelectedVariant(variant);
+                // Reset quantity to 1 when switching variants
+                setTempQuantity(1);
+              }}
+              disabled={!variant.in_stock}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: 12,
+                borderWidth: 2,
+                borderColor:
+                  tempSelectedVariant?.id === variant.id
+                    ? "#EA580C"
+                    : "#E5E7EB",
+                borderRadius: 10,
+                marginBottom: 10,
+                backgroundColor:
+                  tempSelectedVariant?.id === variant.id
+                    ? "#FFF7ED"
+                    : "#FFFFFF",
+                opacity: variant.in_stock ? 1 : 0.5,
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 12,
+                  flex: 1,
+                }}
+              >
+                {resolveVariantImageUrl(variant) ? (
+                  <Image
+                    source={{ uri: resolveVariantImageUrl(variant)! }}
+                    style={{ width: 50, height: 50, borderRadius: 8 }}
+                  />
+                ) : (
+                  <View
+                    style={{
+                      width: 50,
+                      height: 50,
+                      backgroundColor: "#F3F4F6",
+                      borderRadius: 8,
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons name="cube-outline" size={24} color="#9CA3AF" />
+                  </View>
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#111827",
+                    }}
+                  >
+                    {variant.title || variant.sku_code || "Standard"}
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      color: "#EA580C",
+                      fontWeight: "700",
+                    }}
+                  >
+                    {formatCurrency(variant.price) ?? "₱0.00"}
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      color: variant.in_stock ? "#16A34A" : "#DC2626",
+                      marginTop: 2,
+                    }}
+                  >
+                    {variant.in_stock
+                      ? `${variant.available_quantity ?? 0} available`
+                      : "Out of Stock"}
+                  </Text>
+                </View>
+              </View>
+              {tempSelectedVariant?.id === variant.id && (
+                <Ionicons name="checkmark-circle" size={24} color="#EA580C" />
+              )}
+            </TouchableOpacity>
+          ))}
+
+          {/* Quantity Selector */}
+          {tempSelectedVariant && tempSelectedVariant.in_stock && (
+            <View style={{ marginTop: 20 }}>
+              <Text
+                style={{
+                  fontSize: 14,
+                  fontWeight: "600",
+                  color: "#374151",
+                  marginBottom: 12,
+                }}
+              >
+                Quantity
+              </Text>
+              <View
+                style={{ flexDirection: "row", alignItems: "center", gap: 16 }}
+              >
+                <TouchableOpacity
+                  onPress={() => setTempQuantity(Math.max(1, tempQuantity - 1))}
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 8,
+                    backgroundColor: "#F3F4F6",
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                >
+                  <Ionicons name="remove" size={24} color="#374151" />
+                </TouchableOpacity>
+                <Text
+                  style={{
+                    fontSize: 20,
+                    fontWeight: "600",
+                    color: "#111827",
+                    minWidth: 50,
+                    textAlign: "center",
+                  }}
+                >
+                  {tempQuantity}
+                </Text>
+                <TouchableOpacity
+                  onPress={() =>
+                    setTempQuantity(
+                      Math.min(
+                        tempSelectedVariant.available_quantity ?? 99,
+                        tempQuantity + 1,
+                      ),
+                    )
+                  }
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 8,
+                    backgroundColor: "#F3F4F6",
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                >
+                  <Ionicons name="add" size={24} color="#374151" />
+                </TouchableOpacity>
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: "#6B7280",
+                    marginLeft: "auto",
+                  }}
+                >
+                  {tempSelectedVariant.available_quantity ?? 0} available
+                </Text>
+              </View>
+            </View>
+          )}
+        </ScrollView>
+
+        {/* Footer Buttons */}
+        <View
+          style={{
+            flexDirection: "row",
+            gap: 12,
+            paddingHorizontal: 20,
+            paddingVertical: 16,
+            borderTopWidth: 1,
+            borderTopColor: "#F3F4F6",
+            backgroundColor: "#FFFFFF",
+          }}
+        >
+          <TouchableOpacity
+            onPress={onClose}
+            style={{
+              flex: 1,
+              borderWidth: 1,
+              borderColor: "#E5E7EB",
+              borderRadius: 10,
+              paddingVertical: 14,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#6B7280" }}>
+              Cancel
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleConfirm}
+            style={{
+              flex: 2,
+              backgroundColor: "#EA580C",
+              borderRadius: 10,
+              paddingVertical: 14,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}>
+              Confirm Selection
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </Modal>
   );
@@ -739,7 +1094,9 @@ const ReviewsSection = ({
               alignItems: "center",
             }}
           >
-            <Text style={{ fontSize: 13, fontWeight: "600", color: "#374151" }}>
+            <Text
+              style={{ fontSize: 13, fontWeight: "600", color: "#374151" }}
+            >
               {review.customer?.username || "Anonymous"}
             </Text>
             {review.rating && <StarRow count={review.rating} />}
@@ -779,7 +1136,6 @@ export default function CustomerViewProductScreen() {
     id?: string | string[];
     productId?: string | string[];
   }>();
-
   const rawProductId = params.id ?? params.productId;
   const productId = Array.isArray(rawProductId)
     ? String(rawProductId[0] ?? "")
@@ -790,14 +1146,14 @@ export default function CustomerViewProductScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [product, setProduct] = useState<ProductDetail | null>(null);
-  const [expandedVariants, setExpandedVariants] = useState<
-    Record<string, boolean>
-  >({});
   const [galleryVisible, setGalleryVisible] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [selectedVariant, setSelectedVariant] = useState<Variant | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [addingToCart, setAddingToCart] = useState(false);
+  const [variantModalVisible, setVariantModalVisible] = useState(false);
+  const [proofGalleryVisible, setProofGalleryVisible] = useState(false);
+  const [proofGalleryImages, setProofGalleryImages] = useState<string[]>([]);
 
   const fetchProduct = useCallback(async () => {
     if (!productId) {
@@ -851,19 +1207,8 @@ export default function CustomerViewProductScreen() {
       .filter((url): url is string => !!url);
   }, [product]);
 
-  const proofImages = useMemo(() => {
-    return (product?.variants ?? [])
-      .map(resolveProofImageUrl)
-      .filter((url): url is string => !!url);
-  }, [product]);
-
   const galleryImages = useMemo(
     () => [...productImages, ...variantImages],
-    [productImages, variantImages],
-  );
-
-  const heroImage = useMemo(
-    () => productImages[0] || variantImages[0] || null,
     [productImages, variantImages],
   );
 
@@ -873,17 +1218,8 @@ export default function CustomerViewProductScreen() {
   };
 
   const openProofGallery = (url: string) => {
-    setSelectedImageIndex(0);
-    setGalleryVisible(false);
     setProofGalleryImages([url]);
     setProofGalleryVisible(true);
-  };
-
-  const [proofGalleryVisible, setProofGalleryVisible] = useState(false);
-  const [proofGalleryImages, setProofGalleryImages] = useState<string[]>([]);
-
-  const toggleVariantExpand = (variantId: string) => {
-    setExpandedVariants((prev) => ({ ...prev, [variantId]: !prev[variantId] }));
   };
 
   const toggleFavorite = async () => {
@@ -894,29 +1230,51 @@ export default function CustomerViewProductScreen() {
     Alert.alert("Coming Soon", "Favorite functionality will be implemented");
   };
 
+  // ── Open variant selection modal ─────────────────────────────────────────
+  const openVariantSelection = () => {
+    if (product?.variants && product.variants.length > 0) {
+      setVariantModalVisible(true);
+    } else {
+      Alert.alert("Error", "No variants available for this product");
+    }
+  };
+
+  // ── Add to Cart ───────────────────────────────────────────────────────────
   const addToCart = async () => {
     if (!userId) {
       Alert.alert("Sign In Required", "Please sign in to add items to cart");
       return;
     }
+
+    // If no variant selected, open the modal instead of erroring
     if (!selectedVariant) {
-      Alert.alert("Error", "Please select a variant");
+      if (product?.variants && product.variants.length > 0) {
+        setVariantModalVisible(true);
+      } else {
+        Alert.alert("Error", "No variants available for this product");
+      }
       return;
     }
+
     if (!selectedVariant.in_stock) {
       Alert.alert("Out of Stock", "This variant is currently out of stock");
       return;
     }
+
     setAddingToCart(true);
     try {
-      await AxiosInstance.post("/view-cart/", {
+      const response = await AxiosInstance.post("/view-cart/", {
         user_id: userId,
         variant_id: selectedVariant.id,
         quantity,
       });
+
+      const isCreated = response.data?.created === true;
       Alert.alert(
-        "Added to Cart",
-        `${product?.name} has been added to your cart.`,
+        "Success",
+        isCreated
+          ? `${product?.name} has been added to your cart.`
+          : `Cart updated — you now have ${response.data?.cart_item?.quantity ?? quantity} of this item.`,
       );
     } catch (err: any) {
       const msg =
@@ -929,22 +1287,28 @@ export default function CustomerViewProductScreen() {
     }
   };
 
-  // ── Buy Now — passes directly to checkout without adding to cart ──────────
+  // ── Buy Now ───────────────────────────────────────────────────────────────
   const buyNow = () => {
     if (!userId) {
       Alert.alert("Sign In Required", "Please sign in to purchase");
       return;
     }
+
+    // If no variant selected, open the modal instead of erroring
     if (!selectedVariant) {
-      Alert.alert("Error", "Please select a variant");
+      if (product?.variants && product.variants.length > 0) {
+        setVariantModalVisible(true);
+      } else {
+        Alert.alert("Error", "No variants available for this product");
+      }
       return;
     }
+
     if (!selectedVariant.in_stock) {
       Alert.alert("Out of Stock", "This variant is currently out of stock");
       return;
     }
 
-    // Pass productId and variantId directly — no cart mutation needed
     router.push({
       pathname: "/customer/checkout",
       params: {
@@ -953,6 +1317,13 @@ export default function CustomerViewProductScreen() {
         quantity: String(quantity),
       },
     });
+  };
+
+  // ── Variant modal confirm ─────────────────────────────────────────────────
+  // selectedVariant and quantity are already updated via onSelectVariant /
+  // onQuantityChange callbacks before this fires, so no extra work needed.
+  const handleVariantConfirm = () => {
+    setVariantModalVisible(false);
   };
 
   // ── Loading / error states ─────────────────────────────────────────────────
@@ -1032,7 +1403,12 @@ export default function CustomerViewProductScreen() {
           <Ionicons name="arrow-back" size={22} color="#111827" />
         </TouchableOpacity>
         <Text
-          style={{ fontSize: 18, fontWeight: "700", color: "#111827", flex: 1 }}
+          style={{
+            fontSize: 18,
+            fontWeight: "700",
+            color: "#111827",
+            flex: 1,
+          }}
           numberOfLines={1}
         >
           Product Details
@@ -1137,6 +1513,7 @@ export default function CustomerViewProductScreen() {
           )}
 
           <View style={{ padding: 16 }}>
+            {/* Name + Favorite */}
             <View
               style={{
                 flexDirection: "row",
@@ -1169,6 +1546,8 @@ export default function CustomerViewProductScreen() {
                 />
               </TouchableOpacity>
             </View>
+
+            {/* Condition */}
             {product.condition && (
               <View
                 style={{
@@ -1185,11 +1564,15 @@ export default function CustomerViewProductScreen() {
                 </Text>
               </View>
             )}
+
+            {/* Category */}
             <Text style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>
               {product.category_admin?.name ||
                 product.category?.name ||
                 "Uncategorized"}
             </Text>
+
+            {/* Price */}
             <Text
               style={{
                 fontSize: 26,
@@ -1204,6 +1587,8 @@ export default function CustomerViewProductScreen() {
                   ? (formatCurrency(product.price_range?.min) ?? "₱0.00")
                   : `${formatCurrency(product.price_range?.min) ?? "₱0.00"} – ${formatCurrency(product.price_range?.max) ?? "₱0.00"}`}
             </Text>
+
+            {/* Badges */}
             <View
               style={{
                 marginTop: 10,
@@ -1233,6 +1618,136 @@ export default function CustomerViewProductScreen() {
                 </View>
               )}
             </View>
+
+            {/* Variant Selection Button */}
+            {product.variants && product.variants.length > 0 && (
+              <TouchableOpacity
+                onPress={openVariantSelection}
+                style={{
+                  marginTop: 16,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  backgroundColor: "#F9FAFB",
+                  borderWidth: 1,
+                  borderColor: "#E5E7EB",
+                  borderRadius: 10,
+                  padding: 12,
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      color: "#6B7280",
+                      marginBottom: 2,
+                    }}
+                  >
+                    Variant
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 15,
+                      fontWeight: "600",
+                      color: "#111827",
+                    }}
+                  >
+                    {selectedVariant?.title || "Select Option"}
+                  </Text>
+                </View>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 12,
+                  }}
+                >
+                  {selectedVariant && (
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "700",
+                        color: "#EA580C",
+                      }}
+                    >
+                      {formatCurrency(selectedVariant.price) ?? "₱0.00"}
+                    </Text>
+                  )}
+                  <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* Quantity — shown on main screen too, synced with modal */}
+            {selectedVariant && selectedVariant.in_stock && (
+              <View
+                style={{
+                  marginTop: 12,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  backgroundColor: "#F9FAFB",
+                  borderWidth: 1,
+                  borderColor: "#E5E7EB",
+                  borderRadius: 10,
+                  padding: 12,
+                }}
+              >
+                <Text style={{ fontSize: 14, color: "#374151" }}>Quantity</Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 12,
+                  }}
+                >
+                  <TouchableOpacity
+                    onPress={() => setQuantity(Math.max(1, quantity - 1))}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 6,
+                      backgroundColor: "#F3F4F6",
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons name="remove" size={18} color="#374151" />
+                  </TouchableOpacity>
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: "600",
+                      color: "#111827",
+                      minWidth: 30,
+                      textAlign: "center",
+                    }}
+                  >
+                    {quantity}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() =>
+                      setQuantity(
+                        Math.min(
+                          selectedVariant.available_quantity ?? 99,
+                          quantity + 1,
+                        ),
+                      )
+                    }
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 6,
+                      backgroundColor: "#F3F4F6",
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons name="add" size={18} color="#374151" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
 
             {/* Description */}
             <View
@@ -1276,257 +1791,12 @@ export default function CustomerViewProductScreen() {
           }}
         />
 
-        {/* Variant Selection */}
-        {product.variants && product.variants.length > 0 && (
-          <View
-            style={{
-              backgroundColor: "#FFFFFF",
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: "#E5E7EB",
-              padding: 14,
-              marginBottom: 12,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 14,
-                fontWeight: "700",
-                color: "#111827",
-                marginBottom: 12,
-              }}
-            >
-              Select Variant
-            </Text>
-            {product.variants.map((variant) => (
-              <TouchableOpacity
-                key={variant.id}
-                onPress={() => {
-                  setSelectedVariant(variant);
-                  setQuantity(1);
-                }}
-                disabled={!variant.in_stock}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: 12,
-                  borderWidth: 2,
-                  borderColor:
-                    selectedVariant?.id === variant.id ? "#EA580C" : "#E5E7EB",
-                  borderRadius: 10,
-                  marginBottom: 8,
-                  backgroundColor:
-                    selectedVariant?.id === variant.id ? "#FFF7ED" : "#FFFFFF",
-                  opacity: variant.in_stock ? 1 : 0.5,
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 12,
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                >
-                  {resolveVariantImageUrl(variant) ? (
-                    <Image
-                      source={{ uri: resolveVariantImageUrl(variant)! }}
-                      style={{ width: 44, height: 44, borderRadius: 6 }}
-                    />
-                  ) : (
-                    <View
-                      style={{
-                        width: 44,
-                        height: 44,
-                        backgroundColor: "#F3F4F6",
-                        borderRadius: 6,
-                        justifyContent: "center",
-                        alignItems: "center",
-                      }}
-                    >
-                      <Ionicons name="cube-outline" size={20} color="#9CA3AF" />
-                    </View>
-                  )}
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text
-                      numberOfLines={2}
-                      ellipsizeMode="tail"
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "#111827",
-                        lineHeight: 18,
-                      }}
-                    >
-                      {variant.title || variant.sku_code || "Variant"}
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        color: "#EA580C",
-                        fontWeight: "700",
-                      }}
-                    >
-                      {formatCurrency(variant.price) ?? "₱0.00"}
-                    </Text>
-                    {variant.original_price && (
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 4,
-                          marginTop: 2,
-                        }}
-                      >
-                        <Ionicons
-                          name="time-outline"
-                          size={10}
-                          color="#6B7280"
-                        />
-                        <Text style={{ fontSize: 10, color: "#6B7280" }}>
-                          Pre-owned
-                        </Text>
-                      </View>
-                    )}
-                    <Text
-                      style={{
-                        fontSize: 11,
-                        color: variant.in_stock ? "#16A34A" : "#DC2626",
-                        marginTop: 2,
-                      }}
-                    >
-                      {variant.in_stock
-                        ? `${variant.available_quantity ?? 0} available`
-                        : "Out of Stock"}
-                    </Text>
-                  </View>
-                </View>
-                <View
-                  style={{
-                    marginLeft: 8,
-                    minWidth: 84,
-                    alignItems: "flex-end",
-                    justifyContent: "center",
-                  }}
-                >
-                  {!variant.in_stock ? (
-                    <View
-                      style={{
-                        backgroundColor: "#FEE2E2",
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 4,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontSize: 10,
-                          color: "#DC2626",
-                          fontWeight: "600",
-                        }}
-                      >
-                        Out of Stock
-                      </Text>
-                    </View>
-                  ) : selectedVariant?.id === variant.id ? (
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={24}
-                      color="#EA580C"
-                    />
-                  ) : null}
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
         {/* Ownership Info for selected variant */}
         {selectedVariant && (
           <OwnershipInfoCard
             variant={selectedVariant}
             onProofImagePress={openProofGallery}
           />
-        )}
-
-        {/* Quantity Selector */}
-        {selectedVariant && selectedVariant.in_stock && (
-          <View
-            style={{
-              backgroundColor: "#FFFFFF",
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: "#E5E7EB",
-              padding: 14,
-              marginBottom: 12,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 14,
-                fontWeight: "700",
-                color: "#111827",
-                marginBottom: 12,
-              }}
-            >
-              Quantity
-            </Text>
-            <View
-              style={{ flexDirection: "row", alignItems: "center", gap: 16 }}
-            >
-              <TouchableOpacity
-                onPress={() => setQuantity(Math.max(1, quantity - 1))}
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 8,
-                  backgroundColor: "#F3F4F6",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons name="remove" size={20} color="#374151" />
-              </TouchableOpacity>
-              <Text
-                style={{
-                  fontSize: 18,
-                  fontWeight: "600",
-                  color: "#111827",
-                  minWidth: 32,
-                  textAlign: "center",
-                }}
-              >
-                {quantity}
-              </Text>
-              <TouchableOpacity
-                onPress={() =>
-                  setQuantity(
-                    Math.min(
-                      selectedVariant.available_quantity ?? 99,
-                      quantity + 1,
-                    ),
-                  )
-                }
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 8,
-                  backgroundColor: "#F3F4F6",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons name="add" size={20} color="#374151" />
-              </TouchableOpacity>
-              <Text
-                style={{ fontSize: 13, color: "#6B7280", marginLeft: "auto" }}
-              >
-                {selectedVariant.available_quantity ?? 0} available
-              </Text>
-            </View>
-          </View>
         )}
 
         {/* Reviews */}
@@ -1576,11 +1846,15 @@ export default function CustomerViewProductScreen() {
               <ActivityIndicator size="small" color="#F97316" />
             ) : (
               <>
-                <Ionicons name="cart-outline" size={20} color="#F97316" />
+                <Ionicons
+                  name={selectedVariant ? "cart-outline" : "options-outline"}
+                  size={20}
+                  color="#F97316"
+                />
                 <Text
                   style={{ fontSize: 14, fontWeight: "700", color: "#F97316" }}
                 >
-                  Add to Cart
+                  {selectedVariant ? "Add to Cart" : "Select Option"}
                 </Text>
               </>
             )}
@@ -1602,9 +1876,13 @@ export default function CustomerViewProductScreen() {
               opacity: addingToCart ? 0.7 : 1,
             }}
           >
-            <Ionicons name="flash-outline" size={20} color="#FFFFFF" />
+            <Ionicons
+              name={selectedVariant ? "flash-outline" : "options-outline"}
+              size={20}
+              color="#FFFFFF"
+            />
             <Text style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}>
-              Buy Now
+              {selectedVariant ? "Buy Now" : "Select Option"}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1630,11 +1908,28 @@ export default function CustomerViewProductScreen() {
               alignItems: "center",
             }}
           >
-            <Text style={{ fontSize: 14, color: "#DC2626", fontWeight: "700" }}>
+            <Text
+              style={{ fontSize: 14, color: "#DC2626", fontWeight: "700" }}
+            >
               Currently Out of Stock
             </Text>
           </View>
         </View>
+      )}
+
+      {/* Variant Selection Modal */}
+      {product.variants && (
+        <VariantSelectionModal
+          visible={variantModalVisible}
+          variants={product.variants}
+          selectedVariant={selectedVariant}
+          quantity={quantity}
+          onSelectVariant={setSelectedVariant}
+          onQuantityChange={setQuantity}
+          onConfirm={handleVariantConfirm}
+          onClose={() => setVariantModalVisible(false)}
+          productName={product.name}
+        />
       )}
 
       {/* Product photo gallery */}

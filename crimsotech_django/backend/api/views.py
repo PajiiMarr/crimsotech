@@ -1,4 +1,5 @@
 from asyncio.log import logger
+from django.db import transaction
 from decimal import Decimal, ROUND_HALF_UP
 import csv
 from asgiref.sync import async_to_sync
@@ -20615,37 +20616,50 @@ class CartListView(APIView):
         if not variant.product:
             return Response({"error": "Variant has no associated product"}, status=400)
 
-        # If item already in cart, increment quantity
-        cart_item, created = CartItem.objects.get_or_create(
-            user=user,
-            variant=variant,
-            is_ordered=False,
-            defaults={
-                "product": variant.product,
-                "quantity": quantity,
-            }
-        )
+        try:
+            from django.db import transaction
 
-        if not created:
-            new_quantity = cart_item.quantity + quantity
-            if new_quantity > variant.quantity:
-                return Response({
-                    "error": f"Only {variant.quantity} items available. You already have {cart_item.quantity} in your cart.",
-                    "available_quantity": variant.quantity,
-                    "current_quantity": cart_item.quantity
-                }, status=400)
-            cart_item.quantity = new_quantity
-            cart_item.save()
+            with transaction.atomic():
+                cart_item, created = CartItem.objects.get_or_create(
+                    user=user,
+                    variant=variant,
+                    is_ordered=False,
+                    defaults={
+                        "product": variant.product,
+                        "quantity": quantity,
+                    }
+                )
+
+                if not created:
+                    new_quantity = cart_item.quantity + quantity
+                    if new_quantity > variant.quantity:
+                        return Response({
+                            "error": f"Only {variant.quantity} items available. You already have {cart_item.quantity} in your cart.",
+                            "available_quantity": variant.quantity,
+                            "current_quantity": cart_item.quantity
+                        }, status=400)
+                    cart_item.quantity = new_quantity
+                    cart_item.save()
+
+        except Exception as e:
+            import traceback
+            print("Error in CartListView.post:", str(e))
+            print(traceback.format_exc())
+            return Response({
+                "success": False,
+                "error": "Failed to add item to cart",
+                "details": str(e)
+            }, status=500)
 
         serializer = CartItemSerializer(cart_item, context={"request": request})
 
         return Response({
             "success": True,
-            "message": "Item added to cart",
+            "message": "Item added to cart" if created else "Cart quantity updated",
             "cart_item": serializer.data,
             "created": created
         }, status=201 if created else 200)
-
+        
 class CartBulkUpdateView(APIView):
     """
     Handle bulk updates to cart (update multiple quantities at once)
