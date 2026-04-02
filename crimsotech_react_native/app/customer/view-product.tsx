@@ -19,6 +19,7 @@ import {
   FlatList,
   Dimensions,
   TouchableWithoutFeedback,
+  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -165,7 +166,6 @@ const CONDITION_SCALE: Record<
     stars: 5,
   },
 };
-
 const resolveMediaUrl = (item: MediaItem): string | null => {
   return item.file_url || item.file_data || null;
 };
@@ -209,6 +209,115 @@ const StarRow = ({ count }: { count: number }) => (
     ))}
   </View>
 );
+
+// ─── Toast Notification ────────────────────────────────────────────────────────
+const ToastNotification = ({
+  visible,
+  message,
+  type = "success",
+  onHide,
+}: {
+  visible: boolean;
+  message: string;
+  type?: "success" | "error" | "info";
+  onHide: () => void;
+}) => {
+  const translateY = useRef(new Animated.Value(-100)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true,
+          tension: 80,
+          friction: 10,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      const timer = setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(translateY, {
+            toValue: -100,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(opacity, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ]).start(() => onHide());
+      }, 2500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  const bgColor =
+    type === "success" ? "#16A34A" : type === "error" ? "#DC2626" : "#2563EB";
+  const iconName =
+    type === "success"
+      ? "checkmark-circle"
+      : type === "error"
+        ? "close-circle"
+        : "information-circle";
+
+  return (
+    <Animated.View
+      style={{
+        position: "absolute",
+        top: 60,
+        left: 16,
+        right: 16,
+        zIndex: 9999,
+        transform: [{ translateY }],
+        opacity,
+      }}
+    >
+      <View
+        style={{
+          backgroundColor: bgColor,
+          borderRadius: 12,
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 10,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.2,
+          shadowRadius: 8,
+          elevation: 8,
+        }}
+      >
+        <Ionicons name={iconName as any} size={22} color="#FFFFFF" />
+        <Text
+          style={{
+            flex: 1,
+            fontSize: 14,
+            fontWeight: "600",
+            color: "#FFFFFF",
+            lineHeight: 20,
+          }}
+        >
+          {message}
+        </Text>
+        <TouchableOpacity onPress={onHide} style={{ padding: 2 }}>
+          <Ionicons name="close" size={18} color="rgba(255,255,255,0.8)" />
+        </TouchableOpacity>
+      </View>
+    </Animated.View>
+  );
+};
 
 // ─── Image Gallery Modal ───────────────────────────────────────────────────────
 const ImageGalleryModal = ({
@@ -334,6 +443,7 @@ const VariantSelectionModal = ({
   onConfirm,
   onClose,
   productName,
+  pendingAction,
 }: {
   visible: boolean;
   variants: Variant[];
@@ -344,6 +454,7 @@ const VariantSelectionModal = ({
   onConfirm: () => void;
   onClose: () => void;
   productName: string;
+  pendingAction: "add_to_cart" | "buy_now" | null;
 }) => {
   const [tempQuantityMap, setTempQuantityMap] = useState<
     Record<string, number>
@@ -376,6 +487,10 @@ const VariantSelectionModal = ({
       Alert.alert("Error", "Please select a variant");
     }
   };
+
+  const confirmLabel = pendingAction === "buy_now" ? "Buy Now" : "Add to Cart";
+  const confirmIcon =
+    pendingAction === "buy_now" ? "flash-outline" : "cart-outline";
 
   return (
     <Modal
@@ -708,10 +823,14 @@ const VariantSelectionModal = ({
               borderRadius: 10,
               paddingVertical: 14,
               alignItems: "center",
+              flexDirection: "row",
+              justifyContent: "center",
+              gap: 8,
             }}
           >
+            <Ionicons name={confirmIcon as any} size={18} color="#FFFFFF" />
             <Text style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}>
-              Confirm Selection
+              {confirmLabel}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1190,7 +1309,25 @@ export default function CustomerViewProductScreen() {
   const [variantModalVisible, setVariantModalVisible] = useState(false);
   const [proofGalleryVisible, setProofGalleryVisible] = useState(false);
   const [proofGalleryImages, setProofGalleryImages] = useState<string[]>([]);
-  const [pendingAction, setPendingAction] = useState<"add_to_cart" | "buy_now" | null>(null);
+  const [pendingAction, setPendingAction] = useState<
+    "add_to_cart" | "buy_now" | null
+  >(null);
+
+  // Toast state
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+  const [toastType, setToastType] = useState<"success" | "error" | "info">(
+    "success",
+  );
+
+  const showToast = (
+    message: string,
+    type: "success" | "error" | "info" = "success",
+  ) => {
+    setToastMessage(message);
+    setToastType(type);
+    setToastVisible(true);
+  };
 
   const quantity = selectedVariant ? (quantityMap[selectedVariant.id] ?? 1) : 1;
 
@@ -1304,18 +1441,18 @@ export default function CustomerViewProductScreen() {
         quantity,
       });
       const isCreated = response.data?.created === true;
-      Alert.alert(
-        "Success",
+      showToast(
         isCreated
-          ? `${product?.name} has been added to your cart.`
-          : `Cart updated — you now have ${response.data?.cart_item?.quantity ?? quantity} of this item.`,
+          ? `${product?.name} added to cart!`
+          : `Cart updated — ${response.data?.cart_item?.quantity ?? quantity} item(s) in cart.`,
+        "success",
       );
     } catch (err: any) {
       const msg =
         err.response?.data?.error ??
         err.response?.data?.detail ??
         "Failed to add to cart.";
-      Alert.alert("Error", msg);
+      showToast(msg, "error");
     } finally {
       setAddingToCart(false);
     }
@@ -1354,59 +1491,69 @@ export default function CustomerViewProductScreen() {
   };
 
   // ── Execute pending action after variant selection ───────────────────────
-  const executePendingAction = async () => {
-    if (!selectedVariant) return;
-
+  const executePendingAction = async (
+    resolvedVariant: Variant,
+    resolvedQuantity: number,
+  ) => {
     if (pendingAction === "add_to_cart") {
       setAddingToCart(true);
       try {
         const response = await AxiosInstance.post("/view-cart/", {
           user_id: userId,
-          variant_id: selectedVariant.id,
-          quantity,
+          variant_id: resolvedVariant.id,
+          quantity: resolvedQuantity,
         });
         const isCreated = response.data?.created === true;
-        Alert.alert(
-          "Success",
+        showToast(
           isCreated
-            ? `${product?.name} has been added to your cart.`
-            : `Cart updated — you now have ${response.data?.cart_item?.quantity ?? quantity} of this item.`,
+            ? `${product?.name} added to cart!`
+            : `Cart updated — ${response.data?.cart_item?.quantity ?? resolvedQuantity} item(s) in cart.`,
+          "success",
         );
       } catch (err: any) {
         const msg =
           err.response?.data?.error ??
           err.response?.data?.detail ??
           "Failed to add to cart.";
-        Alert.alert("Error", msg);
+        showToast(msg, "error");
       } finally {
         setAddingToCart(false);
         setPendingAction(null);
       }
     } else if (pendingAction === "buy_now") {
+      setPendingAction(null);
       router.push({
         pathname: "/customer/checkout",
         params: {
           productId,
-          variantId: selectedVariant.id,
-          quantity: String(quantity),
+          variantId: resolvedVariant.id,
+          quantity: String(resolvedQuantity),
         },
       });
-      setPendingAction(null);
     }
   };
 
   const handleVariantConfirm = () => {
     setVariantModalVisible(false);
-    // Execute the pending action after modal closes
+    // selectedVariant and quantityMap are updated synchronously via onSelectVariant/onQuantityChange
+    // Use a short timeout to let state settle, then read from refs
     setTimeout(() => {
-      executePendingAction();
-    }, 100);
+      setSelectedVariant((currentVariant) => {
+        setQuantityMap((currentQtyMap) => {
+          if (currentVariant) {
+            const currentQty = currentQtyMap[currentVariant.id] ?? 1;
+            executePendingAction(currentVariant, currentQty);
+          }
+          return currentQtyMap;
+        });
+        return currentVariant;
+      });
+    }, 150);
   };
 
   const handleQuantityChange = (variantId: string, qty: number) => {
     setQuantityMap((prev) => ({ ...prev, [variantId]: qty }));
   };
-
 
   if (loading) {
     return (
@@ -1465,6 +1612,14 @@ export default function CustomerViewProductScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F9FAFB" }}>
+      {/* Toast */}
+      <ToastNotification
+        visible={toastVisible}
+        message={toastMessage}
+        type={toastType}
+        onHide={() => setToastVisible(false)}
+      />
+
       <View
         style={{
           paddingHorizontal: 16,
@@ -1693,7 +1848,7 @@ export default function CustomerViewProductScreen() {
               )}
             </View>
 
-            {/* Variant Selection Button - shows current selection */}
+            {/* Variant Selection Button */}
             {product.variants && product.variants.length > 0 && (
               <TouchableOpacity
                 onPress={openVariantSelection}
@@ -1926,8 +2081,12 @@ export default function CustomerViewProductScreen() {
           onSelectVariant={setSelectedVariant}
           onQuantityChange={handleQuantityChange}
           onConfirm={handleVariantConfirm}
-          onClose={() => setVariantModalVisible(false)}
+          onClose={() => {
+            setVariantModalVisible(false);
+            setPendingAction(null);
+          }}
           productName={product.name}
+          pendingAction={pendingAction}
         />
       )}
 
