@@ -2,6 +2,30 @@
 
 from django.db import migrations, models
 
+def convert_condition_to_int(apps, schema_editor):
+    Product = apps.get_model('api', 'Product')
+    
+    condition_mapping = {
+        'Used - Excellent': 5,
+        'Used - Very Good': 4,
+        'Used - Good': 3,
+        'Used - Fair': 2,
+        'Used - Poor': 1,
+        'New': 5,
+        'Like New': 5,
+        'Excellent': 5,
+        'Very Good': 4,
+        'Good': 3,
+        'Fair': 2,
+        'Poor': 1,
+    }
+    
+    for product in Product.objects.all():
+        old_value = product.condition
+        if isinstance(old_value, str):
+            new_value = condition_mapping.get(old_value, 0)
+            product.condition = new_value
+            product.save(update_fields=['condition'])
 
 class Migration(migrations.Migration):
 
@@ -10,6 +34,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(convert_condition_to_int, migrations.RunPython.noop),
         migrations.AlterField(
             model_name='product',
             name='condition',
