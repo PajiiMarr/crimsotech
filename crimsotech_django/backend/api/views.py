@@ -20622,19 +20622,18 @@ class CartListView(APIView):
 
         try:
             from django.db import transaction
+            from django.db import IntegrityError
 
             with transaction.atomic():
-                cart_item, created = CartItem.objects.get_or_create(
+                # Lock the row for update to prevent race conditions
+                cart_item = CartItem.objects.select_for_update().filter(
                     user=user,
                     variant=variant,
-                    is_ordered=False,
-                    defaults={
-                        "product": variant.product,
-                        "quantity": quantity,
-                    }
-                )
-
-                if not created:
+                    is_ordered=False
+                ).first()
+                
+                if cart_item:
+                    # Update existing
                     new_quantity = cart_item.quantity + quantity
                     if new_quantity > variant.quantity:
                         return Response({
@@ -20644,7 +20643,43 @@ class CartListView(APIView):
                         }, status=400)
                     cart_item.quantity = new_quantity
                     cart_item.save()
+                    created = False
+                else:
+                    # Create new
+                    cart_item = CartItem.objects.create(
+                        user=user,
+                        variant=variant,
+                        product=variant.product,
+                        quantity=quantity,
+                        is_ordered=False
+                    )
+                    created = True
 
+        except IntegrityError as e:
+            # Handle unique constraint violation - try fetching again
+            try:
+                with transaction.atomic():
+                    cart_item = CartItem.objects.select_for_update().get(
+                        user=user,
+                        variant=variant,
+                        is_ordered=False
+                    )
+                    new_quantity = cart_item.quantity + quantity
+                    if new_quantity > variant.quantity:
+                        return Response({
+                            "error": f"Only {variant.quantity} items available. You already have {cart_item.quantity} in your cart.",
+                            "available_quantity": variant.quantity,
+                            "current_quantity": cart_item.quantity
+                        }, status=400)
+                    cart_item.quantity = new_quantity
+                    cart_item.save()
+                    created = False
+            except CartItem.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "error": "Failed to add item to cart",
+                    "details": str(e)
+                }, status=500)
         except Exception as e:
             import traceback
             print("Error in CartListView.post:", str(e))
@@ -20663,7 +20698,7 @@ class CartListView(APIView):
             "cart_item": serializer.data,
             "created": created
         }, status=201 if created else 200)
-        
+
 class CartBulkUpdateView(APIView):
     """
     Handle bulk updates to cart (update multiple quantities at once)
