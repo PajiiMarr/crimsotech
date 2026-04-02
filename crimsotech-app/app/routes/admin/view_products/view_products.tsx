@@ -287,6 +287,8 @@ export async function loader({
     user = await fetchUserRole({ request, context });
   }
 
+  console.log("User in loader:", user);
+
   await requireRole(request, context, ["isAdmin"]);
 
   // Get session for authentication
@@ -425,6 +427,9 @@ export default function ViewProduct({
   loaderData: LoaderData;
 }) {
   const { user, product: initialProduct, error: initialError } = loaderData;
+
+  console.log("User in component:", user);
+  console.log("User ID:", user?.id || user?.user_id);
 
   // State for dynamic product data
   const [product, setProduct] = useState<ProductData | null>(initialProduct);
@@ -599,11 +604,32 @@ export default function ViewProduct({
 
     setProcessing(true);
     try {
+      // Get the user ID - check multiple possible properties
+      const adminUserId = user?.id || user?.user_id;
+      
+      if (!adminUserId) {
+        console.error("No user ID found in user object:", user);
+        toast({
+          title: "Error",
+          description: "Unable to identify admin user. Please log out and log back in.",
+          variant: "destructive",
+        });
+        setProcessing(false);
+        setShowDialog(false);
+        return;
+      }
+
       const requestData: any = {
         product_id: product.id,
         action_type: activeAction,
-        user_id: user.user_id,
+        user_id: adminUserId,
       };
+
+      console.log("=== SENDING REQUEST ===");
+      console.log("URL:", "/admin-products/update_product_status/");
+      console.log("Request Data:", requestData);
+      console.log("User object:", user);
+      console.log("User ID being sent:", adminUserId);
 
       // Add reason for applicable actions
       if (reason.trim()) {
@@ -619,6 +645,10 @@ export default function ViewProduct({
         "/admin-products/update_product_status/",
         requestData,
       );
+      
+      console.log("=== RESPONSE RECEIVED ===");
+      console.log("Response status:", response.status);
+      console.log("Response data:", response.data);
 
       toast({
         title: "Success",
@@ -629,11 +659,17 @@ export default function ViewProduct({
       // Handle successful action (fetch updated data)
       await handleSuccessfulAction();
     } catch (error: any) {
-      console.error("Error executing action:", error);
+      console.error("=== ERROR DETAILS ===");
+      console.error("Full error object:", error);
+      console.error("Error response:", error.response);
+      console.error("Error status:", error.response?.status);
+      console.error("Error data:", error.response?.data);
+      console.error("Error message:", error.message);
 
       const errorMessage =
         error.response?.data?.error ||
         error.response?.data?.detail ||
+        error.message ||
         "Failed to complete action. Please try again.";
 
       toast({
@@ -1294,6 +1330,175 @@ export default function ViewProduct({
 
                   <Separator className="my-4" />
 
+                  {/* Selected Variant Details Card */}
+                  {selectedVariant && (
+                    <>
+                      <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 mb-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="font-semibold text-primary flex items-center gap-2">
+                            <Layers className="w-4 h-4" />
+                            Selected Variant Details
+                          </h3>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSelectedVariant(null)}
+                            className="h-8 px-2 text-muted-foreground"
+                          >
+                            Clear
+                          </Button>
+                        </div>
+                        {(() => {
+                          const variant = allVariants.find(v => v.id === selectedVariant);
+                          if (!variant) return null;
+                          return (
+                            <div className="space-y-3">
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Title</p>
+                                  <p className="font-medium text-sm">{variant.title}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-muted-foreground">SKU</p>
+                                  <p className="font-mono text-sm">{variant.sku_code || "N/A"}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Price</p>
+                                  <p className="font-bold text-primary">
+                                    ₱{parseFloat(variant.price || "0").toLocaleString()}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Stock</p>
+                                  <p className={`font-medium ${variant.quantity === 0 ? "text-red-600" : variant.quantity < 5 ? "text-yellow-600" : "text-green-600"}`}>
+                                    {variant.quantity} units
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Status</p>
+                                  <Badge variant={variant.is_active ? "default" : "secondary"}>
+                                    {variant.is_active ? "Active" : "Inactive"}
+                                  </Badge>
+                                </div>
+                                {variant.compare_price && (
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Compare Price</p>
+                                    <p className="text-sm line-through text-muted-foreground">
+                                      ₱{parseFloat(variant.compare_price).toLocaleString()}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Additional Variant Info */}
+                              <div className="flex flex-wrap gap-2 pt-2 border-t">
+                                {variant.weight && (
+                                  <Tooltip>
+                                    <TooltipTrigger>
+                                      <Badge variant="outline" className="gap-1">
+                                        <Scale className="w-3 h-3" />
+                                        {variant.weight} {variant.weight_unit}
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Weight</TooltipContent>
+                                  </Tooltip>
+                                )}
+                                {variant.usage_period && (
+                                  <Tooltip>
+                                    <TooltipTrigger>
+                                      <Badge variant="outline" className="gap-1">
+                                        <Clock className="w-3 h-3" />
+                                        Used: {variant.usage_period} {variant.usage_unit}
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Usage Period</TooltipContent>
+                                  </Tooltip>
+                                )}
+                                {variant.original_price && (
+                                  <Tooltip>
+                                    <TooltipTrigger>
+                                      <Badge variant="outline" className="gap-1 bg-blue-50">
+                                        <Tag className="w-3 h-3" />
+                                        Original: ₱{parseFloat(variant.original_price).toLocaleString()}
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Original Price</TooltipContent>
+                                  </Tooltip>
+                                )}
+                                {variant.depreciation_rate && (
+                                  <Tooltip>
+                                    <TooltipTrigger>
+                                      <Badge variant="outline" className="gap-1">
+                                        <TrendingUp className="w-3 h-3" />
+                                        {variant.depreciation_rate}% depreciation/yr
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Depreciation Rate</TooltipContent>
+                                  </Tooltip>
+                                )}
+                                {variant.allow_swap && (
+                                  <Badge variant="outline" className="bg-purple-50">
+                                    Swap available ({variant.swap_type})
+                                  </Badge>
+                                )}
+                                {variant.is_refundable && (
+                                  <Badge variant="outline" className="bg-green-50">
+                                    Refundable ({variant.refund_days} days)
+                                  </Badge>
+                                )}
+                              </div>
+
+                              {/* Proof Image */}
+                              {variant.proof_image && (
+                                <div className="flex items-center gap-2 pt-2 border-t">
+                                  <Shield className="w-4 h-4 text-green-600" />
+                                  <span className="text-sm text-muted-foreground">Proof Image:</span>
+                                  <img
+                                    src={variant.proof_image}
+                                    alt="Proof"
+                                    className="w-10 h-10 object-cover rounded cursor-pointer border border-gray-200"
+                                    onClick={() => setSelectedProofImage(variant.proof_image)}
+                                  />
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 px-2"
+                                    onClick={() => setSelectedProofImage(variant.proof_image)}
+                                  >
+                                    View Full
+                                  </Button>
+                                </div>
+                              )}
+
+                              {/* Variant Image */}
+                              {variant.image && variant.image !== variant.proof_image && (
+                                <div className="flex items-center gap-2 pt-2 border-t">
+                                  <ImageIcon className="w-4 h-4 text-blue-600" />
+                                  <span className="text-sm text-muted-foreground">Variant Image:</span>
+                                  <img
+                                    src={variant.image}
+                                    alt={variant.title}
+                                    className="w-10 h-10 object-cover rounded cursor-pointer border border-gray-200"
+                                    onClick={() => setSelectedImage(variant.image)}
+                                  />
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 px-2"
+                                    onClick={() => setSelectedImage(variant.image)}
+                                  >
+                                    View Full
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                      <Separator />
+                    </>
+                  )}
+
                   {/* Scrollable Content Area */}
                   <div className="flex-1 overflow-y-auto min-h-0 pr-2 space-y-4">
                     {/* Key Stats Grid */}
@@ -1852,7 +2057,6 @@ export default function ViewProduct({
                 <div className="p-4 sm:p-6">
                   {product.shop ? (
                     <>
-                      // AFTER
                       <div className="flex items-center gap-3 mb-4">
                         <Link
                           to={`/admin/shops/${product.shop.id}`}

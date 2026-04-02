@@ -66,8 +66,10 @@ export async function action({ request }: Route.ActionArgs) {
     // IMPORTANT: Set the userId
     session.set("userId", response.data.user_id);
     
-    // IMPORTANT: Set the complete userData object (this is what root.tsx expects)
+    // IMPORTANT: Set the complete userData object with ID included
     session.set("userData", {
+      id: response.data.user_id,           // Add this
+      user_id: response.data.user_id,      // Add this for compatibility
       username: response.data.username,
       email: response.data.email,
       isAdmin: response.data.is_admin,

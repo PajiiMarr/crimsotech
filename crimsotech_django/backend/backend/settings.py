@@ -10,7 +10,7 @@ import redis
 import base64
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().resolve().parent.parent
 
 # ENV Setup
 env = environ.Env(
@@ -28,23 +28,9 @@ SECRET_KEY = env.str('SECRET_KEY', default='unsafe-dev-key')
 
 DEBUG = env.bool('DEBUG', default=False)
 
-ALLOWED_HOSTS = [
-    "localhost",
-    "127.0.0.1",
-    "0.0.0.0",
-    "192.168.254.105",
-    ".ngrok-free.app",
-    "10.207.168.15",
-    "10.55.244.79",
-    "192.168.1.21",
-    ".ondigitalocean.app",
-    '192.168.254.101',
-    '192.168.254.102',
-    '192.168.254.104',
-    '192.168.254.108',
-    '192.168.254.121',
-    'crimsotechreactnative',
-]
+# Parse ALLOWED_HOSTS from environment variable
+# Can be set as comma-separated string: "localhost,127.0.0.1,0.0.0.0,192.168.254.102,.ondigitalocean.app"
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS')
 
 # Application definition
 INSTALLED_APPS = [
@@ -79,54 +65,83 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny']
 }
 
-CORS_ORIGIN_ALLOW_ALL = False
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:3000", 
-    "http://localhost:8000",
-    "https://crimsotech.vercel.app",
-]
+# CORS Settings - Allow all origins for development (temporary fix)
+# Remove this line in production and use specific origins
+CORS_ALLOW_ALL_ORIGINS = True  # Temporarily allow all origins for development
+
+# Or use specific origins (uncomment below and comment above for production)
+# CORS_ALLOW_ALL_ORIGINS = False
+# CORS_ALLOWED_ORIGINS = [
+#     "http://localhost:3000",
+#     "http://localhost:5173",
+#     "http://localhost:5174",
+#     "http://127.0.0.1:5173",
+#     "http://127.0.0.1:5174",
+#     "http://127.0.0.1:3000", 
+#     "http://localhost:8000",
+#     "https://crimsotech.vercel.app",
+# ]
 
 # WebSocket CORS settings
 CORS_ALLOWED_ORIGINS_WEBSOCKETS = [
     "ws://localhost:3000",
     "ws://localhost:5173",
+    "ws://localhost:5174",
     "ws://127.0.0.1:5173",
+    "ws://127.0.0.1:5174",
     "wss://crimsotech.vercel.app",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
 
-# Allow the frontend to send the custom X-User-Id header in preflight
+# Allow all headers for development
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-user-id',
     'X-User-Id',
     'x-shop-id',
+    'content-type',
+    'accept',
+    'origin',
+    'authorization',
+    'x-csrftoken',
+    'x-requested-with',
 ]
 
-# ✅ Add CSRF trusted origins including custom scheme
+# Allow all methods
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+# Preflight max age
+CORS_PREFLIGHT_MAX_AGE = 86400
+
+# CSRF trusted origins
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
     'http://localhost:5173',
+    'http://localhost:5174',
     'http://127.0.0.1:5173',
+    'http://127.0.0.1:5174',
     'http://127.0.0.1:3000',
     'http://localhost:8000',
     'https://crimsotech.vercel.app',
-    'crimsotechreactnative://',  # ✅ Add custom scheme for mobile
-    'crimsotechreactnative://localhost',  # ✅ Alternative format
+    'crimsotechreactnative://',
+    'crimsotechreactnative://localhost',
 ]
 
 # ✅ Override the default redirect class to allow custom schemes
-# This is the key fix for allowing redirects to custom URL schemes
 from django.http.response import HttpResponseRedirectBase
 
 class CustomHttpResponseRedirect(HttpResponseRedirectBase):
     """
     Custom redirect class that allows custom URL schemes like crimsotechreactnative://
     """
-    allowed_schemes = ['http', 'https', 'crimsotechreactnative', 'crimsotechreactnative', 'crimsotech']
+    allowed_schemes = ['http', 'https', 'crimsotechreactnative', 'crimsotech']
 
 # ✅ Replace the default redirect class with our custom one
 from django.http import HttpResponseRedirect

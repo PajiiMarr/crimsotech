@@ -3413,9 +3413,9 @@ class AdminProduct(viewsets.ViewSet):
         """
         Update product status with admin actions and send notifications
         """
-        print(request.body)
         try:
-            data = json.loads(request.body)
+            # Use request.data directly instead of json.loads
+            data = request.data
             product_id = data.get('product_id')
             action_type = data.get('action_type')
             user_id = data.get('user_id')
@@ -3467,9 +3467,9 @@ class AdminProduct(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-        except json.JSONDecodeError:
+        except Exception as e:
             return Response(
-                {"error": "Invalid JSON data"},
+                {"error": f"Invalid request data: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -3535,7 +3535,7 @@ class AdminProduct(viewsets.ViewSet):
                         "message": "Product published successfully",
                         "upload_status": product.upload_status,
                         "status": product.status,
-                        "updated_at": product.updated_at
+                        "updated_at": product.updated_at.isoformat()
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'deleteDraft':
@@ -3588,11 +3588,11 @@ class AdminProduct(viewsets.ViewSet):
                     return Response({
                         "message": "Product unpublished successfully",
                         "upload_status": product.upload_status,
-                        "updated_at": product.updated_at
+                        "updated_at": product.updated_at.isoformat()
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'archive':
-                    if product.upload_status != 'published' and product.upload_status != 'draft':
+                    if product.upload_status not in ['published', 'draft']:
                         return Response(
                             {"error": f"Only published or draft products can be archived. Current upload_status: {product.upload_status}"},
                             status=status.HTTP_400_BAD_REQUEST
@@ -3619,7 +3619,7 @@ class AdminProduct(viewsets.ViewSet):
                     return Response({
                         "message": "Product archived successfully",
                         "upload_status": product.upload_status,
-                        "updated_at": product.updated_at
+                        "updated_at": product.updated_at.isoformat()
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'restore':
@@ -3650,13 +3650,19 @@ class AdminProduct(viewsets.ViewSet):
                     return Response({
                         "message": "Product restored successfully",
                         "upload_status": product.upload_status,
-                        "updated_at": product.updated_at
+                        "updated_at": product.updated_at.isoformat()
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'remove':
                     if product.is_removed:
                         return Response(
                             {"error": "Product is already removed"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    if not reason:
+                        return Response(
+                            {"error": "Reason for removal is required"},
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
@@ -3684,8 +3690,8 @@ class AdminProduct(viewsets.ViewSet):
                         "message": "Product removed successfully",
                         "is_removed": product.is_removed,
                         "removal_reason": product.removal_reason,
-                        "removed_at": product.removed_at,
-                        "updated_at": product.updated_at
+                        "removed_at": product.removed_at.isoformat(),
+                        "updated_at": product.updated_at.isoformat()
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'restoreRemoved':
@@ -3718,7 +3724,7 @@ class AdminProduct(viewsets.ViewSet):
                     return Response({
                         "message": "Product restored successfully",
                         "is_removed": product.is_removed,
-                        "updated_at": product.updated_at
+                        "updated_at": product.updated_at.isoformat()
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'suspend':
@@ -3740,13 +3746,12 @@ class AdminProduct(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    previous_status = product.status
                     product.status = 'Suspended'
                     product.save()
                     
                     Logs.objects.create(
                         user=admin_user,
-                        action=f"Suspended product: {product.name}. Previous status: {previous_status}. Reason: {reason}"
+                        action=f"Suspended product: {product.name}. Reason: {reason}"
                     )
                     
                     if product.customer and product.customer.customer:
@@ -3763,7 +3768,7 @@ class AdminProduct(viewsets.ViewSet):
                         "message": "Product suspended successfully",
                         "status": product.status,
                         "suspension_days": suspension_days,
-                        "updated_at": product.updated_at
+                        "updated_at": product.updated_at.isoformat()
                     }, status=status.HTTP_200_OK)
                     
                 elif action_type == 'unsuspend':
@@ -3794,7 +3799,7 @@ class AdminProduct(viewsets.ViewSet):
                     return Response({
                         "message": "Product unsuspended successfully",
                         "status": product.status,
-                        "updated_at": product.updated_at
+                        "updated_at": product.updated_at.isoformat()
                     }, status=status.HTTP_200_OK)
                 
                 else:
@@ -3817,7 +3822,7 @@ class AdminProduct(viewsets.ViewSet):
             traceback.print_exc()
             print(f"Error updating product status: {str(e)}")
             return Response(
-                {"error": "An error occurred while updating product status"},
+                {"error": f"An error occurred while updating product status: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -3920,7 +3925,6 @@ class AdminProduct(viewsets.ViewSet):
                     'shop_name': category.shop.name if category.shop else None,
                     'user_id': str(category.user.id) if category.user else None,
                     'username': category.user.username if category.user else None,
-                    'created_at': category.created_at.isoformat() if hasattr(category, 'created_at') else None,
                     'product_count': category.products.count() if hasattr(category, 'products') else 0,
                     'admin_product_count': category.admin_products.count() if hasattr(category, 'admin_products') else 0
                 }
@@ -3942,7 +3946,7 @@ class AdminProduct(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving categories: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+         
 class AdminShops(viewsets.ViewSet):
     """
     ViewSet for admin shop management with comprehensive endpoints
