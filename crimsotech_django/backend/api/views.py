@@ -15646,38 +15646,43 @@ class SellerDashboard(viewsets.ViewSet):
             )
 
     def _get_store_management_counts(self, shop):
-        """Get counts for Store Management grid items"""
+        """Get counts for Store Management grid items - FILTERED BY SPECIFIC SHOP"""
         try:
+            # Only count products for this specific shop
             product_count = Product.objects.filter(
                 shop=shop,
                 is_removed=False
             ).count()
 
+            # Only count orders for this specific shop
             orders_count = Order.objects.filter(
-                shipping_address__user__customer__owned_shops=shop
-            ).exclude(
-                status__in=['cancelled', 'refunded']
-            ).count()
+                checkout__cart_item__product__shop=shop,
+                status__in=['pending', 'processing', 'shipped', 'delivered']
+            ).distinct().count()
 
+            # Only count gifts for this specific shop
             gifts_count = AppliedGift.objects.filter(
                 shop_id=shop,
                 is_active=True
             ).count()
 
+            # Only count return addresses for this specific shop
             address_count = ReturnAddress.objects.filter(
                 shop=shop
             ).count()
 
+            # Only count shop vouchers for this specific shop
             shop_voucher_count = Voucher.objects.filter(
                 shop=shop,
                 is_active=True,
-                discount_type__icontains='shop'
+                voucher_type='shop'
             ).count()
 
+            # Only count product vouchers for this specific shop
             product_voucher_count = Voucher.objects.filter(
                 shop=shop,
                 is_active=True,
-                discount_type__icontains='product'
+                voucher_type='product'
             ).count()
 
             return {
@@ -15716,14 +15721,13 @@ class SellerDashboard(viewsets.ViewSet):
             previous_start_date = start_date - timedelta(days=365)
             previous_end_date = end_date - timedelta(days=365)
         else:
-            # For custom ranges, use same length as current period
             previous_start_date = start_date - timedelta(days=period_days)
             previous_end_date = end_date - timedelta(days=period_days)
         
         return previous_start_date, previous_end_date
     
     def _get_summary_data(self, shop, start_date, end_date, previous_start_date, previous_end_date):
-        """Get summary statistics for the dashboard cards"""
+        """Get summary statistics for the dashboard cards - FILTERED BY SPECIFIC SHOP"""
         
         # Convert dates to datetime with time for filtering
         start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
@@ -15731,13 +15735,13 @@ class SellerDashboard(viewsets.ViewSet):
         prev_start_datetime = timezone.make_aware(datetime.combine(previous_start_date, time.min))
         prev_end_datetime = timezone.make_aware(datetime.combine(previous_end_date, time.max))
         
-        # Current period data
+        # Current period data - only for this specific shop
         current_period_orders = Order.objects.filter(
-            shipping_address__user__customer__owned_shops=shop,
+            checkout__cart_item__product__shop=shop,
             created_at__range=[start_datetime, end_datetime]
         ).exclude(
             status__in=['cancelled', 'refunded']
-        )
+        ).distinct()
         
         current_period_sales = current_period_orders.filter(
             status='delivered'
@@ -15745,17 +15749,16 @@ class SellerDashboard(viewsets.ViewSet):
             total_sales=Sum('total_amount')
         )['total_sales'] or Decimal('0.00')
         
-        current_period_earnings = current_period_sales  # Since no delivery_fee field
-        
+        current_period_earnings = current_period_sales
         current_period_order_count = current_period_orders.count()
         
-        # Previous period data for comparison
+        # Previous period data for comparison - only for this specific shop
         previous_period_orders = Order.objects.filter(
-            shipping_address__user__customer__owned_shops=shop,
+            checkout__cart_item__product__shop=shop,
             created_at__range=[prev_start_datetime, prev_end_datetime]
         ).exclude(
             status__in=['cancelled', 'refunded']
-        )
+        ).distinct()
         
         previous_period_sales = previous_period_orders.filter(
             status='delivered'
@@ -15764,7 +15767,6 @@ class SellerDashboard(viewsets.ViewSet):
         )['total_sales'] or Decimal('0.00')
         
         previous_period_earnings = previous_period_sales
-        
         previous_period_order_count = previous_period_orders.count()
         
         # Calculate percentage changes
@@ -15780,7 +15782,7 @@ class SellerDashboard(viewsets.ViewSet):
         if previous_period_order_count > 0:
             orders_change = ((current_period_order_count - previous_period_order_count) / previous_period_order_count) * 100
         
-        # FIXED: Low stock variants count - Using correct field names
+        # Low stock variants count - only for this specific shop
         low_stock_variants = Variants.objects.filter(
             product__shop=shop,
             product__upload_status='published',
@@ -15793,30 +15795,26 @@ class SellerDashboard(viewsets.ViewSet):
         )
         
         low_stock_count = low_stock_variants.count()
-        
-        # Previous period low stock - Estimate based on current products
-        # This is an approximation since we don't track historical stock levels
-        previous_low_stock_count = low_stock_count  # Simplified for now
-        
+        previous_low_stock_count = low_stock_count
         low_stock_change = low_stock_count - previous_low_stock_count
         
-        # Refund requests count
+        # Refund requests count - only for this specific shop
         refund_requests = Refund.objects.filter(
-            order_id__shipping_address__user__customer__owned_shops=shop,
+            order_id__checkout__cart_item__product__shop=shop,
             requested_at__range=[start_datetime, end_datetime],
             status__in=['pending', 'negotiation', 'dispute']
-        ).count()
+        ).distinct().count()
         
-        # Previous period refunds
+        # Previous period refunds - only for this specific shop
         previous_refunds = Refund.objects.filter(
-            order_id__shipping_address__user__customer__owned_shops=shop,
+            order_id__checkout__cart_item__product__shop=shop,
             requested_at__range=[prev_start_datetime, prev_end_datetime],
             status__in=['pending', 'negotiation', 'dispute']
-        ).count()
+        ).distinct().count()
         
         refund_change = refund_requests - previous_refunds
         
-        # Draft products count
+        # Draft products count - only for this specific shop
         draft_count = Product.objects.filter(
             shop=shop,
             upload_status='draft',
@@ -15840,17 +15838,17 @@ class SellerDashboard(viewsets.ViewSet):
         }
     
     def _get_latest_orders(self, shop, start_date, end_date, limit=5):
-        """Get latest 5 orders for the shop"""
+        """Get latest 5 orders for the shop - FILTERED BY SPECIFIC SHOP"""
         try:
             start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
             end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
             
             orders = Order.objects.filter(
-                shipping_address__user__customer__owned_shops=shop,
+                checkout__cart_item__product__shop=shop,
                 created_at__range=[start_datetime, end_datetime]
             ).select_related(
                 'shipping_address__user'
-            ).order_by('-created_at')[:limit]
+            ).distinct().order_by('-created_at')[:limit]
             
             return [
                 {
@@ -15869,9 +15867,8 @@ class SellerDashboard(viewsets.ViewSet):
             return []
     
     def _get_low_stock_data(self, shop, limit=5):
-        """Get low stock variants"""
+        """Get low stock variants - FILTERED BY SPECIFIC SHOP"""
         try:
-            # FIXED: Query variants directly with correct field names
             low_stock_variants = Variants.objects.filter(
                 product__shop=shop,
                 product__upload_status='published',
@@ -15901,29 +15898,29 @@ class SellerDashboard(viewsets.ViewSet):
             return []
     
     def _get_refund_data(self, shop, start_date, end_date, limit=3):
-        """Get refund and dispute data"""
+        """Get refund and dispute data - FILTERED BY SPECIFIC SHOP"""
         try:
             start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
             end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
             
             refunds = Refund.objects.filter(
-                order_id__shipping_address__user__customer__owned_shops=shop,
+                order_id__checkout__cart_item__product__shop=shop,
                 requested_at__range=[start_datetime, end_datetime]
-            ).select_related('order_id').order_by('-requested_at')[:limit]
+            ).select_related('order_id').distinct().order_by('-requested_at')[:limit]
             
             pending_count = Refund.objects.filter(
-                order_id__shipping_address__user__customer__owned_shops=shop,
+                order_id__checkout__cart_item__product__shop=shop,
                 status='pending'
-            ).count()
+            ).distinct().count()
             
             disputes_count = Refund.objects.filter(
-                order_id__shipping_address__user__customer__owned_shops=shop,
+                order_id__checkout__cart_item__product__shop=shop,
                 status='dispute'
-            ).count()
+            ).distinct().count()
             
             total_count = Refund.objects.filter(
-                order_id__shipping_address__user__customer__owned_shops=shop,
-            ).count()
+                order_id__checkout__cart_item__product__shop=shop,
+            ).distinct().count()
             
             latest_refunds = [
                 {
@@ -15954,31 +15951,31 @@ class SellerDashboard(viewsets.ViewSet):
             }
     
     def _get_shop_performance_data(self, shop, start_date, end_date):
-        """Get shop performance metrics"""
+        """Get shop performance metrics - FILTERED BY SPECIFIC SHOP"""
         try:
             start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
             end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
             
-            # FIXED: Average rating - using 'average_rating' field, not 'rating'
+            # Only for this specific shop
             reviews = Review.objects.filter(shop=shop)
             average_rating = reviews.aggregate(avg_rating=Avg('average_rating'))['avg_rating'] or 0
             
-            # Recent reviews (last 30 days)
+            # Recent reviews (last 30 days) - only for this shop
             recent_reviews = Review.objects.filter(
                 shop=shop,
                 created_at__range=[start_datetime, end_datetime]
             ).count()
             
-            # Total followers
+            # Total followers - only for this shop
             total_followers = ShopFollow.objects.filter(shop=shop).count()
             
-            # New followers (last 30 days)
+            # New followers - only for this shop
             new_followers = ShopFollow.objects.filter(
                 shop=shop,
                 followed_at__range=[start_datetime, end_datetime]
             ).count()
             
-            # Product counts
+            # Product counts - only for this shop
             total_products = Product.objects.filter(shop=shop, is_removed=False).count()
             active_products = Product.objects.filter(
                 shop=shop,
@@ -16015,9 +16012,9 @@ class SellerDashboard(viewsets.ViewSet):
             }
     
     def _get_report_data(self, shop):
-        """Get report and notification data"""
+        """Get report and notification data - FILTERED BY SPECIFIC SHOP"""
         try:
-            # Active reports against shop
+            # Active reports against this specific shop
             active_reports = Report.objects.filter(
                 reported_shop=shop,
                 status__in=['pending', 'under_review']
@@ -16087,7 +16084,7 @@ class SellerDashboard(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def get_products_low_stock(self, request):
-        """Get all low stock products for the shop"""
+        """Get all low stock products for the shop - FILTERED BY SPECIFIC SHOP"""
         try:
             shop_id = request.query_params.get('shop_id')
             
@@ -16097,7 +16094,6 @@ class SellerDashboard(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # FIXED: Query variants directly
             low_stock_variants = Variants.objects.filter(
                 product__shop_id=shop_id,
                 product__upload_status='published',
@@ -16139,7 +16135,7 @@ class SellerDashboard(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def get_recent_reviews(self, request):
-        """Get recent reviews for the shop"""
+        """Get recent reviews for the shop - FILTERED BY SPECIFIC SHOP"""
         try:
             shop_id = request.query_params.get('shop_id')
             limit = int(request.query_params.get('limit', 10))
@@ -16182,10 +16178,10 @@ class SellerDashboard(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def get_sales_chart_data(self, request):
-        """Get sales data for charts (daily/weekly/monthly)"""
+        """Get sales data for charts (daily/weekly/monthly) - FILTERED BY SPECIFIC SHOP"""
         try:
             shop_id = request.query_params.get('shop_id')
-            period = request.query_params.get('period', 'monthly')  # daily, weekly, monthly
+            period = request.query_params.get('period', 'monthly')
             
             if not shop_id:
                 return Response(
@@ -16196,28 +16192,58 @@ class SellerDashboard(viewsets.ViewSet):
             end_date = timezone.now().date()
             
             if period == 'daily':
-                start_date = end_date - timedelta(days=7)
+                start_date = end_date - timedelta(days=30)
                 date_format = '%Y-%m-%d'
-                date_trunc = 'day'
             elif period == 'weekly':
                 start_date = end_date - timedelta(weeks=12)
                 date_format = '%Y-W%W'
-                date_trunc = 'week'
-            else:  # monthly
+            else:
                 start_date = end_date - timedelta(days=365)
                 date_format = '%Y-%m'
-                date_trunc = 'month'
             
-            # This is a simplified version - in production you'd use database date truncation
-            # and aggregation. For now, we'll return sample data structure
+            start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
+            end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
+            
+            # Get orders for this specific shop
+            orders = Order.objects.filter(
+                checkout__cart_item__product__shop_id=shop_id,
+                created_at__range=[start_datetime, end_datetime],
+                status='delivered'
+            ).distinct()
+            
+            # Group by date
+            sales_by_date = {}
+            for order in orders:
+                date_key = order.created_at.strftime(date_format)
+                sales_by_date[date_key] = sales_by_date.get(date_key, 0) + float(order.total_amount)
+            
+            # Generate date range and build response
+            data = []
+            current_date = start_date
+            while current_date <= end_date:
+                if period == 'daily':
+                    date_key = current_date.strftime(date_format)
+                    current_date += timedelta(days=1)
+                elif period == 'weekly':
+                    date_key = current_date.strftime(date_format)
+                    current_date += timedelta(weeks=1)
+                else:
+                    date_key = current_date.strftime(date_format)
+                    # Move to next month
+                    if current_date.month == 12:
+                        current_date = current_date.replace(year=current_date.year + 1, month=1)
+                    else:
+                        current_date = current_date.replace(month=current_date.month + 1)
+                
+                data.append({
+                    'date': date_key,
+                    'sales': sales_by_date.get(date_key, 0)
+                })
             
             return Response({
                 'success': True,
                 'period': period,
-                'data': [
-                    {'date': (end_date - timedelta(days=i)).strftime(date_format), 'sales': 0}
-                    for i in range(7, 0, -1)
-                ],
+                'data': data,
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -16227,7 +16253,7 @@ class SellerDashboard(viewsets.ViewSet):
                 {'error': str(e), 'success': False},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+            
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
