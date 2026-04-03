@@ -50,7 +50,6 @@ export default function CreateGift() {
 
   const fetchInitialData = async () => {
     try {
-      // Fetch shop details
       if (shopId) {
         try {
           const shopResponse = await AxiosInstance.get('/shop-add-product/get_shop/', {
@@ -64,7 +63,6 @@ export default function CreateGift() {
         }
       }
 
-      // Fetch global categories
       try {
         const categoriesResponse = await AxiosInstance.get('/seller-products/global-categories/');
         if (categoriesResponse.data.success) {
@@ -74,7 +72,6 @@ export default function CreateGift() {
         console.error('Failed to fetch categories:', error);
       }
 
-      // Fetch model classes
       try {
         const classesResponse = await AxiosInstance.get('/classes/');
         if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
@@ -123,7 +120,6 @@ export default function CreateGift() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Back Button */}
         <TouchableOpacity 
           style={styles.backButton}
           onPress={() => router.back()}
@@ -134,7 +130,6 @@ export default function CreateGift() {
 
         <Text style={styles.title}>Create New Gift</Text>
 
-        {/* Form Container */}
         <View style={styles.formContainer}>
           <CreateGiftForm 
             selectedShop={selectedShop}

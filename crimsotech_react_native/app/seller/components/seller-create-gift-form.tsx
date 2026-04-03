@@ -1,4 +1,4 @@
-// app/seller/components/CreateGiftForm.tsx
+// app/seller/components/seller-create-gift-form.tsx
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -53,13 +53,21 @@ interface MediaPreview {
   preview: string;
   type: "image" | "video";
 }
-interface Variant {
+interface GiftVariant {
   id: string;
   title: string;
   quantity: number | "";
   sku_code?: string;
   image?: any | null;
   imagePreview?: string;
+  proofImage?: any | null;
+  proofImagePreview?: string;
+  length?: number | "";
+  width?: number | "";
+  height?: number | "";
+  dimension_unit?: string;
+  weight?: number | "";
+  weight_unit?: "g" | "kg" | "lb" | "oz";
   critical_trigger?: number | "";
   is_active?: boolean;
 }
@@ -88,7 +96,7 @@ const generateId = () => {
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 
-// --- CONDITION SCALE (matches product form) ---
+// --- CONDITION SCALE ---
 const CONDITION_SCALE = {
   1: {
     label: "Poor - Heavy signs of use, may not function perfectly",
@@ -137,285 +145,32 @@ type ConditionValue = keyof typeof CONDITION_SCALE;
 const weightUnitOptions = ["g", "kg", "lb", "oz"];
 const dimensionUnitOptions = ["cm", "m", "in", "ft"];
 
-// --- DATE PICKER MODAL ---
-interface DatePickerModalProps {
-  visible: boolean;
-  selectedDate?: Date | null;
-  onSelect: (date: Date) => void;
-  onClose: () => void;
-}
+const normalizeText = (s: string) => {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(" ");
+};
 
-const MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
+const tokenSimilarity = (a: string, b: string) => {
+  const ta = new Set(normalizeText(a).split(" "));
+  const tb = new Set(normalizeText(b).split(" "));
+  if (ta.size === 0 || tb.size === 0) return 0;
+  const inter = [...ta].filter((x) => tb.has(x)).length;
+  const union = new Set([...ta, ...tb]).size;
+  return union === 0 ? 0 : inter / union;
+};
 
-function formatDate(date: Date): string {
-  return `${MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
-}
-
-function DatePickerModal({
-  visible,
-  selectedDate,
-  onSelect,
-  onClose,
-}: DatePickerModalProps) {
-  const today = new Date();
-  const [year, setYear] = useState(
-    selectedDate?.getFullYear() ?? today.getFullYear(),
-  );
-  const [month, setMonth] = useState(
-    selectedDate?.getMonth() ?? today.getMonth(),
-  );
-  const [day, setDay] = useState(selectedDate?.getDate() ?? today.getDate());
-
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const years = Array.from({ length: 30 }, (_, i) => today.getFullYear() - i);
-
-  const handleConfirm = () => {
-    const safeDay = Math.min(day, daysInMonth);
-    onSelect(new Date(year, month, safeDay));
-    onClose();
-  };
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <TouchableOpacity
-        style={dpStyles.overlay}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <View style={dpStyles.container}>
-          <View style={dpStyles.header}>
-            <Text style={dpStyles.title}>Purchase Date</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Ionicons name="close" size={24} color="#374151" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={dpStyles.pickerRow}>
-            <View style={dpStyles.pickerCol}>
-              <Text style={dpStyles.pickerLabel}>Month</Text>
-              <ScrollView
-                style={dpStyles.pickerScroll}
-                showsVerticalScrollIndicator={false}
-              >
-                {MONTHS.map((m, i) => (
-                  <TouchableOpacity
-                    key={m}
-                    style={[
-                      dpStyles.pickerItem,
-                      month === i && dpStyles.pickerItemActive,
-                    ]}
-                    onPress={() => setMonth(i)}
-                  >
-                    <Text
-                      style={[
-                        dpStyles.pickerItemText,
-                        month === i && dpStyles.pickerItemTextActive,
-                      ]}
-                    >
-                      {m}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-            <View style={dpStyles.pickerCol}>
-              <Text style={dpStyles.pickerLabel}>Day</Text>
-              <ScrollView
-                style={dpStyles.pickerScroll}
-                showsVerticalScrollIndicator={false}
-              >
-                {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(
-                  (d) => (
-                    <TouchableOpacity
-                      key={d}
-                      style={[
-                        dpStyles.pickerItem,
-                        day === d && dpStyles.pickerItemActive,
-                      ]}
-                      onPress={() => setDay(d)}
-                    >
-                      <Text
-                        style={[
-                          dpStyles.pickerItemText,
-                          day === d && dpStyles.pickerItemTextActive,
-                        ]}
-                      >
-                        {d}
-                      </Text>
-                    </TouchableOpacity>
-                  ),
-                )}
-              </ScrollView>
-            </View>
-            <View style={dpStyles.pickerCol}>
-              <Text style={dpStyles.pickerLabel}>Year</Text>
-              <ScrollView
-                style={dpStyles.pickerScroll}
-                showsVerticalScrollIndicator={false}
-              >
-                {years.map((y) => (
-                  <TouchableOpacity
-                    key={y}
-                    style={[
-                      dpStyles.pickerItem,
-                      year === y && dpStyles.pickerItemActive,
-                    ]}
-                    onPress={() => setYear(y)}
-                  >
-                    <Text
-                      style={[
-                        dpStyles.pickerItemText,
-                        year === y && dpStyles.pickerItemTextActive,
-                      ]}
-                    >
-                      {y}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          </View>
-
-          <TouchableOpacity
-            style={dpStyles.confirmButton}
-            onPress={handleConfirm}
-          >
-            <Text style={dpStyles.confirmButtonText}>Confirm Date</Text>
-          </TouchableOpacity>
-        </View>
-      </TouchableOpacity>
-    </Modal>
-  );
-}
-
-const dpStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
-  },
-  container: {
-    backgroundColor: "#FFFFFF",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  pickerRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 16,
-  },
-  pickerCol: {
-    flex: 1,
-  },
-  pickerLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#6B7280",
-    textAlign: "center",
-    marginBottom: 8,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  pickerScroll: {
-    maxHeight: 200,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 8,
-  },
-  pickerItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    alignItems: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  pickerItemActive: {
-    backgroundColor: "#FFF7ED",
-  },
-  pickerItemText: {
-    fontSize: 14,
-    color: "#374151",
-  },
-  pickerItemTextActive: {
-    color: "#EA580C",
-    fontWeight: "700",
-  },
-  confirmButton: {
-    backgroundColor: "#F97316",
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  confirmButtonText: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "600",
-  },
-});
-
-// --- DEPRECIATION INTERFACE ---
-interface Depreciation {
-  originalPrice: number | "";
-  usagePeriod: number | "";
-  usageUnit: "weeks" | "months" | "years";
-  depreciationRate: number | "";
-  calculatedPrice: number | "";
-  purchaseDate?: Date | null;
-}
-
-// Extended Variant with depreciation for gifts
-interface GiftVariant {
-  id: string;
-  title: string;
-  price: number | "";
-  quantity: number | "";
-  sku_code?: string;
-  image?: any | null;
-  imagePreview?: string;
-  proofImage?: any | null;
-  proofImagePreview?: string;
-  length?: number | "";
-  width?: number | "";
-  height?: number | "";
-  dimension_unit?: string;
-  weight?: number | "";
-  weight_unit?: "g" | "kg" | "lb" | "oz";
-  critical_trigger?: number | "";
-  is_active?: boolean;
-  refundable?: boolean;
-  depreciation: Depreciation;
-  attributes?: Record<string, string>;
-}
+const findBestCategoryMatch = (predictedName: string, globalCategories: Category[]) => {
+  const scores = globalCategories.map((gc) => ({
+    category: gc,
+    score: tokenSimilarity(predictedName, gc.name),
+  }));
+  scores.sort((a, b) => b.score - a.score);
+  return scores[0] || null;
+};
 
 export default function CreateGiftForm({
   selectedShop,
@@ -430,48 +185,29 @@ export default function CreateGiftForm({
   const [giftDescription, setGiftDescription] = useState("");
   const [giftCondition, setGiftCondition] = useState<ConditionValue | "">("");
   const [selectedCategoryName, setSelectedCategoryName] = useState<string>("");
-  const [giftRefundable, setGiftRefundable] = useState(false); // Gifts are not refundable by default
 
   // Media state
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
 
-  // Variants state with depreciation
+  // Variants state - NO PRICE FIELDS (gifts are free)
   const [variants, setVariants] = useState<GiftVariant[]>([
     {
       id: generateId(),
       title: "",
-      price: "",
       quantity: "",
       sku_code: "",
       weight_unit: "g",
       dimension_unit: "cm",
       is_active: true,
-      refundable: false,
-      depreciation: {
-        originalPrice: "",
-        usagePeriod: "",
-        usageUnit: "months",
-        depreciationRate: 10,
-        calculatedPrice: "",
-        purchaseDate: null,
-      },
     },
   ]);
 
   // UI state
   const [currentStep, setCurrentStep] = useState(1);
-  const [expandedVariants, setExpandedVariants] = useState<
-    Record<string, boolean>
-  >({});
-  const [expandedAdvanced, setExpandedAdvanced] = useState<
-    Record<string, boolean>
-  >({});
+  const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiResponseError, setApiResponseError] = useState<string | null>(null);
-  const [apiResponseMessage, setApiResponseMessage] = useState<string | null>(
-    null,
-  );
 
   // Modal state
   const [conditionModalVisible, setConditionModalVisible] = useState(false);
@@ -484,19 +220,10 @@ export default function CreateGiftForm({
     visible: boolean;
     variantId: string | null;
   }>({ visible: false, variantId: null });
-  const [usageUnitModalVisible, setUsageUnitModalVisible] = useState<{
-    visible: boolean;
-    variantId: string | null;
-  }>({ visible: false, variantId: null });
-  const [datePickerModal, setDatePickerModal] = useState<{
-    visible: boolean;
-    variantId: string | null;
-  }>({ visible: false, variantId: null });
 
   // Prediction state
   const [isPredicting, setIsPredicting] = useState(false);
-  const [predictionResult, setPredictionResult] =
-    useState<PredictionResult | null>(null);
+  const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
   const [predictionError, setPredictionError] = useState<string | null>(null);
   const predictionAbortController = useRef<AbortController | null>(null);
 
@@ -508,125 +235,6 @@ export default function CreateGiftForm({
       ),
     );
   }, [giftName]);
-
-  // --- DEPRECIATION CALCULATION ---
-  const calculateDepreciatedPrice = (
-    originalPrice: number,
-    usagePeriod: number,
-    usageUnit: string,
-    depreciationRate: number,
-  ): number => {
-    if (!originalPrice || !usagePeriod || !depreciationRate)
-      return originalPrice;
-    let years = usagePeriod;
-    if (usageUnit === "months") years = usagePeriod / 12;
-    else if (usageUnit === "weeks") years = usagePeriod / 52;
-    const rate = depreciationRate / 100;
-    const val = originalPrice * Math.pow(1 - rate, years);
-    return Math.max(0, Math.round(val * 100) / 100);
-  };
-
-  const calcAndUpdate = (
-    variantId: string,
-    updatedDep: Depreciation,
-  ): GiftVariant => {
-    const v = variants.find((x) => x.id === variantId)!;
-    if (
-      updatedDep.originalPrice &&
-      updatedDep.usagePeriod &&
-      updatedDep.depreciationRate
-    ) {
-      const cp = calculateDepreciatedPrice(
-        Number(updatedDep.originalPrice),
-        Number(updatedDep.usagePeriod),
-        updatedDep.usageUnit,
-        Number(updatedDep.depreciationRate),
-      );
-      updatedDep.calculatedPrice = cp;
-      return { ...v, depreciation: updatedDep, price: cp };
-    }
-    return { ...v, depreciation: updatedDep };
-  };
-
-  const handleDepreciationChange = (
-    variantId: string,
-    field: keyof Depreciation,
-    value: any,
-  ) => {
-    setVariants((prev) =>
-      prev.map((v) => {
-        if (v.id !== variantId) return v;
-        const updatedDep = { ...v.depreciation, [field]: value };
-        return calcAndUpdate(variantId, updatedDep);
-      }),
-    );
-  };
-
-  const handlePurchaseDateChange = (variantId: string, date: Date) => {
-    setVariants((prev) =>
-      prev.map((v) => {
-        if (v.id !== variantId) return v;
-        const unit = v.depreciation.usageUnit || "months";
-        const today = new Date();
-        let usagePeriod: number;
-        if (unit === "weeks")
-          usagePeriod = Math.floor(
-            (today.getTime() - date.getTime()) / (1000 * 60 * 60 * 24 * 7),
-          );
-        else if (unit === "years")
-          usagePeriod = today.getFullYear() - date.getFullYear();
-        else
-          usagePeriod =
-            (today.getFullYear() - date.getFullYear()) * 12 +
-            (today.getMonth() - date.getMonth());
-
-        const updatedDep = {
-          ...v.depreciation,
-          purchaseDate: date,
-          usagePeriod,
-        };
-        return calcAndUpdate(variantId, updatedDep);
-      }),
-    );
-  };
-
-  const handleDepreciationRateSlider = (variantId: string, rate: number) => {
-    setVariants((prev) =>
-      prev.map((v) => {
-        if (v.id !== variantId) return v;
-        const updatedDep = { ...v.depreciation, depreciationRate: rate };
-        return calcAndUpdate(variantId, updatedDep);
-      }),
-    );
-  };
-
-  // --- CATEGORY ---
-  const normalizeText = (s: string) => {
-    return s
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .split(/\s+/)
-      .filter(Boolean)
-      .join(" ");
-  };
-
-  const tokenSimilarity = (a: string, b: string) => {
-    const ta = new Set(normalizeText(a).split(" "));
-    const tb = new Set(normalizeText(b).split(" "));
-    if (ta.size === 0 || tb.size === 0) return 0;
-    const inter = [...ta].filter((x) => tb.has(x)).length;
-    const union = new Set([...ta, ...tb]).size;
-    return union === 0 ? 0 : inter / union;
-  };
-
-  const findBestCategoryMatch = (predictedName: string) => {
-    const scores = globalCategories.map((gc) => ({
-      category: gc,
-      score: tokenSimilarity(predictedName, gc.name),
-    }));
-    scores.sort((a, b) => b.score - a.score);
-    return scores[0] || null;
-  };
 
   // --- MEDIA ---
   const pickMedia = async () => {
@@ -766,8 +374,7 @@ export default function CreateGiftForm({
       setPredictionResult(mapped);
 
       if (mapped.predicted_category?.category_name && globalCategories) {
-        const predictedName =
-          mapped.predicted_category.category_name.toLowerCase();
+        const predictedName = mapped.predicted_category.category_name.toLowerCase();
         const found = globalCategories.find(
           (gc: any) => gc.name.toLowerCase() === predictedName,
         );
@@ -807,21 +414,11 @@ export default function CreateGiftForm({
       {
         id: generateId(),
         title: `Variant ${prev.length + 1}`,
-        price: "",
         quantity: "",
         sku_code: "",
         weight_unit: "g",
         dimension_unit: "cm",
         is_active: true,
-        refundable: false,
-        depreciation: {
-          originalPrice: "",
-          usagePeriod: "",
-          usageUnit: "months",
-          depreciationRate: 10,
-          calculatedPrice: "",
-          purchaseDate: null,
-        },
       },
     ]);
   };
@@ -873,8 +470,7 @@ export default function CreateGiftForm({
                 ...v,
                 image: {
                   uri: asset.uri,
-                  name:
-                    asset.uri.split("/").pop() || `variant_${variantId}.jpg`,
+                  name: asset.uri.split("/").pop() || `variant_${variantId}.jpg`,
                   type: "image/jpeg",
                 },
                 imagePreview: asset.uri,
@@ -923,10 +519,6 @@ export default function CreateGiftForm({
     setExpandedVariants((prev) => ({ ...prev, [variantId]: !prev[variantId] }));
   };
 
-  const toggleAdvancedExpand = (variantId: string) => {
-    setExpandedAdvanced((prev) => ({ ...prev, [variantId]: !prev[variantId] }));
-  };
-
   // --- VALIDATION & SUBMIT ---
   const validateForm = () => {
     if (!giftName.trim()) {
@@ -949,13 +541,6 @@ export default function CreateGiftForm({
       const v = variants[i];
       if (!v.title) {
         Alert.alert("Validation Error", `Variant ${i + 1} title is required`);
-        return false;
-      }
-      if (!v.price) {
-        Alert.alert(
-          "Validation Error",
-          `Variant ${i + 1}: fill in depreciation fields to auto-calculate price`,
-        );
         return false;
       }
       if (!v.quantity || Number(v.quantity) <= 0) {
@@ -989,8 +574,9 @@ export default function CreateGiftForm({
       formData.append("shop", selectedShop?.id ?? "");
       formData.append("status", "active");
       formData.append("customer_id", userId);
+      formData.append("is_gift", "true");
 
-      // Set price to 0 for gifts (free)
+      // Price is forced to 0 for gifts
       formData.append("price", "0");
       formData.append("is_refundable", "false");
       formData.append("refundable", "false");
@@ -1002,7 +588,7 @@ export default function CreateGiftForm({
           (gc) => gc.name.toLowerCase() === selectedCategoryName.toLowerCase(),
         );
         if (!match) {
-          const best = findBestCategoryMatch(selectedCategoryName);
+          const best = findBestCategoryMatch(selectedCategoryName, globalCategories);
           if (best && best.score >= 0.25) {
             match = best.category;
           }
@@ -1012,8 +598,7 @@ export default function CreateGiftForm({
           formData.append("category_admin_id", match.id);
         } else {
           const nameToSend =
-            selectedCategoryName &&
-            selectedCategoryName.toLowerCase() === "others"
+            selectedCategoryName && selectedCategoryName.toLowerCase() === "others"
               ? "others"
               : selectedCategoryName;
           formData.append("category_admin_name", nameToSend);
@@ -1031,43 +616,23 @@ export default function CreateGiftForm({
         }
       });
 
-      // Add variants payload with full fields
+      // Add variants payload - NO PRICE FIELDS
       const variantsPayload = variants.map((v) => ({
         id: v.id,
         title: v.title,
-        price: v.price,
+        price: 0, // Gifts are free
         quantity: v.quantity,
-        length:
-          v.length !== undefined && v.length !== "" ? Number(v.length) : null,
+        length: v.length !== undefined && v.length !== "" ? Number(v.length) : null,
         width: v.width !== undefined && v.width !== "" ? Number(v.width) : null,
-        height:
-          v.height !== undefined && v.height !== "" ? Number(v.height) : null,
+        height: v.height !== undefined && v.height !== "" ? Number(v.height) : null,
         dimension_unit: v.dimension_unit || "cm",
-        weight:
-          v.weight !== undefined && v.weight !== "" ? Number(v.weight) : null,
+        weight: v.weight !== undefined && v.weight !== "" ? Number(v.weight) : null,
         weight_unit: v.weight_unit || "g",
         sku_code: v.sku_code,
         critical_trigger: v.critical_trigger || null,
-        refundable: v.refundable ?? false,
-        is_refundable: v.refundable ?? false,
+        is_refundable: false,
         is_active: v.is_active ?? true,
-        original_price:
-          v.depreciation.originalPrice !== ""
-            ? Number(v.depreciation.originalPrice)
-            : null,
-        usage_period:
-          v.depreciation.usagePeriod !== ""
-            ? Number(v.depreciation.usagePeriod)
-            : null,
-        usage_unit: v.depreciation.usageUnit || "months",
-        depreciation_rate:
-          v.depreciation.depreciationRate !== ""
-            ? Number(v.depreciation.depreciationRate)
-            : null,
-        purchase_date: v.depreciation.purchaseDate
-          ? v.depreciation.purchaseDate.toISOString()
-          : null,
-        attributes: v.attributes || {},
+        // No depreciation fields for gifts
       }));
 
       formData.append("variants", JSON.stringify(variantsPayload));
@@ -1131,9 +696,6 @@ export default function CreateGiftForm({
     }
   };
 
-  const formatPrice = (price: number | ""): string =>
-    typeof price === "number" ? price.toFixed(2) : "0.00";
-
   // --- STEP INDICATOR ---
   const StepIndicator = () => (
     <View style={styles.progressContainer}>
@@ -1183,121 +745,6 @@ export default function CreateGiftForm({
     </View>
   );
 
-  // --- SLIDER COMPONENT ---
-  interface SliderProps {
-    value: number;
-    onValueChange: (value: number) => void;
-    min?: number;
-    max?: number;
-    step?: number;
-  }
-
-  function OrangeSlider({
-    value,
-    onValueChange,
-    min = 0,
-    max = 100,
-    step = 0.5,
-  }: SliderProps) {
-    const sliderWidth = SCREEN_WIDTH - 96;
-    const thumbSize = 22;
-
-    const valueToX = (v: number) =>
-      ((v - min) / (max - min)) * (sliderWidth - thumbSize);
-    const xToValue = (x: number) => {
-      const raw = (x / (sliderWidth - thumbSize)) * (max - min) + min;
-      const stepped = Math.round(raw / step) * step;
-      return Math.max(min, Math.min(max, parseFloat(stepped.toFixed(1))));
-    };
-
-    const panResponder = useRef(
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: (evt) => {
-          const x = evt.nativeEvent.locationX - thumbSize / 2;
-          onValueChange(xToValue(x));
-        },
-        onPanResponderMove: (evt) => {
-          const x = evt.nativeEvent.locationX - thumbSize / 2;
-          onValueChange(xToValue(x));
-        },
-      }),
-    ).current;
-
-    const thumbX = valueToX(value);
-    const fillWidth = thumbX + thumbSize / 2;
-
-    return (
-      <View
-        style={{ height: 40, justifyContent: "center" }}
-        {...panResponder.panHandlers}
-      >
-        <View style={sliderStyles.track}>
-          <View
-            style={[sliderStyles.fill, { width: Math.max(0, fillWidth) }]}
-          />
-          <View style={[sliderStyles.thumb, { left: Math.max(0, thumbX) }]} />
-        </View>
-        <View style={sliderStyles.ticks}>
-          {[0, 25, 50, 75, 100].map((tick) => (
-            <Text key={tick} style={sliderStyles.tickLabel}>
-              {tick}%
-            </Text>
-          ))}
-        </View>
-      </View>
-    );
-  }
-
-  const sliderStyles = StyleSheet.create({
-    track: {
-      height: 6,
-      backgroundColor: "#FED7AA",
-      borderRadius: 3,
-      position: "relative",
-    },
-    fill: {
-      position: "absolute",
-      left: 0,
-      top: 0,
-      height: 6,
-      backgroundColor: "#F97316",
-      borderRadius: 3,
-    },
-    thumb: {
-      position: "absolute",
-      top: -8,
-      width: 22,
-      height: 22,
-      borderRadius: 11,
-      backgroundColor: "#EA580C",
-      borderWidth: 3,
-      borderColor: "#FFFFFF",
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.2,
-      shadowRadius: 3,
-      elevation: 4,
-    },
-    ticks: {
-      flexDirection: "row",
-      justifyContent: "space-between",
-      marginTop: 14,
-    },
-    tickLabel: {
-      fontSize: 10,
-      color: "#9CA3AF",
-      fontWeight: "500",
-    },
-  });
-
-  // Current date picker variant ref
-  const dpVariantId = datePickerModal.variantId;
-  const dpVariant = dpVariantId
-    ? variants.find((v) => v.id === dpVariantId)
-    : null;
-
   return (
     <View style={styles.container}>
       <StepIndicator />
@@ -1312,8 +759,7 @@ export default function CreateGiftForm({
             <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Basic Information</Text>
               <Text style={styles.sectionSubtitle}>
-                Start with gift details. AI will suggest a category when you
-                upload images.
+                Start with gift details. AI will suggest a category when you upload images.
               </Text>
             </View>
           </View>
@@ -1337,9 +783,6 @@ export default function CreateGiftForm({
               placeholderTextColor="#9CA3AF"
               maxLength={100}
             />
-            {externalErrors.name && (
-              <Text style={styles.errorText}>{externalErrors.name}</Text>
-            )}
           </View>
 
           <View style={styles.formGroup}>
@@ -1392,9 +835,6 @@ export default function CreateGiftForm({
                 </Text>
               </View>
             ) : null}
-            {externalErrors.condition && (
-              <Text style={styles.errorText}>{externalErrors.condition}</Text>
-            )}
           </View>
 
           <View style={styles.formGroup}>
@@ -1412,9 +852,6 @@ export default function CreateGiftForm({
               maxLength={1000}
               textAlignVertical="top"
             />
-            {externalErrors.description && (
-              <Text style={styles.errorText}>{externalErrors.description}</Text>
-            )}
           </View>
 
           <TouchableOpacity
@@ -1611,7 +1048,7 @@ export default function CreateGiftForm({
             <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Gift Variants</Text>
               <Text style={styles.sectionSubtitle}>
-                Each gift must have at least one variant with price and stock
+                Each gift must have at least one variant with stock
               </Text>
             </View>
             <View style={styles.requiredBadge}>
@@ -1633,11 +1070,6 @@ export default function CreateGiftForm({
                     <Text style={styles.variantTitle}>
                       {variant.title || `Variant ${index + 1}`}
                     </Text>
-                    {variant.price ? (
-                      <Text style={styles.variantPrice}>
-                        ₱{formatPrice(variant.price)}
-                      </Text>
-                    ) : null}
                   </View>
                 </View>
                 <View style={styles.variantHeaderRight}>
@@ -1727,46 +1159,7 @@ export default function CreateGiftForm({
                   </View>
 
                   <View style={styles.row}>
-                    <View
-                      style={[styles.formGroup, { flex: 1, marginRight: 8 }]}
-                    >
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 6,
-                          marginBottom: 6,
-                        }}
-                      >
-                        <Text style={styles.label}>
-                          Selling Price <Text style={styles.required}>*</Text>
-                        </Text>
-                        {variant.depreciation.calculatedPrice ? (
-                          <View style={styles.autoBadgeInline}>
-                            <Text style={styles.autoBadgeInlineText}>Auto</Text>
-                          </View>
-                        ) : null}
-                      </View>
-                      <View style={styles.priceInputContainer}>
-                        <Text style={styles.currencySymbol}>₱</Text>
-                        <TextInput
-                          style={[
-                            styles.priceInput,
-                            {
-                              backgroundColor: "#F9FAFB",
-                              color: variant.depreciation.calculatedPrice
-                                ? "#EA580C"
-                                : "#9CA3AF",
-                            },
-                          ]}
-                          value={variant.price ? variant.price.toString() : ""}
-                          editable={false}
-                          placeholder="Auto-calculated"
-                          placeholderTextColor="#9CA3AF"
-                        />
-                      </View>
-                    </View>
-                    <View style={[styles.formGroup, { flex: 1 }]}>
+                    <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
                       <Text style={[styles.label, { marginBottom: 6 }]}>
                         Stock <Text style={styles.required}>*</Text>
                       </Text>
@@ -1785,162 +1178,17 @@ export default function CreateGiftForm({
                         placeholderTextColor="#9CA3AF"
                       />
                     </View>
-                  </View>
-
-                  <View style={styles.depreciationSection}>
-                    <View style={styles.depreciationHeader}>
-                      <Ionicons name="calculator" size={16} color="#EA580C" />
-                      <Text style={styles.depreciationTitle}>
-                        Price Depreciation Calculator
-                      </Text>
-                    </View>
-
-                    <View style={styles.formGroup}>
-                      <Text style={styles.depLabel}>Original Price</Text>
-                      <View style={styles.priceInputContainer}>
-                        <Text style={styles.currencySymbol}>₱</Text>
-                        <TextInput
-                          style={styles.priceInput}
-                          value={
-                            variant.depreciation.originalPrice?.toString() || ""
-                          }
-                          onChangeText={(text) =>
-                            handleDepreciationChange(
-                              variant.id,
-                              "originalPrice",
-                              parseFloat(text) || "",
-                            )
-                          }
-                          keyboardType="numeric"
-                          placeholder="0.00"
-                          placeholderTextColor="#9CA3AF"
-                        />
-                      </View>
-                    </View>
-
-                    <View style={styles.formGroup}>
-                      <Text style={styles.depLabel}>Purchase Date</Text>
-                      <TouchableOpacity
-                        style={styles.datePickerButton}
-                        onPress={() =>
-                          setDatePickerModal({
-                            visible: true,
-                            variantId: variant.id,
-                          })
+                    <View style={[styles.formGroup, { flex: 1 }]}>
+                      <Text style={styles.label}>SKU Code</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={variant.sku_code || ""}
+                        onChangeText={(text) =>
+                          updateVariantField(variant.id, "sku_code", text)
                         }
-                      >
-                        <Ionicons
-                          name="calendar-outline"
-                          size={16}
-                          color="#EA580C"
-                        />
-                        <Text
-                          style={
-                            variant.depreciation.purchaseDate
-                              ? styles.datePickerTextSet
-                              : styles.datePickerTextPlaceholder
-                          }
-                        >
-                          {variant.depreciation.purchaseDate
-                            ? formatDate(variant.depreciation.purchaseDate)
-                            : "Pick a date"}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    <View style={styles.sliderSection}>
-                      <View style={styles.sliderHeader}>
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 6,
-                          }}
-                        >
-                          <Ionicons
-                            name="trending-down-outline"
-                            size={16}
-                            color="#EA580C"
-                          />
-                          <Text style={styles.sliderTitle}>
-                            Annual Depreciation Rate
-                          </Text>
-                        </View>
-                        <View style={styles.rateBadge}>
-                          <Text style={styles.rateBadgeText}>
-                            {variant.depreciation.depreciationRate || 0}%
-                          </Text>
-                        </View>
-                      </View>
-                      <OrangeSlider
-                        value={
-                          Number(variant.depreciation.depreciationRate) || 0
-                        }
-                        onValueChange={(val) =>
-                          handleDepreciationRateSlider(variant.id, val)
-                        }
-                        min={0}
-                        max={100}
-                        step={0.5}
+                        placeholder="Optional"
+                        placeholderTextColor="#9CA3AF"
                       />
-                    </View>
-
-                    <View style={styles.calculatedPriceCard}>
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 6,
-                          marginBottom: 12,
-                        }}
-                      >
-                        <Ionicons
-                          name="calculator"
-                          size={18}
-                          color="rgba(255,255,255,0.85)"
-                        />
-                        <Text style={styles.calcCardLabel}>
-                          Calculated Price
-                        </Text>
-                      </View>
-                      {variant.depreciation.calculatedPrice ? (
-                        <View>
-                          <Text style={styles.calcCardPrice}>
-                            ₱
-                            {Number(
-                              variant.depreciation.calculatedPrice,
-                            ).toLocaleString("en-PH", {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </Text>
-                          <View style={styles.calcCardInfo}>
-                            <Ionicons
-                              name="calendar-outline"
-                              size={12}
-                              color="rgba(255,255,255,0.7)"
-                            />
-                            <Text style={styles.calcCardInfoText}>
-                              Based on {variant.depreciation.usagePeriod}{" "}
-                              {variant.depreciation.usageUnit} of use
-                            </Text>
-                          </View>
-                        </View>
-                      ) : (
-                        <View style={{ alignItems: "center" }}>
-                          <Text style={styles.calcCardEmpty}>—</Text>
-                          <View style={styles.calcCardHint}>
-                            <Ionicons
-                              name="information-circle-outline"
-                              size={12}
-                              color="rgba(255,255,255,0.8)"
-                            />
-                            <Text style={styles.calcCardHintText}>
-                              Fill in original price &amp; purchase date
-                            </Text>
-                          </View>
-                        </View>
-                      )}
                     </View>
                   </View>
 
@@ -2252,6 +1500,7 @@ export default function CreateGiftForm({
                 label: "Total Stock",
                 value: `${variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units`,
               },
+              { label: "Price", value: "FREE (₱0.00)" },
             ].map(({ label, value }) => (
               <View key={label} style={styles.reviewRow}>
                 <Text style={styles.reviewLabel}>{label}:</Text>
@@ -2264,12 +1513,6 @@ export default function CreateGiftForm({
             <View style={styles.apiErrorContainer}>
               <Ionicons name="alert-circle" size={20} color="#EF4444" />
               <Text style={styles.apiErrorText}>{apiResponseError}</Text>
-            </View>
-          )}
-          {apiResponseMessage && (
-            <View style={styles.apiSuccessContainer}>
-              <Ionicons name="checkmark-circle" size={20} color="#10B981" />
-              <Text style={styles.apiSuccessText}>{apiResponseMessage}</Text>
             </View>
           )}
 
@@ -2549,95 +1792,12 @@ export default function CreateGiftForm({
           </View>
         </TouchableOpacity>
       </Modal>
-
-      {/* Usage Unit Modal */}
-      <Modal
-        visible={usageUnitModalVisible.visible}
-        transparent
-        animationType="slide"
-        onRequestClose={() =>
-          setUsageUnitModalVisible({ visible: false, variantId: null })
-        }
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() =>
-            setUsageUnitModalVisible({ visible: false, variantId: null })
-          }
-        >
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Time Unit</Text>
-              <TouchableOpacity
-                onPress={() =>
-                  setUsageUnitModalVisible({ visible: false, variantId: null })
-                }
-              >
-                <Ionicons name="close" size={24} color="#374151" />
-              </TouchableOpacity>
-            </View>
-            <FlatList
-              data={[
-                { label: "Weeks", value: "weeks" },
-                { label: "Months", value: "months" },
-                { label: "Years", value: "years" },
-              ]}
-              keyExtractor={(item) => item.value}
-              renderItem={({ item }) => {
-                const current = usageUnitModalVisible.variantId
-                  ? variants.find(
-                      (v) => v.id === usageUnitModalVisible.variantId,
-                    )?.depreciation.usageUnit
-                  : null;
-                return (
-                  <TouchableOpacity
-                    style={[
-                      styles.modalItem,
-                      current === item.value && { backgroundColor: "#FFF7ED" },
-                    ]}
-                    onPress={() => {
-                      if (usageUnitModalVisible.variantId) {
-                        handleDepreciationChange(
-                          usageUnitModalVisible.variantId,
-                          "usageUnit",
-                          item.value,
-                        );
-                      }
-                      setUsageUnitModalVisible({
-                        visible: false,
-                        variantId: null,
-                      });
-                    }}
-                  >
-                    <Text style={styles.modalItemText}>{item.label}</Text>
-                    {current === item.value && (
-                      <Ionicons name="checkmark" size={20} color="#EA580C" />
-                    )}
-                  </TouchableOpacity>
-                );
-              }}
-            />
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* Date Picker Modal */}
-      <DatePickerModal
-        visible={datePickerModal.visible}
-        selectedDate={dpVariant?.depreciation.purchaseDate}
-        onSelect={(date) => {
-          if (datePickerModal.variantId)
-            handlePurchaseDateChange(datePickerModal.variantId, date);
-        }}
-        onClose={() => setDatePickerModal({ visible: false, variantId: null })}
-      />
     </View>
   );
 }
 
 // ============================================================
-// STYLES (matching CreateProductForm)
+// STYLES
 // ============================================================
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -2714,7 +1874,6 @@ const styles = StyleSheet.create({
     color: "#111827",
     backgroundColor: "#FFFFFF",
   },
-  inputDisabled: { backgroundColor: "#F3F4F6", color: "#9CA3AF" },
   textArea: { minHeight: 100, textAlignVertical: "top" },
   errorText: { fontSize: 12, color: "#EF4444", marginTop: 4 },
 
@@ -2761,7 +1920,6 @@ const styles = StyleSheet.create({
     marginTop: 20,
     gap: 12,
   },
-  navButton: { flex: 1 },
   backButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -2956,7 +2114,6 @@ const styles = StyleSheet.create({
   },
   variantNumberText: { fontSize: 12, fontWeight: "700", color: "#FFFFFF" },
   variantTitle: { fontSize: 14, fontWeight: "600", color: "#111827" },
-  variantPrice: { fontSize: 12, color: "#EA580C", fontWeight: "500" },
   variantHeaderRight: { flexDirection: "row", alignItems: "center", gap: 12 },
   defaultBadge: {
     backgroundColor: "#FFF7ED",
@@ -2987,142 +2144,6 @@ const styles = StyleSheet.create({
   removeVariantImage: { position: "absolute", top: -6, right: -6 },
 
   row: { flexDirection: "row" },
-  priceInputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    borderRadius: 8,
-    backgroundColor: "#FFFFFF",
-  },
-  currencySymbol: { fontSize: 14, color: "#6B7280", paddingLeft: 12 },
-  priceInput: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingRight: 12,
-    fontSize: 14,
-    color: "#111827",
-  },
-  autoBadgeInline: {
-    backgroundColor: "#FFF7ED",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: "#FED7AA",
-  },
-  autoBadgeInlineText: { fontSize: 9, fontWeight: "600", color: "#EA580C" },
-
-  depreciationSection: {
-    backgroundColor: "#FFF7ED",
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#FED7AA",
-  },
-  depreciationHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 14,
-  },
-  depreciationTitle: { fontSize: 13, fontWeight: "600", color: "#C2410C" },
-  depLabel: {
-    fontSize: 13,
-    fontWeight: "500",
-    color: "#92400E",
-    marginBottom: 6,
-  },
-
-  datePickerButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderWidth: 1,
-    borderColor: "#FED7AA",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    backgroundColor: "#FFFFFF",
-  },
-  datePickerTextSet: { fontSize: 14, color: "#111827" },
-  datePickerTextPlaceholder: { fontSize: 14, color: "#9CA3AF" },
-
-  sliderSection: {
-    backgroundColor: "#FFFBEB",
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: "#FDE68A",
-  },
-  sliderHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  sliderTitle: { fontSize: 13, fontWeight: "500", color: "#92400E" },
-  rateBadge: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#FED7AA",
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  rateBadgeText: { fontSize: 15, fontWeight: "700", color: "#EA580C" },
-
-  calculatedPriceCard: {
-    backgroundColor: "#EA580C",
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: "#EA580C",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  calcCardLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "rgba(255,255,255,0.8)",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  calcCardPrice: {
-    fontSize: 34,
-    fontWeight: "700",
-    color: "#FFFFFF",
-    marginBottom: 6,
-  },
-  calcCardInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    alignSelf: "flex-start",
-  },
-  calcCardInfoText: { fontSize: 11, color: "rgba(255,255,255,0.8)" },
-  calcCardEmpty: {
-    fontSize: 32,
-    color: "rgba(255,255,255,0.4)",
-    marginBottom: 8,
-  },
-  calcCardHint: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-  },
-  calcCardHintText: { fontSize: 11, color: "rgba(255,255,255,0.85)" },
 
   toggleRow: {
     flexDirection: "row",
@@ -3215,18 +2236,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   apiErrorText: { flex: 1, fontSize: 13, color: "#991B1B" },
-  apiSuccessContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F0FDF4",
-    borderWidth: 1,
-    borderColor: "#BBF7D0",
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    gap: 8,
-  },
-  apiSuccessText: { flex: 1, fontSize: 13, color: "#166534" },
 
   submitContainer: { flexDirection: "row", gap: 12, marginTop: 20 },
   cancelButton: {
