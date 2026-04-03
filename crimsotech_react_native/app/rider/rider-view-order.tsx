@@ -70,6 +70,7 @@ interface OrderDetails {
   delivery: {
     id: string;
     status: string;
+    delivery_fee?: number;
     rider_id: string;
     rider_name: string;
     rider_contact: string;
@@ -392,6 +393,12 @@ export default function RiderViewOrder() {
                 <Text style={{ fontSize: 13, color: '#6B7280' }}>Total Amount</Text>
                 <Text style={{ fontSize: 16, fontWeight: '700', color: '#EE4D2D' }}>{formatCurrency(orderDetails.total_amount)}</Text>
               </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                <Text style={{ fontSize: 13, color: '#6B7280' }}>Delivery Fee</Text>
+                <Text style={{ fontSize: 13, fontWeight: '500', color: '#1F2937' }}>
+                    {formatCurrency(orderDetails.delivery?.delivery_fee || 0)}
+                </Text>
+                </View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
                 <Text style={{ fontSize: 13, color: '#6B7280' }}>Payment Method</Text>
                 <Text style={{ fontSize: 13, color: '#1F2937' }}>{orderDetails.payment_method || 'N/A'}</Text>

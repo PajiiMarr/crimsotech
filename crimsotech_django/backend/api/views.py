@@ -27345,6 +27345,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             "delivery": {
                 "id": str(delivery.id) if delivery else None,
                 "status": delivery.status if delivery else None,
+                "delivery_fee": delivery.delivery_fee if delivery else None,
                 "rider_id": str(delivery.rider.rider.id) if delivery and delivery.rider and delivery.rider.rider else None,
                 "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery and delivery.rider and delivery.rider.rider else None,
                 "rider_contact": delivery.rider.rider.contact_number if delivery and delivery.rider and delivery.rider.rider else None,
@@ -27605,6 +27606,23 @@ class RiderOrdersActive(viewsets.ViewSet):
         for delivery in paginated_deliveries:
             order = delivery.order
             
+            # Get product image for this order - SAME LOGIC AS order_details
+            product_image_url = None
+            try:
+                # Get checkout items for this order
+                checkout_items = Checkout.objects.filter(order=order)
+                for item in checkout_items:
+                    if item.cart_item and item.cart_item.variant:
+                        variant = item.cart_item.variant
+                        product = variant.product if variant.product else None
+                        if product:
+                            first_media = product.productmedia_set.first()
+                            if first_media and first_media.file_data:
+                                product_image_url = get_media_url(first_media.file_data)
+                                break  # Stop after finding first image
+            except Exception as e:
+                print(f"Error getting product image: {e}")
+            
             # Handle null shipping_address
             shipping_address = order.shipping_address
             shipping_address_data = None
@@ -27628,6 +27646,8 @@ class RiderOrdersActive(viewsets.ViewSet):
             # Format delivery data
             delivery_info = {
                 "id": str(delivery.id),
+                "product_image": product_image_url,
+                "delivery_fee": delivery.delivery_fee,
                 "order": {
                     "order_id": str(order.order),
                     "customer": {
@@ -27656,16 +27676,15 @@ class RiderOrdersActive(viewsets.ViewSet):
             deliveries_data.append(delivery_info)
         
         # Get pending orders (orders without rider assignment)
-        # Only include orders with shipping_address to avoid errors
         pending_orders = Order.objects.filter(
             status__in=['pending', 'processing'],
             delivery__isnull=True,
-            shipping_address__isnull=False  # Only include orders with shipping address
-        )[:5]  # Limit to 5 for dashboard
+            shipping_address__isnull=False
+        )[:5]
         
         pending_orders_data = []
         for order in pending_orders:
-            if order.shipping_address:  # Double check
+            if order.shipping_address:
                 pending_orders_data.append({
                     "order_id": str(order.order),
                     "customer": order.shipping_address.recipient_name,
@@ -27691,7 +27710,6 @@ class RiderOrdersActive(viewsets.ViewSet):
         }
         
         return Response(response)
-
     @action(detail=False, methods=['post'])
     def accept_order(self, request):
         """

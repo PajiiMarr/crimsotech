@@ -22,7 +22,8 @@ import RiderPageHeader from './includes/riderPageHeader';
 
 interface Delivery {
   id: string;
-  product_image?: string;  // Add product image field
+  product_image?: string;
+  delivery_fee?: number;
   order: {
     order_id: string;
     customer: {
@@ -675,11 +676,13 @@ export default function ActiveOrders() {
                             <Text style={{ fontSize: 11, color: '#9CA3AF', marginHorizontal: 4 }}>•</Text>
                             <Text style={{ fontSize: 11, color: '#6B7280' }}>{formatDate(delivery.created_at)}</Text>
                           </View>
+                          
                           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                             <Text style={{ fontSize: 14, fontWeight: '700', color: '#EE4D2D' }}>
                               {formatCurrency(delivery.order.total_amount)}
                             </Text>
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              
                               {getStatusBadge(delivery.status)}
                               {delivery.is_late && (
                                 <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginLeft: 6 }}>
@@ -687,11 +690,12 @@ export default function ActiveOrders() {
                                 </View>
                               )}
                             </View>
+                            
                           </View>
                         </View>
                       </View>
 
-                      {/* Address and Contact */}
+                      {/* Address and Contact - Using shipping_address.recipient_phone */}
                       <View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                           <Ionicons name="location-outline" size={12} color="#6B7280" />
@@ -702,13 +706,19 @@ export default function ActiveOrders() {
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                           <Ionicons name="call-outline" size={12} color="#6B7280" />
                           <Text style={{ fontSize: 11, color: '#4B5563', marginLeft: 6 }}>
-                            {customer.contact_number || 'No contact'}
+                            {address?.recipient_phone || 'No contact'}
                           </Text>
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                           <Ionicons name="card-outline" size={12} color="#6B7280" />
                           <Text style={{ fontSize: 11, color: '#6B7280', marginLeft: 6 }}>
                             {delivery.order.payment_method || 'N/A'}
+                          </Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                          <Ionicons name="cash-outline" size={12} color="#6B7280" />
+                          <Text style={{ fontSize: 11, color: '#6B7280', marginLeft: 6 }}>
+                            Delivery Fee: {formatCurrency(delivery.delivery_fee || 0)}
                           </Text>
                         </View>
                       </View>
