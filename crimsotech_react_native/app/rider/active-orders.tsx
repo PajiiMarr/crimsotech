@@ -610,14 +610,14 @@ export default function ActiveOrders() {
             })}
           </View>
 
-          {/* Deliveries List - Edge to Edge Cards with Images */}
-          <View>
+          {/* Deliveries List - Cards with small padding */}
+          <View style={{ padding: 12 }}>
             {isLoading ? (
-              <View style={{ padding: 16 }}>
+              <>
                 <LoadingSkeleton />
                 <LoadingSkeleton />
                 <LoadingSkeleton />
-              </View>
+              </>
             ) : filteredDeliveries.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 48 }}>
                 <Ionicons name="bag-outline" size={48} color="#D1D5DB" />
@@ -635,15 +635,17 @@ export default function ActiveOrders() {
                     key={delivery.id} 
                     onPress={() => handleCardPress(delivery)}
                     activeOpacity={0.7}
+                    style={{ marginBottom: 8 }}
                   >
                     <View style={{ 
-                      backgroundColor: 'white', 
-                      borderBottomWidth: 1, 
-                      borderTopWidth: 1, 
-                      borderColor: '#F3F4F6',
-                      marginBottom: -1,
-                      padding: 16
-                    }}>
+                        backgroundColor: 'white', 
+                        padding: 5,
+                        shadowColor: '#000',
+                        shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: 0.1,
+                        shadowRadius: 2,
+                        elevation: 2,
+                      }}>
                       {/* Product Image and Header Row */}
                       <View style={{ flexDirection: 'row', marginBottom: 12 }}>
                         {/* Product Image */}
@@ -682,7 +684,6 @@ export default function ActiveOrders() {
                               {formatCurrency(delivery.order.total_amount)}
                             </Text>
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                              
                               {getStatusBadge(delivery.status)}
                               {delivery.is_late && (
                                 <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginLeft: 6 }}>
@@ -690,7 +691,6 @@ export default function ActiveOrders() {
                                 </View>
                               )}
                             </View>
-                            
                           </View>
                         </View>
                       </View>

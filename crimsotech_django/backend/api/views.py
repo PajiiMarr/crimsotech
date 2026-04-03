@@ -36706,84 +36706,72 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
     # ================================================================
 
     def _format_delivery_data(self, deliveries):
-        """Format delivery data for frontend consumption"""
-        formatted_deliveries = []
+        """Format delivery data for response"""
 
+        
+        deliveries_data = []
         for delivery in deliveries:
             order = delivery.order
-            customer = order.user
-            shipping_address = order.shipping_address
-            payment = order.payment_set.filter(status='success').first()
-            is_cod = self._is_cod_order(order)
-
-            time_elapsed = None
-            is_late = False
-            if delivery.status in ['pending', 'picked_up', 'in_progress']:
-                time_diff = timezone.now() - delivery.created_at
-                hours = int(time_diff.total_seconds() // 3600)
-                minutes = int((time_diff.total_seconds() % 3600) // 60)
-                time_elapsed = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
-                if delivery.estimated_minutes:
-                    expected_delivery_time = delivery.created_at + timedelta(minutes=delivery.estimated_minutes)
-                    is_late = timezone.now() > expected_delivery_time
-                else:
-                    is_late = time_diff.total_seconds() > 7200
-
-            shop_name = None
+            
+            # Get product image for this order
+            product_image_url = None
             try:
-                if order.checkout_set.exists():
-                    first_item = order.checkout_set.first()
-                    if first_item.cart_item and first_item.cart_item.product and first_item.cart_item.product.shop:
-                        shop_name = first_item.cart_item.product.shop.name
-            except Exception:
-                shop_name = None
-
-            # Check if this delivery has been remitted
-            is_remitted = delivery.remittance_items.filter(
-                remittance__status='completed'
-            ).exists()
-
-            formatted_deliveries.append({
-                'id': str(delivery.id),
-                'order_id': str(order.order),
-                'order_number': str(order.order)[:8].upper(),
-                'customer_name': f"{customer.first_name} {customer.last_name}".strip() or customer.username,
-                'customer_contact': customer.contact_number,
-                'customer_email': customer.email,
-                'pickup_location': shop_name or "Pickup Location",
-                'delivery_location': shipping_address.get_full_address() if shipping_address else "Address not available",
-                'recipient_name': shipping_address.recipient_name if shipping_address else customer.first_name,
-                'recipient_phone': shipping_address.recipient_phone if shipping_address else customer.contact_number,
-                'status': delivery.status,
-                'distance_km': float(delivery.distance_km) if delivery.distance_km else None,
-                'estimated_minutes': delivery.estimated_minutes,
-                'actual_minutes': delivery.actual_minutes,
-                'delivery_rating': delivery.delivery_rating,
-                'notes': delivery.notes,
-                'order_amount': float(order.total_amount),
-                'delivery_fee': float(delivery.delivery_fee or 0),
-                'total_amount': float(order.total_amount + (delivery.delivery_fee or 0)),
-                'payment_method': order.payment_method,
-                'is_cod': is_cod,
-                'payment_status': payment.status if payment else 'unknown',
-                'amount_to_remit': float(order.total_amount + (delivery.delivery_fee or 0)) if is_cod else float(delivery.delivery_fee or 0),
-                'rider_earnings': float(delivery.delivery_fee or 0),
-                'is_remitted': is_remitted,
-                'shop_name': shop_name,
-                'shop_contact': None,
-                'order_created_at': order.created_at.isoformat(),
-                'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
-                'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
-                'created_at': delivery.created_at.isoformat(),
-                'items_count': order.checkout_set.count(),
-                'items_summary': self._get_items_summary(order),
-                'is_late': is_late,
-                'time_elapsed': time_elapsed,
-                'sandbox_mode': getattr(settings, 'ENABLE_SANDBOX', False)
+                # Get checkout items for this order
+                checkout_items = Checkout.objects.filter(order=order)
+                for item in checkout_items:
+                    if item.cart_item and item.cart_item.variant:
+                        variant = item.cart_item.variant
+                        product = variant.product if variant.product else None
+                        if product:
+                            first_media = product.productmedia_set.first()
+                            if first_media and first_media.file_data:
+                                product_image_url = get_media_url(first_media.file_data)
+                                break  # Stop after finding first image
+            except Exception as e:
+                print(f"Error getting product image for order {order.order}: {e}")
+            
+            # Get delivery fee
+            delivery_fee = delivery.delivery_fee
+            
+            # Calculate time elapsed
+            time_elapsed = timezone.now() - delivery.created_at
+            hours = int(time_elapsed.total_seconds() // 3600)
+            minutes = int((time_elapsed.total_seconds() % 3600) // 60)
+            
+            # Determine if late (more than 2 hours for pending)
+            is_late = hours > 2 and delivery.status == 'pending'
+            
+            # Get shipping address
+            shipping_address = order.shipping_address
+            delivery_location = shipping_address.get_full_address() if shipping_address else "Address not available"
+            recipient_name = shipping_address.recipient_name if shipping_address else ""
+            recipient_phone = shipping_address.recipient_phone if shipping_address else ""
+            
+            deliveries_data.append({
+                "id": str(delivery.id),
+                "order_id": str(order.order),
+                "order_number": str(order.order)[:8],
+                "customer_name": f"{order.user.first_name} {order.user.last_name}" if order.user else "Unknown",
+                "customer_contact": order.user.contact_number if order.user else "",
+                "customer_email": order.user.email if order.user else "",
+                "recipient_name": recipient_name,
+                "recipient_phone": recipient_phone,
+                "delivery_location": delivery_location,
+                "status": delivery.status,
+                "order_amount": float(order.total_amount),
+                "payment_method": order.payment_method,
+                "delivery_fee": float(delivery_fee) if delivery_fee else 0,
+                "product_image": product_image_url,  # Add product image
+                "order_created_at": order.created_at.isoformat(),
+                "picked_at": delivery.picked_at.isoformat() if delivery.picked_at else None,
+                "delivered_at": delivery.delivered_at.isoformat() if delivery.delivered_at else None,
+                "created_at": delivery.created_at.isoformat(),
+                "time_elapsed": f"{hours}h {minutes}m",
+                "is_late": is_late,
+                "proofs_count": Proof.objects.filter(delivery=delivery).count(),
             })
-
-        return formatted_deliveries
-
+        
+        return deliveries_data
     def _get_items_summary(self, order):
         """Get a brief summary of order items"""
         items = order.checkout_set.all()[:3]
