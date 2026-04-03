@@ -30,7 +30,6 @@ export default function RiderLayout() {
       }
 
       try {
-        // Prefer locally stored registration stage when available
         const localStage = registrationStage ?? null;
         if (localStage && localStage < 4) {
           const target = routeForStage(localStage);
@@ -90,104 +89,24 @@ export default function RiderLayout() {
           screenOptions={{
             headerShown: false,
             tabBarShowLabel: false,
-            tabBarStyle: {
-              display: "none",
-            },
+            tabBarStyle: { display: "none" },
           }}
         >
-          <Tabs.Screen
-            name="home"
-            options={{
-              headerShown: false,
-            }}
-          />
-          <Tabs.Screen
-            name="active-orders"
-            options={{
-              headerShown: false,
-            }}
-          />
-          <Tabs.Screen
-            name="history"
-            options={{
-              headerShown: false,
-              href: null,
-            }}
-          />
-          <Tabs.Screen
-            name="schedule"
-            options={{
-              headerShown: false,
-            }}
-          />
-          <Tabs.Screen
-            name="earnings"
-            options={{
-              headerShown: false,
-            }}
-          />
-          <Tabs.Screen
-            name="message"
-            options={{
-              headerShown: false,
-            }}
-          />
-          <Tabs.Screen
-            name="notification"
-            options={{
-              headerShown: false,
-              href: null,
-            }}
-          />
-          <Tabs.Screen
-            name="edit-profile"
-            options={{
-              headerShown: false,
-              href: null,
-            }}
-          />
-          <Tabs.Screen
-            name="settings"
-            options={{
-              headerShown: false,
-              href: null,
-            }}
-          />
-          <Tabs.Screen
-            name="delivery-details"
-            options={{
-              headerShown: false,
-              href: null,
-            }}
-          />
-          <Tabs.Screen
-            name="active-order-details"
-            options={{
-              headerShown: false,
-              href: null,
-            }}
-          />
-          <Tabs.Screen
-            name="add-delivery-media"
-            options={{
-              headerShown: false,
-              href: null,
-            }}
-          />
-          <Tabs.Screen
-            name="add-proof"
-            options={{
-              headerShown: false,
-              href: null,
-            }}
-          />
-          <Tabs.Screen
-            name="withdraw"
-            options={{
-              headerShown: false,
-              href: null,
-            }}
-          />
+          <Tabs.Screen name="home" options={{ headerShown: false }} />
+          <Tabs.Screen name="active-orders" options={{ headerShown: false }} />
+          <Tabs.Screen name="history" options={{ headerShown: false, href: null }} />
+          <Tabs.Screen name="schedule" options={{ headerShown: false }} />
+          <Tabs.Screen name="earnings" options={{ headerShown: false }} />
+          <Tabs.Screen name="message" options={{ headerShown: false }} />
+          <Tabs.Screen name="notification" options={{ headerShown: false, href: null }} />
+          <Tabs.Screen name="edit-profile" options={{ headerShown: false, href: null }} />
+          <Tabs.Screen name="settings" options={{ headerShown: false, href: null }} />
+          <Tabs.Screen name="delivery-details" options={{ headerShown: false, href: null }} />
+          <Tabs.Screen name="active-order-details" options={{ headerShown: false, href: null }} />
+          <Tabs.Screen name="add-delivery-media" options={{ headerShown: false, href: null }} />
+          <Tabs.Screen name="add-proof" options={{ headerShown: false, href: null }} />
+          <Tabs.Screen name="withdraw" options={{ headerShown: false, href: null }} />
+          <Tabs.Screen name="rider-view-order" options={{ headerShown: false, href: null }} />
         </Tabs>
       </SafeAreaView>
     </RoleGuard>

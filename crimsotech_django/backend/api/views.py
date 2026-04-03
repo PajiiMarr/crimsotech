@@ -27250,19 +27250,47 @@ class ArrangeShipment(viewsets.ViewSet):
 
         
 class RiderOrdersActive(viewsets.ViewSet):
+    def _get_media_url(self, request, file_field):
+        """Helper method to get full media URL"""
+        if not file_field:
+            return None
+        try:
+            if hasattr(file_field, 'url'):
+                # If the URL is already absolute
+                if file_field.url.startswith('http://') or file_field.url.startswith('https://'):
+                    return file_field.url
+                
+                # Build absolute URL using request
+                if request:
+                    return request.build_absolute_uri(file_field.url)
+                
+                # Fallback to MEDIA_URL
+                media_url = settings.MEDIA_URL
+                if media_url.startswith('http://') or media_url.startswith('https://'):
+                    return f"{media_url.rstrip('/')}/{file_field.name}"
+                
+                return file_field.url
+            return None
+        except Exception as e:
+            print(f"Error getting media URL: {e}")
+            return None
+
+    def _get_rider(self, request):
+        """Get rider instance from authenticated user"""
+        try:
+            user_id = request.headers.get('X-User-Id')
+            if not user_id:
+                return None
+            return Rider.objects.get(rider_id=user_id)
+        except (Rider.DoesNotExist, ValueError):
+            return None
+
     @action(detail=False, methods=['get'], url_path='order-details/(?P<order_id>[^/.]+)')
     def order_details(self, request, order_id=None):
         """
         Get detailed information about a specific order.
-        
-        Parameters:
-        - order_id: UUID of the order to retrieve details for
-        
-        Returns:
-        - Order details including delivery, payment, and related information
         """
         try:
-            # Validate that order_id is a valid UUID
             order_uuid = uuid.UUID(order_id)
         except (ValueError, AttributeError):
             return Response(
@@ -27270,8 +27298,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Get the order with related data efficiently using select_related/prefetch_related
-        # Note: 'delivery' is not a direct field on Order model, it's a reverse relation
+        # Get the order with related data
         order = get_object_or_404(
             Order.objects.select_related(
                 'user',
@@ -27280,17 +27307,15 @@ class RiderOrdersActive(viewsets.ViewSet):
             order=order_uuid
         )
 
-        # Get related data efficiently
-        # Delivery is a reverse relation, so we use filter() and select_related() on Delivery model
+        # Get related data
         delivery = Delivery.objects.filter(order=order).select_related('rider__rider').first()
-        
-        # Get payment for this order
         payment = Payment.objects.filter(order=order).first()
         
-        # Get checkout items for this order with related product data
+        # Get checkout items with variant and product media
         checkout_items = Checkout.objects.filter(order=order).select_related(
-            'cart_item__product__shop',
-            'cart_item__product__customer__customer'
+            'cart_item__variant',
+            'cart_item__variant__product__shop',
+            'cart_item__variant__product__customer__customer'
         )
 
         # Build the response data
@@ -27320,9 +27345,9 @@ class RiderOrdersActive(viewsets.ViewSet):
             "delivery": {
                 "id": str(delivery.id) if delivery else None,
                 "status": delivery.status if delivery else None,
-                "rider_id": str(delivery.rider.rider.id) if delivery and delivery.rider else None,
-                "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery and delivery.rider else None,
-                "rider_contact": delivery.rider.rider.contact_number if delivery and delivery.rider else None,
+                "rider_id": str(delivery.rider.rider.id) if delivery and delivery.rider and delivery.rider.rider else None,
+                "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery and delivery.rider and delivery.rider.rider else None,
+                "rider_contact": delivery.rider.rider.contact_number if delivery and delivery.rider and delivery.rider.rider else None,
                 "picked_at": delivery.picked_at if delivery else None,
                 "delivered_at": delivery.delivered_at if delivery else None,
                 "created_at": delivery.created_at if delivery else None
@@ -27334,38 +27359,91 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "method": payment.method if payment else None,
                 "transaction_date": payment.transaction_date if payment else None
             } if payment else None,
-            "items": [
-                {
-                    "checkout_id": str(item.id),
-                    "product_id": str(item.cart_item.product.id) if item.cart_item and item.cart_item.product else None,
-                    "product_name": item.cart_item.product.name if item.cart_item and item.cart_item.product else None,
-                    "shop_name": item.cart_item.product.shop.name if item.cart_item and item.cart_item.product and item.cart_item.product.shop else None,
-                    "shop_id": str(item.cart_item.product.shop.id) if item.cart_item and item.cart_item.product and item.cart_item.product.shop else None,
-                    "seller_name": f"{item.cart_item.product.customer.customer.first_name} {item.cart_item.product.customer.customer.last_name}" if item.cart_item and item.cart_item.product and item.cart_item.product.customer and item.cart_item.product.customer.customer else None,
-                    "quantity": item.quantity,
-                    "unit_price": str(item.cart_item.product.price) if item.cart_item and item.cart_item.product else None,
-                    "total": str(item.total_amount) if item.total_amount else None,
-                    "remarks": item.remarks
-                }
-                for item in checkout_items
-                if item.cart_item and item.cart_item.product
-            ]
+            "items": []
         }
+        
+        # Build items list safely with product images and dimensions
+        for item in checkout_items:
+            try:
+                if item.cart_item and item.cart_item.variant:
+                    variant = item.cart_item.variant
+                    product = variant.product if variant.product else None
+                    
+                    # Get product image URL
+                    product_image_url = None
+                    if product:
+                        first_media = product.productmedia_set.first()
+                        if first_media and first_media.file_data:
+                            product_image_url = get_media_url(first_media.file_data)
+                            print(f"Product image URL for {product.name}: {product_image_url}")
+                    
+                    # Get product dimensions from variant
+                    dimensions = None
+                    if variant:
+                        dims = []
+                        if variant.length:
+                            unit = variant.dimension_unit or 'cm'
+                            dims.append(f"L: {float(variant.length):.1f}{unit}")
+                        if variant.width:
+                            unit = variant.dimension_unit or 'cm'
+                            dims.append(f"W: {float(variant.width):.1f}{unit}")
+                        if variant.height:
+                            unit = variant.dimension_unit or 'cm'
+                            dims.append(f"H: {float(variant.height):.1f}{unit}")
+                        dimensions = " | ".join(dims) if dims else None
+                    
+                    # Get weight info
+                    weight_info = None
+                    if variant and variant.weight:
+                        weight_unit = variant.weight_unit or 'g'
+                        weight_info = f"{float(variant.weight):.1f}{weight_unit}"
+                    
+                    # Get price from variant
+                    unit_price = variant.price if variant.price else 0
+                    
+                    # Get shop address fields
+                    shop_street = None
+                    shop_barangay = None
+                    shop_city = None
+                    shop_province = None
+                    if product and product.shop:
+                        shop_street = product.shop.street
+                        shop_barangay = product.shop.barangay
+                        shop_city = product.shop.city
+                        shop_province = product.shop.province
+                    
+                    item_data = {
+                        "checkout_id": str(item.id),
+                        "product_id": str(product.id) if product else None,
+                        "product_name": product.name if product else "Unknown Product",
+                        "product_image": product_image_url,
+                        "variant_name": variant.title if variant.title else "Default",
+                        "shop_name": product.shop.name if product and product.shop else None,
+                        "shop_id": str(product.shop.id) if product and product.shop else None,
+                        "seller_name": f"{product.customer.customer.first_name} {product.customer.customer.last_name}" if product and product.customer and product.customer.customer else None,
+                        "quantity": item.quantity,
+                        "unit_price": str(unit_price),
+                        "total": str(item.total_amount) if item.total_amount else str(unit_price * item.quantity),
+                        "remarks": item.remarks,
+                        "dimensions": dimensions,
+                        "weight": weight_info,
+                        # Shop address fields
+                        "shop_street": shop_street,
+                        "shop_barangay": shop_barangay,
+                        "shop_city": shop_city,
+                        "shop_province": shop_province,
+                    }
+                    order_data["items"].append(item_data)
+                    print(f"Added item: {item_data['product_name']} - Shop: {item_data['shop_name']} - Address: {shop_street}, {shop_barangay}, {shop_city}, {shop_province}")
+            except Exception as e:
+                print(f"Error processing item: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
 
+        print(f"Total items in response: {len(order_data['items'])}")
         return Response(order_data, status=status.HTTP_200_OK)
     
-    
-    def _get_rider(self, request):
-        """Get rider instance from authenticated user"""
-        try:
-            user_id = request.headers.get('X-User-Id')
-            if not user_id:
-                return None
-            
-            # Try to find the rider by user ID
-            return Rider.objects.get(rider_id=user_id)
-        except (Rider.DoesNotExist, ValueError):
-            return None
     
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):

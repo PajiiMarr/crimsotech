@@ -22,6 +22,7 @@ import RiderPageHeader from './includes/riderPageHeader';
 
 interface Delivery {
   id: string;
+  product_image?: string;  // Add product image field
   order: {
     order_id: string;
     customer: {
@@ -105,7 +106,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: keyof 
   }
 };
 
-// Tabs configuration
+// Tabs configuration - Only Pending and To Process
 const STATUS_TABS: Array<{ id: 'pending' | 'to_process'; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
   { id: 'pending', label: 'Pending', icon: 'time-outline' },
   { id: 'to_process', label: 'To Process', icon: 'car-outline' }
@@ -131,13 +132,13 @@ export default function ActiveOrders() {
   const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null);
   const [actionType, setActionType] = useState<'pickup' | 'deliver' | null>(null);
   const [activeTab, setActiveTab] = useState<'pending' | 'to_process'>('pending');
-  const [expandedDeliveries, setExpandedDeliveries] = useState<Set<string>>(new Set());
+  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
 
   // Modal states
   const [showPickupDialog, setShowPickupDialog] = useState(false);
   const [showProofModal, setShowProofModal] = useState(false);
   
-  // Media states - using the pattern from your example
+  // Media states
   const [proofMedia, setProofMedia] = useState<Array<{
     file: {
       uri: string;
@@ -202,13 +203,17 @@ export default function ActiveOrders() {
     }
   };
 
-  // Media handlers - Camera only (from your example)
+  // Handle image loading error
+  const handleImageError = (deliveryId: string) => {
+    setImageErrors(prev => ({ ...prev, [deliveryId]: true }));
+  };
+
+  // Media handlers - Camera only
   const pickMedia = async () => {
     if (proofMedia.length >= 6) {
       Alert.alert('Limit Reached', 'Maximum 6 media files allowed');
       return;
     }
-          <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
@@ -420,11 +425,12 @@ export default function ActiveOrders() {
     );
   };
 
-  const handleOpenDetails = (delivery: Delivery) => {
+  const handleCardPress = (delivery: Delivery) => {
     router.push({
-      pathname: '/rider/active-order-details',
+      pathname: '/rider/rider-view-order',
       params: {
         deliveryId: delivery.id,
+        orderId: delivery.order.order_id,
       }
     });
   };
@@ -468,17 +474,7 @@ export default function ActiveOrders() {
     );
   };
 
-  const toggleDeliveryExpansion = (deliveryId: string) => {
-    const newExpanded = new Set(expandedDeliveries);
-    if (newExpanded.has(deliveryId)) {
-      newExpanded.delete(deliveryId);
-    } else {
-      newExpanded.add(deliveryId);
-    }
-    setExpandedDeliveries(newExpanded);
-  };
-
-  // Prepare filtered data
+  // Prepare filtered data - Only pending and to process
   const pendingStatuses = ['pending', 'pending_offer'];
   const toProcessStatuses = ['accepted', 'picked_up'];
 
@@ -551,6 +547,7 @@ export default function ActiveOrders() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <RiderPageHeader 
         title="Active Orders" 
         subtitle="Manage your deliveries"
@@ -563,284 +560,171 @@ export default function ActiveOrders() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          {/* Metrics */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 }}>
-            <View style={{ width: '48%', backgroundColor: 'white', borderRadius: 10, padding: 10, marginRight: '4%', marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB' }}>
-              <Text style={{ fontSize: 10, color: '#6B7280' }}>Active</Text>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{metrics.total_active_orders}</Text>
-            </View>
-            <View style={{ width: '48%', backgroundColor: 'white', borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB' }}>
-              <Text style={{ fontSize: 10, color: '#6B7280' }}>In Transit</Text>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{metrics.in_transit}</Text>
-            </View>
-            <View style={{ width: '48%', backgroundColor: 'white', borderRadius: 10, padding: 10, marginRight: '4%', borderWidth: 1, borderColor: '#E5E7EB' }}>
-              <Text style={{ fontSize: 10, color: '#6B7280' }}>Declined</Text>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{metrics.declined_orders}</Text>
-            </View>
-            <View style={{ width: '48%', backgroundColor: 'white', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: '#E5E7EB' }}>
-              <Text style={{ fontSize: 10, color: '#6B7280' }}>Expected</Text>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{formatCurrency(metrics.expected_earnings)}</Text>
-            </View>
-          </View>
-
-          {metrics.declined_orders >= 2 && (
-            <View style={{ backgroundColor: '#FEF3C7', borderRadius: 10, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'flex-start' }}>
-              <Ionicons name="warning-outline" size={18} color="#D97706" style={{ marginTop: 1 }} />
-              <Text style={{ fontSize: 13, color: '#92400E', marginLeft: 8, flex: 1, lineHeight: 18 }}>
-                Warning: You have {metrics.declined_orders} declined orders. Excessive declines may affect your account standing.
-              </Text>
-            </View>
-          )}
-
-          {/* Deliveries Card */}
-          <View style={{ backgroundColor: 'white', borderRadius: 12, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2 }}>
-            {/* Tabs */}
-            <View style={{ flexDirection: 'row', marginBottom: 16 }}>
-              {STATUS_TABS.map((tab) => {
-                const count = getTabCount(tab.id);
-                const isActive = activeTab === tab.id;
-                
-                return (
-                  <TouchableOpacity
-                    key={tab.id}
-                    onPress={() => setActiveTab(tab.id)}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      paddingHorizontal: 12,
-                      paddingVertical: 6,
-                      borderRadius: 20,
-                      marginRight: 8,
-                      backgroundColor: isActive ? '#EFF6FF' : 'transparent',
-                      borderWidth: 1,
-                      borderColor: isActive ? '#BFDBFE' : '#E5E7EB'
-                    }}
-                  >
-                    <Ionicons name={tab.icon} size={14} color={isActive ? '#2563EB' : '#6B7280'} />
-                    <Text style={{ fontSize: 12, marginLeft: 4, color: isActive ? '#2563EB' : '#6B7280' }}>
+        <View style={{ flex: 1 }}>
+          {/* Full Width Tabs */}
+          <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}>
+            {STATUS_TABS.map((tab) => {
+              const count = getTabCount(tab.id);
+              const isActive = activeTab === tab.id;
+              
+              return (
+                <TouchableOpacity
+                  key={tab.id}
+                  onPress={() => setActiveTab(tab.id)}
+                  style={{
+                    flex: 1,
+                    alignItems: 'center',
+                    paddingVertical: 12,
+                    backgroundColor: isActive ? '#FFFFFF' : '#F9FAFB',
+                    borderBottomWidth: 2,
+                    borderBottomColor: isActive ? '#EE4D2D' : 'transparent',
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name={tab.icon} size={18} color={isActive ? '#EE4D2D' : '#6B7280'} />
+                    <Text style={{ 
+                      fontSize: 14, 
+                      marginLeft: 6, 
+                      color: isActive ? '#EE4D2D' : '#6B7280', 
+                      fontWeight: isActive ? '600' : '500' 
+                    }}>
                       {tab.label}
                     </Text>
                     {count > 0 && (
                       <View style={{
-                        marginLeft: 4,
-                        paddingHorizontal: 4,
-                        paddingVertical: 1,
+                        marginLeft: 6,
+                        paddingHorizontal: 5,
+                        paddingVertical: 2,
                         borderRadius: 10,
-                        backgroundColor: isActive ? '#BFDBFE' : '#F3F4F6'
+                        backgroundColor: isActive ? '#FEE2E2' : '#F3F4F6'
                       }}>
-                        <Text style={{ fontSize: 9, color: isActive ? '#1E40AF' : '#4B5563' }}>{count}</Text>
+                        <Text style={{ fontSize: 10, color: isActive ? '#EE4D2D' : '#4B5563', fontWeight: '500' }}>
+                          {count}
+                        </Text>
                       </View>
                     )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
 
-            {/* Deliveries List */}
-            <View>
-              {isLoading ? (
-                <>
-                  <LoadingSkeleton />
-                  <LoadingSkeleton />
-                  <LoadingSkeleton />
-                </>
-              ) : filteredDeliveries.length === 0 ? (
-                <View style={{ alignItems: 'center', paddingVertical: 32 }}>
-                  <Ionicons name="bag-outline" size={40} color="#D1D5DB" />
-                  <Text style={{ color: '#9CA3AF', fontSize: 13, marginTop: 8 }}>
-                    {activeTab === 'pending' ? 'No pending deliveries' : 'No orders to process'}
-                  </Text>
-                </View>
-              ) : (
-                filteredDeliveries.map((delivery) => {
-                  const isExpanded = expandedDeliveries.has(delivery.id);
-                  const customer = delivery.order.customer;
-                  const address = delivery.order.shipping_address;
-                  
-                  return (
-                    <View key={delivery.id} style={{ backgroundColor: 'white', borderWidth: 1, borderColor: '#F3F4F6', borderRadius: 12, marginBottom: 12 }}>
-                      {/* Header */}
-                      <View style={{ padding: 12 }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                          <View style={{ flex: 1 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                              <Ionicons name="cube-outline" size={14} color="#6B7280" />
-                              <Text style={{ fontSize: 12, fontWeight: '500', marginLeft: 4 }} numberOfLines={1}>
-                                Order #{delivery.order.order_id?.slice(-8)}
-                              </Text>
+          {/* Deliveries List - Edge to Edge Cards with Images */}
+          <View>
+            {isLoading ? (
+              <View style={{ padding: 16 }}>
+                <LoadingSkeleton />
+                <LoadingSkeleton />
+                <LoadingSkeleton />
+              </View>
+            ) : filteredDeliveries.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 48 }}>
+                <Ionicons name="bag-outline" size={48} color="#D1D5DB" />
+                <Text style={{ color: '#9CA3AF', fontSize: 14, marginTop: 12 }}>
+                  {activeTab === 'pending' ? 'No pending deliveries' : 'No orders to process'}
+                </Text>
+              </View>
+            ) : (
+              filteredDeliveries.map((delivery) => {
+                const customer = delivery.order.customer;
+                const address = delivery.order.shipping_address;
+                
+                return (
+                  <TouchableOpacity 
+                    key={delivery.id} 
+                    onPress={() => handleCardPress(delivery)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ 
+                      backgroundColor: 'white', 
+                      borderBottomWidth: 1, 
+                      borderTopWidth: 1, 
+                      borderColor: '#F3F4F6',
+                      marginBottom: -1,
+                      padding: 16
+                    }}>
+                      {/* Product Image and Header Row */}
+                      <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+                        {/* Product Image */}
+                        <View style={{ width: 60, height: 60, borderRadius: 8, backgroundColor: '#F3F4F6', marginRight: 12, overflow: 'hidden' }}>
+                          {delivery.product_image && !imageErrors[delivery.id] ? (
+                            <Image 
+                              source={{ uri: delivery.product_image }} 
+                              style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+                              onError={() => handleImageError(delivery.id)}
+                            />
+                          ) : (
+                            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                              <Ionicons name="image-outline" size={24} color="#9CA3AF" />
                             </View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                              <Text style={{ fontSize: 10, color: '#6B7280' }} numberOfLines={1}>
-                                {customer.first_name} {customer.last_name}
-                              </Text>
-                              <Text style={{ fontSize: 10, color: '#9CA3AF', marginHorizontal: 4 }}>•</Text>
-                              <Text style={{ fontSize: 10, color: '#6B7280' }}>{formatDate(delivery.created_at)}</Text>
-                            </View>
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            {getStatusBadge(delivery.status)}
-                            {delivery.is_late && (
-                              <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 8, marginLeft: 4 }}>
-                                <Text style={{ fontSize: 8, color: '#DC2626' }}>Late</Text>
-                              </View>
-                            )}
-                            <TouchableOpacity onPress={() => toggleDeliveryExpansion(delivery.id)} style={{ marginLeft: 8, padding: 2 }}>
-                              <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={16} color="#9CA3AF" />
-                            </TouchableOpacity>
-                          </View>
+                          )}
                         </View>
-
-                        {/* Address and Contact */}
-                        <View style={{ marginBottom: 8 }}>
+                        
+                        {/* Order Info */}
+                        <View style={{ flex: 1 }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                            <Ionicons name="location-outline" size={10} color="#6B7280" />
-                            <Text style={{ fontSize: 10, color: '#4B5563', marginLeft: 4, flex: 1 }} numberOfLines={1}>
-                              {address?.full_address || 'No address'}
+                            <Ionicons name="cube-outline" size={14} color="#6B7280" />
+                            <Text style={{ fontSize: 13, fontWeight: '600', marginLeft: 6 }} numberOfLines={1}>
+                              Order #{delivery.order.order_id?.slice(-8)}
                             </Text>
                           </View>
                           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                            <Ionicons name="call-outline" size={10} color="#6B7280" />
-                            <Text style={{ fontSize: 10, color: '#4B5563', marginLeft: 4 }}>
-                              {customer.contact_number || 'No contact'}
+                            <Text style={{ fontSize: 11, color: '#6B7280' }} numberOfLines={1}>
+                              {customer.first_name} {customer.last_name}
                             </Text>
+                            <Text style={{ fontSize: 11, color: '#9CA3AF', marginHorizontal: 4 }}>•</Text>
+                            <Text style={{ fontSize: 11, color: '#6B7280' }}>{formatDate(delivery.created_at)}</Text>
                           </View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                              <Ionicons name="card-outline" size={10} color="#6B7280" />
-                              <Text style={{ fontSize: 10, color: '#6B7280', marginLeft: 4 }}>
-                                {delivery.order.payment_method || 'N/A'}
-                              </Text>
-                            </View>
-                            <Text style={{ fontSize: 12, fontWeight: '600' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#EE4D2D' }}>
                               {formatCurrency(delivery.order.total_amount)}
                             </Text>
-                          </View>
-                        </View>
-
-                        {/* Time Elapsed */}
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <Ionicons name="time-outline" size={10} color="#9CA3AF" />
-                          <Text style={{ fontSize: 9, color: '#9CA3AF', marginLeft: 2 }}>
-                            {delivery.time_elapsed}
-                          </Text>
-                        </View>
-
-                        {/* Expanded Details */}
-                        {isExpanded && (
-                          <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6' }}>
-                            <Text style={{ fontSize: 10, fontWeight: '500', color: '#374151', marginBottom: 4 }}>Recipient Information</Text>
-                            <View style={{ marginBottom: 8 }}>
-                              <Text style={{ fontSize: 10, color: '#6B7280' }}>Name: {address?.recipient_name || 'N/A'}</Text>
-                              <Text style={{ fontSize: 10, color: '#6B7280' }}>Phone: {address?.recipient_phone || 'N/A'}</Text>
-                            </View>
-                            
-                            <Text style={{ fontSize: 10, fontWeight: '500', color: '#374151', marginBottom: 4 }}>Delivery Details</Text>
-                            <View>
-                              <Text style={{ fontSize: 10, color: '#6B7280' }}>Method: {delivery.order.delivery_method || 'N/A'}</Text>
-                              {delivery.picked_at && (
-                                <Text style={{ fontSize: 10, color: '#6B7280' }}>Picked Up: {formatDate(delivery.picked_at)}</Text>
-                              )}
-                              {delivery.delivered_at && (
-                                <Text style={{ fontSize: 10, color: '#6B7280' }}>Delivered: {formatDate(delivery.delivered_at)}</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              {getStatusBadge(delivery.status)}
+                              {delivery.is_late && (
+                                <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, marginLeft: 6 }}>
+                                  <Text style={{ fontSize: 8, color: '#DC2626', fontWeight: '500' }}>Late</Text>
+                                </View>
                               )}
                             </View>
-                          </View>
-                        )}
-
-                        {/* Actions */}
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#F3F4F6' }}>
-                          <TouchableOpacity onPress={() => handleOpenDetails(delivery)} style={{ padding: 4 }}>
-                            <Text style={{ fontSize: 10, color: '#6B7280' }}>{isExpanded ? 'Show Less' : 'View Details'}</Text>
-                          </TouchableOpacity>
-                          
-                          <View style={{ flexDirection: 'row' }}>
-                            {delivery.status === 'pending' ? (
-                              <>
-                                <TouchableOpacity
-                                  onPress={() => handleDeclineDelivery(delivery)}
-                                  disabled={isActionLoading}
-                                  style={{ paddingHorizontal: 8, paddingVertical: 4, marginRight: 8 }}
-                                >
-                                  <Text style={{ fontSize: 10, color: '#DC2626' }}>Decline</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                  onPress={() => handleAcceptDelivery(delivery)}
-                                  style={{ backgroundColor: '#10B981', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 16, flexDirection: 'row', alignItems: 'center' }}
-                                >
-                                  <Ionicons name="checkmark-circle-outline" size={12} color="white" />
-                                  <Text style={{ fontSize: 10, color: 'white', marginLeft: 2 }}>Accept</Text>
-                                </TouchableOpacity>
-                              </>
-                            ) : delivery.status === 'accepted' ? (
-                              <>
-                                <TouchableOpacity
-                                  onPress={() => {
-                                    setSelectedDelivery(delivery);
-                                    setActionType('pickup');
-                                    setShowPickupDialog(true);
-                                  }}
-                                  style={{ paddingHorizontal: 8, paddingVertical: 4, marginRight: 8, flexDirection: 'row', alignItems: 'center' }}
-                                >
-                                  <Ionicons name="cube-outline" size={12} color="#2563EB" />
-                                  <Text style={{ fontSize: 10, color: '#2563EB', marginLeft: 2 }}>Pick Up</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                  onPress={() => handleMarkFailed(delivery)}
-                                  style={{ paddingHorizontal: 8, paddingVertical: 4 }}
-                                >
-                                  <Text style={{ fontSize: 10, color: '#DC2626' }}>Mark Failed</Text>
-                                </TouchableOpacity>
-                              </>
-                            ) : delivery.status === 'pending_offer' ? (
-                              <TouchableOpacity
-                                onPress={() => {
-                                  setSelectedDelivery(delivery);
-                                  setActionType('pickup');
-                                  setShowPickupDialog(true);
-                                }}
-                                style={{ backgroundColor: '#2563EB', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 16, flexDirection: 'row', alignItems: 'center' }}
-                              >
-                                <Ionicons name="cube-outline" size={12} color="white" />
-                                <Text style={{ fontSize: 10, color: 'white', marginLeft: 2 }}>Pick Up</Text>
-                              </TouchableOpacity>
-                            ) : delivery.status === 'picked_up' ? (
-                              <TouchableOpacity
-                                onPress={() => {
-                                  setSelectedDelivery(delivery);
-                                  setActionType('deliver');
-                                  setShowProofModal(true);
-                                }}
-                                style={{ backgroundColor: '#10B981', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 16, flexDirection: 'row', alignItems: 'center' }}
-                              >
-                                <Ionicons name="checkmark-circle-outline" size={12} color="white" />
-                                <Text style={{ fontSize: 10, color: 'white', marginLeft: 2 }}>Deliver</Text>
-                              </TouchableOpacity>
-                            ) : delivery.status === 'delivered' && (
-                              <TouchableOpacity
-                                onPress={() =>
-                                  router.push({
-                                    pathname: '/rider/add-delivery-media',
-                                    params: { deliveryId: delivery.id }
-                                  })
-                                }
-                                style={{ backgroundColor: '#6B7280', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 16, flexDirection: 'row', alignItems: 'center' }}
-                              >
-                                <Text style={{ fontSize: 10, color: 'white' }}>
-                                  {(delivery.proofs_count || 0) > 0 ? 'View Proofs' : 'Add Proof'}
-                                </Text>
-                              </TouchableOpacity>
-                            )}
                           </View>
                         </View>
                       </View>
+
+                      {/* Address and Contact */}
+                      <View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                          <Ionicons name="location-outline" size={12} color="#6B7280" />
+                          <Text style={{ fontSize: 11, color: '#4B5563', marginLeft: 6, flex: 1 }} numberOfLines={2}>
+                            {address?.full_address || 'No address'}
+                          </Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                          <Ionicons name="call-outline" size={12} color="#6B7280" />
+                          <Text style={{ fontSize: 11, color: '#4B5563', marginLeft: 6 }}>
+                            {customer.contact_number || 'No contact'}
+                          </Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Ionicons name="card-outline" size={12} color="#6B7280" />
+                          <Text style={{ fontSize: 11, color: '#6B7280', marginLeft: 6 }}>
+                            {delivery.order.payment_method || 'N/A'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Time Elapsed */}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                        <Ionicons name="time-outline" size={11} color="#9CA3AF" />
+                        <Text style={{ fontSize: 10, color: '#9CA3AF', marginLeft: 4 }}>
+                          {delivery.time_elapsed}
+                        </Text>
+                      </View>
                     </View>
-                  );
-                })
-              )}
-            </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
           </View>
         </View>
       </ScrollView>
