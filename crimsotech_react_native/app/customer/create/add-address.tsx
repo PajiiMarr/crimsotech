@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../../contexts/AuthContext';
 import { router, useLocalSearchParams } from 'expo-router';
 import AxiosInstance from '../../../contexts/axios';
-import AddressDropdowns from 'app/components/address/AddressDropdowns';
+import AddressDropdowns from '../../components/address/AddressDropdowns';
 
 interface AddressFormData {
   recipient_name: string;

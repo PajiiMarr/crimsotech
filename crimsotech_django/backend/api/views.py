@@ -22663,6 +22663,7 @@ class SellerOrderList(viewsets.ViewSet):
                 return Response({'success': False, 'message': 'No items found for this shop in the order'}, status=status.HTTP_404_NOT_FOUND)
             
             delivery_info = None
+            proof_images = []
             try:
                 delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
                 if delivery:
@@ -22675,6 +22676,20 @@ class SellerOrderList(viewsets.ViewSet):
                         'submitted_at': delivery.created_at.isoformat() if delivery.created_at else None,
                         'tracking_number': f"TRK-{str(delivery.id)[:10]}" if delivery.status != 'pending' else None
                     }
+                    
+                    # Fetch proof images for delivered orders - USE THE SAME HELPER AS RIDER SIDE
+                    if delivery.status == 'delivered':
+                        proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
+                        for proof in proofs:
+                            if proof.file_data:
+                                # Use the same convert_s3_to_public_url helper
+                                file_url = convert_s3_to_public_url(proof.file_data.url)
+                                proof_images.append({
+                                    'id': str(proof.id),
+                                    'file_url': file_url,
+                                    'file_type': proof.file_type,
+                                    'uploaded_at': proof.uploaded_at.isoformat() if proof.uploaded_at else None
+                                })
             except Delivery.DoesNotExist:
                 pass
                 
@@ -22697,7 +22712,7 @@ class SellerOrderList(viewsets.ViewSet):
                                 "variant": "Standard",
                                 "shop": {"id": str(shop.id), "name": shop.name},
                                 "media": [],
-                                "primary_image": {"url": checkout.direct_product_image} if checkout.direct_product_image else None
+                                "primary_image": {"url": convert_s3_to_public_url(checkout.direct_product_image) if checkout.direct_product_image else None}
                             },
                             'quantity': checkout.quantity,
                             'variant_id': checkout.direct_variant_id
@@ -22782,6 +22797,7 @@ class SellerOrderList(viewsets.ViewSet):
                     'completed_at': order.completed_at.isoformat() if order.completed_at else None,
                     'items': items,
                     'delivery_info': delivery_info,
+                    'proof_images': proof_images,
                     'pickup_date': order.metadata.get('pickup_date') if order.metadata else None,
                 }
             }, status=status.HTTP_200_OK)
@@ -22791,7 +22807,6 @@ class SellerOrderList(viewsets.ViewSet):
             return Response({'success': False, 'message': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'success': False, 'message': f'Error retrieving order: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
     @action(detail=True, methods=['get'])
     def generate_waybill(self, request, pk=None):
         import io

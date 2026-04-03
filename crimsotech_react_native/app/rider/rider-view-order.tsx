@@ -11,9 +11,10 @@ import {
   RefreshControl,
   Image,
   Dimensions,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, router, Stack } from 'expo-router';
+import { useLocalSearchParams, router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import AxiosInstance from '../../contexts/axios';
 
@@ -97,6 +98,30 @@ export default function RiderViewOrder() {
   const [refreshing, setRefreshing] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  const [proofImages, setProofImages] = useState<any[]>([]);
+  const [loadingProofs, setLoadingProofs] = useState(false);
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+  // Fetch proof images
+  const fetchProofImages = async (deliveryIdParam: string) => {
+    if (!deliveryIdParam) return;
+    
+    try {
+      setLoadingProofs(true);
+      const response = await AxiosInstance.get(
+        `/rider-proof/delivery/${deliveryIdParam}/proofs/`,
+        { headers: { "X-User-Id": user?.user_id } }
+      );
+      if (response.data?.success) {
+        setProofImages(response.data.proofs || []);
+      }
+    } catch (error) {
+      console.error('Error fetching proofs:', error);
+    } finally {
+      setLoadingProofs(false);
+    }
+  };
 
   // Fetch order details
   const fetchOrderDetails = async () => {
@@ -115,6 +140,10 @@ export default function RiderViewOrder() {
       
       if (response.data) {
         setOrderDetails(response.data);
+        // Fetch proofs after getting delivery ID
+        if (response.data.delivery?.id) {
+          await fetchProofImages(response.data.delivery.id);
+        }
       }
     } catch (error: any) {
       console.error('Error fetching order details:', error);
@@ -158,7 +187,7 @@ export default function RiderViewOrder() {
 
               if (response.data.success) {
                 Alert.alert('Success', 'Order accepted successfully');
-                router.back();
+                fetchOrderDetails(); // Refresh to show updated status
               } else {
                 Alert.alert('Error', response.data.error || 'Failed to accept order');
               }
@@ -214,13 +243,167 @@ export default function RiderViewOrder() {
     );
   };
 
+  // Handle mark as picked up
+  const handleMarkPickedUp = async () => {
+    if (!orderDetails?.delivery?.id) return;
+    
+    Alert.alert(
+      'Mark as Picked Up',
+      'Have you picked up the items from the seller?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Yes, Picked Up',
+          onPress: async () => {
+            try {
+              setIsActionLoading(true);
+              const formData = new FormData();
+              formData.append('delivery_id', orderDetails.delivery.id);
+
+              const response = await AxiosInstance.post('/rider-orders-active/pickup_order/', formData, {
+                headers: { 'X-User-Id': user?.user_id }
+              });
+
+              if (response.data.success) {
+                Alert.alert('Success', 'Order marked as picked up successfully');
+                fetchOrderDetails(); // Refresh to show updated status
+              } else {
+                Alert.alert('Error', response.data.error || 'Failed to mark as picked up');
+              }
+            } catch (err: any) {
+              console.error('Error marking as picked up:', err);
+              Alert.alert('Error', err?.response?.data?.error || 'Failed to mark as picked up');
+            } finally {
+              setIsActionLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Handle mark as delivered - Navigate to add proof page first
+  const handleMarkDelivered = async () => {
+    if (!orderDetails?.delivery?.id) return;
+    
+    router.push({
+      pathname: '/rider/add-proof',
+      params: { deliveryId: orderDetails.delivery.id }
+    });
+  };
+
+  // Handle failed delivery
+  const handleFailedDelivery = async () => {
+    if (!orderDetails?.delivery?.id) return;
+    
+    Alert.alert(
+      'Failed Delivery',
+      'Why did the delivery fail?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Customer Not Available',
+          onPress: () => showFailedReasonDialog('Customer not available'),
+        },
+        {
+          text: 'Wrong Address',
+          onPress: () => showFailedReasonDialog('Wrong address provided'),
+        },
+        {
+          text: 'Other',
+          onPress: () => showFailedReasonDialog('Other reason'),
+        },
+      ]
+    );
+  };
+
+  const showFailedReasonDialog = (reason: string) => {
+    Alert.alert(
+      'Confirm Failed Delivery',
+      `Reason: ${reason}\n\nAre you sure you want to mark this delivery as failed?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setIsActionLoading(true);
+              const formData = new FormData();
+              formData.append('delivery_id', orderDetails?.delivery?.id || '');
+              formData.append('status', 'cancelled');
+              formData.append('reason', reason);
+
+              const response = await AxiosInstance.post('/rider-orders-active/update_delivery_status/', formData, {
+                headers: { 'X-User-Id': user?.user_id }
+              });
+
+              if (response.data.success) {
+                Alert.alert('Info', 'Delivery marked as failed');
+                router.back();
+              } else {
+                Alert.alert('Error', response.data.error || 'Failed to mark delivery as failed');
+              }
+            } catch (err: any) {
+              console.error('Error marking delivery as failed:', err);
+              Alert.alert('Error', err?.response?.data?.error || 'Failed to mark delivery as failed');
+            } finally {
+              setIsActionLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Handle cancel order (for accepted status)
+  const handleCancelAcceptedOrder = async () => {
+    if (!orderDetails?.delivery?.id) return;
+    
+    Alert.alert(
+      'Cancel Order',
+      'Are you sure you want to cancel this delivery? This action cannot be undone.',
+      [
+        { text: 'No, Go Back', style: 'cancel' },
+        {
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setIsActionLoading(true);
+              const formData = new FormData();
+              formData.append('order_id', orderDetails.delivery.id);
+              formData.append('reason', 'Rider cancelled the delivery');
+
+              const response = await AxiosInstance.post('/rider-orders-active/decline_order/', formData, {
+                headers: { 'X-User-Id': user?.user_id }
+              });
+
+              if (response.data.success) {
+                Alert.alert('Success', 'Order cancelled successfully');
+                router.back();
+              } else {
+                Alert.alert('Error', response.data.error || 'Failed to cancel order');
+              }
+            } catch (err: any) {
+              console.error('Error cancelling order:', err);
+              Alert.alert('Error', err?.response?.data?.error || 'Failed to cancel order');
+            } finally {
+              setIsActionLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   // Handle image loading error
   const handleImageError = (productId: string) => {
     setImageErrors(prev => ({ ...prev, [productId]: true }));
   };
 
   // Format date
-  const formatDate = (dateString?: string) => {
+  const formatDate = (dateString?: string | null) => {
     if (!dateString) return 'N/A';
     try {
       const date = new Date(dateString);
@@ -250,9 +433,9 @@ export default function RiderViewOrder() {
       case 'pending_offer':
         return '#F59E0B';
       case 'accepted':
-        return '#10B981';
-      case 'picked_up':
         return '#3B82F6';
+      case 'picked_up':
+        return '#10B981';
       case 'delivered':
         return '#10B981';
       case 'cancelled':
@@ -273,6 +456,26 @@ export default function RiderViewOrder() {
         return 'Pending';
       default:
         return status?.charAt(0).toUpperCase() + status?.slice(1) || 'Unknown';
+    }
+  };
+
+  // Get status message
+  const getStatusMessage = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case 'accepted':
+        return 'You have accepted this delivery. Please proceed to the seller\'s location to pick up the items.';
+      case 'pending':
+        return 'This order is pending your response. Please accept or decline within the time limit.';
+      case 'picked_up':
+        return 'You have picked up the items and are now on your way to deliver to the customer.';
+      case 'delivered':
+        return 'This order has been successfully delivered to the customer.';
+      case 'cancelled':
+        return 'This order has been cancelled.';
+      case 'declined':
+        return 'You have declined this delivery order.';
+      default:
+        return '';
     }
   };
 
@@ -335,6 +538,13 @@ export default function RiderViewOrder() {
   }
 
   const showAcceptDecline = orderDetails.delivery?.status === 'pending' || orderDetails.delivery?.status === 'pending_offer';
+  const showAcceptedActions = orderDetails.delivery?.status === 'accepted';
+  const showInTransitActions = orderDetails.delivery?.status === 'picked_up';
+  const showDelivered = orderDetails.delivery?.status === 'delivered';
+  const statusMessage = getStatusMessage(orderDetails.delivery?.status);
+  const isAccepted = orderDetails.delivery?.status === 'accepted';
+  const statusColor = getStatusColor(orderDetails.delivery?.status);
+  const statusLabel = getStatusLabel(orderDetails.delivery?.status);
 
   // Get unique seller info from first item (assuming all items are from same seller for this delivery)
   const sellerInfo = orderDetails.items?.[0] || null;
@@ -342,19 +552,22 @@ export default function RiderViewOrder() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      <Stack.Screen
-        options={{
-          headerTitle: "Order Details",
-          headerTitleStyle: { fontSize: 18, fontWeight: '600' },
-          headerShadowVisible: false,
-          headerStyle: { backgroundColor: '#FFFFFF' },
-          headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 8 }}>
-              <Ionicons name="arrow-back" size={24} color="#1F2937" />
-            </TouchableOpacity>
-          ),
-        }}
-      />
+      
+      {/* Custom Header with Back Button and Title - Edge to Edge */}
+      <View style={{ 
+        backgroundColor: '#FFFFFF', 
+        paddingTop: 12, 
+        paddingBottom: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F4F6'
+      }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
+          <TouchableOpacity onPress={() => router.back()} style={{ marginRight: 12 }}>
+            <Ionicons name="arrow-back" size={24} color="#1F2937" />
+          </TouchableOpacity>
+          <Text style={{ fontSize: 18, fontWeight: '600', color: '#1F2937' }}>Order Details</Text>
+        </View>
+      </View>
       
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -362,21 +575,132 @@ export default function RiderViewOrder() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* Order Status Banner - Edge to Edge */}
-        <View style={{ backgroundColor: '#FFFFFF', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', marginBottom: 8 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: 14, color: '#6B7280' }}>Order Status</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: getStatusColor(orderDetails.delivery?.status), marginRight: 6 }} />
-              <Text style={{ fontSize: 14, fontWeight: '600', color: getStatusColor(orderDetails.delivery?.status) }}>
-                {getStatusLabel(orderDetails.delivery?.status)}
-              </Text>
+        {/* Combined Status Card - Edge to Edge */}
+        <View style={{ 
+          backgroundColor: '#FFFFFF', 
+          borderBottomWidth: 1, 
+          borderTopWidth: 1, 
+          borderColor: '#F3F4F6',
+          marginBottom: -1
+        }}>
+          <View style={{ padding: 16 }}>
+            {/* Status Badge Row */}
+            <View style={{ 
+              flexDirection: 'row', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              marginBottom: statusMessage ? 12 : 0
+            }}>
+              <Text style={{ fontSize: 14, color: '#6B7280' }}>Order Status</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: statusColor, marginRight: 6 }} />
+                <Text style={{ fontSize: 14, fontWeight: '600', color: statusColor }}>
+                  {statusLabel}
+                </Text>
+              </View>
             </View>
+            
+            {/* Status Message */}
+            {statusMessage ? (
+              <View style={{ 
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: isAccepted ? '#EFF6FF' : '#FEF3C7',
+                padding: 12,
+                borderRadius: 8,
+                marginTop: 8,
+              }}>
+                <Ionicons 
+                  name={isAccepted ? "information-circle" : "information-circle"} 
+                  size={20} 
+                  color={isAccepted ? "#3B82F6" : "#F59E0B"} 
+                />
+                <Text style={{ 
+                  fontSize: 13, 
+                  color: isAccepted ? '#1E40AF' : '#92400E', 
+                  marginLeft: 10, 
+                  flex: 1,
+                  lineHeight: 18
+                }}>
+                  {statusMessage}
+                </Text>
+              </View>
+            ) : null}
           </View>
         </View>
 
+        {/* DELIVERED SECTION - Shown when status is delivered */}
+        {showDelivered && (
+          <View style={{ 
+            backgroundColor: '#FFFFFF', 
+            borderBottomWidth: 1, 
+            borderTopWidth: 1, 
+            borderColor: '#F3F4F6',
+            marginBottom: -1,
+            marginTop: -1
+          }}>
+            <View style={{ padding: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                <Text style={{ fontSize: 15, fontWeight: '600', marginLeft: 8, color: '#1F2937' }}>Delivery Complete</Text>
+              </View>
+              
+              <View style={{ backgroundColor: '#F0FDF4', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#BBF7D0' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                  <Ionicons name="time-outline" size={14} color="#059669" />
+                  <Text style={{ fontSize: 12, color: '#065F46', marginLeft: 6 }}>
+                    Delivered on {formatDate(orderDetails.delivery?.delivered_at)}
+                  </Text>
+                </View>
+                
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12 }}>
+                  <Ionicons name="location-outline" size={14} color="#059669" style={{ marginTop: 1 }} />
+                  <Text style={{ fontSize: 12, color: '#065F46', marginLeft: 6, flex: 1 }}>
+                    {orderDetails.shipping_address?.full_address || 'Address not available'}
+                  </Text>
+                </View>
+
+                {/* Proof Images Gallery - Smaller */}
+                {loadingProofs ? (
+                  <ActivityIndicator size="small" color="#10B981" />
+                ) : proofImages.length > 0 ? (
+                  <View>
+                    <Text style={{ fontSize: 11, color: '#065F46', marginBottom: 8, fontWeight: '500' }}>
+                      Proof of Delivery ({proofImages.length})
+                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                      {proofImages.map((proof, index) => {
+                        const imageUrl = proof.file_url || proof.file_data;
+                        if (!imageUrl) return null;
+                        return (
+                          <TouchableOpacity
+                            key={proof.id || index}
+                            onPress={() => {
+                              setSelectedImage(imageUrl);
+                              setPreviewVisible(true);
+                            }}
+                          >
+                            <Image 
+                              source={{ uri: imageUrl }} 
+                              style={{ width: 60, height: 60, borderRadius: 8, borderWidth: 1, borderColor: '#BBF7D0' }}
+                            />
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ) : (
+                  <Text style={{ fontSize: 11, color: '#065F46', fontStyle: 'italic' }}>
+                    No proof photos available
+                  </Text>
+                )}
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* CARD 1: Order Information (Buyer Info + Order Details) - Edge to Edge */}
-        <View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: -1 }}>
+        <View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: -1, marginTop: -1 }}>
           <View style={{ padding: 16 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
               <Ionicons name="receipt-outline" size={22} color="#EE4D2D" />
@@ -468,7 +792,7 @@ export default function RiderViewOrder() {
         </View>
 
         {/* CARD 3: Order Items - Edge to Edge */}
-        <View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: showAcceptDecline ? 0 : 80, marginTop: -1 }}>
+        <View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: (showAcceptDecline || showAcceptedActions || showInTransitActions || showDelivered) ? 0 : 80, marginTop: -1 }}>
           <View style={{ padding: 16 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
               <Ionicons name="cube-outline" size={22} color="#EE4D2D" />
@@ -534,7 +858,7 @@ export default function RiderViewOrder() {
         </View>
       </ScrollView>
 
-      {/* Edge-to-Edge Action Buttons */}
+      {/* Edge-to-Edge Action Buttons for Pending/Accept/Decline */}
       {showAcceptDecline && (
         <View style={{ 
           backgroundColor: '#FFFFFF', 
@@ -590,6 +914,135 @@ export default function RiderViewOrder() {
           </View>
         </View>
       )}
+
+      {/* Edge-to-Edge Action Buttons for Accepted Status - Mark as Picked Up and Cancel */}
+      {showAcceptedActions && (
+        <View style={{ 
+          backgroundColor: '#FFFFFF', 
+          borderTopWidth: 1, 
+          borderTopColor: '#E5E7EB',
+          paddingTop: 12,
+          paddingBottom: 20,
+        }}>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <TouchableOpacity
+              onPress={handleCancelAcceptedOrder}
+              disabled={isActionLoading}
+              style={{
+                flex: 1,
+                backgroundColor: '#FFFFFF',
+                paddingVertical: 14,
+                borderRadius: 0,
+                borderWidth: 1,
+                borderColor: '#DC2626',
+                marginLeft: 16,
+              }}
+            >
+              <Text style={{ 
+                fontSize: 16, 
+                fontWeight: '600', 
+                color: '#DC2626', 
+                textAlign: 'center' 
+              }}>
+                {isActionLoading ? 'Processing...' : 'Cancel'}
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              onPress={handleMarkPickedUp}
+              disabled={isActionLoading}
+              style={{
+                flex: 1,
+                backgroundColor: '#3B82F6',
+                paddingVertical: 14,
+                borderRadius: 0,
+                marginRight: 16,
+              }}
+            >
+              <Text style={{ 
+                fontSize: 16, 
+                fontWeight: '600', 
+                color: '#FFFFFF', 
+                textAlign: 'center' 
+              }}>
+                {isActionLoading ? 'Processing...' : 'Mark as Picked Up'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Edge-to-Edge Action Buttons for In Transit Status - Mark as Delivered and Failed */}
+      {showInTransitActions && (
+        <View style={{ 
+          backgroundColor: '#FFFFFF', 
+          borderTopWidth: 1, 
+          borderTopColor: '#E5E7EB',
+          paddingTop: 12,
+          paddingBottom: 20,
+        }}>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <TouchableOpacity
+              onPress={handleFailedDelivery}
+              disabled={isActionLoading}
+              style={{
+                flex: 1,
+                backgroundColor: '#FFFFFF',
+                paddingVertical: 14,
+                borderRadius: 0,
+                borderWidth: 1,
+                borderColor: '#DC2626',
+                marginLeft: 16,
+              }}
+            >
+              <Text style={{ 
+                fontSize: 16, 
+                fontWeight: '600', 
+                color: '#DC2626', 
+                textAlign: 'center' 
+              }}>
+                {isActionLoading ? 'Processing...' : 'Failed'}
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              onPress={handleMarkDelivered}
+              disabled={isActionLoading}
+              style={{
+                flex: 1,
+                backgroundColor: '#10B981',
+                paddingVertical: 14,
+                borderRadius: 0,
+                marginRight: 16,
+              }}
+            >
+              <Text style={{ 
+                fontSize: 16, 
+                fontWeight: '600', 
+                color: '#FFFFFF', 
+                textAlign: 'center' 
+              }}>
+                {isActionLoading ? 'Processing...' : 'Mark as Delivered'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Image Preview Modal */}
+      <Modal visible={previewVisible} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+          <TouchableOpacity
+            style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 }}
+            onPress={() => setPreviewVisible(false)}
+          >
+            <Ionicons name="close" size={30} color="#FFFFFF" />
+          </TouchableOpacity>
+          {selectedImage && (
+            <Image source={{ uri: selectedImage }} style={{ width: '90%', height: '70%', resizeMode: 'contain' }} />
+          )}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

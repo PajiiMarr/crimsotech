@@ -159,7 +159,7 @@ export default function Home() {
             contentContainerStyle={styles.scrollContent}
           >
             {/* Availability Toggle */}
-            <View style={styles.availabilityCard}>
+            {/* <View style={styles.availabilityCard}>
               <View style={styles.availabilityHeader}>
                 <Text style={styles.availabilityTitle}>Delivery Status</Text>
                 <View style={styles.statusIndicator}>
@@ -197,7 +197,7 @@ export default function Home() {
                   {acceptingDeliveries ? "Go Offline" : "Go Online"}
                 </Text>
               </TouchableOpacity>
-            </View>
+            </View> */}
 
             {/* Stats Grid */}
             <View style={styles.statsContainer}>
@@ -294,7 +294,7 @@ export default function Home() {
             )}
 
             {/* Active Deliveries List */}
-            <View style={styles.section}>
+            {/* <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Active Deliveries</Text>
                 <TouchableOpacity onPress={() => router.push("/rider/active-orders")}>
@@ -370,7 +370,7 @@ export default function Home() {
                   </View>
                 </View>
               ))}
-            </View>
+            </View> */}
 
             {/* Vehicle Info */}
             {riderData && (
