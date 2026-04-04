@@ -25912,6 +25912,19 @@ class PurchasesBuyer(viewsets.ViewSet):
             # Get payment and delivery details
             payment = Payment.objects.filter(order_id=order.order).first()
             delivery = Delivery.objects.filter(order_id=order.order).first()
+
+            proof_images = []
+            if delivery:
+                proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
+                for proof in proofs:
+                    proof_images.append({
+                        'id': str(proof.id),
+                        'file_url': get_media_url(proof.file_data),
+                        'file_type': proof.file_type,
+                        'uploaded_at': proof.uploaded_at.isoformat(),
+                        'proof_type': proof.proof_type,
+                        'proof_type_display': proof.get_proof_type_display(),
+                    })
             
             # Get shipping/delivery address
             delivery_address = None
@@ -25998,15 +26011,17 @@ class PurchasesBuyer(viewsets.ViewSet):
                             except Exception:
                                 shop_picture_url = None
                         
+                        followers_count = ShopFollow.objects.filter(shop=product.shop).count()
+                        
                         shop_info = {
                             'id': str(product.shop.id),
                             'name': product.shop.name,
                             'picture': shop_picture_url,
                             'description': product.shop.description if hasattr(product.shop, 'description') else '',
                             'items_count': product.shop.products.count() if product.shop else 0,
-                            'followers_count': 178000,
-                            'is_choices': True,
-                            'is_new': True,
+                            'followers_count': followers_count,  # Changed from hardcoded 178000
+                            'is_choices': False,  # You can determine this based on product variants
+                            'is_new': False,
                         }
                     
                     # Check if user has reviewed this product
@@ -26094,7 +26109,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'can_return': order.status == 'delivered' and any(item['can_return'] for item in items_data),
                     'can_contact_seller': True,
                     'can_buy_again': True,
-                }
+                },
+                'proof_images': proof_images,
             }
             
             return Response(response_data)

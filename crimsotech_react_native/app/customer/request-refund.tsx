@@ -196,13 +196,29 @@ const Checkbox = ({ checked, onPress }: any) => (
   </TouchableOpacity>
 );
 
-const Badge = ({ children, variant = 'default' }: any) => (
-  <View style={[styles.badge, styles[`badge${variant}`]]}>
-    <Text style={[styles.badgeText, styles[`badgeText${variant}`]]}>
-      {children}
-    </Text>
-  </View>
-);
+const Badge = ({ children, variant = 'default' }: { children: React.ReactNode; variant?: string }) => {
+  const badgeStyle = variant === 'info' ? styles.badgeinfo :
+                     variant === 'success' ? styles.badgesuccess :
+                     variant === 'warning' ? styles.badgewarning :
+                     variant === 'purple' ? styles.badgepurple :
+                     variant === 'disabled' ? styles.badgedisabled :
+                     styles.badgedefault;
+  
+  const textStyle = variant === 'info' ? styles.badgeTextinfo :
+                    variant === 'success' ? styles.badgeTextsuccess :
+                    variant === 'warning' ? styles.badgeTextwarning :
+                    variant === 'purple' ? styles.badgeTextpurple :
+                    variant === 'disabled' ? styles.badgeTextdisabled :
+                    styles.badgeTextdefault;
+  
+  return (
+    <View style={[styles.badge, badgeStyle]}>
+      <Text style={[styles.badgeText, textStyle]}>
+        {children}
+      </Text>
+    </View>
+  );
+};
 
 const ProgressBar = ({ progress }: any) => (
   <View style={styles.progressBarContainer}>
@@ -1297,15 +1313,16 @@ export default function RequestRefundPage() {
           </View>
           
           {selectedItems.length > 0 && (
-            <View style={styles.selectedSummary}>
-              <Text style={styles.selectedCount}>
-                {selectedItems.length} item{selectedItems.length !== 1 ? 's' : ''} selected
-              </Text>
-              <Text style={styles.selectedAmount}>
-                Total: {formatCurrency(fullAmount)}
-              </Text>
-            </View>
-          )}
+          <View style={styles.selectedSummary}>
+            <Text style={styles.selectedCount}>
+              {selectedItems.length} item{selectedItems.length !== 1 ? 's' : ''} selected
+            </Text>
+            <Text style={styles.selectedAmount}>
+              Order Total: {formatCurrency(order.total_amount)}
+            </Text>
+          </View>
+        )}
+       
         </View>
 
         {/* Refund Type */}
@@ -1734,7 +1751,7 @@ export default function RequestRefundPage() {
                   if (item === 'Other') {
                     Alert.prompt('Specify Reason', 'Please specify your reason for return:', [
                       { text: 'Cancel', style: 'cancel' },
-                      { text: 'OK', onPress: (reason) => { if (reason) setCustomReason(reason); } }
+                      { text: 'OK', onPress: (reason?: string) => { if (reason) setCustomReason(reason); } }
                     ]);
                   }
                   setShowReasonModal(false);

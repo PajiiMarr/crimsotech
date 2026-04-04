@@ -11,6 +11,7 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Modal,
   RefreshControl
 } from 'react-native';
 import { Ionicons, MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -126,6 +127,14 @@ interface OrderData {
     can_contact_seller: boolean;
     can_buy_again: boolean;
   };
+  proof_images?: Array<{  
+    id: string;
+    file_url: string;
+    file_type: string;
+    uploaded_at: string;
+    proof_type?: string;
+    proof_type_display?: string;
+  }>;
 }
 
 export default function ViewTrackOrderPage() {
@@ -134,6 +143,9 @@ export default function ViewTrackOrderPage() {
   const [loading, setLoading] = useState(true);
   const [orderData, setOrderData] = useState<OrderData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [proofs, setProofs] = useState<any[]>([]);
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   useEffect(() => {
     if (user?.id && orderId) {
@@ -225,6 +237,12 @@ export default function ViewTrackOrderPage() {
           }
 
         setOrderData(data);
+// Set proofs from order data if available (like seller side)
+if (data.proof_images && data.proof_images.length > 0) {
+  setProofs(data.proof_images);
+} else {
+  setProofs([]);
+}
       }
     } catch (error: any) {
       console.error('Error fetching order details:', error);
@@ -252,6 +270,8 @@ export default function ViewTrackOrderPage() {
       year: 'numeric',
     });
   };
+
+
 
   const formatDateTime = (dateString: string | null) => {
     if (!dateString) return 'N/A';
@@ -328,6 +348,57 @@ export default function ViewTrackOrderPage() {
       ]
     );
   };
+const renderProofOfDelivery = () => {
+  if (orderData?.order?.status !== 'delivered') return null;
+  
+  const proofs = orderData?.proof_images || [];
+  if (proofs.length === 0) return null;
+
+  return (
+    <View style={styles.infoCard}>
+      <View style={styles.cardHeader}>
+        <MaterialIcons name="photo-camera" size={20} color="#111827" />
+        <Text style={styles.cardTitle}>Proof of Delivery</Text>
+      </View>
+      <View style={styles.cardContent}>
+        <View style={styles.proofGrid}>
+          {proofs.map((proof) => (
+            <TouchableOpacity
+              key={proof.id}
+              onPress={() => {
+                setSelectedImage(proof.file_url);
+                setPreviewVisible(true);
+              }}
+            >
+              <Image source={{ uri: proof.file_url }} style={styles.proofImage} />
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+};
+
+const renderRiderInfo = () => {
+  // Only show for delivered orders that have a rider assigned
+  if (orderData?.order?.status !== 'delivered') return null;
+  if (!orderData?.order?.delivery_rider) return null;
+  
+  return (
+    <View style={styles.infoCard}>
+      <View style={styles.cardHeader}>
+        <MaterialCommunityIcons name="motorbike" size={20} color="#111827" />
+        <Text style={styles.cardTitle}>Rider Information</Text>
+      </View>
+      <View style={styles.cardContent}>
+        <View style={styles.riderInfoRow}>
+          <Ionicons name="person-outline" size={16} color="#6B7280" />
+          <Text style={styles.riderName}>{orderData.order.delivery_rider}</Text>
+        </View>
+      </View>
+    </View>
+  );
+};
 
   const handleReviewProduct = (productId: string) => {
     router.push(`/customer/order-review?productId=${productId}&orderId=${orderId}`);
@@ -340,6 +411,7 @@ export default function ViewTrackOrderPage() {
   const handleContactSeller = (shopId: string) => {
     router.push(`/customer/messages?shopId=${shopId}`);
   };
+  
 
   const handleTrackOrder = () => {
     // Navigate to shipping timeline route with orderId
@@ -445,6 +517,7 @@ export default function ViewTrackOrderPage() {
                 </View>
               </View>
             );
+            
           }
 
           // Processing status UI (includes ready_for_pickup variant)
@@ -520,6 +593,8 @@ export default function ViewTrackOrderPage() {
             </View>
           );
         })()}
+        {renderRiderInfo()}
+        {renderProofOfDelivery()}
 
         {/* Shipping / Pickup Information */}
         {(() => {
@@ -836,6 +911,30 @@ export default function ViewTrackOrderPage() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Image Preview Modal */}
+<Modal
+  visible={previewVisible}
+  transparent={true}
+  animationType="fade"
+  onRequestClose={() => setPreviewVisible(false)}
+>
+  <View style={styles.modalOverlay}>
+    <TouchableOpacity
+      style={styles.closeButton}
+      onPress={() => setPreviewVisible(false)}
+    >
+      <Ionicons name="close" size={30} color="#FFFFFF" />
+    </TouchableOpacity>
+    {selectedImage && (
+      <Image 
+        source={{ uri: selectedImage }} 
+        style={styles.fullScreenImage}
+        resizeMode="contain"
+      />
+    )}
+  </View>
+</Modal>
     </View>
   );
 }
@@ -1335,4 +1434,47 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+ 
+proofGrid: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  gap: 8,
+},
+proofImage: {
+  width: 80,
+  height: 80,
+  borderRadius: 8,
+  borderWidth: 1,
+  borderColor: '#E5E7EB',
+},
+riderInfoRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 8,
+  marginBottom: 8,
+},
+riderName: {
+  fontSize: 14,
+  fontWeight: '500',
+  color: '#111827',
+},
+modalOverlay: {
+  flex: 1,
+  backgroundColor: 'rgba(0, 0, 0, 0.95)',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+closeButton: {
+  position: 'absolute',
+  top: Platform.OS === 'ios' ? 60 : 40,
+  right: 20,
+  zIndex: 10,
+  padding: 8,
+  backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  borderRadius: 20,
+},
+fullScreenImage: {
+  width: '100%',
+  height: '80%',
+},
 });
