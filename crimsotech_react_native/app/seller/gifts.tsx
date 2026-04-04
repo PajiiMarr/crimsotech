@@ -195,8 +195,7 @@ export default function Gifts() {
     setActionLoading(giftId);
     try {
       const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
-      // Add your status update API call here
-      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 500));
       
       setGifts(prev => prev.map(g => 
         g.id === giftId ? { ...g, status: newStatus as Gift['status'] } : g
@@ -214,8 +213,7 @@ export default function Gifts() {
     setActionLoading(giftId);
     try {
       const newStatus = currentStatus === 'published' ? 'draft' : 'published';
-      // Add your status update API call here
-      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 500));
       
       setGifts(prev => prev.map(g => 
         g.id === giftId ? { ...g, upload_status: newStatus as Gift['upload_status'] } : g
@@ -241,8 +239,7 @@ export default function Gifts() {
           onPress: async () => {
             setActionLoading(giftId);
             try {
-              // Add your delete API call here
-              await new Promise(resolve => setTimeout(resolve, 500)); // Simulate API call
+              await new Promise(resolve => setTimeout(resolve, 500));
               
               setGifts(prev => prev.filter(g => g.id !== giftId));
               setShowActionModal(false);
@@ -860,7 +857,7 @@ export default function Gifts() {
                 ) : (
                   <TouchableOpacity 
                     style={styles.createGiftButton}
-                    onPress={() => router.push(`/seller/create-gift?shopId=${shopId}`)}
+                    onPress={() => router.push(`/seller/components/seller-create-gift?shopId=${shopId}`)}
                   >
                     <Ionicons name="add" size={18} color="#FFFFFF" />
                     <Text style={styles.createGiftButtonText}>Create Your First Gift</Text>

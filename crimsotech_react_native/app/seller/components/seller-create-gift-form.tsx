@@ -632,7 +632,6 @@ export default function CreateGiftForm({
         critical_trigger: v.critical_trigger || null,
         is_refundable: false,
         is_active: v.is_active ?? true,
-        // No depreciation fields for gifts
       }));
 
       formData.append("variants", JSON.stringify(variantsPayload));
@@ -754,7 +753,7 @@ export default function CreateGiftForm({
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionIcon}>
-              <Ionicons name="gift-outline" size={20} color="#EA580C" />
+              <Ionicons name="gift-outline" size={20} color="#9333EA" />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Basic Information</Text>
@@ -766,7 +765,7 @@ export default function CreateGiftForm({
 
           {selectedShop && (
             <View style={styles.shopInfoCard}>
-              <Ionicons name="storefront-outline" size={16} color="#EA580C" />
+              <Ionicons name="storefront-outline" size={16} color="#9333EA" />
               <Text style={styles.shopInfoText}>Shop: {selectedShop.name}</Text>
             </View>
           )}
@@ -869,7 +868,7 @@ export default function CreateGiftForm({
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionIcon}>
-              <Ionicons name="camera" size={20} color="#EA580C" />
+              <Ionicons name="camera" size={20} color="#9333EA" />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Gift Photos</Text>
@@ -890,7 +889,7 @@ export default function CreateGiftForm({
               Take photos of your gift (max 9 photos)
             </Text>
             <View style={styles.cameraButton}>
-              <Ionicons name="camera-outline" size={16} color="#EA580C" />
+              <Ionicons name="camera-outline" size={16} color="#9333EA" />
               <Text style={styles.cameraButtonText}>Open Camera</Text>
             </View>
           </TouchableOpacity>
@@ -931,7 +930,7 @@ export default function CreateGiftForm({
           <View style={styles.aiSection}>
             <View style={styles.aiHeader}>
               <View style={styles.aiTitleContainer}>
-                <Ionicons name="sparkles" size={18} color="#EA580C" />
+                <Ionicons name="sparkles" size={18} color="#9333EA" />
                 <Text style={styles.aiTitle}>AI Category Prediction</Text>
               </View>
               {predictionResult && (
@@ -961,7 +960,7 @@ export default function CreateGiftForm({
                   disabled={mainMedia.length === 0 || isPredicting}
                 >
                   {isPredicting ? (
-                    <ActivityIndicator size="small" color="#EA580C" />
+                    <ActivityIndicator size="small" color="#9333EA" />
                   ) : (
                     <Text style={styles.analyzeButtonText}>Analyze Photos</Text>
                   )}
@@ -1043,7 +1042,7 @@ export default function CreateGiftForm({
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionIcon}>
-              <Ionicons name="cube" size={20} color="#EA580C" />
+              <Ionicons name="cube" size={20} color="#9333EA" />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Gift Variants</Text>
@@ -1199,9 +1198,9 @@ export default function CreateGiftForm({
                         onValueChange={(value) =>
                           updateVariantField(variant.id, "is_active", value)
                         }
-                        trackColor={{ false: "#E5E7EB", true: "#F97316" }}
+                        trackColor={{ false: "#E5E7EB", true: "#9333EA" }}
                         thumbColor={
-                          variant.is_active !== false ? "#EA580C" : "#9CA3AF"
+                          variant.is_active !== false ? "#9333EA" : "#9CA3AF"
                         }
                       />
                       <Text style={styles.toggleLabel}>Active</Text>
@@ -1210,7 +1209,7 @@ export default function CreateGiftForm({
                       <Switch
                         value={false}
                         disabled={true}
-                        trackColor={{ false: "#E5E7EB", true: "#F97316" }}
+                        trackColor={{ false: "#E5E7EB", true: "#9333EA" }}
                         thumbColor={"#9CA3AF"}
                       />
                       <Text style={[styles.toggleLabel, { color: "#9CA3AF" }]}>
@@ -1224,7 +1223,7 @@ export default function CreateGiftForm({
                       <Ionicons
                         name="resize-outline"
                         size={15}
-                        color="#EA580C"
+                        color="#9333EA"
                       />
                       <Text style={styles.advancedSectionTitle}>
                         Dimensions
@@ -1358,7 +1357,7 @@ export default function CreateGiftForm({
                       <Ionicons
                         name="shield-checkmark-outline"
                         size={15}
-                        color="#EA580C"
+                        color="#9333EA"
                       />
                       <Text style={styles.advancedSectionTitle}>
                         Proof of Ownership
@@ -1430,7 +1429,7 @@ export default function CreateGiftForm({
             style={styles.addVariantButton}
             onPress={addVariant}
           >
-            <Ionicons name="add" size={20} color="#EA580C" />
+            <Ionicons name="add" size={20} color="#9333EA" />
             <Text style={styles.addVariantButtonText}>Add Another Variant</Text>
           </TouchableOpacity>
 
@@ -1469,7 +1468,7 @@ export default function CreateGiftForm({
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View style={styles.sectionIcon}>
-              <Ionicons name="checkmark-circle" size={20} color="#EA580C" />
+              <Ionicons name="checkmark-circle" size={20} color="#9333EA" />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.sectionTitle}>Review & Submit</Text>
@@ -1580,7 +1579,7 @@ export default function CreateGiftForm({
                   <TouchableOpacity
                     style={[
                       styles.modalItem,
-                      isSelected && { backgroundColor: "#FFF7ED" },
+                      isSelected && { backgroundColor: "#FAF5FF" },
                     ]}
                     onPress={() => {
                       setGiftCondition(val);
@@ -1608,7 +1607,7 @@ export default function CreateGiftForm({
                       </Text>
                     </View>
                     {isSelected && (
-                      <Ionicons name="checkmark" size={20} color="#EA580C" />
+                      <Ionicons name="checkmark" size={20} color="#9333EA" />
                     )}
                   </TouchableOpacity>
                 );
@@ -1645,7 +1644,7 @@ export default function CreateGiftForm({
                   style={[
                     styles.modalItem,
                     selectedCategoryName === item && {
-                      backgroundColor: "#FFF7ED",
+                      backgroundColor: "#FAF5FF",
                     },
                   ]}
                   onPress={() => {
@@ -1655,7 +1654,7 @@ export default function CreateGiftForm({
                 >
                   <Text style={styles.modalItemText}>{item}</Text>
                   {selectedCategoryName === item && (
-                    <Ionicons name="checkmark" size={20} color="#EA580C" />
+                    <Ionicons name="checkmark" size={20} color="#9333EA" />
                   )}
                 </TouchableOpacity>
               )}
@@ -1703,7 +1702,7 @@ export default function CreateGiftForm({
                   <TouchableOpacity
                     style={[
                       styles.modalItem,
-                      current === item && { backgroundColor: "#FFF7ED" },
+                      current === item && { backgroundColor: "#FAF5FF" },
                     ]}
                     onPress={() => {
                       if (weightUnitModal.variantId)
@@ -1717,7 +1716,7 @@ export default function CreateGiftForm({
                   >
                     <Text style={styles.modalItemText}>{item}</Text>
                     {current === item && (
-                      <Ionicons name="checkmark" size={20} color="#EA580C" />
+                      <Ionicons name="checkmark" size={20} color="#9333EA" />
                     )}
                   </TouchableOpacity>
                 );
@@ -1766,7 +1765,7 @@ export default function CreateGiftForm({
                   <TouchableOpacity
                     style={[
                       styles.modalItem,
-                      current === item && { backgroundColor: "#FFF7ED" },
+                      current === item && { backgroundColor: "#FAF5FF" },
                     ]}
                     onPress={() => {
                       if (dimensionUnitModal.variantId)
@@ -1783,7 +1782,7 @@ export default function CreateGiftForm({
                   >
                     <Text style={styles.modalItemText}>{item}</Text>
                     {current === item && (
-                      <Ionicons name="checkmark" size={20} color="#EA580C" />
+                      <Ionicons name="checkmark" size={20} color="#9333EA" />
                     )}
                   </TouchableOpacity>
                 );
@@ -1797,10 +1796,10 @@ export default function CreateGiftForm({
 }
 
 // ============================================================
-// STYLES
+// STYLES - GIFT THEME (Purple/Magenta)
 // ============================================================
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: "#F9FAFB" },
 
   progressContainer: {
     flexDirection: "row",
@@ -1818,7 +1817,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: "#F3F4F6",
   },
-  stepActive: { backgroundColor: "#F97316" },
+  stepActive: { backgroundColor: "#9333EA" },
   stepInactive: { backgroundColor: "#F3F4F6" },
   stepBadgeText: { fontSize: 10, fontWeight: "500", color: "#6B7280" },
   stepTextActive: { color: "#FFFFFF" },
@@ -1828,7 +1827,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#E5E7EB",
     marginHorizontal: 4,
   },
-  stepLineActive: { backgroundColor: "#F97316" },
+  stepLineActive: { backgroundColor: "#9333EA" },
 
   section: { padding: 16 },
   sectionHeader: {
@@ -1841,7 +1840,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#FFF7ED",
+    backgroundColor: "#FAF5FF",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -1851,15 +1850,15 @@ const styles = StyleSheet.create({
   shopInfoCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FFF7ED",
+    backgroundColor: "#FAF5FF",
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
     gap: 8,
     borderWidth: 1,
-    borderColor: "#FED7AA",
+    borderColor: "#E9D5FF",
   },
-  shopInfoText: { fontSize: 14, color: "#C2410C", fontWeight: "500" },
+  shopInfoText: { fontSize: 14, color: "#6B21A5", fontWeight: "500" },
 
   formGroup: { marginBottom: 16 },
   label: { fontSize: 14, fontWeight: "500", color: "#374151", marginBottom: 6 },
@@ -1904,7 +1903,7 @@ const styles = StyleSheet.create({
   placeholderText: { fontSize: 14, color: "#9CA3AF" },
 
   nextButton: {
-    backgroundColor: "#F97316",
+    backgroundColor: "#9333EA",
     borderRadius: 10,
     minHeight: 50,
     paddingHorizontal: 14,
@@ -1963,13 +1962,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     borderWidth: 1,
-    borderColor: "#FED7AA",
+    borderColor: "#E9D5FF",
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 8,
     backgroundColor: "#FFFFFF",
   },
-  cameraButtonText: { fontSize: 14, color: "#EA580C", fontWeight: "500" },
+  cameraButtonText: { fontSize: 14, color: "#9333EA", fontWeight: "500" },
   mediaGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1988,7 +1987,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 4,
     left: 4,
-    backgroundColor: "#F97316",
+    backgroundColor: "#9333EA",
     paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 4,
@@ -2021,7 +2020,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     padding: 16,
-    backgroundColor: "#FFF7ED",
+    backgroundColor: "#FAF5FF",
   },
   aiTitleContainer: { flexDirection: "row", alignItems: "center", gap: 8 },
   aiTitle: { fontSize: 15, fontWeight: "600", color: "#111827" },
@@ -2037,27 +2036,27 @@ const styles = StyleSheet.create({
   aiDescription: { fontSize: 13, color: "#6B7280", marginBottom: 8 },
   analyzeButton: {
     borderWidth: 1,
-    borderColor: "#FED7AA",
+    borderColor: "#E9D5FF",
     borderRadius: 6,
     paddingVertical: 8,
     paddingHorizontal: 14,
     alignSelf: "flex-start",
-    backgroundColor: "#FFF7ED",
+    backgroundColor: "#FAF5FF",
   },
   analyzeButtonDisabled: { opacity: 0.5 },
-  analyzeButtonText: { fontSize: 13, fontWeight: "500", color: "#EA580C" },
+  analyzeButtonText: { fontSize: 13, fontWeight: "500", color: "#9333EA" },
   predictionCard: {
-    backgroundColor: "#FFF7ED",
+    backgroundColor: "#FAF5FF",
     borderRadius: 8,
     padding: 12,
     marginTop: 8,
     borderWidth: 1,
-    borderColor: "#FED7AA",
+    borderColor: "#E9D5FF",
   },
   predictionTitle: {
     fontSize: 13,
     fontWeight: "600",
-    color: "#C2410C",
+    color: "#6B21A5",
     marginBottom: 4,
   },
   predictionRow: {
@@ -2065,9 +2064,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  predictionCategory: { fontSize: 14, fontWeight: "500", color: "#7C2D12" },
-  predictionConfidence: { fontSize: 12, color: "#EA580C" },
-  alternativeText: { fontSize: 11, color: "#EA580C", marginTop: 4 },
+  predictionCategory: { fontSize: 14, fontWeight: "500", color: "#6B21A5" },
+  predictionConfidence: { fontSize: 12, color: "#9333EA" },
+  alternativeText: { fontSize: 11, color: "#9333EA", marginTop: 4 },
   errorCard: {
     backgroundColor: "#FEF2F2",
     borderRadius: 8,
@@ -2077,16 +2076,16 @@ const styles = StyleSheet.create({
   errorCardText: { fontSize: 12, color: "#991B1B" },
 
   requiredBadge: {
-    backgroundColor: "#FFF7ED",
+    backgroundColor: "#FAF5FF",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#FED7AA",
+    borderColor: "#E9D5FF",
     alignSelf: "flex-start",
     marginBottom: 16,
   },
-  requiredBadgeText: { fontSize: 12, color: "#EA580C", fontWeight: "500" },
+  requiredBadgeText: { fontSize: 12, color: "#9333EA", fontWeight: "500" },
 
   variantCard: {
     backgroundColor: "#FFFFFF",
@@ -2108,7 +2107,7 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: "#F97316",
+    backgroundColor: "#9333EA",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2116,14 +2115,14 @@ const styles = StyleSheet.create({
   variantTitle: { fontSize: 14, fontWeight: "600", color: "#111827" },
   variantHeaderRight: { flexDirection: "row", alignItems: "center", gap: 12 },
   defaultBadge: {
-    backgroundColor: "#FFF7ED",
+    backgroundColor: "#FAF5FF",
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: "#FED7AA",
+    borderColor: "#E9D5FF",
   },
-  defaultBadgeText: { fontSize: 10, fontWeight: "600", color: "#EA580C" },
+  defaultBadgeText: { fontSize: 10, fontWeight: "600", color: "#9333EA" },
   variantContent: { padding: 16 },
 
   variantImageContainer: { position: "relative" },
@@ -2181,7 +2180,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "#FED7AA",
+    borderColor: "#E9D5FF",
     borderStyle: "dashed",
     borderRadius: 8,
     padding: 16,
@@ -2189,7 +2188,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     gap: 8,
   },
-  addVariantButtonText: { fontSize: 14, fontWeight: "500", color: "#EA580C" },
+  addVariantButtonText: { fontSize: 14, fontWeight: "500", color: "#9333EA" },
   variantSummary: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -2250,7 +2249,7 @@ const styles = StyleSheet.create({
   cancelButtonText: { fontSize: 14, fontWeight: "500", color: "#6B7280" },
   submitButton: {
     flex: 2,
-    backgroundColor: "#F97316",
+    backgroundColor: "#9333EA",
     borderRadius: 8,
     padding: 14,
     flexDirection: "row",
