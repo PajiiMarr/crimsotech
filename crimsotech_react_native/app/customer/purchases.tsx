@@ -614,9 +614,9 @@ export default function PurchasesPage() {
         {/* Total and Action */}
         <View style={styles.footer}>
           <View style={styles.totalContainer}>
-            <Text style={styles.totalLabel}>Total:</Text>
-            <Text style={styles.totalAmount}>{formatCurrency(item.total_amount)}</Text>
-          </View>
+          <Text style={styles.totalLabel}>Total to Pay:</Text>
+          <Text style={styles.totalAmount}>{formatCurrency(parseFloat(item.order.total_amount))}</Text>
+        </View>
 
           {/* Action Buttons - Matches web version exactly */}
           <View style={styles.actionButtons}>
@@ -632,7 +632,7 @@ export default function PurchasesPage() {
             )}
 
             {/* Track button for to_ship/to_receive items (but not delivered) */}
-            {(item.status === 'to_ship' || item.status === 'to_receive') && (
+            {/* {(item.status === 'to_ship' || item.status === 'to_receive') && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.trackButton]}
                 onPress={() => router.push(`/customer/track-order?orderId=${item.order_id}&status=${item.status}`)}
@@ -640,7 +640,7 @@ export default function PurchasesPage() {
                 <MaterialIcons name="location-on" size={14} color="#3B82F6" />
                 <Text style={styles.trackButtonText}>Track</Text>
               </TouchableOpacity>
-            )}
+            )} */}
 
             {/* For delivered items - Shows Rate button (like web version) */}
             {item.status === 'delivered' && (

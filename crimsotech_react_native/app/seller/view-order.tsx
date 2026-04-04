@@ -28,6 +28,12 @@ interface MediaItem {
   url: string;
   file_type: string;
 }
+interface ProofImage {
+  id: string;
+  file_url: string;
+  file_type: string;
+  uploaded_at: string;
+}
 interface OrderItemProduct {
   id: string;
   name: string;
@@ -98,6 +104,7 @@ interface OrderDetails {
   items: OrderItem[];
   delivery_info?: DeliveryInfo;
   pickup_date?: string;
+  proof_images?: ProofImage[];  // ADD THIS LINE
 }
 
 // Status configuration — covers full delivery + pickup flow
@@ -182,8 +189,13 @@ export default function SellerViewOrder() {
   const [refreshing, setRefreshing] = useState(false);
   const [availableActions, setAvailableActions] = useState<string[]>([]);
   const [processing, setProcessing] = useState(false);
+  const [proofImages, setProofImages] = useState<ProofImage[]>([]);
+const [loadingProofs, setLoadingProofs] = useState(false);
+const [previewVisible, setPreviewVisible] = useState(false);
+const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [selectedAction, setSelectedAction] = useState<{
+    
     type: string; title: string; description: string;
   } | null>(null);
 
@@ -195,24 +207,48 @@ export default function SellerViewOrder() {
   }, [orderId, shopId]);
 
   const fetchOrderDetails = async () => {
-    if (!orderId || !shopId) return;
-    try {
-      const response = await AxiosInstance.get('/seller-order-list/seller_view_order/', {
-        params: { order_id: orderId, shop_id: shopId },
-      });
-      if (response.data.success) {
-        setOrder(response.data.data);
-      } else {
-        Alert.alert('Error', response.data.message || 'Failed to load order details');
+  if (!orderId || !shopId) return;
+  try {
+    const response = await AxiosInstance.get('/seller-order-list/seller_view_order/', {
+      params: { order_id: orderId, shop_id: shopId },
+    });
+    
+    if (response.data.success) {
+      setOrder(response.data.data);
+      
+      // If order is delivered and has proof_images from backend, use them directly
+      if (response.data.data.status === 'delivered' && response.data.data.proof_images) {
+        setProofImages(response.data.data.proof_images);
       }
-    } catch (error: any) {
-      console.error('Error fetching order details:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to load order details');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+    } else {
+      Alert.alert('Error', response.data.message || 'Failed to load order details');
     }
-  };
+  } catch (error: any) {
+    console.error('Error fetching order details:', error);
+    Alert.alert('Error', error.response?.data?.message || 'Failed to load order details');
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+};
+
+  const fetchProofImages = async (deliveryId: string) => {
+  if (!deliveryId) return;
+  try {
+    setLoadingProofs(true);
+    const response = await AxiosInstance.get(
+      `/rider-proof/delivery/${deliveryId}/proofs/`,
+      { headers: { "X-User-Id": userId } }
+    );
+    if (response.data?.success) {
+      setProofImages(response.data.proofs || []);
+    }
+  } catch (error) {
+    console.error('Error fetching proofs:', error);
+  } finally {
+    setLoadingProofs(false);
+  }
+};
 
   const fetchAvailableActions = async () => {
     if (!orderId || !shopId) return;
@@ -377,7 +413,36 @@ export default function SellerViewOrder() {
       </View>
     );
   };
+const renderProofOfDelivery = () => {
+  if (order?.status !== 'delivered') return null;
+  
+  const proofs = order?.proof_images || [];
+  if (proofs.length === 0) return null;
 
+  return (
+    <View style={styles.infoCard}>
+      <View style={styles.cardHeader}>
+        <MaterialIcons name="photo-camera" size={20} color="#111827" />
+        <Text style={styles.cardTitle}>Proof of Delivery</Text>
+      </View>
+      <View style={styles.cardContent}>
+        <View style={styles.proofGrid}>
+          {proofs.map((proof) => (
+            <TouchableOpacity
+              key={proof.id}
+              onPress={() => {
+                setSelectedImage(proof.file_url);
+                setPreviewVisible(true);
+              }}
+            >
+              <Image source={{ uri: proof.file_url }} style={styles.proofImage} />
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+};
   const renderActionButtons = () => {
     const isCompleted = order?.status === 'completed';
     const isCancelled = order?.status === 'cancelled';
@@ -448,7 +513,7 @@ export default function SellerViewOrder() {
             </TouchableOpacity>
           )}
 
-          {showDelivered && (
+          {/* {showDelivered && (
             <TouchableOpacity
               style={[styles.actionButton, styles.confirmButton]}
               onPress={() => showActionConfirmation(
@@ -458,7 +523,7 @@ export default function SellerViewOrder() {
             >
               <Text style={styles.actionButtonText}>Mark Delivered</Text>
             </TouchableOpacity>
-          )}
+          )} */}
 
           {/* --- PICKUP FLOW --- */}
           {showReadyForPickup && (
@@ -487,7 +552,7 @@ export default function SellerViewOrder() {
           )}
 
           {/* --- SHARED --- */}
-          {showComplete && (
+          {/* {showComplete && (
             <TouchableOpacity
               style={[styles.actionButton, styles.confirmButton]}
               onPress={() => showActionConfirmation(
@@ -498,7 +563,7 @@ export default function SellerViewOrder() {
             >
               <Text style={styles.actionButtonText}>Complete Order</Text>
             </TouchableOpacity>
-          )}
+          )} */}
 
           {showCancel && (
             <TouchableOpacity
@@ -643,6 +708,7 @@ export default function SellerViewOrder() {
 
         {/* Rider Information - Display if available */}
         {renderRiderInfo()}
+        {renderProofOfDelivery()} 
 
         {/* Delivery Address & Buyer Info */}
         <View style={styles.infoCard}>
@@ -764,8 +830,22 @@ export default function SellerViewOrder() {
 
         {/* Extra padding for sticky footer */}
         {hasActions() && <View style={styles.footerPadding} />}
+        
       </ScrollView>
-
+{/* Image Preview Modal */}
+<Modal visible={previewVisible} transparent animationType="fade">
+  <View style={styles.modalOverlayImage}>
+    <TouchableOpacity
+      style={styles.closeButton}
+      onPress={() => setPreviewVisible(false)}
+    >
+      <Ionicons name="close" size={30} color="#FFFFFF" />
+    </TouchableOpacity>
+    {selectedImage && (
+      <Image source={{ uri: selectedImage }} style={styles.previewImage} />
+    )}
+  </View>
+</Modal>
       {/* Sticky Action Buttons */}
       {renderActionButtons()}
 
@@ -786,6 +866,36 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F0F0F0',
     paddingTop: Platform.OS === 'ios' ? 44 : 40,
   },
+  proofGrid: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+  gap: 8,
+},
+proofImage: {
+  width: 80,
+  height: 80,
+  borderRadius: 8,
+  borderWidth: 1,
+  borderColor: '#E5E7EB',
+},
+modalOverlayImage: {
+  flex: 1,
+  backgroundColor: 'rgba(0,0,0,0.95)',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+closeButton: {
+  position: 'absolute',
+  top: 50,
+  right: 20,
+  zIndex: 10,
+  padding: 8,
+},
+previewImage: {
+  width: '90%',
+  height: '70%',
+  resizeMode: 'contain',
+},
   header: {
     flexDirection: 'row',
     alignItems: 'center',
