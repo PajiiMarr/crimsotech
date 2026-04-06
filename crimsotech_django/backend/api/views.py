@@ -26569,7 +26569,9 @@ class ViewShopAPIView(APIView):
         # --- Additional metrics for frontend display ---
         try:
             # Ratings: average rating and review count for this shop
-            rating_agg = Review.objects.filter(shop=shop).aggregate(avg=Avg('rating'), count=Count('id'))
+            rating_agg = Review.objects.filter(shop=shop).aggregate(
+            avg=Avg('average_rating'), 
+            count=Count('id'))
             rating_avg = float(round(rating_agg.get('avg') or 0, 1)) if rating_agg.get('avg') is not None else None
             rating_count = rating_agg.get('count') or 0
 
@@ -47114,3 +47116,6 @@ class NotificationViewSet(viewsets.ModelViewSet):
             'message': f'Successfully deleted {deleted_count} notifications',
             'deleted_count': deleted_count
         })
+
+
+

@@ -132,13 +132,13 @@ class ShopSerializer(serializers.ModelSerializer):
         return ", ".join([p for p in parts if p])  # skip empty parts
 
     def get_avg_rating(self, obj):
-        reviews = obj.reviews.all()  # related_name='reviews' in your Review model
+        reviews = obj.reviews.all()
         if reviews.exists():
-            # Filter out reviews with null average_rating
+            # Use average_rating instead of rating
             valid_reviews = [r for r in reviews if r.average_rating is not None]
             if valid_reviews:
                 return sum(r.average_rating for r in valid_reviews) / len(valid_reviews)
-        return None  # or 0 if you prefer
+        return None
     
     def get_shop_picture_url(self, obj):
         return get_media_url(obj.shop_picture)
@@ -147,6 +147,7 @@ class ShopFollowSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShopFollow
         fields = '__all__'
+        read_only_fields = ['id', 'followed_at']
 
 class ReviewSerializer(serializers.ModelSerializer):
     # Add computed field for product average

@@ -7,6 +7,7 @@ import {
   Platform,
   SafeAreaView,
   ScrollView,
+  Alert,
   StatusBar,
   StyleSheet,
   Text,
@@ -21,6 +22,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
 import AxiosInstance from "../../contexts/axios";
 import CustomerLayout from "./CustomerLayout";
+import { useAuth } from "../../contexts/AuthContext";
 
 type ErrorType = "not_found" | "suspended" | "server" | "other";
 type ActiveTab = "products" | "details" | "reviews";
@@ -370,6 +372,7 @@ const ReviewCard = ({ review }: { review: ShopReview }) => {
 };
 
 export default function ViewShopPage() {
+  const { userId } = useAuth();
   const params = useLocalSearchParams();
   const rawShopId = params.shopId;
   const shopId = Array.isArray(rawShopId) ? rawShopId[0] : rawShopId;
@@ -421,7 +424,12 @@ export default function ViewShopPage() {
         setLoading(true);
         setError(null);
 
-        const response = await AxiosInstance.get(`/shops/${shopId}/`);
+        const headers: any = {};
+        if (userId) {
+          headers['X-User-Id'] = userId;
+        }
+
+        const response = await AxiosInstance.get(`/shops/${shopId}/`, { headers });
         const data = response.data as ShopInfo;
 
         if (data.is_suspended) {
@@ -503,7 +511,7 @@ export default function ViewShopPage() {
     };
 
     fetchShopData();
-  }, [shopId]);
+  }, [shopId, userId]);
 
   useEffect(() => {
     const fetchReviews = async () => {
@@ -627,26 +635,51 @@ export default function ViewShopPage() {
     filterType,
   ]);
 
-  const handleFollowToggle = async () => {
-    if (followLoading || !shopId) return;
-
-    setFollowLoading(true);
-    try {
-      if (!isFollowing) {
-        await AxiosInstance.post(`/shops/${shopId}/follow/`);
-        setIsFollowing(true);
-        setFollowersCount((prev) => prev + 1);
-      } else {
-        await AxiosInstance.delete(`/shops/${shopId}/unfollow/`);
-        setIsFollowing(false);
-        setFollowersCount((prev) => Math.max(prev - 1, 0));
-      }
-    } catch (e) {
-      console.error("Follow action failed", e);
-    } finally {
-      setFollowLoading(false);
+const handleFollowToggle = async () => {
+  if (followLoading || !shopId) {
+    if (!userId) {
+      Alert.alert("Login Required", "Please login to follow shops");
+      router.push("/(auth)/login");
     }
-  };
+    return;
+  }
+
+  setFollowLoading(true);
+  try {
+    const headers: any = {};
+    if (userId) {
+      headers['X-User-Id'] = userId;
+    }
+
+    if (!isFollowing) {
+      // Use the POST method on the main shop URL (not /follow/)
+      const response = await AxiosInstance.post(`/shops/${shopId}/`, {}, { headers });
+      
+      console.log("Follow response:", response.data);
+      
+      setIsFollowing(true);
+      setFollowersCount(response.data.total_followers || followersCount + 1);
+      Alert.alert("Success", "You are now following this shop");
+    } else {
+      // Use the DELETE method on the main shop URL (not /unfollow/)
+      const response = await AxiosInstance.delete(`/shops/${shopId}/`, { headers });
+      
+      console.log("Unfollow response:", response.data);
+      
+      setIsFollowing(false);
+      setFollowersCount(response.data.total_followers || Math.max(followersCount - 1, 0));
+      Alert.alert("Success", "You have unfollowed this shop");
+    }
+  } catch (e: any) {
+    console.error("Follow action failed", e);
+    Alert.alert(
+      "Error",
+      e.response?.data?.error || "Failed to update follow status",
+    );
+  } finally {
+    setFollowLoading(false);
+  }
+};
 
   if (loading) {
     return (
@@ -750,22 +783,32 @@ export default function ViewShopPage() {
                     </Text>
 
                     <TouchableOpacity
-                      style={styles.followBtn}
+                      style={[
+                        styles.followBtn,
+                        isFollowing && styles.followBtnActive,
+                      ]}
                       onPress={handleFollowToggle}
-                      disabled={followLoading}
+                      disabled={followLoading || !userId}
                     >
-                      <Ionicons
-                        name={isFollowing ? "heart" : "heart-outline"}
-                        size={14}
-                        color={isFollowing ? "#DC2626" : "#4B5563"}
-                      />
-                      <Text style={styles.followBtnText}>
-                        {followLoading
-                          ? "..."
-                          : isFollowing
-                            ? "Following"
-                            : "Follow"}
-                      </Text>
+                      {followLoading ? (
+                        <ActivityIndicator size="small" color={isFollowing ? "#DC2626" : "#4B5563"} />
+                      ) : (
+                        <>
+                          <Ionicons
+                            name={isFollowing ? "heart" : "heart-outline"}
+                            size={14}
+                            color={isFollowing ? "#DC2626" : "#4B5563"}
+                          />
+                          <Text
+                            style={[
+                              styles.followBtnText,
+                              isFollowing && styles.followBtnTextActive,
+                            ]}
+                          >
+                            {isFollowing ? "Following" : "Follow"}
+                          </Text>
+                        </>
+                      )}
                     </TouchableOpacity>
                   </View>
 
@@ -791,7 +834,7 @@ export default function ViewShopPage() {
                   <View style={styles.inlineRow}>
                     <Ionicons name="people-outline" size={13} color="#6B7280" />
                     <Text style={styles.smallMeta}>
-                      {followersCount} followers
+                      {followersCount} {followersCount === 1 ? "follower" : "followers"}
                     </Text>
                     {shopInfo.rating ? (
                       <>
@@ -1305,11 +1348,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     backgroundColor: "#FFFFFF",
+    minWidth: 80,
+    justifyContent: "center",
+  },
+  followBtnActive: {
+    backgroundColor: "#FEE2E2",
+    borderColor: "#DC2626",
   },
   followBtnText: {
     color: "#4B5563",
     fontSize: 12,
     fontWeight: "600",
+  },
+  followBtnTextActive: {
+    color: "#DC2626",
   },
   shopDescription: {
     marginTop: 4,

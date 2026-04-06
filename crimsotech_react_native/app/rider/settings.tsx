@@ -293,7 +293,7 @@ export default function SettingsPage() {
         )}
 
         {/* --- Support --- */}
-        <Text style={styles.sectionTitle}>Support</Text>
+        {/* <Text style={styles.sectionTitle}>Support</Text>
         <View style={styles.sectionGroup}>
           <SettingItem
             icon="help-circle"
@@ -310,7 +310,7 @@ export default function SettingsPage() {
               Alert.alert("Terms & Policies", "View our terms of service and privacy policy");
             }}
           />
-        </View>
+        </View> */}
 
         {/* --- Logout --- */}
         <View style={[styles.sectionGroup, styles.logoutGroup]}>
