@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, FlatList, RefreshControl, Alert } from 'react-native';
+import { SafeAreaView, View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, FlatList, RefreshControl, Alert, Modal } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import CustomerLayout from './CustomerLayout';
@@ -25,7 +25,8 @@ type AppNotification = {
 export default function NotificationPage() {
   const { userId, loading: authLoading, userRole } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'all' | 'unread'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'unread'>('all');
+  const [showFilterModal, setShowFilterModal] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -37,9 +38,9 @@ export default function NotificationPage() {
 
   // All useMemo and useEffect hooks MUST be before any conditional returns
   const visibleNotifications = useMemo(() => {
-    if (activeTab === 'unread') return notifications.filter((n) => !n.is_read);
+    if (activeFilter === 'unread') return notifications.filter((n) => !n.is_read);
     return notifications;
-  }, [activeTab, notifications]);
+  }, [activeFilter, notifications]);
 
   const fetchNotifications = async (refresh = false, pageNum = 1) => {
     if (!userId) return;
@@ -59,7 +60,7 @@ export default function NotificationPage() {
       };
       
       // Filter by read status
-      if (activeTab === 'unread') {
+      if (activeFilter === 'unread') {
         params.is_read = false;
       }
       
@@ -117,7 +118,7 @@ export default function NotificationPage() {
     if (userId) {
       fetchNotifications(true);
     }
-  }, [userId, activeTab]);
+  }, [userId, activeFilter]);
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -238,6 +239,11 @@ export default function NotificationPage() {
     );
   };
 
+  const handleFilterSelect = (filter: 'all' | 'unread') => {
+    setActiveFilter(filter);
+    setShowFilterModal(false);
+  };
+
   const handleOpenNotification = (n: AppNotification) => {
     markAsRead(n.id);
     
@@ -329,6 +335,75 @@ export default function NotificationPage() {
     );
   };
 
+  // Render filter modal
+  const renderFilterModal = () => (
+    <Modal
+      visible={showFilterModal}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={() => setShowFilterModal(false)}
+    >
+      <TouchableOpacity 
+        style={styles.modalOverlay} 
+        activeOpacity={1} 
+        onPress={() => setShowFilterModal(false)}
+      >
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Filter Notifications</Text>
+            <TouchableOpacity onPress={() => setShowFilterModal(false)}>
+              <MaterialIcons name="close" size={24} color="#6B7280" />
+            </TouchableOpacity>
+          </View>
+          
+          <TouchableOpacity 
+            style={[styles.filterOption, activeFilter === 'all' && styles.filterOptionActive]}
+            onPress={() => handleFilterSelect('all')}
+          >
+            <MaterialIcons 
+              name="notifications-none" 
+              size={24} 
+              color={activeFilter === 'all' ? '#6366F1' : '#6B7280'} 
+            />
+            <View style={styles.filterOptionTextContainer}>
+              <Text style={[styles.filterOptionTitle, activeFilter === 'all' && styles.filterOptionTitleActive]}>
+                All Notifications
+              </Text>
+              <Text style={styles.filterOptionSubtitle}>
+                Show all notifications ({totalCount})
+              </Text>
+            </View>
+            {activeFilter === 'all' && (
+              <MaterialIcons name="check" size={20} color="#6366F1" />
+            )}
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.filterOption, activeFilter === 'unread' && styles.filterOptionActive]}
+            onPress={() => handleFilterSelect('unread')}
+          >
+            <MaterialIcons 
+              name="mark-email-unread" 
+              size={24} 
+              color={activeFilter === 'unread' ? '#6366F1' : '#6B7280'} 
+            />
+            <View style={styles.filterOptionTextContainer}>
+              <Text style={[styles.filterOptionTitle, activeFilter === 'unread' && styles.filterOptionTitleActive]}>
+                Unread Only
+              </Text>
+              <Text style={styles.filterOptionSubtitle}>
+                Show only unread notifications ({unreadCount})
+              </Text>
+            </View>
+            {activeFilter === 'unread' && (
+              <MaterialIcons name="check" size={20} color="#6366F1" />
+            )}
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+
   // All conditional returns MUST come AFTER all hooks
   if (authLoading || loading) {
     return (
@@ -365,11 +440,29 @@ export default function NotificationPage() {
             <View style={styles.headerLeft}>
               <Text style={styles.title}>Notifications</Text>
               <Text style={styles.subtitle}>
-                {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
+                {activeFilter === 'unread' 
+                  ? `${unreadCount} unread` 
+                  : totalCount > 0 ? `${totalCount} total` : 'All caught up'}
               </Text>
             </View>
 
             <View style={styles.headerActions}>
+              {/* Filter Button */}
+              <TouchableOpacity
+                style={[styles.iconButton, activeFilter === 'unread' && styles.filterActive]}
+                onPress={() => setShowFilterModal(true)}
+              >
+                <MaterialIcons 
+                  name="filter-list" 
+                  size={20} 
+                  color={activeFilter === 'unread' ? '#6366F1' : '#6B7280'} 
+                />
+                {activeFilter === 'unread' && (
+                  <View style={styles.activeFilterDot} />
+                )}
+              </TouchableOpacity>
+
+              {/* Delete All Read Button */}
               {totalCount > 0 && (
                 <TouchableOpacity
                   style={styles.iconButton}
@@ -379,6 +472,7 @@ export default function NotificationPage() {
                 </TouchableOpacity>
               )}
               
+              {/* Mark All Read Button */}
               <TouchableOpacity
                 style={[styles.actionButton, unreadCount === 0 && styles.actionButtonDisabled]}
                 onPress={handleMarkAllRead}
@@ -388,34 +482,6 @@ export default function NotificationPage() {
                 <Text style={[styles.actionText, unreadCount === 0 && styles.actionTextDisabled]}>Mark all read</Text>
               </TouchableOpacity>
             </View>
-          </View>
-
-          <View style={styles.tabs}>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'all' && styles.tabActive]}
-              onPress={() => setActiveTab('all')}
-            >
-              <Text style={[styles.tabText, activeTab === 'all' && styles.tabTextActive]}>All</Text>
-              {activeTab === 'all' && totalCount > 0 && (
-                <Text style={[styles.tabCount, activeTab === 'all' && styles.tabCountActive]}>
-                  {totalCount}
-                </Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'unread' && styles.tabActive]}
-              onPress={() => setActiveTab('unread')}
-            >
-              <Text style={[styles.tabText, activeTab === 'unread' && styles.tabTextActive]}>
-                Unread
-              </Text>
-              {unreadCount > 0 && (
-                <Text style={[styles.tabCount, activeTab === 'unread' && styles.tabCountActive]}>
-                  {unreadCount}
-                </Text>
-              )}
-            </TouchableOpacity>
           </View>
 
           <FlatList
@@ -441,7 +507,7 @@ export default function NotificationPage() {
                 </View>
                 <Text style={styles.emptyTitle}>No notifications</Text>
                 <Text style={styles.emptyText}>
-                  {activeTab === 'unread'
+                  {activeFilter === 'unread'
                     ? 'You have no unread notifications right now.'
                     : 'You’ll see updates here when something happens.'}
                 </Text>
@@ -493,6 +559,9 @@ export default function NotificationPage() {
           />
         </View>
       </CustomerLayout>
+      
+      {/* Filter Modal */}
+      {renderFilterModal()}
     </View>
   );
 }
@@ -500,13 +569,13 @@ export default function NotificationPage() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  inner: { flex: 1, paddingHorizontal: 0, paddingTop: 12 }, // Removed horizontal padding for edge-to-edge
+  inner: { flex: 1, paddingHorizontal: 0, paddingTop: 12 },
   headerRow: { 
     flexDirection: 'row', 
     alignItems: 'center', 
     justifyContent: 'space-between', 
     marginBottom: 12,
-    paddingHorizontal: 16, // Add padding to header only
+    paddingHorizontal: 16,
   },
   headerLeft: { flex: 1, paddingRight: 10 },
   headerActions: { 
@@ -522,6 +591,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    position: 'relative',
+  },
+  filterActive: {
+    borderColor: '#6366F1',
+    backgroundColor: '#EEF2FF',
+  },
+  activeFilterDot: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#6366F1',
   },
   actionButton: {
     flexDirection: 'row',
@@ -538,40 +621,62 @@ const styles = StyleSheet.create({
   actionText: { fontSize: 12, fontWeight: '700', color: '#111827' },
   actionTextDisabled: { color: '#9CA3AF' },
 
-  tabs: {
-    flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 4,
-    marginBottom: 12,
-    marginHorizontal: 16, // Add margin to tabs
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
   },
-  tab: { 
-    flex: 1, 
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    minHeight: 300,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  filterOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10, 
-    borderRadius: 10, 
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    backgroundColor: '#F9FAFB',
   },
-  tabActive: { backgroundColor: '#111827' },
-  tabText: { fontSize: 13, fontWeight: '700', color: '#111827' },
-  tabTextActive: { color: '#FFFFFF' },
-  tabCount: {
-    fontSize: 11,
+  filterOptionActive: {
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#6366F1',
+  },
+  filterOptionTextContainer: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  filterOptionTitle: {
+    fontSize: 16,
     fontWeight: '600',
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-    color: '#6B7280',
+    color: '#111827',
+    marginBottom: 2,
   },
-  tabCountActive: {
-    backgroundColor: '#374151',
-    color: '#FFFFFF',
+  filterOptionTitleActive: {
+    color: '#6366F1',
+  },
+  filterOptionSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
   },
 
   listContent: { paddingBottom: 24 },
