@@ -23,6 +23,13 @@ type LoginData = {
   password: string;
 };
 
+type ServerError = {
+  general?: string;
+  username?: string;
+  password?: string;
+  errorType?: string;
+};
+
 export default function LoginScreen() {
   const router = useRouter();
   const {
@@ -42,23 +49,19 @@ export default function LoginScreen() {
   });
   const [loginLoading, setLoginLoading] = useState(false);
   const [errors, setErrors] = useState<Partial<LoginData>>({});
+  const [serverError, setServerError] = useState<ServerError>({});
   const [showPassword, setShowPassword] = useState(false);
+
+  // Clear server error when user starts typing
+  useEffect(() => {
+    if (serverError.general || serverError.username || serverError.password) {
+      setServerError({});
+    }
+  }, [formData.username, formData.password]);
 
   // Check if user is already logged in
   useEffect(() => {
-    console.log("🔄 Login screen - Auth state:", {
-      userId,
-      shopId,
-      userRole,
-      registrationStage,
-      authLoading,
-    });
-
-    // Only auto-redirect to home if registration is fully complete (stage === 4)
     if (userId && !authLoading && registrationStage === 4) {
-      console.log(
-        "✅ User already logged in and fully registered, redirecting to home...",
-      );
       if (userRole === "customer") {
         router.replace("/customer/home");
       } else if (userRole === "rider") {
@@ -82,10 +85,36 @@ export default function LoginScreen() {
     return Object.keys(newErrors).length === 0;
   };
 
+  const getErrorMessage = (error: any): string => {
+    if (error.response?.data) {
+      const serverData = error.response.data;
+      
+      if (typeof serverData === 'string') return serverData;
+      if (serverData.error) return serverData.error;
+      if (serverData.message) return serverData.message;
+      if (serverData.detail) return serverData.detail;
+      if (serverData.non_field_errors) return serverData.non_field_errors[0];
+      if (serverData.username) return serverData.username;
+      if (serverData.password) return serverData.password;
+    }
+    
+    if (error.message === "Network Error") {
+      return "Network error. Please check your internet connection.";
+    }
+    
+    if (error.code === "ECONNABORTED") {
+      return "Request timed out. Please try again.";
+    }
+    
+    return "Invalid username or password. Please try again.";
+  };
+
   const handleLogin = async () => {
     if (!validateForm()) return;
 
     setLoginLoading(true);
+    setServerError({});
+
     try {
       const { username, password } = formData;
       const response = await AxiosInstance.post(
@@ -98,35 +127,20 @@ export default function LoginScreen() {
       );
 
       const data = response.data;
-      console.log("✅ Login response:", JSON.stringify(data, null, 2));
-
-      // ✅ Determine user role based on response
       const userRole = data.is_rider ? "rider" : "customer";
-
-      // ✅ Get registration stage - default to 4 if not provided (assuming fully registered)
       const registrationStage = data.registration_stage || 4;
+      const shopId = data.shop_id || data.profile?.shop?.id || null;
 
-      console.log(
-        "📊 Registration stage from server:",
-        data.registration_stage,
-        "Using:",
+      await setAuthData(
+        data.user_id || data.id,
+        userRole,
+        data.username,
+        data.email,
+        shopId,
         registrationStage,
       );
 
-      // ✅ Get shop ID if available
-      const shopId = data.shop_id || data.profile?.shop?.id || null;
-
-      // ✅ Save auth data using new context
-      await setAuthData(
-        data.user_id || data.id, // user ID
-        userRole, // user role
-        data.username, // username
-        data.email, // email
-        shopId, // shop ID (optional)
-        registrationStage, // registration stage
-      );
-
-      // Try to fetch full profile immediately to obtain shop information if server didn't include it in login response
+      // Fetch profile for shop info if needed
       try {
         const profileRes = await AxiosInstance.get("/profile/", {
           headers: {
@@ -138,88 +152,66 @@ export default function LoginScreen() {
           const foundShopId = profileRes.data.profile.shop.id;
           if (foundShopId) {
             await updateShopId(foundShopId);
-            console.log(
-              "🚀 Shop ID updated from profile after login:",
-              foundShopId,
-            );
           }
         }
       } catch (profileErr) {
-        console.log(
-          "No shop info available immediately after login:",
-          profileErr?.message || profileErr,
-        );
+        // Silent fail - not critical
       }
 
-      console.log(
-        "📊 Final state - Registration stage:",
-        registrationStage,
-        "Role:",
-        userRole,
-      );
-
-      // Handle navigation
+      // Handle navigation based on role and registration stage
       if (userRole === "rider") {
-        // Rider flow
         if (registrationStage === 1) {
-          console.log("🔄 Redirecting rider to signup (stage 1)");
           router.replace("/(auth)/signup");
-          return;
         } else if (registrationStage === 2) {
-          console.log("🔄 Redirecting rider to setup-account (stage 2)");
           router.replace("/(auth)/setup-account");
-          return;
         } else if (registrationStage === 3) {
-          console.log("🔄 Redirecting rider to verify-phone (stage 3)");
           router.replace("/(auth)/verify-phone");
-          return;
-        } else if (registrationStage === 4) {
-          console.log("🏠 Redirecting rider to home (stage 4)");
-          router.replace("/rider/home");
-          return;
         } else {
-          // Default for any other stage
-          console.log("🏠 Redirecting rider to home (default)");
           router.replace("/rider/home");
-          return;
         }
       } else {
-        // Customer flow
         if (registrationStage === 1) {
-          console.log("🔄 Redirecting customer to setup-account (stage 1)");
           router.replace("/(auth)/setup-account");
-          return;
         } else if (registrationStage === 2) {
-          console.log("🔄 Redirecting customer to verify-phone (stage 2)");
           router.replace("/(auth)/verify-phone");
-          return;
-        } else if (registrationStage === 4) {
-          console.log("🏠 Redirecting customer to home (stage 4)");
-          router.replace("/customer/home");
-          return;
         } else {
-          // Default for any other stage
-          console.log("🏠 Redirecting customer to home (default)");
           router.replace("/customer/home");
-          return;
         }
       }
     } catch (error: any) {
-      // ... error handling
+      const errorMessage = getErrorMessage(error);
+      const statusCode = error.response?.status;
+      
+      let userFriendlyMessage = errorMessage;
+      let errorType = "general";
+      
+      if (statusCode === 401) {
+        userFriendlyMessage = "Invalid username or password. Please try again.";
+        errorType = "credentials";
+      } else if (statusCode === 403) {
+        userFriendlyMessage = "Your account has been suspended. Please contact support.";
+        errorType = "suspended";
+      } else if (statusCode === 404) {
+        userFriendlyMessage = "Account not found. Please check your username.";
+        errorType = "not-found";
+      } else if (statusCode === 429) {
+        userFriendlyMessage = "Too many login attempts. Please wait a moment and try again.";
+        errorType = "rate-limit";
+      } else if (statusCode >= 500) {
+        userFriendlyMessage = "Server error. Please try again later.";
+        errorType = "server";
+      }
+      
+      setServerError({ general: userFriendlyMessage, errorType });
     } finally {
       setLoginLoading(false);
     }
   };
 
   const handleDebugAuth = async () => {
-    console.log("🔍 Current Auth Context:");
-    console.log("User ID:", userId);
-    console.log("Shop ID:", shopId);
-    console.log("User Role:", userRole);
-
     Alert.alert(
       "Auth Debug",
-      `User ID: ${userId || "null"}\nShop ID: ${shopId || "null"}\nRole: ${userRole || "null"}`,
+      `User ID: ${userId || "null"}\nShop ID: ${shopId || "null"}\nRole: ${userRole || "null"}\nStage: ${registrationStage || "null"}`,
     );
   };
 
@@ -228,7 +220,6 @@ export default function LoginScreen() {
       await clearAuthData();
       Alert.alert("Success", "Auth data cleared!");
     } catch (error) {
-      console.error("Clear error:", error);
       Alert.alert("Error", "Failed to clear auth data");
     }
   };
@@ -242,6 +233,66 @@ export default function LoginScreen() {
       </View>
     );
   }
+
+  // Helper to render error message with appropriate styling
+  const renderErrorMessage = () => {
+    if (!serverError.general) return null;
+    
+    const errorType = serverError.errorType;
+    let bgColor = "#FEF2F2";
+    let borderColor = "#FECACA";
+    let textColor = "#991B1B";
+    let iconName: keyof typeof MaterialIcons.glyphMap = "error-outline";
+    
+    if (errorType === "rate-limit") {
+      bgColor = "#FEFCE8";
+      borderColor = "#FEF08A";
+      textColor = "#854D0E";
+      iconName = "access-time";
+    } else if (errorType === "suspended") {
+      bgColor = "#FEF2F2";
+      borderColor = "#FECACA";
+      textColor = "#991B1B";
+      iconName = "gavel";
+    } else if (errorType === "server") {
+      bgColor = "#EFF6FF";
+      borderColor = "#BFDBFE";
+      textColor = "#1E40AF";
+      iconName = "computer";
+    }
+    
+    return (
+      <View style={[styles.errorContainer, { backgroundColor: bgColor, borderColor: borderColor }]}>
+        <MaterialIcons name={iconName} size={20} color={textColor} />
+        <View style={styles.errorTextContainer}>
+          <Text style={[styles.errorTitle, { color: textColor }]}>Login Failed</Text>
+          <Text style={[styles.errorMessageText, { color: textColor }]}>
+            {serverError.general}
+          </Text>
+          {errorType === "rate-limit" && (
+            <Text style={[styles.errorHint, { color: textColor }]}>
+              Wait a few minutes before trying again.
+            </Text>
+          )}
+          {errorType === "suspended" && (
+            <Text style={[styles.errorHint, { color: textColor }]}>
+              Contact customer support for assistance.
+            </Text>
+          )}
+          {errorType === "server" && (
+            <Text style={[styles.errorHint, { color: textColor }]}>
+              Our team has been notified. Please try again shortly.
+            </Text>
+          )}
+          {(!errorType || errorType === "general" || errorType === "credentials" || errorType === "not-found") && (
+            <Text style={[styles.errorHint, { color: textColor }]}>
+              Check your credentials and try again.
+            </Text>
+          )}
+        </View>
+      </View>
+    );
+  };
 
   return (
     <KeyboardAvoidingView
@@ -268,24 +319,28 @@ export default function LoginScreen() {
           <Text style={styles.title}>Welcome Back!</Text>
           <Text style={styles.subtitle}>Log in to your account</Text>
 
+          {/* Server Error Message */}
+          {renderErrorMessage()}
+
           {/* Username Field */}
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Username</Text>
             <TextInput
               style={[styles.input, errors.username && styles.inputError]}
               placeholder="Enter your username"
+              placeholderTextColor="#9CA3AF"
               value={formData.username}
               onChangeText={(text) => {
                 setFormData({ ...formData, username: text });
-                if (errors.username)
-                  setErrors({ ...errors, username: undefined });
+                if (errors.username) setErrors({ ...errors, username: undefined });
               }}
               autoCapitalize="none"
               autoCorrect={false}
+              editable={!loginLoading}
             />
-            {errors.username ? (
+            {errors.username && (
               <Text style={styles.errorText}>{errors.username}</Text>
-            ) : null}
+            )}
           </View>
 
           {/* Password Field */}
@@ -299,13 +354,14 @@ export default function LoginScreen() {
                   errors.password && styles.inputError,
                 ]}
                 placeholder="Enter your password"
+                placeholderTextColor="#9CA3AF"
                 value={formData.password}
                 onChangeText={(text) => {
                   setFormData({ ...formData, password: text });
-                  if (errors.password)
-                    setErrors({ ...errors, password: undefined });
+                  if (errors.password) setErrors({ ...errors, password: undefined });
                 }}
                 secureTextEntry={!showPassword}
+                editable={!loginLoading}
               />
               <TouchableOpacity
                 style={styles.eyeButton}
@@ -318,9 +374,9 @@ export default function LoginScreen() {
                 />
               </TouchableOpacity>
             </View>
-            {errors.password ? (
+            {errors.password && (
               <Text style={styles.errorText}>{errors.password}</Text>
-            ) : null}
+            )}
           </View>
 
           {/* Forgot Password Link */}
@@ -366,12 +422,22 @@ export default function LoginScreen() {
           <View style={styles.riderLinkContainer}>
             <MaterialIcons name="two-wheeler" size={20} color="#ff6d0b" />
             <Text style={styles.riderText}>Want to deliver? </Text>
-            <TouchableOpacity
-              onPress={() => router.push("/(auth)/rider-apply")}
-            >
+            <TouchableOpacity onPress={() => router.push("/(auth)/rider-apply")}>
               <Text style={styles.riderLink}>Apply as Rider</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Debug Buttons (only in development) */}
+          {__DEV__ && (
+            <View style={styles.debugContainer}>
+              <TouchableOpacity style={styles.debugButton} onPress={handleDebugAuth}>
+                <Text style={styles.debugButtonText}>Debug Auth</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.clearButton} onPress={handleClearAuth}>
+                <Text style={styles.clearButtonText}>Clear Auth Data</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -473,6 +539,32 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 4,
     marginLeft: 4,
+  },
+  errorContainer: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 16,
+    gap: 10,
+  },
+  errorTextContainer: {
+    flex: 1,
+  },
+  errorTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 2,
+  },
+  errorMessageText: {
+    fontSize: 13,
+    marginBottom: 4,
+  },
+  errorHint: {
+    fontSize: 11,
+    opacity: 0.8,
+    marginTop: 2,
   },
   forgotPassword: {
     alignSelf: "flex-end",
