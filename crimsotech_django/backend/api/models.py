@@ -164,22 +164,53 @@ class Logs(models.Model):
         return f"Log {self.id} by {self.user.username} at {self.timestamp}"
     
 class Notification(models.Model):
+    NOTIFICATION_TYPES = [
+        ('order_update', 'Order Update'),
+        ('refund_update', 'Refund Update'),
+        ('replacement', 'Replacement Order'),
+        ('delivery', 'Delivery Update'),
+        ('payment', 'Payment Update'),
+        ('system', 'System Notification'),
+        ('message', 'Message'),
+        ('dispute', 'Dispute Update'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    title = models.CharField(max_length=500)
-    type = models.CharField(max_length=50)
-    message = models.CharField(max_length=500)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES, default='system')
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    # Optional: link to related objects
+    related_order = models.ForeignKey('Order', on_delete=models.SET_NULL, null=True, blank=True)
+    related_refund = models.ForeignKey('Refund', on_delete=models.SET_NULL, null=True, blank=True)
+    related_delivery = models.ForeignKey('Delivery', on_delete=models.SET_NULL, null=True, blank=True)
+
+    # For deep linking in the app
+    action_url = models.CharField(max_length=500, blank=True, null=True)
+    action_type = models.CharField(max_length=100, blank=True, null=True)
+    action_id = models.CharField(max_length=100, blank=True, null=True)
 
     class Meta:
+        ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['user', 'is_read', 'created_at']),
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['user', 'is_read', '-created_at']),
+            models.Index(fields=['type', '-created_at']),
             models.Index(fields=['created_at']),
         ]
 
     def __str__(self):
-        return f"Notification {self.id} for {self.user.username}"
+        return f"Notification for {self.user.username}: {self.title}"
+
+    def mark_as_read(self):
+        if not self.is_read:
+            self.is_read = True
+            self.read_at = timezone.now()
+            self.save(update_fields=['is_read', 'read_at'])
     
 class OTP(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
