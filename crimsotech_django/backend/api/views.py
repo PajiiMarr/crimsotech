@@ -46637,3 +46637,480 @@ class UserPaymentDetailsViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
+
+
+class NotificationViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for Notification operations.
+    Uses X-User-Id header for authentication.
+    """
+    queryset = Notification.objects.all()
+    serializer_class = NotificationSerializer
+    http_method_names = ['get', 'post', 'patch', 'delete']
+
+    def get_queryset(self):
+        """Filter notifications by user from X-User-Id header."""
+        user_id = self.request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return Notification.objects.none()
+        
+        queryset = Notification.objects.filter(user_id=user_id)
+        
+        # Filter by read status
+        is_read = self.request.query_params.get('is_read')
+        if is_read is not None:
+            is_read_bool = is_read.lower() == 'true'
+            queryset = queryset.filter(is_read=is_read_bool)
+        
+        # Filter by notification type
+        notification_type = self.request.query_params.get('type')
+        if notification_type:
+            queryset = queryset.filter(type=notification_type)
+        
+        # Filter by date range
+        from_date = self.request.query_params.get('from_date')
+        if from_date:
+            queryset = queryset.filter(created_at__gte=from_date)
+        
+        to_date = self.request.query_params.get('to_date')
+        if to_date:
+            queryset = queryset.filter(created_at__lte=to_date)
+        
+        return queryset
+
+    def get_user_from_header(self, request):
+        """Helper to get user from X-User-Id header."""
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return None, Response(
+                {'error': 'X-User-Id header is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+            return user, None
+        except User.DoesNotExist:
+            return None, Response(
+                {'error': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except (ValueError, TypeError):
+            return None, Response(
+                {'error': 'Invalid user ID format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def list(self, request, *args, **kwargs):
+        """
+        List notifications with unread count and pagination.
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Get user for counts
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        # Get counts
+        unread_count = Notification.objects.filter(
+            user=user, 
+            is_read=False
+        ).count()
+        
+        total_count = Notification.objects.filter(user=user).count()
+        
+        # Pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response({
+                'notifications': serializer.data,
+                'unread_count': unread_count,
+                'total_count': total_count,
+                'page': page.number,
+                'pages': page.paginator.num_pages
+            })
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'notifications': serializer.data,
+            'unread_count': unread_count,
+            'total_count': total_count
+        })
+
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Get a single notification by ID.
+        Auto-marks as read when viewed.
+        """
+        # Verify user
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        instance = self.get_object()
+        
+        # Check if notification belongs to user
+        if str(instance.user.id) != str(user.id):
+            return Response(
+                {'error': 'You can only access your own notifications'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Auto-mark as read when viewed individually
+        auto_mark_read = request.query_params.get('auto_mark_read', 'true').lower() == 'true'
+        if auto_mark_read and not instance.is_read:
+            instance.mark_as_read()
+        
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    def create(self, request, *args, **kwargs):
+        """
+        Create a new notification.
+        Only admins and moderators can create notifications.
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        # Check permissions
+        if not (user.is_admin or user.is_moderator):
+            return Response(
+                {'error': 'Only admins and moderators can create notifications'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Add user_id to request data
+        data = request.data.copy()
+        data['user_id'] = str(user.id)
+        
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED
+        )
+
+    def update(self, request, *args, **kwargs):
+        """
+        Update a notification (only is_read field can be updated).
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        instance = self.get_object()
+        
+        # Check if notification belongs to user
+        if str(instance.user.id) != str(user.id):
+            return Response(
+                {'error': 'You can only update your own notifications'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Only allow updating is_read field
+        if 'is_read' in request.data:
+            serializer = self.get_serializer(instance, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            return Response(serializer.data)
+        
+        return Response(
+            {'error': 'Only is_read field can be updated'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        """
+        Partially update a notification (PATCH method).
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        instance = self.get_object()
+        
+        # Check if notification belongs to user
+        if str(instance.user.id) != str(user.id):
+            return Response(
+                {'error': 'You can only update your own notifications'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Only allow updating is_read field
+        if 'is_read' in request.data:
+            serializer = self.get_serializer(instance, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            return Response(serializer.data)
+        
+        return Response(
+            {'error': 'Only is_read field can be updated'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a notification.
+        Only allows deleting read notifications unless force_delete is used.
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        instance = self.get_object()
+        
+        # Check if notification belongs to user
+        if str(instance.user.id) != str(user.id):
+            return Response(
+                {'error': 'You can only delete your own notifications'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Only allow deleting read notifications
+        allow_delete_unread = request.query_params.get('allow_delete_unread', 'false').lower() == 'true'
+        if not allow_delete_unread and not instance.is_read:
+            return Response(
+                {'error': 'Cannot delete unread notifications. Mark as read first or use force delete'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        self.perform_destroy(instance)
+        return Response(
+            {'message': 'Notification deleted successfully'},
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=False, methods=['post'], url_path='bulk-action')
+    def bulk_action(self, request):
+        """
+        Bulk actions on notifications:
+        - Mark multiple as read
+        - Mark all as read
+        - Delete all read notifications
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        serializer = BulkNotificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Mark all as read
+        if serializer.validated_data.get('mark_all_as_read'):
+            updated_count = Notification.objects.filter(
+                user=user, 
+                is_read=False
+            ).update(is_read=True, read_at=timezone.now())
+            
+            return Response({
+                'message': f'Successfully marked {updated_count} notifications as read',
+                'marked_count': updated_count,
+                'action': 'mark_all_read'
+            })
+        
+        # Delete all read notifications
+        if serializer.validated_data.get('delete_all_read'):
+            deleted_count, _ = Notification.objects.filter(
+                user=user, 
+                is_read=True
+            ).delete()
+            
+            return Response({
+                'message': f'Successfully deleted {deleted_count} read notifications',
+                'deleted_count': deleted_count,
+                'action': 'delete_all_read'
+            })
+        
+        # Mark specific notifications as read
+        notification_ids = serializer.validated_data.get('notification_ids')
+        if notification_ids:
+            # Verify all notifications belong to the user
+            user_notifications = Notification.objects.filter(
+                id__in=notification_ids,
+                user=user
+            )
+            
+            if user_notifications.count() != len(notification_ids):
+                return Response(
+                    {'error': 'Some notifications do not belong to you or do not exist'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            updated_count = user_notifications.filter(is_read=False).update(
+                is_read=True, 
+                read_at=timezone.now()
+            )
+            
+            return Response({
+                'message': f'Successfully marked {updated_count} notifications as read',
+                'marked_count': updated_count,
+                'action': 'mark_selected_read'
+            })
+        
+        return Response(
+            {'error': 'No valid action specified'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    @action(detail=False, methods=['get'], url_path='unread-count')
+    def unread_count(self, request):
+        """
+        Get the number of unread notifications for the current user.
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        count = Notification.objects.filter(
+            user=user,
+            is_read=False
+        ).count()
+        
+        return Response({
+            'unread_count': count,
+            'has_unread': count > 0
+        })
+
+    @action(detail=False, methods=['post'], url_path='mark-all-read')
+    def mark_all_read(self, request):
+        """
+        Mark all notifications as read for the current user.
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        updated_count = Notification.objects.filter(
+            user=user,
+            is_read=False
+        ).update(is_read=True, read_at=timezone.now())
+        
+        return Response({
+            'message': f'Successfully marked {updated_count} notifications as read',
+            'marked_count': updated_count
+        })
+
+    @action(detail=True, methods=['post'], url_path='mark-read')
+    def mark_single_read(self, request, pk=None):
+        """
+        Mark a single notification as read.
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        notification = self.get_object()
+        
+        # Check if notification belongs to user
+        if str(notification.user.id) != str(user.id):
+            return Response(
+                {'error': 'You can only mark your own notifications as read'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if not notification.is_read:
+            notification.mark_as_read()
+            return Response({
+                'message': 'Notification marked as read',
+                'notification': self.get_serializer(notification).data
+            })
+        
+        return Response(
+            {'message': 'Notification was already read'},
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=['delete'], url_path='force-delete')
+    def force_delete(self, request, pk=None):
+        """
+        Force delete a notification even if unread.
+        Admins and moderators can delete any notification.
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        notification = self.get_object()
+        
+        # Check permissions
+        if str(notification.user.id) != str(user.id) and not (user.is_admin or user.is_moderator):
+            return Response(
+                {'error': 'You can only delete your own notifications'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        notification.delete()
+        return Response(
+            {'message': 'Notification deleted successfully'},
+            status=status.HTTP_200_OK
+        )
+
+    @action(detail=False, methods=['delete'], url_path='delete-all-read')
+    def delete_all_read(self, request):
+        """
+        Delete all read notifications for the current user.
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        deleted_count, _ = Notification.objects.filter(
+            user=user,
+            is_read=True
+        ).delete()
+        
+        return Response({
+            'message': f'Successfully deleted {deleted_count} read notifications',
+            'deleted_count': deleted_count
+        })
+
+    @action(detail=False, methods=['delete'], url_path='delete-all')
+    def delete_all(self, request):
+        """
+        Delete ALL notifications for the current user (admin only).
+        Requires confirmation with ?confirm=true parameter.
+        """
+        # Get user from header
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        # Check if user is admin
+        if not user.is_admin:
+            return Response(
+                {'error': 'Only admins can delete all notifications'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Require confirmation
+        confirm = request.query_params.get('confirm', 'false').lower() == 'true'
+        if not confirm:
+            return Response(
+                {'error': 'Please confirm with ?confirm=true parameter'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        deleted_count, _ = Notification.objects.filter(user=user).delete()
+        
+        return Response({
+            'message': f'Successfully deleted {deleted_count} notifications',
+            'deleted_count': deleted_count
+        })

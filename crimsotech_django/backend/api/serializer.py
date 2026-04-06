@@ -1706,3 +1706,203 @@ class RiderWalletSerializer(serializers.ModelSerializer):
                 }
         
         return data
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """Comprehensive Notification Serializer for all operations"""
+    
+    # Read-only fields for additional info
+    time_ago = serializers.SerializerMethodField(read_only=True)
+    related_order_number = serializers.SerializerMethodField(read_only=True)
+    related_refund_id = serializers.SerializerMethodField(read_only=True)
+    related_delivery_id = serializers.SerializerMethodField(read_only=True)
+    
+    # For create/update operations
+    user_id = serializers.UUIDField(write_only=True, required=False)
+    related_order_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    related_refund_id_field = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    related_delivery_id_field = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    
+    class Meta:
+        model = Notification
+        fields = [
+            # Core fields
+            'id',
+            'title',
+            'message',
+            'type',
+            'is_read',
+            'created_at',
+            'read_at',
+            
+            # Related objects (read)
+            'related_order',
+            'related_refund',
+            'related_delivery',
+            
+            # Related objects (write)
+            'user_id',
+            'related_order_id',
+            'related_refund_id_field',
+            'related_delivery_id_field',
+            
+            # Deep linking
+            'action_url',
+            'action_type',
+            'action_id',
+            
+            # Computed fields
+            'time_ago',
+            'related_order_number',
+            'related_refund_id',
+            'related_delivery_id',
+        ]
+        read_only_fields = ['id', 'created_at', 'read_at', 'related_order', 'related_refund', 'related_delivery']
+    
+    def get_time_ago(self, obj):
+        """Get human-readable time difference"""
+        now = timezone.now()
+        diff = now - obj.created_at
+        
+        if diff.days > 30:
+            months = diff.days // 30
+            return f"{months} month{'s' if months > 1 else ''} ago"
+        elif diff.days > 0:
+            return f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
+        elif diff.seconds > 3600:
+            hours = diff.seconds // 3600
+            return f"{hours} hour{'s' if hours > 1 else ''} ago"
+        elif diff.seconds > 60:
+            minutes = diff.seconds // 60
+            return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+        else:
+            return "Just now"
+    
+    def get_related_order_number(self, obj):
+        """Get order number if related order exists"""
+        if obj.related_order:
+            return str(obj.related_order.order)
+        return None
+    
+    def get_related_refund_id(self, obj):
+        """Get refund ID if related refund exists"""
+        if obj.related_refund:
+            return str(obj.related_refund.refund_id)
+        return None
+    
+    def get_related_delivery_id(self, obj):
+        """Get delivery ID if related delivery exists"""
+        if obj.related_delivery:
+            return str(obj.related_delivery.id)
+        return None
+    
+    def validate_user_id(self, value):
+        """Validate that user exists"""
+        if not value:
+            raise serializers.ValidationError("user_id is required for creating notifications")
+        try:
+            User.objects.get(id=value)
+            return value
+        except User.DoesNotExist:
+            raise serializers.ValidationError("User does not exist")
+    
+    def validate_related_order_id(self, value):
+        """Validate that order exists if provided"""
+        if value:
+            try:
+                return Order.objects.get(order=value)
+            except Order.DoesNotExist:
+                raise serializers.ValidationError("Order does not exist")
+        return None
+    
+    def validate_related_refund_id_field(self, value):
+        """Validate that refund exists if provided"""
+        if value:
+            try:
+                return Refund.objects.get(refund_id=value)
+            except Refund.DoesNotExist:
+                raise serializers.ValidationError("Refund does not exist")
+        return None
+    
+    def validate_related_delivery_id_field(self, value):
+        """Validate that delivery exists if provided"""
+        if value:
+            try:
+                return Delivery.objects.get(id=value)
+            except Delivery.DoesNotExist:
+                raise serializers.ValidationError("Delivery does not exist")
+        return None
+    
+    def validate(self, data):
+        """Cross-field validation"""
+        # For update operations, user_id might not be required
+        if self.instance is None and not data.get('user_id'):
+            raise serializers.ValidationError({"user_id": "user_id is required when creating a notification"})
+        return data
+    
+    def create(self, validated_data):
+        """Create a new notification"""
+        # Extract related object IDs
+        user_id = validated_data.pop('user_id', None)
+        related_order = validated_data.pop('related_order_id', None)
+        related_refund = validated_data.pop('related_refund_id_field', None)
+        related_delivery = validated_data.pop('related_delivery_id_field', None)
+        
+        # Get the user
+        user = User.objects.get(id=user_id)
+        
+        # Create notification
+        notification = Notification.objects.create(
+            user=user,
+            related_order=related_order,
+            related_refund=related_refund,
+            related_delivery=related_delivery,
+            **validated_data
+        )
+        
+        return notification
+    
+    def update(self, instance, validated_data):
+        """Update a notification (typically just marking as read)"""
+        # Remove fields that shouldn't be updated directly
+        validated_data.pop('user_id', None)
+        validated_data.pop('related_order_id', None)
+        validated_data.pop('related_refund_id_field', None)
+        validated_data.pop('related_delivery_id_field', None)
+        
+        # Handle marking as read
+        is_read = validated_data.get('is_read', False)
+        if is_read and not instance.is_read:
+            instance.read_at = timezone.now()
+        
+        # Update other fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        instance.save()
+        return instance
+
+
+class BulkNotificationSerializer(serializers.Serializer):
+    """Serializer for bulk notification operations"""
+    notification_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        help_text="List of notification IDs to mark as read"
+    )
+    mark_all_as_read = serializers.BooleanField(
+        default=False,
+        help_text="Set to true to mark all notifications as read"
+    )
+    delete_all_read = serializers.BooleanField(
+        default=False,
+        help_text="Set to true to delete all read notifications"
+    )
+    
+    def validate(self, data):
+        """Validate that at least one action is specified"""
+        if not any([data.get('notification_ids'), data.get('mark_all_as_read'), data.get('delete_all_read')]):
+            raise serializers.ValidationError(
+                "At least one action (notification_ids, mark_all_as_read, or delete_all_read) must be provided"
+            )
+        return data
