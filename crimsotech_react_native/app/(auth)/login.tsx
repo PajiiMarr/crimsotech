@@ -49,12 +49,19 @@ export default function LoginScreen() {
   });
   const [loginLoading, setLoginLoading] = useState(false);
   const [errors, setErrors] = useState<Partial<LoginData>>({});
+  const [fieldErrors, setFieldErrors] = useState<Partial<LoginData>>({});
   const [serverError, setServerError] = useState<ServerError>({});
   const [showPassword, setShowPassword] = useState(false);
 
-  // Clear server error when user starts typing
+  // Clear field errors when user starts typing
   useEffect(() => {
-    if (serverError.general || serverError.username || serverError.password) {
+    if (fieldErrors.username && formData.username) {
+      setFieldErrors((prev) => ({ ...prev, username: undefined }));
+    }
+    if (fieldErrors.password && formData.password) {
+      setFieldErrors((prev) => ({ ...prev, password: undefined }));
+    }
+    if (serverError.general) {
       setServerError({});
     }
   }, [formData.username, formData.password]);
@@ -85,28 +92,48 @@ export default function LoginScreen() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const getErrorMessage = (error: any): string => {
+  const getErrorMessage = (error: any): { message: string; field?: string } => {
     if (error.response?.data) {
       const serverData = error.response.data;
-      
-      if (typeof serverData === 'string') return serverData;
-      if (serverData.error) return serverData.error;
-      if (serverData.message) return serverData.message;
-      if (serverData.detail) return serverData.detail;
-      if (serverData.non_field_errors) return serverData.non_field_errors[0];
-      if (serverData.username) return serverData.username;
-      if (serverData.password) return serverData.password;
+
+      // Check for field-specific errors
+      if (serverData.username) {
+        return { message: serverData.username, field: "username" };
+      }
+      if (serverData.password) {
+        return { message: serverData.password, field: "password" };
+      }
+      if (serverData.non_field_errors) {
+        return { message: serverData.non_field_errors[0], field: "general" };
+      }
+      if (typeof serverData === "string")
+        return { message: serverData, field: "general" };
+      if (serverData.error)
+        return { message: serverData.error, field: "general" };
+      if (serverData.message)
+        return { message: serverData.message, field: "general" };
+      if (serverData.detail)
+        return { message: serverData.detail, field: "general" };
     }
-    
+
     if (error.message === "Network Error") {
-      return "Network error. Please check your internet connection.";
+      return {
+        message: "Network error. Please check your internet connection.",
+        field: "general",
+      };
     }
-    
+
     if (error.code === "ECONNABORTED") {
-      return "Request timed out. Please try again.";
+      return {
+        message: "Request timed out. Please try again.",
+        field: "general",
+      };
     }
-    
-    return "Invalid username or password. Please try again.";
+
+    return {
+      message: "Invalid username or password. Please try again.",
+      field: "general",
+    };
   };
 
   const handleLogin = async () => {
@@ -114,6 +141,7 @@ export default function LoginScreen() {
 
     setLoginLoading(true);
     setServerError({});
+    setFieldErrors({});
 
     try {
       const { username, password } = formData;
@@ -179,40 +207,52 @@ export default function LoginScreen() {
         }
       }
     } catch (error: any) {
-      const errorMessage = getErrorMessage(error);
+      const { message, field } = getErrorMessage(error);
       const statusCode = error.response?.status;
-      
-      let userFriendlyMessage = errorMessage;
+
+      let userFriendlyMessage = message;
       let errorType = "general";
-      
+
       if (statusCode === 401) {
         userFriendlyMessage = "Invalid username or password. Please try again.";
         errorType = "credentials";
+        // Set field-specific error based on what's likely wrong
+        if (!formData.username.trim()) {
+          setFieldErrors({ username: "Username is required" });
+        } else if (!formData.password) {
+          setFieldErrors({ password: "Password is required" });
+        } else {
+          setFieldErrors({
+            username: "Invalid username",
+            password: "Invalid password",
+          });
+        }
       } else if (statusCode === 403) {
-        userFriendlyMessage = "Your account has been suspended. Please contact support.";
+        userFriendlyMessage =
+          "Your account has been suspended. Please contact support.";
         errorType = "suspended";
+        setFieldErrors({ username: userFriendlyMessage });
       } else if (statusCode === 404) {
         userFriendlyMessage = "Account not found. Please check your username.";
         errorType = "not-found";
+        setFieldErrors({ username: userFriendlyMessage });
       } else if (statusCode === 429) {
-        userFriendlyMessage = "Too many login attempts. Please wait a moment and try again.";
+        userFriendlyMessage =
+          "Too many login attempts. Please wait a moment and try again.";
         errorType = "rate-limit";
       } else if (statusCode >= 500) {
         userFriendlyMessage = "Server error. Please try again later.";
         errorType = "server";
+      } else if (field === "username") {
+        setFieldErrors({ username: userFriendlyMessage });
+      } else if (field === "password") {
+        setFieldErrors({ password: userFriendlyMessage });
+      } else {
+        setServerError({ general: userFriendlyMessage, errorType });
       }
-      
-      setServerError({ general: userFriendlyMessage, errorType });
     } finally {
       setLoginLoading(false);
     }
-  };
-
-  const handleDebugAuth = async () => {
-    Alert.alert(
-      "Auth Debug",
-      `User ID: ${userId || "null"}\nShop ID: ${shopId || "null"}\nRole: ${userRole || "null"}\nStage: ${registrationStage || "null"}`,
-    );
   };
 
   const handleClearAuth = async () => {
@@ -237,13 +277,13 @@ export default function LoginScreen() {
   // Helper to render error message with appropriate styling
   const renderErrorMessage = () => {
     if (!serverError.general) return null;
-    
+
     const errorType = serverError.errorType;
     let bgColor = "#FEF2F2";
     let borderColor = "#FECACA";
     let textColor = "#991B1B";
     let iconName: keyof typeof MaterialIcons.glyphMap = "error-outline";
-    
+
     if (errorType === "rate-limit") {
       bgColor = "#FEFCE8";
       borderColor = "#FEF08A";
@@ -260,12 +300,19 @@ export default function LoginScreen() {
       textColor = "#1E40AF";
       iconName = "computer";
     }
-    
+
     return (
-      <View style={[styles.errorContainer, { backgroundColor: bgColor, borderColor: borderColor }]}>
+      <View
+        style={[
+          styles.errorContainer,
+          { backgroundColor: bgColor, borderColor: borderColor },
+        ]}
+      >
         <MaterialIcons name={iconName} size={20} color={textColor} />
         <View style={styles.errorTextContainer}>
-          <Text style={[styles.errorTitle, { color: textColor }]}>Login Failed</Text>
+          <Text style={[styles.errorTitle, { color: textColor }]}>
+            Login Failed
+          </Text>
           <Text style={[styles.errorMessageText, { color: textColor }]}>
             {serverError.general}
           </Text>
@@ -284,12 +331,28 @@ export default function LoginScreen() {
               Our team has been notified. Please try again shortly.
             </Text>
           )}
-          {(!errorType || errorType === "general" || errorType === "credentials" || errorType === "not-found") && (
+          {(!errorType ||
+            errorType === "general" ||
+            errorType === "credentials" ||
+            errorType === "not-found") && (
             <Text style={[styles.errorHint, { color: textColor }]}>
               Check your credentials and try again.
             </Text>
           )}
         </View>
+      </View>
+    );
+  };
+
+  // Helper to render field error message below input
+  const renderFieldError = (field: "username" | "password") => {
+    const errorMessage = fieldErrors[field] || errors[field];
+    if (!errorMessage) return null;
+
+    return (
+      <View style={styles.fieldErrorContainer}>
+        <MaterialIcons name="error-outline" size={14} color="#EF4444" />
+        <Text style={styles.fieldErrorText}>{errorMessage}</Text>
       </View>
     );
   };
@@ -326,21 +389,23 @@ export default function LoginScreen() {
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Username</Text>
             <TextInput
-              style={[styles.input, errors.username && styles.inputError]}
+              style={[
+                styles.input,
+                (errors.username || fieldErrors.username) && styles.inputError,
+              ]}
               placeholder="Enter your username"
               placeholderTextColor="#9CA3AF"
               value={formData.username}
               onChangeText={(text) => {
                 setFormData({ ...formData, username: text });
-                if (errors.username) setErrors({ ...errors, username: undefined });
+                if (errors.username)
+                  setErrors({ ...errors, username: undefined });
               }}
               autoCapitalize="none"
               autoCorrect={false}
               editable={!loginLoading}
             />
-            {errors.username && (
-              <Text style={styles.errorText}>{errors.username}</Text>
-            )}
+            {renderFieldError("username")}
           </View>
 
           {/* Password Field */}
@@ -351,14 +416,16 @@ export default function LoginScreen() {
                 style={[
                   styles.input,
                   styles.passwordInput,
-                  errors.password && styles.inputError,
+                  (errors.password || fieldErrors.password) &&
+                    styles.inputError,
                 ]}
                 placeholder="Enter your password"
                 placeholderTextColor="#9CA3AF"
                 value={formData.password}
                 onChangeText={(text) => {
                   setFormData({ ...formData, password: text });
-                  if (errors.password) setErrors({ ...errors, password: undefined });
+                  if (errors.password)
+                    setErrors({ ...errors, password: undefined });
                 }}
                 secureTextEntry={!showPassword}
                 editable={!loginLoading}
@@ -374,12 +441,9 @@ export default function LoginScreen() {
                 />
               </TouchableOpacity>
             </View>
-            {errors.password && (
-              <Text style={styles.errorText}>{errors.password}</Text>
-            )}
+            {renderFieldError("password")}
           </View>
 
-          {/* Forgot Password Link */}
           <TouchableOpacity
             style={styles.forgotPassword}
             onPress={() => router.push("/(auth)/login")}
@@ -422,22 +486,12 @@ export default function LoginScreen() {
           <View style={styles.riderLinkContainer}>
             <MaterialIcons name="two-wheeler" size={20} color="#ff6d0b" />
             <Text style={styles.riderText}>Want to deliver? </Text>
-            <TouchableOpacity onPress={() => router.push("/(auth)/rider-apply")}>
+            <TouchableOpacity
+              onPress={() => router.push("/(auth)/rider-apply")}
+            >
               <Text style={styles.riderLink}>Apply as Rider</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Debug Buttons (only in development) */}
-          {__DEV__ && (
-            <View style={styles.debugContainer}>
-              <TouchableOpacity style={styles.debugButton} onPress={handleDebugAuth}>
-                <Text style={styles.debugButtonText}>Debug Auth</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.clearButton} onPress={handleClearAuth}>
-                <Text style={styles.clearButtonText}>Clear Auth Data</Text>
-              </TouchableOpacity>
-            </View>
-          )}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -532,13 +586,18 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   inputError: {
-    borderColor: "#ff6d0b",
+    borderColor: "#EF4444",
+    borderWidth: 1.5,
   },
-  errorText: {
-    color: "#ff6d0b",
+  fieldErrorContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+    gap: 4,
+  },
+  fieldErrorText: {
     fontSize: 11,
-    marginTop: 4,
-    marginLeft: 4,
+    color: "#EF4444",
   },
   errorContainer: {
     flexDirection: "row",
