@@ -193,8 +193,11 @@ const RejectedStatus = ({ refund, formatCurrency, onDispute }: { refund: any; fo
   );
 };
 // ========== 4. APPROVED STATUS ==========
+// ========== 4. APPROVED STATUS ==========
 const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDate, shopReturnAddress, onOpenProofViewer }: { refund: any; onOpenTrackingDialog?: () => void; formatCurrency: (amount: string | number) => string; formatDate: (dateString: string) => string; shopReturnAddress?: any; onOpenProofViewer?: (urls: string[], index?: number) => void }) => {
+  const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
   const isReturnItem = refund.refund_type === 'return';
+  const isReplaceItem = refund.refund_type === 'replace';
   const rr = refund.return_request || {};
   const rrStatus = String(rr?.status || '').toLowerCase();
   const payStatus = String(refund.refund_payment_status || '').toLowerCase();
@@ -205,191 +208,196 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
   const returnAddress = refund.return_address || shopReturnAddress || null;
 
   const extractReturnProofUrls = () => {
-  const rrObj = refund.return_request || {};
-  
-  // Try all possible paths where media might be stored
-  const mediaFromReturn = rrObj.medias || 
-                          rrObj.media || 
-                          rrObj.media_files || 
-                          refund.return_request_media || 
-                          [];
-  
-  const urls: string[] = [];
-  
-  if (Array.isArray(mediaFromReturn) && mediaFromReturn.length > 0) {
-    mediaFromReturn.forEach((m: any) => {
-      // Try different possible URL field names
-      const url = m.file_url || m.url || m.file_data;
-      if (url && typeof url === 'string') {
-        urls.push(url);
-      }
-    });
-  }
-  
-  console.log('Extracted media URLs:', urls);
-  return urls;
-};
+    const rrObj = refund.return_request || {};
+    const mediaFromReturn = rrObj.medias || rrObj.media || rrObj.media_files || refund.return_request_media || [];
+    const urls: string[] = [];
+    if (Array.isArray(mediaFromReturn) && mediaFromReturn.length > 0) {
+      mediaFromReturn.forEach((m: any) => {
+        const url = m.file_url || m.url || m.file_data;
+        if (url && typeof url === 'string') {
+          urls.push(url);
+        }
+      });
+    }
+    return urls;
+  };
   const shippingProofUrls = extractReturnProofUrls();
   
   const isProcessing = (
-    (isReturnItem && rrStatus === 'approved' && payStatus === 'processing' && refund.status?.toLowerCase() === 'approved') ||
-    (!isReturnItem && payStatus === 'processing' && refund.status?.toLowerCase() === 'approved') ||
+    (isReturnOrReplace && rrStatus === 'approved' && payStatus === 'processing' && refund.status?.toLowerCase() === 'approved') ||
+    (!isReturnOrReplace && payStatus === 'processing' && refund.status?.toLowerCase() === 'approved') ||
     (dr && dr.status?.toLowerCase() === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'processing')
   );
   const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
   const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
-const returnDeadline = refund.processed_at ? new Date(new Date(refund.processed_at).getTime() + 2 * 24 * 60 * 60 * 1000) : null;
+  const returnDeadline = refund.processed_at ? new Date(new Date(refund.processed_at).getTime() + 2 * 24 * 60 * 60 * 1000) : null;
+
+  // Get the type label for display
+  const getTypeLabel = () => {
+    if (isReturnItem) return 'return';
+    if (isReplaceItem) return 'replacement';
+    return 'refund';
+  };
+
+  const getDisplayTitle = () => {
+    if (!isReturnOrReplace) return 'Refund Approved';
+    if (rrStatus === 'shipped') {
+      return isReturnItem ? 'Approved - Shipped' : 'Replacement Approved - Shipped';
+    }
+    if (rrStatus === 'received') {
+      return isReturnItem ? 'Approved - Inspecting' : 'Replacement Approved - Inspecting';
+    }
+    return isReturnItem ? 'Approved - Waiting for return' : 'Replacement Approved - Waiting for return';
+  };
 
   if (isProcessing) return <ProcessingStatus refund={refund} formatCurrency={formatCurrency} />;
   if ((payStatus === 'completed' && refund.status?.toLowerCase() === 'approved') || refund.status?.toLowerCase() === 'completed') {
     return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
   }
 
- return (
-  <View style={styles.statusSection}>
-    <View style={styles.statusRow}>
-      <CheckCircle2 size={24} color={isReturnItem ? "#3B82F6" : "#10B981"} fill={isReturnItem ? "#DBEAFE" : "#D1FAE5"} />
-      <View style={styles.statusTextContainer}>
-        {/* Show different title based on shipping status */}
-        <Text style={[styles.statusTitle, isReturnItem && { color: "#3B82F6" }]}>
-          {!isReturnItem 
-            ? 'Refund Approved' 
-            : rrStatus === 'shipped' 
-              ? 'Approved - Shipped' 
-              : 'Approved - Waiting for return'}
-        </Text>
-        
-        {!isReturnItem ? (
-          <Text style={styles.statusSubtitle}>Your refund will be processed soon</Text>
-        ) : (
-          isReturnAcceptedWaitingModeration ? (
-            <View style={styles.moderationCard}>
-              <Text style={styles.moderationTitle}>Return Accepted</Text>
-              <Text style={styles.moderationText}>Seller accepted your return request. Waiting for the moderation team to process the refund.</Text>
-              {refund.return_request?.return_deadline && <Text style={styles.moderationDeadline}>Return Deadline: {formatDate(refund.return_request.return_deadline)}</Text>}
-            </View>
-          ) : rrStatus === 'shipped' ? (
-            // Show shipped status message
-            <Text style={[styles.statusSubtitle, { color: "#3B82F6" }]}>
-              Your item has been shipped. Waiting for seller to receive and verify the item.
-            </Text>
-          ) : !hasShippingInfo ? (
-            <Text style={[styles.statusSubtitle, { color: "#3B82F6" }]}>
-              Please return the item to complete your refund
-            </Text>
-          ) : null
-        )}
+  return (
+    <View style={styles.statusSection}>
+      <View style={styles.statusRow}>
+        <CheckCircle2 size={24} color={isReturnOrReplace ? "#3B82F6" : "#10B981"} fill={isReturnOrReplace ? "#DBEAFE" : "#D1FAE5"} />
+        <View style={styles.statusTextContainer}>
+          <Text style={[styles.statusTitle, isReturnOrReplace && { color: "#3B82F6" }]}>
+            {getDisplayTitle()}
+          </Text>
+          
+          {!isReturnOrReplace ? (
+            <Text style={styles.statusSubtitle}>Your refund will be processed soon</Text>
+          ) : (
+            isReturnAcceptedWaitingModeration ? (
+              <View style={styles.moderationCard}>
+                <Text style={styles.moderationTitle}>{isReturnItem ? 'Return Accepted' : 'Replacement Accepted'}</Text>
+                <Text style={styles.moderationText}>
+                  {isReturnItem 
+                    ? 'Seller accepted your return request. Waiting for the moderation team to process the refund.'
+                    : 'Seller accepted your replacement request. Waiting for the moderation team to process the replacement.'}
+                </Text>
+                {refund.return_request?.return_deadline && <Text style={styles.moderationDeadline}>Return Deadline: {formatDate(refund.return_request.return_deadline)}</Text>}
+              </View>
+            ) : rrStatus === 'shipped' ? (
+              <Text style={[styles.statusSubtitle, { color: "#3B82F6" }]}>
+                Your item has been shipped. Waiting for seller to receive and verify the item.
+              </Text>
+            ) : !hasShippingInfo ? (
+              <Text style={[styles.statusSubtitle, { color: "#3B82F6" }]}>
+                Please return the item to complete your {getTypeLabel()}
+              </Text>
+            ) : null
+          )}
+        </View>
       </View>
+      
+      {/* Return Address Card - Show only when not shipped yet */}
+      {isReturnOrReplace && !hasShippingInfo && returnAddress && (
+        <View style={styles.returnAddressCardLarge}>
+          <View style={styles.returnAddressHeader}>
+            <MapPin size={20} color="#3B82F6" />
+            <Text style={styles.returnAddressHeaderText}>Return to Seller</Text>
+          </View>
+          
+          <View style={styles.returnAddressContent}>
+            <View style={styles.returnAddressRow}>
+              <Text style={styles.returnAddressLabel}>Recipient:</Text>
+              <Text style={styles.returnAddressValue}>{returnAddress.recipient_name || returnAddress.name || 'Not specified'}</Text>
+            </View>
+            
+            <View style={styles.returnAddressRow}>
+              <Text style={styles.returnAddressLabel}>Contact:</Text>
+              <Text style={styles.returnAddressValue}>{returnAddress.contact_number || returnAddress.phone || 'Not specified'}</Text>
+            </View>
+            
+            <View style={styles.returnAddressRow}>
+              <Text style={styles.returnAddressLabel}>Address:</Text>
+              <Text style={[styles.returnAddressValue, { flex: 1 }]}>
+                {returnAddress.street && `${returnAddress.street}, `}
+                {returnAddress.barangay && `${returnAddress.barangay}, `}
+                {returnAddress.city && `${returnAddress.city}, `}
+                {returnAddress.province && `${returnAddress.province}`}
+              </Text>
+            </View>
+          </View>
+          
+          {returnDeadline && (
+            <View style={styles.returnDeadlineCard}>
+              <Clock size={16} color="#F59E0B" />
+              <Text style={styles.returnDeadlineText}>
+                Please ship the item by <Text style={styles.returnDeadlineDate}>{formatDate(returnDeadline.toISOString())}</Text>
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+      
+      {/* Return details section - Show only when not shipped yet */}
+      {isReturnOrReplace && !hasShippingInfo && (
+        <View style={[styles.returnDetails, { borderLeftColor: "#3B82F6", borderLeftWidth: 4, marginTop: 12 }]}>
+          <View style={styles.returnDetailRow}>
+            <Text style={styles.returnDetailLabel}>Return Deadline:</Text>
+            <Text style={[styles.returnDetailValue, { color: "#F59E0B", fontWeight: "600" }]}>
+              {rr.return_deadline || refund.return_deadline ? formatDate(rr.return_deadline || refund.return_deadline) : (returnDeadline ? formatDate(returnDeadline.toISOString()) : '7 days from approval')}
+            </Text>
+          </View>
+          <View style={styles.returnDetailRow}>
+            <Text style={styles.returnDetailLabel}>Instructions:</Text>
+            <Text style={[styles.returnDetailValue, { fontSize: 12, color: "#6B7280" }]}>
+              1. Package the item securely{'\n'}
+              2. Include all original packaging and accessories{'\n'}
+              3. Ship to the return address above{'\n'}
+              4. Provide tracking number once shipped
+            </Text>
+          </View>
+        </View>
+      )}
+      
+      {/* Shipped Info Section - Show when status is shipped */}
+      {isReturnOrReplace && rrStatus === 'shipped' && (
+        <View style={styles.shippedInfo}>
+          <Text style={styles.shippedTitle}>Item has been shipped</Text>
+          <Text style={styles.shippedSubtitle}>Waiting for the seller to receive the item.</Text>
+          <View style={styles.shippingDetails}>
+            {rr.tracking_number && (
+              <View style={styles.shippingDetail}>
+                <Text style={styles.shippingLabel}>Tracking Number:</Text>
+                <Text style={styles.shippingValue}>{rr.tracking_number}</Text>
+              </View>
+            )}
+            {rr.logistic_service && (
+              <View style={styles.shippingDetail}>
+                <Text style={styles.shippingLabel}>Shipping Service:</Text>
+                <Text style={styles.shippingValue}>{rr.logistic_service}</Text>
+              </View>
+            )}
+            {rr.shipped_at && (
+              <View style={styles.shippingDetail}>
+                <Text style={styles.shippingLabel}>Shipped At:</Text>
+                <Text style={styles.shippingValue}>{formatDate(rr.shipped_at)}</Text>
+              </View>
+            )}
+          </View>
+          {shippingProofUrls.length > 0 && (
+            <View style={{ marginTop: 12 }}>
+              <Text style={{ fontSize: 14, color: '#374151', marginBottom: 8, fontWeight: '600' }}>Shipping Proofs</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                {shippingProofUrls.map((u, idx) => (
+                  <TouchableOpacity key={`${u}-${idx}`} onPress={() => onOpenProofViewer && onOpenProofViewer(shippingProofUrls, idx)} style={{ marginRight: 8 }}>
+                    <Image source={{ uri: u }} style={{ width: 90, height: 90, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+          {onOpenTrackingDialog && !isReturnAcceptedWaitingModeration && (
+            <TouchableOpacity style={styles.updateShippingBtn} onPress={onOpenTrackingDialog}>
+              <Text style={styles.updateShippingText}>Update shipping info</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
     </View>
-    
-    {/* Return Address Card - Show only when not shipped yet */}
-    {isReturnItem && !hasShippingInfo && returnAddress && (
-      <View style={styles.returnAddressCardLarge}>
-        <View style={styles.returnAddressHeader}>
-          <MapPin size={20} color="#3B82F6" />
-          <Text style={styles.returnAddressHeaderText}>Return to Seller</Text>
-        </View>
-        
-        <View style={styles.returnAddressContent}>
-          <View style={styles.returnAddressRow}>
-            <Text style={styles.returnAddressLabel}>Recipient:</Text>
-            <Text style={styles.returnAddressValue}>{returnAddress.recipient_name || returnAddress.name || 'Not specified'}</Text>
-          </View>
-          
-          <View style={styles.returnAddressRow}>
-            <Text style={styles.returnAddressLabel}>Contact:</Text>
-            <Text style={styles.returnAddressValue}>{returnAddress.contact_number || returnAddress.phone || 'Not specified'}</Text>
-          </View>
-          
-          <View style={styles.returnAddressRow}>
-            <Text style={styles.returnAddressLabel}>Address:</Text>
-            <Text style={[styles.returnAddressValue, { flex: 1 }]}>
-              {returnAddress.street && `${returnAddress.street}, `}
-              {returnAddress.barangay && `${returnAddress.barangay}, `}
-              {returnAddress.city && `${returnAddress.city}, `}
-              {returnAddress.province && `${returnAddress.province}`}
-            </Text>
-          </View>
-        </View>
-        
-        {returnDeadline && (
-          <View style={styles.returnDeadlineCard}>
-            <Clock size={16} color="#F59E0B" />
-            <Text style={styles.returnDeadlineText}>
-              Please ship the item by <Text style={styles.returnDeadlineDate}>{formatDate(returnDeadline.toISOString())}</Text>
-            </Text>
-          </View>
-        )}
-      </View>
-    )}
-    
-    {/* Return details section - Show only when not shipped yet */}
-    {isReturnItem && !hasShippingInfo && (
-      <View style={[styles.returnDetails, { borderLeftColor: "#3B82F6", borderLeftWidth: 4, marginTop: 12 }]}>
-        <View style={styles.returnDetailRow}>
-          <Text style={styles.returnDetailLabel}>Return Deadline:</Text>
-          <Text style={[styles.returnDetailValue, { color: "#F59E0B", fontWeight: "600" }]}>
-            {rr.return_deadline || refund.return_deadline ? formatDate(rr.return_deadline || refund.return_deadline) : (returnDeadline ? formatDate(returnDeadline.toISOString()) : '7 days from approval')}
-          </Text>
-        </View>
-        <View style={styles.returnDetailRow}>
-          <Text style={styles.returnDetailLabel}>Instructions:</Text>
-          <Text style={[styles.returnDetailValue, { fontSize: 12, color: "#6B7280" }]}>
-            1. Package the item securely{'\n'}
-            2. Include all original packaging and accessories{'\n'}
-            3. Ship to the return address above{'\n'}
-            4. Provide tracking number once shipped
-          </Text>
-        </View>
-      </View>
-    )}
-    
-    {/* Shipped Info Section - Show when status is shipped */}
-    {isReturnItem && rrStatus === 'shipped' && (
-      <View style={styles.shippedInfo}>
-        <Text style={styles.shippedTitle}>Item has been shipped</Text>
-        <Text style={styles.shippedSubtitle}>Waiting for the seller to receive the item.</Text>
-        <View style={styles.shippingDetails}>
-          {rr.tracking_number && (
-            <View style={styles.shippingDetail}>
-              <Text style={styles.shippingLabel}>Tracking Number:</Text>
-              <Text style={styles.shippingValue}>{rr.tracking_number}</Text>
-            </View>
-          )}
-          {rr.logistic_service && (
-            <View style={styles.shippingDetail}>
-              <Text style={styles.shippingLabel}>Shipping Service:</Text>
-              <Text style={styles.shippingValue}>{rr.logistic_service}</Text>
-            </View>
-          )}
-          {rr.shipped_at && (
-            <View style={styles.shippingDetail}>
-              <Text style={styles.shippingLabel}>Shipped At:</Text>
-              <Text style={styles.shippingValue}>{formatDate(rr.shipped_at)}</Text>
-            </View>
-          )}
-        </View>
-        {shippingProofUrls.length > 0 && (
-          <View style={{ marginTop: 12 }}>
-            <Text style={{ fontSize: 14, color: '#374151', marginBottom: 8, fontWeight: '600' }}>Shipping Proofs</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
-              {shippingProofUrls.map((u, idx) => (
-                <TouchableOpacity key={`${u}-${idx}`} onPress={() => onOpenProofViewer && onOpenProofViewer(shippingProofUrls, idx)} style={{ marginRight: 8 }}>
-                  <Image source={{ uri: u }} style={{ width: 90, height: 90, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-        {onOpenTrackingDialog && !isReturnAcceptedWaitingModeration && (
-          <TouchableOpacity style={styles.updateShippingBtn} onPress={onOpenTrackingDialog}>
-            <Text style={styles.updateShippingText}>Update shipping info</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    )}
-  </View>
-);
+  );
 };
 
 // ========== 5. WAITING STATUS ==========
@@ -888,9 +896,9 @@ useEffect(() => {
     console.log('Seller Shop ID:', sellerShopId);
     console.log('Full refund data:', JSON.stringify(refund, null, 2));
     
-    // Only fetch if refund is approved and type is return AND we have a seller shop ID
+    // UPDATE THIS CONDITION - Include both 'return' and 'replace' types
     if (refund?.status?.toLowerCase() === 'approved' && 
-        refund?.refund_type === 'return' && 
+        (refund?.refund_type === 'return' || refund?.refund_type === 'replace') && 
         sellerShopId) {
       try {
         // Fetch shop details using the seller's shop ID
@@ -917,7 +925,7 @@ useEffect(() => {
     } else {
       console.log('Conditions not met for fetching shop address:');
       console.log('- refund status approved?', refund?.status?.toLowerCase() === 'approved');
-      console.log('- refund_type return?', refund?.refund_type === 'return');
+      console.log('- refund_type return or replace?', refund?.refund_type === 'return' || refund?.refund_type === 'replace');
       console.log('- sellerShopId exists?', sellerShopId);
     }
   };
@@ -1361,7 +1369,7 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
     return <PendingStatus refund={refund} />;
   };
 
- const renderActionButtons = () => {
+const renderActionButtons = () => {
   if (!refund) return null;
 
   // Check if the refund is effectively completed
@@ -1379,11 +1387,19 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
   const payStatus = String(refund.refund_payment_status || '').toLowerCase();
   const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
   const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
-  const isReturnItem = refund.refund_type === 'return';
+  
+  // UPDATE THIS CONDITION - Include both 'return' and 'replace' types
+  const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
+  
   const showAddTrackingAction = (
-    (statusUpper === 'APPROVED' && isReturnItem && !['shipped','received','inspected'].includes(rrStatus) && !(rrStatus === 'approved' && ['processing','completed'].includes(payStatus)) && !isReturnAcceptedWaitingModeration) ||
+    (statusUpper === 'APPROVED' && 
+     isReturnOrReplace && 
+     !['shipped', 'received', 'inspected'].includes(rrStatus) && 
+     !(rrStatus === 'approved' && ['processing', 'completed'].includes(payStatus)) && 
+     !isReturnAcceptedWaitingModeration) ||
     STATUS_CONDITIONS.showWaitingStatus(statusUpper)
   );
+  
   if (showAddTrackingAction) return <ReturnActions onAddTracking={handleAddTracking} onWalkIn={handleOpenWalkInConfirm} loading={actionLoading} />;
   if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) return <PendingActions onCancel={handleCancelRefund} loading={actionLoading} />;
   if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) return <NegotiationActions onAccept={handleAcceptOffer} onReject={handleRejectOffer} loading={actionLoading} isAccepting={isAccepting} />;

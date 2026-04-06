@@ -30119,7 +30119,13 @@ class RefundViewSet(viewsets.ViewSet):
             # Start transaction
             with transaction.atomic():
                 # Map legacy category to current refund_type
-                refund_type = 'return' if str(refund_data.get('refund_category', 'return_item')).lower().startswith('return') else 'keep'
+                refund_category_value = str(refund_data.get('refund_category', 'return_item')).lower()
+                if refund_category_value.startswith('return'):
+                    refund_type = 'return'
+                elif refund_category_value == 'replacement':
+                    refund_type = 'replace'
+                else:
+                    refund_type = 'keep'
                 refund = Refund.objects.create(
                     order_id=order,
                     requested_by=user,
@@ -31110,7 +31116,7 @@ class RefundViewSet(viewsets.ViewSet):
             if str(refund.requested_by.id) != str(user.id):
                 return Response({"error": "Not authorized to start return for this refund"}, status=status.HTTP_403_FORBIDDEN)
 
-            if refund.refund_type != 'return':
+            if refund.refund_type not in ['return', 'replace']:
                 return Response({"error": "This refund is not a return item refund"}, status=status.HTTP_400_BAD_REQUEST)
 
             if refund.status not in ['approved', 'waiting']:
@@ -31158,7 +31164,7 @@ class RefundViewSet(viewsets.ViewSet):
             if str(refund.requested_by.id) != str(user.id):
                 return Response({"error": "Not authorized to update tracking for this refund"}, status=status.HTTP_403_FORBIDDEN)
 
-            if refund.refund_type != 'return':
+            if refund.refund_type not in ['return', 'replace']:
                 return Response({"error": "This refund is not a return item refund"}, status=status.HTTP_400_BAD_REQUEST)
 
             logistic_service = request.data.get('logistic_service')
@@ -31509,7 +31515,7 @@ class RefundViewSet(viewsets.ViewSet):
                 return err
             
             # Check if this is a return refund
-            if refund.refund_type != 'return':
+            if refund.refund_type not in ['return', 'replace']:
                 return Response({"error": "This refund is not a return item refund"}, 
                                 status=status.HTTP_400_BAD_REQUEST)
             
@@ -31614,7 +31620,7 @@ class RefundViewSet(viewsets.ViewSet):
             if err:
                 return err
 
-            if refund.refund_type != 'return':
+            if refund.refund_type not in ['return', 'replace']:
                 return Response({"error": "This refund is not a return item refund"}, status=status.HTTP_400_BAD_REQUEST)
 
             return_request = getattr(refund, 'return_request', None)
@@ -31632,6 +31638,57 @@ class RefundViewSet(viewsets.ViewSet):
                 return_request.updated_by = user
                 return_request.updated_at = timezone.now()
                 return_request.save()
+                # Leave refund.refund_payment_status unchanged (remain pending)
+                refund.save()
+
+                if refund.refund_type == 'replace':
+                    original_order = refund.order_id
+                    
+                    # Create new replacement order
+                    replacement_order = Order.objects.create(
+                        user=original_order.user,
+                        shipping_address=original_order.shipping_address,
+                        status='processing',  # Start processing immediately
+                        total_amount=original_order.total_amount,
+                        payment_method=original_order.payment_method,
+                        delivery_method=original_order.delivery_method,
+                        delivery_address_text=original_order.delivery_address_text,
+                        metadata={
+                            'replacement_for': str(original_order.order),
+                            'refund_id': str(refund.refund_id),
+                            'is_replacement': True
+                        }
+                    )
+                    
+                    # Copy checkout items to the new order
+                    original_checkouts = Checkout.objects.filter(order=original_order)
+                    for original_checkout in original_checkouts:
+                        Checkout.objects.create(
+                            order=replacement_order,
+                            cart_item=original_checkout.cart_item,
+                            voucher=original_checkout.voucher,
+                            quantity=original_checkout.quantity,
+                            total_amount=original_checkout.total_amount,
+                            status='pending',
+                            remarks=f"Replacement for refund {refund.refund_id}"
+                        )
+                    
+                  
+                    refund.save()
+                    
+                    # Notify the buyer
+                    try:
+                        from .models import Notification
+                        Notification.objects.create(
+                            user=original_order.user,
+                            title='Replacement Order Created',
+                            type='replacement',
+                            message=f'Your replacement order #{str(replacement_order.order)[:8]} has been created and is being processed.',
+                            is_read=False
+                        )
+                    except Exception:
+                        pass  # Notification model might not exist
+                
                 # Leave refund.refund_payment_status unchanged (remain pending)
                 refund.save()
 
@@ -31656,6 +31713,7 @@ class RefundViewSet(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
+    
     # ========== ADMIN VIEWS ==========
 
     @action(detail=False, methods=['get'])
@@ -32319,7 +32377,7 @@ class RefundViewSet(viewsets.ViewSet):
 
         # Return request information
         # Return request information
-        if refund.refund_type == 'return':
+        if refund.refund_type in ['return', 'replace']:
             try:
                 return_request = refund.return_request
                 data['return_request'] = {
@@ -32456,7 +32514,7 @@ class RefundViewSet(viewsets.ViewSet):
             data['seller_suggested_amount'] = None
 
         # Return request activities
-        if refund.refund_type == 'return':
+        if refund.refund_type in ['return', 'replace']:
             try:
                 return_request = refund.return_request
                 if return_request.shipped_at:
@@ -32698,7 +32756,7 @@ class RefundViewSet(viewsets.ViewSet):
                 actions.append('withdraw_counter_offer')
         
         elif refund.status == 'approved':
-            if is_buyer and refund.refund_type == 'return':
+            if is_buyer and refund.refund_type in ['return', 'replace']:
                 actions.append('start_return')
                 actions.append('upload_shipping_info')
             if is_seller:
@@ -43205,8 +43263,8 @@ class PersonalRefundViewSet(viewsets.ViewSet):
     @action(detail=True, methods=['post'])
     def start_return_process(self, request, pk=None):
         """
-        BUYER VIEW: Start the return process for approved return refunds. Creates a ReturnRequestItem (if missing).
-        Note: This does NOT change the `refund.status` (keeps as 'approved'); use `buyer_notified_at` / `return_request` to indicate waiting state.
+        BUYER VIEW: Start the return process for approved return or replacement refunds.
+        Creates a ReturnRequestItem (if missing).
         """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
@@ -43215,7 +43273,6 @@ class PersonalRefundViewSet(viewsets.ViewSet):
         try:
             user = User.objects.get(id=user_id)
 
-            # Get refund
             try:
                 refund = Refund.objects.get(refund_id=pk)
             except Refund.DoesNotExist:
@@ -43225,8 +43282,9 @@ class PersonalRefundViewSet(viewsets.ViewSet):
             if str(refund.requested_by.id) != str(user.id):
                 return Response({"error": "Not authorized to start return for this refund"}, status=status.HTTP_403_FORBIDDEN)
 
-            if refund.refund_type != 'return':
-                return Response({"error": "This refund is not a return item refund"}, status=status.HTTP_400_BAD_REQUEST)
+            # UPDATE: Allow both 'return' and 'replace' types
+            if refund.refund_type not in ['return', 'replace']:
+                return Response({"error": "This refund is not a return or replacement refund"}, status=status.HTTP_400_BAD_REQUEST)
 
             if refund.status not in ['approved', 'waiting']:
                 return Response({"error": "Return process can only be started after approval"}, status=status.HTTP_400_BAD_REQUEST)
@@ -43240,9 +43298,7 @@ class PersonalRefundViewSet(viewsets.ViewSet):
                     return_deadline=timezone.now() + timedelta(days=7)
                 )
 
-            # Do not modify refund.status here; leave it 'approved'
             refund.save()
-
             data = self._get_refund_details_data(refund, request, user)
             return Response({"message": "Return process started", "refund": data})
 

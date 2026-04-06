@@ -41,34 +41,38 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 // ========== HELPER TO GET DISPLAY STATUS ==========
-// ========== HELPER TO GET DISPLAY STATUS ==========
-// ========== HELPER TO GET DISPLAY STATUS ==========
-// ========== HELPER TO GET DISPLAY STATUS ==========
 const getDisplayStatus = (refund: any) => {
   if (!refund) return '';
   const status = refund.status?.toLowerCase();
   const refundType = refund.refund_type;
   const returnStatus = refund.return_request?.status?.toLowerCase();
   
-  // If refund is approved, type is 'return', and return request status is 'approved'
-  // Show regular "Approved" since seller accepted the return and admin will process
+  // For 'return' type
   if (status === 'approved' && refundType === 'return' && returnStatus === 'approved') {
     return 'APPROVED';
   }
-  
-  // If refund is approved, type is 'return', and return request status is 'shipped'
   if (status === 'approved' && refundType === 'return' && returnStatus === 'shipped') {
     return 'Approved - Shipped';
   }
-  
-  // If refund is approved, type is 'return', and return request status is 'received' (Inspecting)
   if (status === 'approved' && refundType === 'return' && returnStatus === 'received') {
     return 'Approved - Inspecting';
   }
-  
-  // If refund is approved and type is 'return', show waiting for return
   if (status === 'approved' && refundType === 'return') {
     return 'Approved - Waiting for return';
+  }
+  
+  // For 'replace' type - same flow as return
+  if (status === 'approved' && refundType === 'replace' && returnStatus === 'approved') {
+    return 'APPROVED';
+  }
+  if (status === 'approved' && refundType === 'replace' && returnStatus === 'shipped') {
+    return 'Replacement Approved - Shipped';
+  }
+  if (status === 'approved' && refundType === 'replace' && returnStatus === 'received') {
+    return 'Replacement Approved - Inspecting';
+  }
+  if (status === 'approved' && refundType === 'replace') {
+    return 'Replacement Approved - Waiting for return';
   }
   
   // Otherwise return the regular status
@@ -85,24 +89,32 @@ const getStatusColor = (refund: any) => {
   const refundType = refund.refund_type;
   const returnStatus = refund.return_request?.status?.toLowerCase();
   
-  // If refund is approved, type is 'return', and return request status is 'approved' - use green (regular approved)
+  // For 'return' type
   if (status === 'approved' && refundType === 'return' && returnStatus === 'approved') {
-    return STATUS_COLORS.approved; // Green color (#10B981)
+    return STATUS_COLORS.approved;
   }
-  
-  // If refund is approved, type is 'return', and return request status is 'shipped' - use blue
   if (status === 'approved' && refundType === 'return' && returnStatus === 'shipped') {
-    return STATUS_COLORS.waiting; // Blue color (#3B82F6)
+    return STATUS_COLORS.waiting;
   }
-  
-  // If refund is approved, type is 'return', and return request status is 'received' - use purple for inspecting
   if (status === 'approved' && refundType === 'return' && returnStatus === 'received') {
-    return '#8B5CF6'; // Purple color for inspecting
+    return '#8B5CF6';
+  }
+  if (status === 'approved' && refundType === 'return') {
+    return STATUS_COLORS.waiting;
   }
   
-  // If refund is approved and type is 'return' (no specific return status) - use waiting color (blue)
-  if (status === 'approved' && refundType === 'return') {
-    return STATUS_COLORS.waiting; // Blue color
+  // For 'replace' type - same flow as return
+  if (status === 'approved' && refundType === 'replace' && returnStatus === 'approved') {
+    return STATUS_COLORS.approved;
+  }
+  if (status === 'approved' && refundType === 'replace' && returnStatus === 'shipped') {
+    return STATUS_COLORS.waiting;
+  }
+  if (status === 'approved' && refundType === 'replace' && returnStatus === 'received') {
+    return '#8B5CF6';
+  }
+  if (status === 'approved' && refundType === 'replace') {
+    return STATUS_COLORS.waiting;
   }
   
   // Otherwise return the regular status color
@@ -388,23 +400,30 @@ const handleReject = async () => {
   }
 };
   
- const handleNegotiate = async () => {
-  // Send the actual counter type without mapping
-  const typeToSend = counterType;
+const handleNegotiate = async () => {
+  // Map the counter type to the correct value
+  let typeToSend = counterType;
+  
+  // Ensure we're using the correct type value
+  if (typeToSend === 'replace') {
+    typeToSend = 'replace';  // This is correct
+  } else if (typeToSend === 'return') {
+    typeToSend = 'return';   // This is correct
+  }
+  
   let amount = undefined;
   
-  // Only calculate amount for 'return' type
+  // Only calculate amount for 'return' type (replacement doesn't need amount)
   if (typeToSend === 'return') {
     amount = computeReturnAmount(refund);
   }
-  // For 'replace' type, amount should be null/undefined (no amount needed)
   
   try {
     setActionLoading(true);
     await AxiosInstance.post(`/return-refund/${refundId}/seller_respond_to_refund/`, {
       action: 'negotiate',
       counter_refund_type: typeToSend,
-      counter_refund_amount: amount,  // Will be undefined for 'replace'
+      counter_refund_amount: amount,
       counter_notes: counterNotes,
     }, {
       headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' },
@@ -741,6 +760,13 @@ const getStatusDescription = () => {
   const status = refund.status?.toLowerCase();
   const returnStatus = refund.return_request?.status?.toLowerCase();
   const orderId = refund.order?.order_id || refund.order_id || '';
+  const refundType = refund.refund_type;
+  
+  // IMPORTANT: Check for approved return/replace FIRST before checking completed
+  if (status === 'approved' && (refundType === 'return' || refundType === 'replace') && returnStatus === 'approved') {
+    const typeLabel = refundType === 'replace' ? 'Replacement' : 'Return';
+    return `${typeLabel} accepted. The ${typeLabel.toLowerCase()} will be processed by the admin team. You don't need to take any further action.`;
+  }
   
   switch (status) {
     case 'pending':
@@ -748,17 +774,16 @@ const getStatusDescription = () => {
     case 'negotiation':
       return `You have sent a counter‑offer. Waiting for the buyer to accept or reject.`;
     case 'approved':
-      if (refund.refund_type === 'return') {
-        if (returnStatus === 'approved') {
-          return `Return accepted. The refund will now be processed by the admin team. You don't need to take any further action.`;
-        }
+      // Handle both 'return' and 'replace' types
+      if (refundType === 'return' || refundType === 'replace') {
+        const typeLabel = refundType === 'replace' ? 'Replacement' : 'Return';
         if (returnStatus === 'shipped') {
-          return `The buyer has shipped the item back. Tracking number: ${refund.return_request?.tracking_number || 'provided'}. Once you receive the item, mark it as received to begin inspection.`;
+          return `The buyer has shipped the item back for ${typeLabel.toLowerCase()}. Tracking number: ${refund.return_request?.tracking_number || 'provided'}. Once you receive the item, mark it as received to begin inspection.`;
         }
         if (returnStatus === 'received') {
-          return `Item has been received. Please inspect the item condition and decide whether to accept or decline the return.`;
+          return `Item has been received. Please inspect the item condition and decide whether to accept or decline the ${typeLabel.toLowerCase()}.`;
         }
-        return `Waiting for buyer to ship the item back. Once the item is shipped, you will be notified.`;
+        return `Waiting for buyer to ship the item back for ${typeLabel.toLowerCase()}. Once the item is shipped, you will be notified.`;
       }
       return `Refund approved. The refund will be processed by the admin team. You don't need to take any further action.`;
     case 'dispute':
@@ -778,8 +803,9 @@ const renderActionButtons = () => {
   if (!refund) return null;
   const status = refund.status?.toLowerCase();
   const returnStatus = refund.return_request?.status?.toLowerCase();
-  const isReturn = refund.refund_type === 'return';
-  const refundType = refund.refund_type; // 'keep' or 'return'
+  // UPDATE THIS - Include both 'return' and 'replace' types
+  const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
+  const refundType = refund.refund_type; // 'keep', 'return', or 'replace'
 
   let buttons: React.ReactNode[] = [];
 
@@ -798,15 +824,19 @@ const renderActionButtons = () => {
           setCounterType('return');
         } else if (refundType === 'return') {
           setCounterType('replace');
+        } else if (refundType === 'replace') {
+          setCounterType('return');
         }
         setCounterAmount(computeReturnAmount(refund));
         setShowNegotiateModal(true);
       }} disabled={actionLoading}>
         <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
         <Text style={styles.actionBtnText}>Negotiate</Text>
-      </TouchableOpacity>,
+      </TouchableOpacity>
     ];
-  } else if (isReturn && status === 'approved') {
+  } 
+  // UPDATE THIS - Use isReturnOrReplace instead of isReturn
+  else if (isReturnOrReplace && status === 'approved') {
     // Show "Provide Tracking" button ONLY when return status is 'pending' (not yet shipped)
     if (returnStatus === 'pending') {
       buttons.push(
@@ -922,7 +952,11 @@ const renderActionButtons = () => {
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Refund Type:</Text>
-                <Text style={styles.detailValue}>{refund?.refund_type === 'return' ? 'Return Item' : 'Keep Item'}</Text>
+                <Text style={styles.detailValue}>
+                  {refund?.refund_type === 'return' ? 'Return Item' : 
+                  refund?.refund_type === 'replace' ? 'Replacement' : 
+                  'Keep Item'}
+                </Text>
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Preferred Method:</Text>
@@ -1121,6 +1155,18 @@ const renderActionButtons = () => {
             <Text style={styles.modalSubtitle}>Propose a new solution to the buyer.</Text>
             {(() => {
               const refundType = refund?.refund_type;
+              // For 'replace' type, only allow negotiating to 'return'
+              if (refundType === 'replace') {
+                return (
+                  <View style={styles.radioGroup}>
+                    <TouchableOpacity style={styles.radio} onPress={() => setCounterType('return')}>
+                      <Ionicons name={counterType === 'return' ? 'radio-button-on' : 'radio-button-off'} size={20} color="#EE4D2D" />
+                      <Text style={styles.radioText}>Return Item (Full Refund)</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              }
+              // For 'keep' type, allow negotiating to 'return' or 'replace'
               if (refundType === 'keep') {
                 return (
                   <View style={styles.radioGroup}>
@@ -1134,7 +1180,9 @@ const renderActionButtons = () => {
                     </TouchableOpacity>
                   </View>
                 );
-              } else if (refundType === 'return') {
+              }
+              // For 'return' type, allow negotiating to 'replace' only
+              if (refundType === 'return') {
                 return (
                   <View style={styles.radioGroup}>
                     <TouchableOpacity style={styles.radio} onPress={() => setCounterType('replace')}>
@@ -1571,7 +1619,11 @@ const renderActionButtons = () => {
           <Text style={styles.cardTitle}>Refund Information</Text>
           <InfoRow label="Reason" value={refund.reason || 'N/A'} />
           <InfoRow label="Total Amount" value={formatCurrency(refund.total_refund_amount)} />
-          <InfoRow label="Refund Type" value={refund.refund_type === 'return' ? 'Return Item' : 'Keep Item'} />
+           <InfoRow label="Refund Type" value={
+    refund.refund_type === 'return' ? 'Return Item' : 
+    refund.refund_type === 'replace' ? 'Replacement' : 
+    'Keep Item'
+  } />
           {refund.approved_refund_amount != null && (
             <InfoRow label="Approved Amount" value={formatCurrency(refund.approved_refund_amount)} />
           )}
@@ -1657,8 +1709,10 @@ const renderActionButtons = () => {
             {refund.counter_requests.map((cr: any, idx: number) => (
               <View key={idx} style={styles.counterItem}>
                 <Text style={styles.counterDate}>{formatDate(cr.requested_at)}</Text>
-                <Text style={styles.counterDetail}>
-                  {cr.counter_refund_type === 'keep' ? 'Keep Item' : cr.counter_refund_type === 'return' ? 'Return Item' : 'Replace Item'} - {cr.counter_refund_method}
+               <Text style={styles.counterDetail}>
+                  {cr.counter_refund_type === 'keep' ? 'Keep Item' : 
+                  cr.counter_refund_type === 'return' ? 'Return Item' : 
+                  cr.counter_refund_type === 'replace' ? 'Replace Item' : 'Unknown'} - {cr.counter_refund_method}
                   {cr.counter_refund_amount != null && ` - ${formatCurrency(cr.counter_refund_amount)}`}
                 </Text>
                 {cr.notes && <Text style={styles.counterNote}>{cr.notes}</Text>}
