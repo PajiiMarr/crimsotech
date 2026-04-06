@@ -26522,11 +26522,25 @@ class ViewShopAPIView(APIView):
             shop.province
         ]
         address = ', '.join(filter(None, address_parts))
-        
+
+        # Get the shop owner's username and user ID
+        owner_username = None
+        owner_id = None
+        try:
+            if shop.customer and shop.customer.customer:
+                owner_username = shop.customer.customer.username
+                owner_id = str(shop.customer.customer.id)  # Get the actual User ID
+            else:
+                print(f"Shop {shop.id} has no customer or customer has no user")
+        except Exception as e:
+            print(f"Error getting owner info for shop {shop.id}: {e}")
+
         # Shop basic info
         shop_data = {
             'id': str(shop.id),
             'name': shop.name,
+            'username': owner_username,
+            'owner_id': owner_id,  # Add this line
             'shop_picture': request.build_absolute_uri(shop.shop_picture.url) if shop.shop_picture else None,
             'description': shop.description or 'No description provided',
             'province': shop.province,
@@ -47119,3 +47133,420 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
 
 
+
+class MessageViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for Message operations.
+    Uses X-User-Id header for authentication.
+    """
+    serializer_class = MessageSerializer
+    http_method_names = ['get', 'post', 'patch', 'delete']
+    
+    def get_queryset(self):
+        """Filter messages for the authenticated user"""
+        user_id = self.request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return Message.objects.none()
+        
+        queryset = Message.objects.filter(
+            Q(sender_id=user_id) | Q(receiver_id=user_id)
+        )
+        
+        # Exclude soft-deleted messages
+        queryset = queryset.exclude(
+            Q(sender_id=user_id, is_deleted_for_sender=True) |
+            Q(receiver_id=user_id, is_deleted_for_receiver=True)
+        )
+        
+        # Filter by conversation
+        conversation_id = self.request.query_params.get('conversation_id')
+        if conversation_id:
+            queryset = queryset.filter(conversation_id=conversation_id)
+        
+        # Filter by other user
+        other_user_id = self.request.query_params.get('other_user_id')
+        if other_user_id:
+            queryset = queryset.filter(
+                Q(sender_id=user_id, receiver_id=other_user_id) |
+                Q(sender_id=other_user_id, receiver_id=user_id)
+            )
+        
+        return queryset.order_by('-created_at')
+    
+    def get_user_from_header(self, request):
+        """Helper to get user from X-User-Id header."""
+        user_id = request.headers.get('X-User-Id')
+        
+        if not user_id:
+            return None, Response(
+                {'error': 'X-User-Id header is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+            return user, None
+        except User.DoesNotExist:
+            return None, Response(
+                {'error': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except (ValueError, TypeError):
+            return None, Response(
+                {'error': 'Invalid user ID format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    def create(self, request, *args, **kwargs):
+        """
+        Send a new message
+        Expected data: {
+            'receiver_id': 'uuid',
+            'content': 'message text',
+            'conversation_id': 'uuid' (optional)
+        }
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        receiver_id = request.data.get('receiver_id')
+        content = request.data.get('content')
+        conversation_id = request.data.get('conversation_id')
+        
+        if not receiver_id:
+            return Response(
+                {'error': 'receiver_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not content:
+            return Response(
+                {'error': 'content is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            receiver = User.objects.get(id=receiver_id)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Receiver not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if str(user.id) == str(receiver_id):
+            return Response(
+                {'error': 'Cannot send message to yourself'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Generate conversation_id if not provided
+        if not conversation_id:
+            conversation_id = uuid.uuid4()
+        
+        message = Message.objects.create(
+            sender=user,
+            receiver=receiver,
+            content=content,
+            conversation_id=conversation_id,
+            message_type=request.data.get('message_type', 'text'),
+            status='sent'
+        )
+        
+        serializer = self.get_serializer(message)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    def list(self, request, *args, **kwargs):
+        """
+        List messages with pagination
+        Query params: conversation_id, other_user_id, page, page_size
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            
+            # Get unread count for this conversation
+            conversation_id = request.query_params.get('conversation_id')
+            unread_count = 0
+            if conversation_id:
+                unread_count = Message.objects.filter(
+                    conversation_id=conversation_id,
+                    receiver_id=user.id,
+                    status__in=['sent', 'delivered'],
+                    read_at__isnull=True
+                ).count()
+            
+            return self.get_paginated_response({
+                'messages': serializer.data,
+                'unread_count': unread_count,
+                'total': queryset.count(),
+                'page': page.number,
+                'pages': page.paginator.num_pages
+            })
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='conversations')
+    def get_conversations(self, request):
+        """
+        Get all conversations for the current user
+        Returns list of users the current user has chatted with
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        # Get all unique users that the current user has messaged with
+        sent_users = Message.objects.filter(
+            sender_id=user.id,
+            is_deleted_for_sender=False
+        ).values('receiver_id').distinct()
+        
+        received_users = Message.objects.filter(
+            receiver_id=user.id,
+            is_deleted_for_receiver=False
+        ).values('sender_id').distinct()
+        
+        # Combine unique user IDs
+        user_ids = set()
+        for u in sent_users:
+            user_ids.add(u['receiver_id'])
+        for u in received_users:
+            user_ids.add(u['sender_id'])
+        
+        conversations = []
+        for other_id in user_ids:
+            # Get last message
+            last_message = Message.objects.filter(
+                Q(sender_id=user.id, receiver_id=other_id) |
+                Q(sender_id=other_id, receiver_id=user.id)
+            ).exclude(
+                Q(sender_id=user.id, is_deleted_for_sender=True) |
+                Q(receiver_id=user.id, is_deleted_for_receiver=True)
+            ).order_by('-created_at').first()
+            
+            # Get unread count
+            unread_count = Message.objects.filter(
+                sender_id=other_id,
+                receiver_id=user.id,
+                status__in=['sent', 'delivered'],
+                read_at__isnull=True
+            ).count()
+            
+            # Get other user info
+            try:
+                other_user = User.objects.get(id=other_id)
+                
+                # Default display name is username
+                display_name = other_user.username
+                shop_name = None
+                
+                # Try to find if this user owns a shop
+                try:
+                    customer = Customer.objects.filter(customer=other_user).first()
+                    if customer:
+                        shop = Shop.objects.filter(customer=customer, is_suspended=False).first()
+                        if shop:
+                            shop_name = shop.name
+                            display_name = shop_name  # Use shop name as main display
+                except Exception as e:
+                    print(f"Error getting shop for user {other_id}: {e}")
+                
+                conversations.append({
+                    'conversation_id': str(last_message.conversation_id) if last_message else None,
+                    'user_id': str(other_id),
+                    'user_name': display_name,  # Main title (shop name or username)
+                    'username': other_user.username,  # Always show username as subtitle
+                    'shop_name': shop_name,  # Shop name if exists
+                    'user_avatar': other_user.profile_picture.url if other_user.profile_picture else None,
+                    'last_message': last_message.content if last_message else None,
+                    'last_message_time': last_message.created_at.isoformat() if last_message else None,
+                    'last_message_type': last_message.message_type if last_message else None,
+                    'unread_count': unread_count,
+                })
+            except User.DoesNotExist:
+                continue
+        
+        # Sort by last message time (most recent first)
+        conversations.sort(key=lambda x: x['last_message_time'] or '', reverse=True)
+        
+        return Response({
+            'count': len(conversations),
+            'conversations': conversations
+        })
+    
+    @action(detail=False, methods=['post'], url_path='mark-read')
+    def mark_messages_read(self, request):
+        """
+        Mark messages as read
+        Expected data: {
+            'conversation_id': 'uuid' (optional),
+            'message_ids': ['uuid1', 'uuid2'] (optional)
+        }
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        conversation_id = request.data.get('conversation_id')
+        message_ids = request.data.get('message_ids', [])
+        
+        if not conversation_id and not message_ids:
+            return Response(
+                {'error': 'Either conversation_id or message_ids is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Build queryset
+        queryset = Message.objects.filter(receiver_id=user.id)
+        
+        if conversation_id:
+            queryset = queryset.filter(conversation_id=conversation_id)
+        
+        if message_ids:
+            queryset = queryset.filter(id__in=message_ids)
+        
+        # Update unread messages
+        updated_count = queryset.filter(
+            status__in=['sent', 'delivered'],
+            read_at__isnull=True
+        ).update(status='read', read_at=timezone.now())
+        
+        return Response({
+            'message': f'Marked {updated_count} messages as read',
+            'marked_count': updated_count
+        })
+    
+    @action(detail=True, methods=['patch'], url_path='mark-read')
+    def mark_single_read(self, request, pk=None):
+        """Mark a single message as read"""
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        try:
+            message = Message.objects.get(id=pk)
+        except Message.DoesNotExist:
+            return Response(
+                {'error': 'Message not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if str(message.receiver_id) != str(user.id):
+            return Response(
+                {'error': 'You can only mark your own messages as read'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if message.status in ['sent', 'delivered'] and not message.read_at:
+            message.status = 'read'
+            message.read_at = timezone.now()
+            message.save(update_fields=['status', 'read_at'])
+        
+        serializer = self.get_serializer(message)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['delete'], url_path='delete')
+    def delete_messages(self, request):
+        """
+        Delete messages (soft delete)
+        Expected data: {
+            'message_ids': ['uuid1', 'uuid2'],
+            'delete_for_both': false (optional)
+        }
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        message_ids = request.data.get('message_ids', [])
+        delete_for_both = request.data.get('delete_for_both', False)
+        
+        if not message_ids:
+            return Response(
+                {'error': 'message_ids is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        messages = Message.objects.filter(id__in=message_ids)
+        deleted_count = 0
+        
+        for message in messages:
+            if delete_for_both:
+                # Hard delete for both users
+                message.delete()
+                deleted_count += 1
+            else:
+                # Soft delete for current user only
+                if str(message.sender_id) == str(user.id):
+                    message.is_deleted_for_sender = True
+                if str(message.receiver_id) == str(user.id):
+                    message.is_deleted_for_receiver = True
+                message.deleted_at = timezone.now()
+                message.save(update_fields=['is_deleted_for_sender', 'is_deleted_for_receiver', 'deleted_at'])
+                deleted_count += 1
+        
+        return Response({
+            'message': f'Deleted {deleted_count} messages',
+            'deleted_count': deleted_count
+        })
+    
+    @action(detail=True, methods=['delete'], url_path='delete')
+    def delete_single_message(self, request, pk=None):
+        """Delete a single message"""
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        try:
+            message = Message.objects.get(id=pk)
+        except Message.DoesNotExist:
+            return Response(
+                {'error': 'Message not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        delete_for_both = request.query_params.get('delete_for_both', 'false').lower() == 'true'
+        
+        if delete_for_both:
+            message.delete()
+        else:
+            if str(message.sender_id) == str(user.id):
+                message.is_deleted_for_sender = True
+            if str(message.receiver_id) == str(user.id):
+                message.is_deleted_for_receiver = True
+            message.deleted_at = timezone.now()
+            message.save(update_fields=['is_deleted_for_sender', 'is_deleted_for_receiver', 'deleted_at'])
+        
+        return Response(
+            {'message': 'Message deleted successfully'},
+            status=status.HTTP_200_OK
+        )
+    
+    @action(detail=False, methods=['get'], url_path='unread-count')
+    def get_unread_count(self, request):
+        """Get total unread message count for the current user"""
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        count = Message.objects.filter(
+            receiver_id=user.id,
+            status__in=['sent', 'delivered'],
+            read_at__isnull=True,
+            is_deleted_for_receiver=False
+        ).count()
+        
+        return Response({
+            'unread_count': count,
+            'has_unread': count > 0
+        })

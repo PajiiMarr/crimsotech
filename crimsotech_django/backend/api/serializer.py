@@ -1907,3 +1907,10 @@ class BulkNotificationSerializer(serializers.Serializer):
                 "At least one action (notification_ids, mark_all_as_read, or delete_all_read) must be provided"
             )
         return data
+
+
+class MessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Message
+        fields = '__all__'
+        read_only_fields = ['id', 'created_at', 'updated_at', 'delivered_at', 'read_at', 'edited_at', 'deleted_at']

@@ -78,6 +78,7 @@ interface ProductItem {
 
 interface ShopInfo {
   id: string;
+  username?: string;
   name?: string;
   description?: string;
   address?: string;
@@ -95,6 +96,8 @@ interface ShopInfo {
   shop_picture?: string | null;
   products?: ProductItem[];
   categories?: any[];
+  owner_id?: string;  // Add this line
+  owner?: { id: string };  
 }
 
 interface ShopReview {
@@ -756,104 +759,131 @@ const handleFollowToggle = async () => {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {shopInfo ? (
-            <View style={styles.headerCard}>
-              {shopInfo.is_suspended ? (
-                <View style={styles.suspendedBanner}>
-                  <Ionicons name="warning-outline" size={16} color="#92400E" />
-                  <Text style={styles.suspendedText} numberOfLines={2}>
-                    Suspended:{" "}
-                    {shopInfo.suspension_reason || "No reason provided"}
-                  </Text>
-                </View>
-              ) : null}
+         {shopInfo ? (
+  <View style={styles.headerCard}>
+    {shopInfo.is_suspended ? (
+      <View style={styles.suspendedBanner}>
+        <Ionicons name="warning-outline" size={16} color="#92400E" />
+        <Text style={styles.suspendedText} numberOfLines={2}>
+          Suspended:{" "}
+          {shopInfo.suspension_reason || "No reason provided"}
+        </Text>
+      </View>
+    ) : null}
 
-              <View style={styles.shopTopRow}>
-                <Image
-                  source={{
-                    uri: ensureAbsoluteUrl(shopInfo.shop_picture || null),
-                  }}
-                  style={styles.shopAvatar}
+    <View style={styles.shopTopRow}>
+      <Image
+        source={{
+          uri: ensureAbsoluteUrl(shopInfo.shop_picture || null),
+        }}
+        style={styles.shopAvatar}
+      />
+
+      <View style={styles.shopMainInfo}>
+        <View style={styles.nameRow}>
+          <View style={styles.shopNameContainer}>
+            <Text style={styles.shopName} numberOfLines={1}>
+              {shopInfo.name || "Shop"}
+            </Text>
+            {shopInfo.username && (
+              <Text style={styles.shopUsername} numberOfLines={1}>
+                @{shopInfo.username}
+              </Text>
+            )}
+          </View>
+
+          // In view-shop.tsx, update the message button:
+<TouchableOpacity
+  style={styles.messageBtn}
+  onPress={() => {
+    router.push({
+      pathname: "/customer/open-message",
+      params: { 
+        shopId: shopInfo.id,
+        shopName: shopInfo.name || "Shop",
+        shopAvatar: shopInfo.shop_picture || '',
+        shopUsername: shopInfo.username || '',
+        ownerId: shopInfo.owner_id || ''
+      }
+    });
+  }}
+>
+            <Ionicons name="chatbubble-outline" size={16} color="#FFFFFF" />
+            <Text style={styles.messageBtnText}>Message</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.followBtn,
+              isFollowing && styles.followBtnActive,
+            ]}
+            onPress={handleFollowToggle}
+            disabled={followLoading || !userId}
+          >
+            {followLoading ? (
+              <ActivityIndicator size="small" color={isFollowing ? "#DC2626" : "#4B5563"} />
+            ) : (
+              <>
+                <Ionicons
+                  name={isFollowing ? "heart" : "heart-outline"}
+                  size={14}
+                  color={isFollowing ? "#DC2626" : "#4B5563"}
                 />
+                <Text
+                  style={[
+                    styles.followBtnText,
+                    isFollowing && styles.followBtnTextActive,
+                  ]}
+                >
+                  {isFollowing ? "Following" : "Follow"}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
 
-                <View style={styles.shopMainInfo}>
-                  <View style={styles.nameRow}>
-                    <Text style={styles.shopName} numberOfLines={1}>
-                      {shopInfo.name || "Shop"}
-                    </Text>
+        {!!shopInfo.description && (
+          <Text style={styles.shopDescription} numberOfLines={2}>
+            {shopInfo.description}
+          </Text>
+        )}
 
-                    <TouchableOpacity
-                      style={[
-                        styles.followBtn,
-                        isFollowing && styles.followBtnActive,
-                      ]}
-                      onPress={handleFollowToggle}
-                      disabled={followLoading || !userId}
-                    >
-                      {followLoading ? (
-                        <ActivityIndicator size="small" color={isFollowing ? "#DC2626" : "#4B5563"} />
-                      ) : (
-                        <>
-                          <Ionicons
-                            name={isFollowing ? "heart" : "heart-outline"}
-                            size={14}
-                            color={isFollowing ? "#DC2626" : "#4B5563"}
-                          />
-                          <Text
-                            style={[
-                              styles.followBtnText,
-                              isFollowing && styles.followBtnTextActive,
-                            ]}
-                          >
-                            {isFollowing ? "Following" : "Follow"}
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  </View>
+        {!!shopInfo.address && (
+          <View style={styles.inlineRow}>
+            <Ionicons
+              name="location-outline"
+              size={14}
+              color="#6B7280"
+            />
+            <Text style={styles.addressText} numberOfLines={1}>
+              {shopInfo.address}
+            </Text>
+          </View>
+        )}
 
-                  {!!shopInfo.description && (
-                    <Text style={styles.shopDescription} numberOfLines={2}>
-                      {shopInfo.description}
-                    </Text>
-                  )}
-
-                  {!!shopInfo.address && (
-                    <View style={styles.inlineRow}>
-                      <Ionicons
-                        name="location-outline"
-                        size={14}
-                        color="#6B7280"
-                      />
-                      <Text style={styles.addressText} numberOfLines={1}>
-                        {shopInfo.address}
-                      </Text>
-                    </View>
-                  )}
-
-                  <View style={styles.inlineRow}>
-                    <Ionicons name="people-outline" size={13} color="#6B7280" />
-                    <Text style={styles.smallMeta}>
-                      {followersCount} {followersCount === 1 ? "follower" : "followers"}
-                    </Text>
-                    {shopInfo.rating ? (
-                      <>
-                        <Ionicons
-                          name="star"
-                          size={13}
-                          color="#F59E0B"
-                          style={styles.metaIconGap}
-                        />
-                        <Text style={styles.smallMeta}>
-                          {shopInfo.rating} ({shopInfo.rating_count || 0})
-                        </Text>
-                      </>
-                    ) : null}
-                  </View>
-                </View>
-              </View>
-            </View>
+        <View style={styles.inlineRow}>
+          <Ionicons name="people-outline" size={13} color="#6B7280" />
+          <Text style={styles.smallMeta}>
+            {followersCount} {followersCount === 1 ? "follower" : "followers"}
+          </Text>
+          {shopInfo.rating ? (
+            <>
+              <Ionicons
+                name="star"
+                size={13}
+                color="#F59E0B"
+                style={styles.metaIconGap}
+              />
+              <Text style={styles.smallMeta}>
+                {shopInfo.rating} ({shopInfo.rating_count || 0})
+              </Text>
+            </>
           ) : null}
+        </View>
+      </View>
+    </View>
+  </View>
+) : null}
 
           <View style={styles.tabBar}>
             {(["products", "details", "reviews"] as ActiveTab[]).map((tab) => {
@@ -1864,5 +1894,28 @@ const styles = StyleSheet.create({
     color: "#EA580C",
     fontSize: 14,
     fontWeight: "600",
+  },
+  messageBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F97316",
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 8,
+  },
+  messageBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  shopNameContainer: {
+    flex: 1,
+  },
+  shopUsername: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginTop: 2,
   },
 });
