@@ -1,3 +1,4 @@
+// app/(auth)/verify-phone.tsx
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -56,7 +57,6 @@ export default function VerifyPhoneScreen() {
       if (storedUserId) {
         setUserId(storedUserId);
 
-        // Use local flags first to avoid role flicker while remote fetch is in-flight.
         const localIsRider = await SecureStore.getItemAsync("is_rider");
         if (localIsRider === "true") {
           setIsRider(true);
@@ -70,11 +70,10 @@ export default function VerifyPhoneScreen() {
               setIsRider(true);
             }
           } catch (e) {
-            console.warn("Failed parsing local user payload", e);
+            // Silent fail
           }
         }
 
-        // Check if user is a rider
         const response = await AxiosInstance.get("/get-registration/", {
           headers: { "X-User-Id": storedUserId },
         });
@@ -82,15 +81,13 @@ export default function VerifyPhoneScreen() {
         setIsRider(Boolean(response.data?.is_rider));
       }
     } catch (error) {
-      console.error("Error loading user data:", error);
+      // Silent fail
     }
   };
 
   const resolveEffectiveIsRider = async (currentUserId: string) => {
-    // 1) Current state
     if (isRider) return true;
 
-    // 2) Stored user object from previous registration steps
     try {
       const userJson = await SecureStore.getItemAsync("user");
       if (userJson) {
@@ -100,42 +97,37 @@ export default function VerifyPhoneScreen() {
         }
       }
     } catch (e) {
-      console.warn("Unable to read local user role", e);
+      // Silent fail
     }
 
-    // 3) Explicit flag used in rider apply flow
     try {
       const riderFlag = await SecureStore.getItemAsync("is_rider");
       if (riderFlag === "true") return true;
       if (riderFlag === "false") return false;
     } catch (e) {
-      console.warn("Unable to read is_rider flag", e);
+      // Silent fail
     }
 
-    // 4) Remote source of truth
     try {
       const response = await AxiosInstance.get("/get-registration/", {
         headers: { "X-User-Id": currentUserId },
       });
       return Boolean(response.data?.is_rider);
     } catch (e) {
-      console.warn("Unable to fetch role from registration endpoint", e);
+      // Silent fail
     }
 
     return false;
   };
 
   const formatPhoneNumber = (text: string) => {
-    // Remove all non-digits
     const digits = text.replace(/\D/g, "");
 
-    // If starts with 63, remove it (we'll add +63 manually)
     let cleanDigits = digits;
     if (digits.startsWith("63")) {
       cleanDigits = digits.slice(2);
     }
 
-    // Keep only first 10 digits
     return cleanDigits.slice(0, 10);
   };
 
@@ -148,14 +140,12 @@ export default function VerifyPhoneScreen() {
   };
 
   const handleOtpChange = (value: string, index: number) => {
-    // Only allow single digit
     const digit = value.slice(-1);
     
     const newOtp = [...otp];
     newOtp[index] = digit;
     setOtp(newOtp);
 
-    // Auto-focus next input
     if (digit && index < 5) {
       otpInputs.current[index + 1]?.focus();
     }
@@ -166,7 +156,6 @@ export default function VerifyPhoneScreen() {
   };
 
   const handleOtpKeyPress = (e: any, index: number) => {
-    // Handle backspace to go to previous input
     if (e.nativeEvent.key === 'Backspace' && !otp[index] && index > 0) {
       otpInputs.current[index - 1]?.focus();
     }
@@ -224,7 +213,7 @@ export default function VerifyPhoneScreen() {
         contact_number: phoneNumber,
       };
 
-      const response = await AxiosInstance.post(
+      await AxiosInstance.post(
         "/verify/verify_number/",
         payload,
         {
@@ -232,17 +221,11 @@ export default function VerifyPhoneScreen() {
         },
       );
 
-      console.log("✅ OTP sent:", response.data);
-
       Alert.alert("OTP Sent", `OTP has been sent to +63${phoneNumber}`);
       setStep("enter-otp");
-      setCooldown(60); // 60 seconds cooldown
-      
-      // Reset OTP when moving to OTP step
+      setCooldown(60);
       setOtp(["", "", "", "", "", ""]);
     } catch (error: any) {
-      console.error("❌ OTP error:", error.response?.data || error.message);
-
       const errorMessage =
         error.response?.data?.error || "Failed to send OTP. Please try again.";
       setErrors((prev) => ({ ...prev, general: errorMessage }));
@@ -265,7 +248,7 @@ export default function VerifyPhoneScreen() {
         otp_code: otp.join(""),
       };
 
-      const response = await AxiosInstance.post(
+      await AxiosInstance.post(
         "/verify/verify_number/",
         payload,
         {
@@ -273,14 +256,8 @@ export default function VerifyPhoneScreen() {
         },
       );
 
-      console.log("✅ OTP verified:", response.data);
-
       const effectiveIsRider = await resolveEffectiveIsRider(userId);
-
-      // UPDATED: Set registration_stage to 3 for customers (completed)
-      // For riders: stage 3 → stage 4 (completed)
-      // For customers: stage 2 → stage 3 (completed)
-      const newRegistrationStage = effectiveIsRider ? 4 : 3;
+      const newRegistrationStage = 4;
 
       await AxiosInstance.put(
         "/profiling/",
@@ -292,7 +269,6 @@ export default function VerifyPhoneScreen() {
         },
       );
 
-      // Update user data in storage
       let storedUsername: string | undefined;
       let storedEmail: string | undefined;
       const userJson = await SecureStore.getItemAsync("user");
@@ -317,78 +293,49 @@ export default function VerifyPhoneScreen() {
           newRegistrationStage,
         );
       } catch (e) {
-        console.warn("Failed to persist auth role before redirect", e);
+        // Silent fail
       }
 
-      // Update context registration stage
       try {
         updateRegistrationStage(newRegistrationStage);
       } catch (e) {
-        console.warn("Failed to update registration stage in context", e);
+        // Silent fail
       }
 
-      // Set auth session role so guarded routes (e.g. rider tabs) allow direct navigation.
       try {
         await setAuthData(
           userId,
-          isRider ? "rider" : "customer",
+          effectiveIsRider ? "rider" : "customer",
           storedUsername,
           storedEmail,
           undefined,
           newRegistrationStage,
         );
       } catch (e) {
-        console.warn("Failed to set auth data after OTP verification", e);
+        // Silent fail
       }
 
-      // Clear temporary storage
       await SecureStore.deleteItemAsync("temp_user_id");
 
-      const debugSummary = `role=${effectiveIsRider ? "rider" : "customer"}, stage=${newRegistrationStage}`;
-      console.log("🔎 OTP redirect debug:", debugSummary);
-
-      const successMessage = __DEV__
-        ? `Phone number verified successfully!\n\nDebug: ${debugSummary}`
-        : "Phone number verified successfully!";
-
-      Alert.alert("Success", successMessage, [
+      Alert.alert("Success", "Phone number verified successfully!", [
         {
           text: "Continue",
           onPress: () => {
-            // Navigate based on user role and completion stage.
-            // Rider completes at stage 4, customer completes at stage 3.
             if (effectiveIsRider) {
-              if (newRegistrationStage >= 4) {
-                router.replace("/rider/home");
-              } else {
-                // Stay on flow or redirect to login to continue later
-                router.replace("/(auth)/login");
-              }
+              router.replace("/rider/home");
             } else {
-              if (newRegistrationStage >= 3) {
-                router.replace("/customer/home");
-              } else {
-                // If not complete, continue via auth flow
-                router.replace("/(auth)/login");
-              }
+              router.replace("/customer/home");
             }
           },
         },
       ]);
     } catch (error: any) {
-      console.error(
-        "❌ Verification error:",
-        error.response?.data || error.message,
-      );
-
       const errorMessage =
         error.response?.data?.error || "Invalid OTP. Please try again.";
       setErrors((prev) => ({ ...prev, general: errorMessage }));
       Alert.alert("Error", errorMessage);
       
-      // Clear OTP on error to allow re-entry
       setOtp(["", "", "", "", "", ""]);
-      // Focus the first input
       setTimeout(() => otpInputs.current[0]?.focus(), 100);
     } finally {
       setLoading(false);
@@ -405,7 +352,7 @@ export default function VerifyPhoneScreen() {
         contact_number: phoneNumber,
       };
 
-      const response = await AxiosInstance.post(
+      await AxiosInstance.post(
         "/verify/verify_number/",
         payload,
         {
@@ -413,15 +360,11 @@ export default function VerifyPhoneScreen() {
         },
       );
 
-      console.log("✅ OTP resent:", response.data);
       Alert.alert("OTP Resent", `New OTP has been sent to +63${phoneNumber}`);
       setCooldown(60);
-      
-      // Clear OTP and focus first input
       setOtp(["", "", "", "", "", ""]);
       setTimeout(() => otpInputs.current[0]?.focus(), 100);
     } catch (error: any) {
-      console.error("❌ Resend error:", error.response?.data || error.message);
       Alert.alert("Error", "Failed to resend OTP. Please try again.");
     } finally {
       setLoading(false);
@@ -451,7 +394,6 @@ export default function VerifyPhoneScreen() {
     );
   };
 
-  // Focus first OTP input when OTP screen appears
   useEffect(() => {
     if (step === "enter-otp") {
       setTimeout(() => {

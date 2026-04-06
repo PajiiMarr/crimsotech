@@ -869,18 +869,40 @@ class VerifyNumber(viewsets.ViewSet):
         Sends OTP using Twilio Verify API
         """
         try:
+            # Validate phone number format
+            # Remove any non-digit characters
+            clean_number = ''.join(filter(str.isdigit, contact_number))
+            
+            # Ensure it starts with 9 and is 10 digits
+            if len(clean_number) != 10 or not clean_number.startswith('9'):
+                print(f"Invalid phone number format: {clean_number}")
+                return None
+            
+            # Format as E.164: +63 followed by the 10-digit number
+            formatted_number = f'+63{clean_number}'
+            
+            print(f"Sending OTP to: {formatted_number}")
+            
             client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-
+            
+            # Try with 'sms' channel first
             verification = client.verify.v2.services(
                 settings.TWILIO_SERVICE_ID
             ).verifications.create(
-                to='+63' + contact_number,
+                to=formatted_number,
                 channel='sms'
             )
-            return verification.status  # returns "pending" if sent successfully
+            
+            print(f"Twilio verification status: {verification.status}")
+            return verification.status
 
         except TwilioRestException as e:
             print(f"Twilio error: {e}")
+            print(f"Error code: {e.code}")
+            print(f"Error message: {e.msg}")
+            return None
+        except Exception as e:
+            print(f"Unexpected error in send_otp: {e}")
             return None
 
     @action(detail=False, methods=['post'], url_path='verify_number')
@@ -889,7 +911,7 @@ class VerifyNumber(viewsets.ViewSet):
         Single action to handle both contact number submission and OTP verification
         """
         user_id = request.headers.get('X-User-Id')
-        action_type = request.data.get('action_type')  # 'send_otp' or 'verify_otp'
+        action_type = request.data.get('action_type')
         contact_number = request.data.get('contact_number')
         otp_code = request.data.get('otp_code')
 
@@ -906,15 +928,30 @@ class VerifyNumber(viewsets.ViewSet):
             if not contact_number:
                 return Response({"error": "Contact number is required!"}, status=400)
 
-            # Removed the duplicate contact number check - now multiple users can have same number
+            # Clean and validate phone number
+            clean_number = ''.join(filter(str.isdigit, contact_number))
+            
+            # Remove leading '63' if present
+            if clean_number.startswith('63'):
+                clean_number = clean_number[2:]
+            
+            # Validate Philippine number format
+            if len(clean_number) != 10 or not clean_number.startswith('9'):
+                return Response({
+                    "error": "Invalid Philippine number. Must be 10 digits starting with 9 (e.g., 9XXXXXXXXX)"
+                }, status=400)
+            
             # Save user's contact number
-            user.contact_number = contact_number
+            user.contact_number = clean_number
             user.save()
 
             # Send OTP using Twilio Verify
-            otp_status = self.send_otp(contact_number)
+            otp_status = self.send_otp(clean_number)
+            
             if not otp_status:
-                return Response({"error": "Failed to send OTP. Please try again later."}, status=500)
+                return Response({
+                    "error": "Failed to send OTP. Please check your Twilio configuration or try again later."
+                }, status=500)
 
             OTP.objects.update_or_create(
                 user=user,
@@ -926,9 +963,9 @@ class VerifyNumber(viewsets.ViewSet):
             )
 
             return Response({
-                "message": f"OTP sent successfully to +63{contact_number}",
+                "message": f"OTP sent successfully to +63{clean_number}",
                 "user_id": str(user.id),
-                "contact_number": contact_number
+                "contact_number": clean_number
             })
 
         elif action_type == 'verify_otp':
@@ -936,22 +973,31 @@ class VerifyNumber(viewsets.ViewSet):
             if not contact_number or not otp_code:
                 return Response({"error": "Contact number and OTP code are required!"}, status=400)
 
+            # Clean phone number for comparison
+            clean_number = ''.join(filter(str.isdigit, contact_number))
+            if clean_number.startswith('63'):
+                clean_number = clean_number[2:]
+            
             # Verify that the contact number matches the user's stored number
-            if user.contact_number != contact_number:
+            if user.contact_number != clean_number:
                 return Response({"error": "Contact number doesn't match user record!"}, status=400)
 
             try:
+                formatted_number = f'+63{clean_number}'
+                
                 client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
                 verification_check = client.verify.v2.services(
                     settings.TWILIO_SERVICE_ID
                 ).verification_checks.create(
-                    to='+63' + contact_number,
+                    to=formatted_number,
                     code=otp_code
                 )
 
+                print(f"Verification check status: {verification_check.status}")
+
                 if verification_check.status == 'approved':
                     # Update user registration stage and OTP record
-                    user.registration_stage = 3  # Mark as verified
+                    user.registration_stage = 3
                     user.save()
                     
                     OTP.objects.filter(user=user).update(
@@ -963,17 +1009,18 @@ class VerifyNumber(viewsets.ViewSet):
                         "message": "Phone number verified successfully!",
                         "registration_stage": user.registration_stage
                     })
-
                 else:
                     return Response({"error": "Invalid or expired OTP!"}, status=400)
 
             except TwilioRestException as e:
                 print(f"Twilio error: {e}")
+                return Response({"error": f"Verification failed: {e.msg}"}, status=500)
+            except Exception as e:
+                print(f"Unexpected error: {e}")
                 return Response({"error": "Verification failed. Please try again later."}, status=500)
 
         else:
             return Response({"error": "Invalid action type"}, status=400)
-
             
 class RiderRegistration(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='register')
