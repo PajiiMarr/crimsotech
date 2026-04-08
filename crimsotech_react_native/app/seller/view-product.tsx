@@ -1,9 +1,9 @@
+// app/customer/view-product.tsx
 import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
-  RefreshControl,
   ScrollView,
   Text,
   TouchableOpacity,
@@ -11,6 +11,7 @@ import {
   Modal,
   FlatList,
   Dimensions,
+  TouchableWithoutFeedback,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -18,198 +19,66 @@ import { router, useLocalSearchParams } from "expo-router";
 import AxiosInstance from "../../contexts/axios";
 import { useAuth } from "../../contexts/AuthContext";
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 type Variant = {
   id: string;
   title?: string;
-  option_title?: string;
-  option_ids?: any[];
-  option_map?: Record<string, any>;
-  sku_code?: string;
   price?: string | null;
-  compare_price?: string | null;
   quantity?: number;
-  
-  // Dimension fields
-  length?: string | null;
-  width?: string | null;
-  height?: string | null;
-  dimension_unit?: string;
-  
-  // Weight fields
-  weight?: string | null;
-  weight_unit?: string;
-  
-  // Status fields
-  is_active?: boolean;
-  is_refundable?: boolean;
-  refund_days?: number;
-  
-  // Swap fields
-  allow_swap?: boolean;
-  swap_type?: string;
-  swap_description?: string | null;
-  minimum_additional_payment?: string | null;
-  maximum_additional_payment?: string | null;
-  
-  // Depreciation fields
+  available_quantity?: number;
+  in_stock?: boolean;
+  image?: string | null;
+  image_url?: string | null;
+  sku_code?: string;
+  proof_image?: string | null;
   original_price?: string | null;
+  purchase_date?: string | null;
   usage_period?: number | null;
   usage_unit?: string | null;
   depreciation_rate?: number | null;
-  
-  // Stock alerts
-  critical_trigger?: number | null;
-  critical_stock?: number | null;
-  
-  // Images
-  image?: string | null;
-  proof_image?: string | null;
-  
-  // Timestamps
-  created_at?: string;
-  updated_at?: string;
-  
-  // Options
-  options?: Array<{
-    id: string;
-    name: string;
-    value: string;
-    title: string;
-  }>;
-};
-
-type MediaItem = {
-  id: string;
-  file_data?: string | null;
-  file_type?: string;
 };
 
 type ProductDetail = {
   id: string;
   name: string;
   description?: string;
-  condition?: number; // Now integer 1-5
-  upload_status?: string;
-  status?: string;
-  is_refundable?: boolean;
-  refund_days?: number;
-  is_removed?: boolean;
-  removal_reason?: string | null;
-  removed_at?: string | null;
-  
-  // Categories
-  category_admin?: { id: string; name: string } | null;
-  category?: { id: string; name: string } | null;
-  
-  // Shop info
-  shop?: {
-    id: string;
-    name: string;
-    shop_picture?: string | null;
-    verified?: boolean;
-    city?: string;
-    barangay?: string;
-    street?: string;
-    contact_number?: string;
-    total_sales?: string;
-    created_at?: string;
-    is_suspended?: boolean;
-  } | null;
-  
-  // Customer info
-  customer?: {
-    id: string;
-    username?: string;
-    email?: string;
-    first_name?: string;
-    last_name?: string;
-    contact_number?: string;
-    product_limit?: number;
-    current_product_count?: number;
-  } | null;
-  
-  // Pricing
-  price_range?: { min?: string | null; max?: string | null };
-  quantity?: number;
-  
-  // Stats
-  variant_stats?: {
-    total_variants: number;
-    active_variants: number;
-    total_stock: number;
-    min_price?: string | null;
-    max_price?: string | null;
-    low_stock_variants: number;
-    out_of_stock_variants: number;
-  };
-  
-  // Related data
+  condition?: number;
   variants?: Variant[];
-  media?: MediaItem[];
-  reviews?: Array<any>;
-  favorites_count?: number;
-  average_rating?: number;
-  total_reviews?: number;
-  
-  // Timestamps
-  created_at?: string;
-  updated_at?: string;
+  media_files?: Array<{ file_data?: string; file_url?: string }>;
+  has_stock?: boolean;
+  is_favorite?: boolean;
 };
 
-// Condition scale matching CreateProductForm
-const CONDITION_SCALE: Record<number, { label: string; shortLabel: string; stars: number }> = {
-  1: { label: 'Poor - Heavy signs of use, may not function perfectly', shortLabel: 'Poor', stars: 1 },
-  2: { label: 'Fair - Visible wear, fully functional', shortLabel: 'Fair', stars: 2 },
-  3: { label: 'Good - Normal wear, well-maintained', shortLabel: 'Good', stars: 3 },
-  4: { label: 'Very Good - Minimal wear, almost like new', shortLabel: 'Very Good', stars: 4 },
-  5: { label: 'Like New - No signs of use, original packaging', shortLabel: 'Like New', stars: 5 },
-};
-
-const statusColor = (status?: string) => {
-  const value = String(status || "").toLowerCase();
-  if (value === "published") return "#16A34A";
-  if (value === "draft") return "#D97706";
-  if (value === "archived") return "#64748B";
-  return "#475569";
-};
-
-const resolveMediaUrl = (url?: string | null) => {
-  if (!url) return null;
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
-  const base = String(AxiosInstance.defaults.baseURL || "").replace(
-    /\/api\/?$/,
-    "",
-  );
-  if (!base) return url;
-  return url.startsWith("/") ? `${base}${url}` : `${base}/${url}`;
+const formatCurrency = (amount?: string | number | null) => {
+  if (!amount && amount !== 0) return null;
+  const num = typeof amount === "string" ? parseFloat(amount) : amount;
+  if (isNaN(num)) return null;
+  return `₱${num.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 };
 
 const formatDate = (dateString?: string) => {
   if (!dateString) return "N/A";
   const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 };
 
-const StarRow = ({ count }: { count: number }) => (
-  <View style={{ flexDirection: 'row', gap: 2 }}>
-    {[1, 2, 3, 4, 5].map((i) => (
-      <Text key={i} style={{ color: i <= count ? '#F59E0B' : '#D1D5DB', fontSize: 14 }}>★</Text>
-    ))}
-  </View>
-);
-
-// Image Gallery Modal Component
-// Image Gallery Modal Component
-const ImageGalleryModal = ({ 
-  visible, 
-  images, 
+// ─── Image Gallery Modal ────────────────────────────────────────────────────
+const ImageGalleryModal = ({
+  visible,
+  images,
   initialIndex = 0,
-  onClose 
-}: { 
-  visible: boolean; 
-  images: string[]; 
+  onClose,
+}: {
+  visible: boolean;
+  images: string[];
   initialIndex?: number;
   onClose: () => void;
 }) => {
@@ -217,44 +86,62 @@ const ImageGalleryModal = ({
   const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
-    if (visible && flatListRef.current && initialIndex > 0) {
-      // Use setTimeout to ensure the layout is ready
-      setTimeout(() => {
-        flatListRef.current?.scrollToIndex({
-          index: initialIndex,
-          animated: false,
-        });
-      }, 100);
+    if (visible) {
+      setCurrentIndex(initialIndex);
+      // Give the FlatList time to mount before scrolling
+      if (initialIndex > 0) {
+        const timer = setTimeout(() => {
+          flatListRef.current?.scrollToIndex({
+            index: initialIndex,
+            animated: false,
+          });
+        }, 150);
+        return () => clearTimeout(timer);
+      }
     }
   }, [visible, initialIndex]);
 
-  const getItemLayout = (data: any, index: number) => ({
-    length: SCREEN_WIDTH,
-    offset: SCREEN_WIDTH * index,
-    index,
-  });
-
-  const onScrollToIndexFailed = (info: {
-    index: number;
-    highestMeasuredFrameIndex: number;
-    averageItemLength: number;
-  }) => {
-    const wait = new Promise(resolve => setTimeout(resolve, 500));
-    wait.then(() => {
-      flatListRef.current?.scrollToIndex({ index: info.index, animated: false });
-    });
-  };
+  if (!visible) return null;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)' }}>
-        <TouchableOpacity 
-          style={{ position: 'absolute', top: 50, right: 20, zIndex: 10 }}
+      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.95)" }}>
+        {/* Close button */}
+        <TouchableOpacity
+          style={{
+            position: "absolute",
+            top: 50,
+            right: 20,
+            zIndex: 10,
+            backgroundColor: "rgba(255,255,255,0.15)",
+            borderRadius: 20,
+            padding: 6,
+          }}
           onPress={onClose}
         >
-          <Ionicons name="close" size={30} color="#FFFFFF" />
+          <Ionicons name="close" size={28} color="#FFFFFF" />
         </TouchableOpacity>
-        
+
+        {/* Image counter */}
+        {images.length > 1 && (
+          <View
+            style={{
+              position: "absolute",
+              top: 56,
+              alignSelf: "center",
+              zIndex: 10,
+              backgroundColor: "rgba(0,0,0,0.5)",
+              paddingHorizontal: 14,
+              paddingVertical: 6,
+              borderRadius: 20,
+            }}
+          >
+            <Text style={{ color: "#FFFFFF", fontSize: 14, fontWeight: "600" }}>
+              {currentIndex + 1} / {images.length}
+            </Text>
+          </View>
+        )}
+
         <FlatList
           ref={flatListRef}
           data={images}
@@ -262,81 +149,836 @@ const ImageGalleryModal = ({
           pagingEnabled
           showsHorizontalScrollIndicator={false}
           initialScrollIndex={initialIndex}
-          getItemLayout={getItemLayout}
-          onScrollToIndexFailed={onScrollToIndexFailed}
+          getItemLayout={(_, index) => ({
+            length: SCREEN_WIDTH,
+            offset: SCREEN_WIDTH * index,
+            index,
+          })}
+          onScrollToIndexFailed={(info) => {
+            setTimeout(() => {
+              flatListRef.current?.scrollToIndex({
+                index: info.index,
+                animated: false,
+              });
+            }, 500);
+          }}
           onScroll={(e) => {
-            const index = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+            const index = Math.round(
+              e.nativeEvent.contentOffset.x / SCREEN_WIDTH
+            );
             setCurrentIndex(index);
           }}
+          scrollEventThrottle={16}
           renderItem={({ item }) => (
-            <View style={{ width: SCREEN_WIDTH, justifyContent: 'center', alignItems: 'center' }}>
-              <Image 
-                source={{ uri: item }} 
-                style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH, resizeMode: 'contain' }}
+            <View
+              style={{
+                width: SCREEN_WIDTH,
+                flex: 1,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <Image
+                source={{ uri: item }}
+                style={{
+                  width: SCREEN_WIDTH,
+                  height: SCREEN_WIDTH * 1.2,
+                  resizeMode: "contain",
+                }}
               />
             </View>
           )}
           keyExtractor={(_, index) => index.toString()}
         />
-        
-        {images.length > 1 && (
-          <View style={{ 
-            position: 'absolute', 
-            bottom: 50, 
-            alignSelf: 'center',
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            paddingHorizontal: 16,
-            paddingVertical: 8,
-            borderRadius: 20,
-          }}>
-            <Text style={{ color: '#FFFFFF', fontSize: 14 }}>
-              {currentIndex + 1} / {images.length}
-            </Text>
-          </View>
-        )}
       </View>
     </Modal>
   );
 };
 
-export default function SellerViewProductScreen() {
+// ─── Ownership Info Card ────────────────────────────────────────────────────
+const OwnershipInfoCard = ({
+  variant,
+  onProofImagePress,
+}: {
+  variant: Variant;
+  onProofImagePress: (url: string) => void;
+}) => {
+  // Default to expanded so proof image is immediately visible
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  const hasOwnershipInfo =
+    variant.original_price ||
+    variant.purchase_date ||
+    variant.proof_image ||
+    variant.usage_period ||
+    variant.depreciation_rate;
+
+  if (!hasOwnershipInfo) return null;
+
+  const originalPrice = variant.original_price
+    ? parseFloat(variant.original_price)
+    : null;
+  const currentPrice = variant.price ? parseFloat(variant.price) : null;
+  const savings =
+    originalPrice && currentPrice && originalPrice > currentPrice
+      ? originalPrice - currentPrice
+      : null;
+  const savingsPercent =
+    savings && originalPrice
+      ? Math.round((savings / originalPrice) * 100)
+      : null;
+
+  return (
+    <View
+      style={{
+        backgroundColor: "#FFF7ED",
+        borderRadius: 12,
+        marginTop: 12,
+        marginBottom: 4,
+        borderWidth: 1,
+        borderColor: "#FED7AA",
+        overflow: "hidden",
+      }}
+    >
+      {/* Header row */}
+      <TouchableOpacity
+        onPress={() => setIsExpanded(!isExpanded)}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: 14,
+          backgroundColor: isExpanded ? "#FFEDD5" : "#FFF7ED",
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Ionicons name="time-outline" size={16} color="#EA580C" />
+          <Text style={{ fontSize: 14, fontWeight: "700", color: "#111827" }}>
+            Item History & Ownership
+          </Text>
+        </View>
+        <Ionicons
+          name={isExpanded ? "chevron-up" : "chevron-down"}
+          size={20}
+          color="#EA580C"
+        />
+      </TouchableOpacity>
+
+      {/* Expanded content */}
+      {isExpanded && (
+        <View style={{ padding: 14, paddingTop: 8 }}>
+          {/* Original Price */}
+          {variant.original_price && (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 8,
+              }}
+            >
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                Original Price
+              </Text>
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: "#9CA3AF",
+                  textDecorationLine: "line-through",
+                }}
+              >
+                {formatCurrency(variant.original_price)}
+              </Text>
+            </View>
+          )}
+
+          {/* Current / Selling Price */}
+          {variant.price && (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 8,
+              }}
+            >
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                Selling Price
+              </Text>
+              <Text
+                style={{ fontSize: 13, fontWeight: "700", color: "#EA580C" }}
+              >
+                {formatCurrency(variant.price)}
+              </Text>
+            </View>
+          )}
+
+          {/* Savings badge */}
+          {savings && savingsPercent && (
+            <View
+              style={{
+                backgroundColor: "#DCFCE7",
+                borderRadius: 8,
+                padding: 8,
+                marginBottom: 10,
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <Text
+                style={{ fontSize: 12, color: "#059669", fontWeight: "600" }}
+              >
+                You Save
+              </Text>
+              <Text
+                style={{ fontSize: 12, color: "#059669", fontWeight: "700" }}
+              >
+                {formatCurrency(savings)} ({savingsPercent}% off)
+              </Text>
+            </View>
+          )}
+
+          {/* Purchase Date */}
+          {variant.purchase_date && (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 8,
+              }}
+            >
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                Purchase Date
+              </Text>
+              <Text style={{ fontSize: 13, color: "#374151" }}>
+                {formatDate(variant.purchase_date)}
+              </Text>
+            </View>
+          )}
+
+          {/* Usage Period */}
+          {variant.usage_period != null && variant.usage_unit && (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 8,
+              }}
+            >
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                Usage Period
+              </Text>
+              <Text style={{ fontSize: 13, color: "#374151" }}>
+                {variant.usage_period} {variant.usage_unit}
+              </Text>
+            </View>
+          )}
+
+          {/* Depreciation Rate */}
+          {variant.depreciation_rate != null && (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 8,
+              }}
+            >
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                Depreciation Rate
+              </Text>
+              <Text style={{ fontSize: 13, color: "#374151" }}>
+                {variant.depreciation_rate}% / year
+              </Text>
+            </View>
+          )}
+
+          {/* ── Proof of Ownership Image ─────────────────────── */}
+          {variant.proof_image ? (
+            <View style={{ marginTop: 12 }}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  marginBottom: 10,
+                }}
+              >
+                <Ionicons
+                  name="shield-checkmark-outline"
+                  size={15}
+                  color="#EA580C"
+                />
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: "#374151",
+                    fontWeight: "600",
+                  }}
+                >
+                  Proof of Ownership
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={() => onProofImagePress(variant.proof_image!)}
+                activeOpacity={0.85}
+                style={{
+                  width: 110,
+                  height: 110,
+                  borderRadius: 10,
+                  overflow: "hidden",
+                  borderWidth: 2,
+                  borderColor: "#34D399",
+                }}
+              >
+                <Image
+                  source={{ uri: variant.proof_image }}
+                  style={{ width: "100%", height: "100%" }}
+                  resizeMode="cover"
+                  onError={(e) =>
+                    console.log(
+                      "Proof image load error:",
+                      e.nativeEvent.error,
+                      "URL:",
+                      variant.proof_image
+                    )
+                  }
+                />
+                {/* Tap to view overlay */}
+                <View
+                  style={{
+                    position: "absolute",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    backgroundColor: "rgba(52,211,153,0.85)",
+                    paddingVertical: 4,
+                    alignItems: "center",
+                    flexDirection: "row",
+                    justifyContent: "center",
+                    gap: 4,
+                  }}
+                >
+                  <Ionicons name="expand-outline" size={11} color="#FFFFFF" />
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      fontWeight: "700",
+                      color: "#FFFFFF",
+                    }}
+                  >
+                    Tap to view
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            // Show a placeholder so you know it's missing vs not rendered
+            <View
+              style={{
+                marginTop: 12,
+                padding: 10,
+                backgroundColor: "#F3F4F6",
+                borderRadius: 8,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Ionicons name="image-outline" size={14} color="#9CA3AF" />
+              <Text style={{ fontSize: 12, color: "#9CA3AF" }}>
+                No proof of ownership image provided
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+};
+
+// ─── Variant Selection Drawer Modal ────────────────────────────────────────
+const VariantSelectionModal = ({
+  visible,
+  variants,
+  selectedVariant,
+  quantity,
+  onSelectVariant,
+  onQuantityChange,
+  onConfirm,
+  onClose,
+  productName,
+  productImage,
+}: {
+  visible: boolean;
+  variants: Variant[];
+  selectedVariant: Variant | null;
+  quantity: number;
+  onSelectVariant: (variant: Variant) => void;
+  onQuantityChange: (quantity: number) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+  productName: string;
+  productImage?: string | null;
+}) => {
+  const [tempQuantity, setTempQuantity] = useState(quantity);
+  const [tempSelectedVariant, setTempSelectedVariant] =
+    useState<Variant | null>(selectedVariant);
+
+  useEffect(() => {
+    if (visible) {
+      setTempQuantity(quantity);
+      setTempSelectedVariant(selectedVariant);
+    }
+  }, [visible, quantity, selectedVariant]);
+
+  const handleConfirm = () => {
+    if (tempSelectedVariant) {
+      onSelectVariant(tempSelectedVariant);
+      onQuantityChange(tempQuantity);
+      onConfirm();
+    } else {
+      Alert.alert("Error", "Please select a variant");
+    }
+  };
+
+  const getDisplayImage = () => {
+    if (
+      tempSelectedVariant &&
+      (tempSelectedVariant.image_url || tempSelectedVariant.image)
+    ) {
+      return tempSelectedVariant.image_url || tempSelectedVariant.image;
+    }
+    return productImage || null;
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <TouchableWithoutFeedback onPress={onClose}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }} />
+      </TouchableWithoutFeedback>
+
+      <View
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: "#FFFFFF",
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          maxHeight: SCREEN_HEIGHT * 0.85,
+        }}
+      >
+        {/* Header */}
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            paddingHorizontal: 20,
+            paddingVertical: 16,
+            borderBottomWidth: 1,
+            borderBottomColor: "#F3F4F6",
+          }}
+        >
+          <Text
+            style={{ fontSize: 18, fontWeight: "700", color: "#111827" }}
+          >
+            Select Option
+          </Text>
+          <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+            <Ionicons name="close" size={24} color="#6B7280" />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 20 }}
+        >
+          {/* Product preview */}
+          <View
+            style={{ flexDirection: "row", gap: 12, marginBottom: 20 }}
+          >
+            {getDisplayImage() ? (
+              <Image
+                source={{ uri: getDisplayImage()! }}
+                style={{ width: 80, height: 80, borderRadius: 8 }}
+              />
+            ) : (
+              <View
+                style={{
+                  width: 80,
+                  height: 80,
+                  backgroundColor: "#F3F4F6",
+                  borderRadius: 8,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Ionicons name="cube-outline" size={32} color="#9CA3AF" />
+              </View>
+            )}
+            <View style={{ flex: 1, justifyContent: "center" }}>
+              <Text
+                style={{
+                  fontSize: 16,
+                  fontWeight: "700",
+                  color: "#111827",
+                }}
+                numberOfLines={2}
+              >
+                {productName}
+              </Text>
+              {tempSelectedVariant && (
+                <Text
+                  style={{
+                    fontSize: 20,
+                    fontWeight: "700",
+                    color: "#EA580C",
+                    marginTop: 4,
+                  }}
+                >
+                  {formatCurrency(tempSelectedVariant.price) ?? "₱0.00"}
+                </Text>
+              )}
+            </View>
+          </View>
+
+          {/* Variant options */}
+          <Text
+            style={{
+              fontSize: 14,
+              fontWeight: "600",
+              color: "#374151",
+              marginBottom: 12,
+            }}
+          >
+            Select Variant{" "}
+            {variants.length > 1 ? `(${variants.length} options)` : ""}
+          </Text>
+
+          {variants.map((variant) => {
+            const isSelected = tempSelectedVariant?.id === variant.id;
+            const availableQty =
+              variant.available_quantity ?? variant.quantity ?? 0;
+            const isInStock = variant.in_stock ?? availableQty > 0;
+
+            return (
+              <TouchableOpacity
+                key={variant.id}
+                onPress={() => {
+                  setTempSelectedVariant(variant);
+                  setTempQuantity(1);
+                }}
+                disabled={!isInStock}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: 12,
+                  borderWidth: 2,
+                  borderColor: isSelected ? "#EA580C" : "#E5E7EB",
+                  borderRadius: 10,
+                  marginBottom: 10,
+                  backgroundColor: isSelected ? "#FFF7ED" : "#FFFFFF",
+                  opacity: isInStock ? 1 : 0.5,
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 12,
+                    flex: 1,
+                  }}
+                >
+                  {variant.image_url || variant.image ? (
+                    <Image
+                      source={{ uri: variant.image_url || variant.image! }}
+                      style={{ width: 50, height: 50, borderRadius: 8 }}
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        width: 50,
+                        height: 50,
+                        backgroundColor: "#F3F4F6",
+                        borderRadius: 8,
+                        justifyContent: "center",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Ionicons
+                        name="cube-outline"
+                        size={24}
+                        color="#9CA3AF"
+                      />
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "600",
+                        color: "#111827",
+                      }}
+                    >
+                      {variant.title || variant.sku_code || "Standard"}
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        color: "#EA580C",
+                        fontWeight: "700",
+                      }}
+                    >
+                      {formatCurrency(variant.price) ?? "₱0.00"}
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        color: isInStock ? "#16A34A" : "#DC2626",
+                        marginTop: 2,
+                      }}
+                    >
+                      {isInStock
+                        ? `${availableQty} available`
+                        : "Out of Stock"}
+                    </Text>
+                  </View>
+                </View>
+                {isSelected && (
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={24}
+                    color="#EA580C"
+                  />
+                )}
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Quantity selector */}
+          {tempSelectedVariant &&
+            (tempSelectedVariant.in_stock ??
+              (tempSelectedVariant.available_quantity ?? 0) > 0) && (
+              <View style={{ marginTop: 20 }}>
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "600",
+                    color: "#374151",
+                    marginBottom: 12,
+                  }}
+                >
+                  Quantity
+                </Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 16,
+                  }}
+                >
+                  <TouchableOpacity
+                    onPress={() =>
+                      setTempQuantity(Math.max(1, tempQuantity - 1))
+                    }
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 8,
+                      backgroundColor: "#F3F4F6",
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons name="remove" size={24} color="#374151" />
+                  </TouchableOpacity>
+                  <Text
+                    style={{
+                      fontSize: 20,
+                      fontWeight: "600",
+                      color: "#111827",
+                      minWidth: 50,
+                      textAlign: "center",
+                    }}
+                  >
+                    {tempQuantity}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() =>
+                      setTempQuantity(
+                        Math.min(
+                          tempSelectedVariant.available_quantity ??
+                            tempSelectedVariant.quantity ??
+                            99,
+                          tempQuantity + 1
+                        )
+                      )
+                    }
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 8,
+                      backgroundColor: "#F3F4F6",
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Ionicons name="add" size={24} color="#374151" />
+                  </TouchableOpacity>
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      color: "#6B7280",
+                      marginLeft: "auto",
+                    }}
+                  >
+                    {tempSelectedVariant.available_quantity ??
+                      tempSelectedVariant.quantity ??
+                      0}{" "}
+                    available
+                  </Text>
+                </View>
+              </View>
+            )}
+        </ScrollView>
+
+        {/* Footer */}
+        <View
+          style={{
+            flexDirection: "row",
+            gap: 12,
+            paddingHorizontal: 20,
+            paddingVertical: 16,
+            borderTopWidth: 1,
+            borderTopColor: "#F3F4F6",
+            backgroundColor: "#FFFFFF",
+          }}
+        >
+          <TouchableOpacity
+            onPress={onClose}
+            style={{
+              flex: 1,
+              borderWidth: 1,
+              borderColor: "#E5E7EB",
+              borderRadius: 10,
+              paddingVertical: 14,
+              alignItems: "center",
+            }}
+          >
+            <Text
+              style={{ fontSize: 14, fontWeight: "600", color: "#6B7280" }}
+            >
+              Cancel
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleConfirm}
+            disabled={
+              !tempSelectedVariant?.in_stock &&
+              (tempSelectedVariant?.available_quantity ?? 0) === 0
+            }
+            style={{
+              flex: 2,
+              backgroundColor:
+                tempSelectedVariant?.in_stock ??
+                (tempSelectedVariant?.available_quantity ?? 0) > 0
+                  ? "#EA580C"
+                  : "#D1D5DB",
+              borderRadius: 10,
+              paddingVertical: 14,
+              alignItems: "center",
+            }}
+          >
+            <Text
+              style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}
+            >
+              Confirm Selection
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+// ─── Main Screen ────────────────────────────────────────────────────────────
+export default function CustomerViewProductScreen() {
   const { userId } = useAuth();
-  const params = useLocalSearchParams<{
-    productId?: string;
-    shopId?: string;
-  }>();
-  const productId = params.productId ? String(params.productId) : "";
-  const shopId = params.shopId ? String(params.shopId) : "";
+  const params = useLocalSearchParams<{ id?: string }>();
+  const productId = params.id ? String(params.id) : "";
 
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [product, setProduct] = useState<ProductDetail | null>(null);
-  const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
+  const [selectedVariant, setSelectedVariant] = useState<Variant | null>(null);
+  const [quantity, setQuantity] = useState(1);
+  const [addingToCart, setAddingToCart] = useState(false);
+  const [variantModalVisible, setVariantModalVisible] = useState(false);
+  const [pendingAction, setPendingAction] = useState<
+    "add_to_cart" | "buy_now" | null
+  >(null);
+
+  // Gallery state
   const [galleryVisible, setGalleryVisible] = useState(false);
-  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [galleryImages, setGalleryImages] = useState<string[]>([]);
+  const [galleryInitialIndex, setGalleryInitialIndex] = useState(0);
 
   const fetchProduct = useCallback(async () => {
-    if (!productId || !userId) {
+    if (!productId) {
       setLoading(false);
       return;
     }
-
     try {
+      const headers: Record<string, string> = {};
+      if (userId) headers["X-User-Id"] = userId;
+
       const response = await AxiosInstance.get(
-        `/seller-products/${productId}/get_product/?user_id=${userId}`,
+        `/public-products/${productId}/`,
+        { headers }
       );
-      if (response.data?.success) {
-        setProduct(response.data.product || null);
-      } else {
-        setProduct(null);
+
+      if (response.data) {
+        setProduct(response.data);
+
+        // Debug: log all variants and their proof images
+        if (__DEV__) {
+          console.log(
+            "[view-product] variants:",
+            JSON.stringify(
+              response.data.variants?.map((v: Variant) => ({
+                id: v.id,
+                title: v.title,
+                proof_image: v.proof_image,
+                original_price: v.original_price,
+                purchase_date: v.purchase_date,
+              })),
+              null,
+              2
+            )
+          );
+        }
+
+        if (response.data.variants?.length > 0) {
+          const inStock = response.data.variants.find(
+            (v: Variant) => v.in_stock
+          );
+          setSelectedVariant(inStock || response.data.variants[0]);
+        }
       }
-    } catch (error) {
-      console.error("Failed to fetch seller product details:", error);
+    } catch (error: any) {
       Alert.alert("Error", "Unable to load product details.");
       setProduct(null);
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, [productId, userId]);
 
@@ -344,52 +986,147 @@ export default function SellerViewProductScreen() {
     fetchProduct();
   }, [fetchProduct]);
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchProduct();
-  };
-
-  // Get all product images from media
+  // All product media images
   const productImages = useMemo(() => {
-    return (product?.media || [])
-      .map(media => resolveMediaUrl(media.file_data))
-      .filter((url): url is string => url !== null);
+    return (product?.media_files || [])
+      .map((item) => item.file_url || item.file_data)
+      .filter((url): url is string => !!url);
   }, [product]);
 
-  // Get variant images
-  const variantImages = useMemo(() => {
+  // All proof images across variants (for the gallery)
+  const allProofImages = useMemo(() => {
     return (product?.variants || [])
-      .filter(v => v.image)
-      .map(v => resolveMediaUrl(v.image))
-      .filter((url): url is string => url !== null);
+      .map((v) => v.proof_image)
+      .filter((url): url is string => !!url);
   }, [product]);
 
-  // Get proof images
-  const proofImages = useMemo(() => {
-    return (product?.variants || [])
-      .filter(v => v.proof_image)
-      .map(v => resolveMediaUrl(v.proof_image))
-      .filter((url): url is string => url !== null);
-  }, [product]);
-
-  // All images for gallery
-  const allImages = useMemo(() => {
-    return [...productImages, ...variantImages, ...proofImages];
-  }, [productImages, variantImages, proofImages]);
-
-  // Hero image (first product image or first variant image)
-  const heroImage = useMemo(() => {
-    return productImages[0] || variantImages[0] || null;
-  }, [productImages, variantImages]);
-
-  const toggleVariantExpand = (variantId: string) => {
-    setExpandedVariants((prev) => ({ ...prev, [variantId]: !prev[variantId] }));
-  };
-
-  const openGallery = (index: number = 0) => {
-    setSelectedImageIndex(index);
+  // Open proof image gallery at the tapped image
+  const openProofGallery = (url: string) => {
+    const index = allProofImages.findIndex((img) => img === url);
+    setGalleryImages(allProofImages);
+    setGalleryInitialIndex(index >= 0 ? index : 0);
     setGalleryVisible(true);
   };
+
+  // Open product media gallery
+  const openProductGallery = (index: number = 0) => {
+    setGalleryImages(productImages);
+    setGalleryInitialIndex(index);
+    setGalleryVisible(true);
+  };
+
+  // Add to Cart
+  const addToCart = async () => {
+    if (!userId) {
+      Alert.alert("Sign In Required", "Please sign in to add items to cart");
+      return;
+    }
+    if (!selectedVariant) {
+      if (product?.variants && product.variants.length > 0) {
+        setPendingAction("add_to_cart");
+        setVariantModalVisible(true);
+      } else {
+        Alert.alert("Error", "No variants available for this product");
+      }
+      return;
+    }
+    if (!selectedVariant.in_stock) {
+      Alert.alert("Out of Stock", "This variant is currently out of stock");
+      return;
+    }
+
+    setAddingToCart(true);
+    try {
+      await AxiosInstance.post("/view-cart/", {
+        user_id: userId,
+        variant_id: selectedVariant.id,
+        quantity,
+      });
+      Alert.alert("Success", `${product?.name} has been added to your cart.`);
+    } catch (err: any) {
+      Alert.alert(
+        "Error",
+        err.response?.data?.error || "Failed to add to cart."
+      );
+    } finally {
+      setAddingToCart(false);
+    }
+  };
+
+  // Buy Now
+  const buyNow = () => {
+    if (!userId) {
+      Alert.alert("Sign In Required", "Please sign in to purchase");
+      return;
+    }
+    if (!selectedVariant) {
+      if (product?.variants && product.variants.length > 0) {
+        setPendingAction("buy_now");
+        setVariantModalVisible(true);
+      } else {
+        Alert.alert("Error", "No variants available for this product");
+      }
+      return;
+    }
+    if (!selectedVariant.in_stock) {
+      Alert.alert("Out of Stock", "This variant is currently out of stock");
+      return;
+    }
+
+    router.push({
+      pathname: "/customer/checkout",
+      params: {
+        productId,
+        variantId: selectedVariant.id,
+        quantity: String(quantity),
+      },
+    });
+  };
+
+  // Execute the pending action after variant is confirmed
+  const executePendingAction = async () => {
+    if (!selectedVariant) return;
+
+    if (pendingAction === "add_to_cart") {
+      setAddingToCart(true);
+      try {
+        await AxiosInstance.post("/view-cart/", {
+          user_id: userId,
+          variant_id: selectedVariant.id,
+          quantity,
+        });
+        Alert.alert(
+          "Success",
+          `${product?.name} has been added to your cart.`
+        );
+      } catch (err: any) {
+        Alert.alert(
+          "Error",
+          err.response?.data?.error || "Failed to add to cart."
+        );
+      } finally {
+        setAddingToCart(false);
+        setPendingAction(null);
+      }
+    } else if (pendingAction === "buy_now") {
+      router.push({
+        pathname: "/customer/checkout",
+        params: {
+          productId,
+          variantId: selectedVariant.id,
+          quantity: String(quantity),
+        },
+      });
+      setPendingAction(null);
+    }
+  };
+
+  const handleVariantConfirm = () => {
+    setVariantModalVisible(false);
+    setTimeout(executePendingAction, 100);
+  };
+
+  // ── Render ──────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -401,7 +1138,7 @@ export default function SellerViewProductScreen() {
           alignItems: "center",
         }}
       >
-        <ActivityIndicator size="small" color="#EA580C" />
+        <ActivityIndicator size="large" color="#EA580C" />
       </SafeAreaView>
     );
   }
@@ -409,43 +1146,25 @@ export default function SellerViewProductScreen() {
   if (!product) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: "#F9FAFB" }}>
-        <View
-          style={{
-            paddingHorizontal: 16,
-            paddingVertical: 10,
-            flexDirection: "row",
-            alignItems: "center",
-            borderBottomWidth: 1,
-            borderBottomColor: "#E5E7EB",
-            backgroundColor: "#FFFFFF",
-          }}
-        >
-          <TouchableOpacity
-            onPress={() => router.back()}
-            style={{ padding: 6, marginRight: 8 }}
-          >
+        <View style={{ padding: 16 }}>
+          <TouchableOpacity onPress={() => router.back()} style={{ padding: 6 }}>
             <Ionicons name="arrow-back" size={22} color="#111827" />
           </TouchableOpacity>
-          <Text style={{ fontSize: 18, fontWeight: "700", color: "#111827" }}>
-            Product Details
+          <Text
+            style={{ textAlign: "center", marginTop: 40, color: "#6B7280" }}
+          >
+            Product not found.
           </Text>
-        </View>
-        <View
-          style={{
-            flex: 1,
-            justifyContent: "center",
-            alignItems: "center",
-            padding: 24,
-          }}
-        >
-          <Text style={{ color: "#6B7280" }}>Product not found.</Text>
         </View>
       </SafeAreaView>
     );
   }
 
+  const isInStock = selectedVariant?.in_stock ?? product.has_stock;
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#F9FAFB" }}>
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <View
         style={{
           paddingHorizontal: 16,
@@ -464,44 +1183,30 @@ export default function SellerViewProductScreen() {
           <Ionicons name="arrow-back" size={22} color="#111827" />
         </TouchableOpacity>
         <Text
-          style={{ fontSize: 18, fontWeight: "700", color: "#111827", flex: 1 }}
+          style={{
+            fontSize: 18,
+            fontWeight: "700",
+            color: "#111827",
+            flex: 1,
+          }}
+          numberOfLines={1}
         >
           Product Details
         </Text>
         <TouchableOpacity
-          onPress={() => {
-            const productData = encodeURIComponent(JSON.stringify(product));
-            router.push({
-              pathname: "/seller/components/seller-edit-product",
-              params: {
-                productId: product.id,
-                shopId: shopId,
-                product: productData,
-              },
-            });
-          }}
-          style={{
-            paddingHorizontal: 10,
-            paddingVertical: 6,
-            borderRadius: 8,
-            borderWidth: 1,
-            borderColor: "#E5E7EB",
-            backgroundColor: "#FFFFFF",
-          }}
+          onPress={() => router.push("/customer/cart")}
+          style={{ padding: 8 }}
         >
-          <Text style={{ fontSize: 12, fontWeight: "600", color: "#111827" }}>
-            Edit
-          </Text>
+          <Ionicons name="cart-outline" size={24} color="#111827" />
         </TouchableOpacity>
       </View>
 
+      {/* ── Scrollable body ────────────────────────────────────────────── */}
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 28 }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
+        contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+        showsVerticalScrollIndicator={false}
       >
-        {/* Hero Image Card */}
+        {/* Hero image card */}
         <View
           style={{
             backgroundColor: "#FFFFFF",
@@ -513,476 +1218,288 @@ export default function SellerViewProductScreen() {
           }}
         >
           <TouchableOpacity
-            onPress={() => allImages.length > 0 && openGallery(0)}
-            activeOpacity={0.8}
-            style={{
-              height: 190,
-              backgroundColor: "#F3F4F6",
-              justifyContent: "center",
-              alignItems: "center",
-            }}
+            onPress={() => openProductGallery(0)}
+            activeOpacity={0.9}
           >
-            {heroImage ? (
-              <Image
-                source={{ uri: heroImage }}
-                style={{ width: "100%", height: "100%" }}
-                resizeMode="cover"
-              />
+            {productImages.length > 0 ? (
+              <View>
+                <Image
+                  source={{ uri: productImages[0] }}
+                  style={{ width: "100%", height: 260 }}
+                  resizeMode="cover"
+                />
+                {productImages.length > 1 && (
+                  <View
+                    style={{
+                      position: "absolute",
+                      bottom: 10,
+                      right: 10,
+                      backgroundColor: "rgba(0,0,0,0.55)",
+                      borderRadius: 12,
+                      paddingHorizontal: 10,
+                      paddingVertical: 4,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <Ionicons name="images-outline" size={13} color="#FFF" />
+                    <Text
+                      style={{
+                        color: "#FFFFFF",
+                        fontSize: 12,
+                        fontWeight: "600",
+                      }}
+                    >
+                      {productImages.length}
+                    </Text>
+                  </View>
+                )}
+              </View>
             ) : (
-              <Ionicons name="image-outline" size={40} color="#9CA3AF" />
-            )}
-            
-            {/* Image count badge */}
-            {allImages.length > 1 && (
-              <View style={{
-                position: 'absolute',
-                bottom: 8,
-                right: 8,
-                backgroundColor: 'rgba(0,0,0,0.6)',
-                paddingHorizontal: 8,
-                paddingVertical: 4,
-                borderRadius: 12,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-              }}>
-                <Ionicons name="images" size={14} color="#FFFFFF" />
-                <Text style={{ color: '#FFFFFF', fontSize: 12 }}>{allImages.length}</Text>
+              <View
+                style={{
+                  height: 260,
+                  backgroundColor: "#F3F4F6",
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Ionicons name="image-outline" size={48} color="#9CA3AF" />
               </View>
             )}
           </TouchableOpacity>
-          
+
           <View style={{ padding: 14 }}>
-            <Text style={{ fontSize: 18, fontWeight: "700", color: "#111827" }}>
+            <Text
+              style={{ fontSize: 20, fontWeight: "700", color: "#111827" }}
+            >
               {product.name}
             </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-              {product.condition && (
-                <>
-                  <StarRow count={product.condition} />
-                  <Text style={{ fontSize: 12, color: "#6B7280", marginLeft: 4 }}>
-                    {CONDITION_SCALE[product.condition]?.shortLabel || `Condition ${product.condition}/5`}
-                  </Text>
-                </>
-              )}
-            </View>
-            <Text style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>
-              {product.category_admin?.name || product.category?.name || "Uncategorized"}
+            <Text
+              style={{
+                fontSize: 26,
+                fontWeight: "700",
+                color: "#EA580C",
+                marginTop: 6,
+              }}
+            >
+              {selectedVariant
+                ? formatCurrency(selectedVariant.price) ?? "₱0.00"
+                : "Price unavailable"}
             </Text>
-            <View style={{ marginTop: 10, flexDirection: "row", gap: 8, flexWrap: 'wrap' }}>
-              <View
+            {product.description ? (
+              <Text
                 style={{
-                  paddingHorizontal: 10,
-                  paddingVertical: 5,
-                  borderRadius: 999,
-                  backgroundColor: "#F1F5F9",
+                  fontSize: 14,
+                  color: "#374151",
+                  marginTop: 12,
+                  lineHeight: 20,
                 }}
               >
-                <Text
-                  style={{
-                    fontSize: 12,
-                    color: statusColor(product.upload_status),
-                    fontWeight: "700",
-                  }}
-                >
-                  {(product.upload_status || "unknown").toUpperCase()}
-                </Text>
-              </View>
-              <View
-                style={{
-                  paddingHorizontal: 10,
-                  paddingVertical: 5,
-                  borderRadius: 999,
-                  backgroundColor: "#F8FAFC",
-                }}
-              >
-                <Text
-                  style={{ fontSize: 12, color: "#334155", fontWeight: "600" }}
-                >
-                  Stock: {product.variant_stats?.total_stock || product.quantity || 0}
-                </Text>
-              </View>
-              {product.is_refundable && (
-                <View
-                  style={{
-                    paddingHorizontal: 10,
-                    paddingVertical: 5,
-                    borderRadius: 999,
-                    backgroundColor: "#DCFCE7",
-                  }}
-                >
-                  <Text style={{ fontSize: 12, color: "#166534", fontWeight: "600" }}>
-                    Refundable ({product.refund_days || 0} days)
-                  </Text>
-                </View>
-              )}
-            </View>
+                {product.description}
+              </Text>
+            ) : null}
           </View>
         </View>
 
-
-
-        {/* Description Card */}
-        <View
-          style={{
-            backgroundColor: "#FFFFFF",
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: "#E5E7EB",
-            padding: 14,
-            marginBottom: 12,
-          }}
-        >
-          <Text
+        {/* Variant selection button */}
+        {product.variants && product.variants.length > 0 && (
+          <TouchableOpacity
+            onPress={() => setVariantModalVisible(true)}
             style={{
-              fontSize: 13,
-              fontWeight: "700",
-              color: "#111827",
-              marginBottom: 8,
-            }}
-          >
-            Description
-          </Text>
-          <Text style={{ fontSize: 13, color: "#374151", lineHeight: 20 }}>
-            {product.description || "No description provided."}
-          </Text>
-        </View>
-
-        {/* Pricing Card */}
-        <View
-          style={{
-            backgroundColor: "#FFFFFF",
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: "#E5E7EB",
-            padding: 14,
-            marginBottom: 12,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: 13,
-              fontWeight: "700",
-              color: "#111827",
-              marginBottom: 8,
-            }}
-          >
-            Pricing
-          </Text>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Text style={{ fontSize: 13, color: "#374151" }}>
-              Min: {product.price_range?.min ? `₱${parseFloat(product.price_range.min).toLocaleString()}` : "N/A"}
-            </Text>
-            <Text style={{ fontSize: 13, color: "#374151" }}>
-              Max: {product.price_range?.max ? `₱${parseFloat(product.price_range.max).toLocaleString()}` : "N/A"}
-            </Text>
-          </View>
-          <Text style={{ fontSize: 13, color: "#374151", marginTop: 4 }}>
-            Status: {product.status || "N/A"}
-          </Text>
-        </View>
-
-        {/* Shop Info Card */}
-        {product.shop && (
-          <View
-            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
               backgroundColor: "#FFFFFF",
-              borderRadius: 12,
               borderWidth: 1,
               borderColor: "#E5E7EB",
+              borderRadius: 10,
+              padding: 12,
+              marginBottom: 4,
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text
+                style={{ fontSize: 13, color: "#6B7280", marginBottom: 2 }}
+              >
+                Variant
+              </Text>
+              <Text
+                style={{
+                  fontSize: 15,
+                  fontWeight: "600",
+                  color: "#111827",
+                }}
+              >
+                {selectedVariant?.title ||
+                  selectedVariant?.sku_code ||
+                  "Select Option"}
+              </Text>
+            </View>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
+              {selectedVariant && (
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "700",
+                    color: "#EA580C",
+                  }}
+                >
+                  {formatCurrency(selectedVariant.price) ?? "₱0.00"}
+                </Text>
+              )}
+              <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {/* ── Ownership Info Card (always rendered when variant selected) ── */}
+        {selectedVariant && (
+          <OwnershipInfoCard
+            variant={selectedVariant}
+            onProofImagePress={openProofGallery}
+          />
+        )}
+      </ScrollView>
+
+      {/* ── Footer action bar ───────────────────────────────────────────── */}
+      {isInStock ? (
+        <View
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            backgroundColor: "#FFFFFF",
+            borderTopWidth: 1,
+            borderTopColor: "#E5E7EB",
+            paddingHorizontal: 16,
+            paddingVertical: 12,
+            paddingBottom: 28,
+            flexDirection: "row",
+            gap: 10,
+          }}
+        >
+          {/* Add to Cart */}
+          <TouchableOpacity
+            onPress={addToCart}
+            disabled={addingToCart}
+            style={{
+              flex: 1,
+              borderWidth: 2,
+              borderColor: "#F97316",
+              borderRadius: 10,
+              paddingVertical: 14,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              backgroundColor: "#FFFFFF",
+            }}
+          >
+            {addingToCart ? (
+              <ActivityIndicator size="small" color="#F97316" />
+            ) : (
+              <>
+                <Ionicons name="cart-outline" size={20} color="#F97316" />
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: "700",
+                    color: "#F97316",
+                  }}
+                >
+                  Add to Cart
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          {/* Buy Now */}
+          <TouchableOpacity
+            onPress={buyNow}
+            style={{
+              flex: 1,
+              backgroundColor: "#EA580C",
+              borderRadius: 10,
+              paddingVertical: 14,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+            }}
+          >
+            <Ionicons name="flash-outline" size={20} color="#FFFFFF" />
+            <Text
+              style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}
+            >
+              Buy Now
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            backgroundColor: "#F9FAFB",
+            borderTopWidth: 1,
+            borderTopColor: "#E5E7EB",
+            padding: 16,
+            paddingBottom: 28,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: "#FEE2E2",
+              borderRadius: 10,
               padding: 14,
-              marginBottom: 12,
+              alignItems: "center",
             }}
           >
             <Text
               style={{
-                fontSize: 13,
+                fontSize: 14,
+                color: "#DC2626",
                 fontWeight: "700",
-                color: "#111827",
-                marginBottom: 8,
               }}
             >
-              Shop Information
-            </Text>
-            <Text style={{ fontSize: 13, color: "#374151" }}>{product.shop.name}</Text>
-            {product.shop.verified && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                <Ionicons name="checkmark-circle" size={14} color="#16A34A" />
-                <Text style={{ fontSize: 12, color: "#16A34A" }}>Verified Shop</Text>
-              </View>
-            )}
-            <Text style={{ fontSize: 12, color: "#6B7280", marginTop: 4 }}>
-              {[product.shop.street, product.shop.barangay, product.shop.city].filter(Boolean).join(', ')}
+              Currently Out of Stock
             </Text>
           </View>
-        )}
-
-        {/* Removed Product Warning */}
-        {product.is_removed && (
-          <View
-            style={{
-              backgroundColor: "#FEF2F2",
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: "#FECACA",
-              padding: 14,
-              marginBottom: 12,
-            }}
-          >
-            <Text style={{ fontSize: 13, fontWeight: "700", color: "#B91C1C" }}>
-              Removed Product
-            </Text>
-            <Text style={{ fontSize: 13, color: "#991B1B", marginTop: 6 }}>
-              {product.removal_reason || "No removal reason available."}
-            </Text>
-            {product.removed_at && (
-              <Text style={{ fontSize: 12, color: "#991B1B", marginTop: 4 }}>
-                Removed on: {formatDate(product.removed_at)}
-              </Text>
-            )}
-          </View>
-        )}
-
-        {/* Variants Section */}
-        <View
-          style={{
-            backgroundColor: "#FFFFFF",
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: "#E5E7EB",
-            padding: 14,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: 13,
-              fontWeight: "700",
-              color: "#111827",
-              marginBottom: 8,
-            }}
-          >
-            Variants ({product.variants?.length || 0})
-          </Text>
-          {(product.variants || []).length === 0 ? (
-            <Text style={{ fontSize: 13, color: "#6B7280" }}>
-              No variants available.
-            </Text>
-          ) : (
-            (product.variants || []).map((variant) => (
-              <View key={variant.id} style={{ marginBottom: 12 }}>
-                {/* Variant Header */}
-                <TouchableOpacity
-                  onPress={() => toggleVariantExpand(variant.id)}
-                  style={{
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    backgroundColor: '#F9FAFB',
-                    padding: 12,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: '#E5E7EB',
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    {variant.image ? (
-                      <Image 
-                        source={{ uri: resolveMediaUrl(variant.image) }} 
-                        style={{ width: 40, height: 40, borderRadius: 4 }}
-                      />
-                    ) : (
-                      <View style={{ width: 40, height: 40, backgroundColor: '#F3F4F6', borderRadius: 4, justifyContent: 'center', alignItems: 'center' }}>
-                        <Ionicons name="cube-outline" size={20} color="#9CA3AF" />
-                      </View>
-                    )}
-                    <View>
-                      <Text style={{ fontSize: 14, fontWeight: "600", color: "#111827" }}>
-                        {variant.title || variant.sku_code || "Variant"}
-                      </Text>
-                      <Text style={{ fontSize: 12, color: "#EA580C", fontWeight: "500" }}>
-                        ₱{variant.price ? parseFloat(variant.price).toLocaleString() : "0.00"}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    {variant.quantity === 0 && (
-                      <View style={{ backgroundColor: '#FEE2E2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                        <Text style={{ fontSize: 10, color: '#DC2626' }}>Out of Stock</Text>
-                      </View>
-                    )}
-                    <Ionicons 
-                      name={expandedVariants[variant.id] ? "chevron-up" : "chevron-down"} 
-                      size={20} 
-                      color="#6B7280" 
-                    />
-                  </View>
-                </TouchableOpacity>
-
-                {/* Expanded Variant Details */}
-                {expandedVariants[variant.id] && (
-                  <View style={{
-                    backgroundColor: '#FFFFFF',
-                    borderWidth: 1,
-                    borderColor: '#E5E7EB',
-                    borderTopWidth: 0,
-                    borderBottomLeftRadius: 8,
-                    borderBottomRightRadius: 8,
-                    padding: 12,
-                  }}>
-                    {/* Basic Info */}
-                    <View style={{ marginBottom: 12 }}>
-                      <Text style={{ fontSize: 12, fontWeight: "600", color: "#6B7280", marginBottom: 4 }}>SKU</Text>
-                      <Text style={{ fontSize: 13, color: "#111827" }}>{variant.sku_code || "N/A"}</Text>
-                    </View>
-
-                    {/* Pricing */}
-                    <View style={{ flexDirection: 'row', gap: 16, marginBottom: 12 }}>
-                      <View>
-                        <Text style={{ fontSize: 12, fontWeight: "600", color: "#6B7280", marginBottom: 4 }}>Price</Text>
-                        <Text style={{ fontSize: 14, color: "#111827" }}>₱{variant.price ? parseFloat(variant.price).toLocaleString() : "0.00"}</Text>
-                      </View>
-                      {variant.compare_price && (
-                        <View>
-                          <Text style={{ fontSize: 12, fontWeight: "600", color: "#6B7280", marginBottom: 4 }}>Compare Price</Text>
-                          <Text style={{ fontSize: 14, color: "#9CA3AF", textDecorationLine: 'line-through' }}>
-                            ₱{parseFloat(variant.compare_price).toLocaleString()}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-
-                    {/* Stock */}
-                    <View style={{ marginBottom: 12 }}>
-                      <Text style={{ fontSize: 12, fontWeight: "600", color: "#6B7280", marginBottom: 4 }}>Stock</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <Text style={{ fontSize: 14, color: variant.quantity === 0 ? "#DC2626" : "#111827" }}>
-                          {variant.quantity ?? 0} units
-                        </Text>
-                        {variant.critical_trigger && variant.quantity <= variant.critical_trigger && variant.quantity > 0 && (
-                          <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                            <Text style={{ fontSize: 10, color: '#D97706' }}>Low Stock Alert</Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
-
-                    {/* Status Toggles */}
-                    <View style={{ flexDirection: 'row', gap: 16, marginBottom: 12 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: variant.is_active ? '#16A34A' : '#9CA3AF' }} />
-                        <Text style={{ fontSize: 13, color: variant.is_active ? '#16A34A' : '#6B7280' }}>
-                          {variant.is_active ? 'Active' : 'Inactive'}
-                        </Text>
-                      </View>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                        <Ionicons name="refresh" size={12} color={variant.is_refundable ? '#EA580C' : '#9CA3AF'} />
-                        <Text style={{ fontSize: 13, color: variant.is_refundable ? '#EA580C' : '#6B7280' }}>
-                          {variant.is_refundable ? `Refundable (${variant.refund_days || 0} days)` : 'Non-refundable'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Dimensions */}
-                    {(variant.length || variant.width || variant.height) && (
-                      <View style={{ marginBottom: 12 }}>
-                        <Text style={{ fontSize: 12, fontWeight: "600", color: "#6B7280", marginBottom: 4 }}>Dimensions</Text>
-                        <Text style={{ fontSize: 13, color: "#111827" }}>
-                          {variant.length || '0'} × {variant.width || '0'} × {variant.height || '0'} {variant.dimension_unit || 'cm'}
-                        </Text>
-                      </View>
-                    )}
-
-                    {/* Weight */}
-                    {variant.weight && (
-                      <View style={{ marginBottom: 12 }}>
-                        <Text style={{ fontSize: 12, fontWeight: "600", color: "#6B7280", marginBottom: 4 }}>Weight</Text>
-                        <Text style={{ fontSize: 13, color: "#111827" }}>
-                          {variant.weight} {variant.weight_unit || 'g'}
-                        </Text>
-                      </View>
-                    )}
-
-                    {/* Depreciation Info */}
-                    {variant.original_price && (
-                      <View style={{ backgroundColor: '#FFF7ED', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                        <Text style={{ fontSize: 12, fontWeight: "600", color: "#C2410C", marginBottom: 4 }}>Depreciation</Text>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                          <Text style={{ fontSize: 12, color: "#92400E" }}>Original:</Text>
-                          <Text style={{ fontSize: 12, color: "#111827" }}>₱{parseFloat(variant.original_price).toLocaleString()}</Text>
-                        </View>
-                        {variant.usage_period && variant.usage_unit && (
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}>
-                            <Text style={{ fontSize: 12, color: "#92400E" }}>Usage:</Text>
-                            <Text style={{ fontSize: 12, color: "#111827" }}>{variant.usage_period} {variant.usage_unit}</Text>
-                          </View>
-                        )}
-                        {variant.depreciation_rate && (
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}>
-                            <Text style={{ fontSize: 12, color: "#92400E" }}>Depreciation Rate:</Text>
-                            <Text style={{ fontSize: 12, color: "#111827" }}>{variant.depreciation_rate}% / year</Text>
-                          </View>
-                        )}
-                      </View>
-                    )}
-
-                    {/* Swap Info */}
-                    {variant.allow_swap && (
-                      <View style={{ backgroundColor: '#EFF6FF', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                          <Ionicons name="swap-horizontal" size={14} color="#1E40AF" />
-                          <Text style={{ fontSize: 12, fontWeight: "600", color: "#1E40AF" }}>Swap Available</Text>
-                        </View>
-                        <Text style={{ fontSize: 12, color: "#374151" }}>Type: {variant.swap_type}</Text>
-                        {variant.swap_description && (
-                          <Text style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>{variant.swap_description}</Text>
-                        )}
-                        {(variant.minimum_additional_payment && variant.minimum_additional_payment !== "0.00") || 
-                         (variant.maximum_additional_payment && variant.maximum_additional_payment !== "0.00") ? (
-                          <View style={{ marginTop: 4 }}>
-                            <Text style={{ fontSize: 11, color: "#1E40AF" }}>
-                              Additional Payment: ₱{parseFloat(variant.minimum_additional_payment || '0').toLocaleString()} - ₱{parseFloat(variant.maximum_additional_payment || '0').toLocaleString()}
-                            </Text>
-                          </View>
-                        ) : null}
-                      </View>
-                    )}
-
-                    {/* Critical Stock Alert */}
-                    {variant.critical_stock && (
-                      <View style={{ marginBottom: 12 }}>
-                        <Text style={{ fontSize: 12, fontWeight: "600", color: "#6B7280", marginBottom: 4 }}>Critical Stock Level</Text>
-                        <Text style={{ fontSize: 13, color: "#111827" }}>{variant.critical_stock} units</Text>
-                      </View>
-                    )}
-
-                    {/* Proof Image */}
-                    {variant.proof_image && (
-                      <View>
-                        <Text style={{ fontSize: 12, fontWeight: "600", color: "#6B7280", marginBottom: 4 }}>Proof of Ownership</Text>
-                        <TouchableOpacity onPress={() => {
-                          const proofIndex = proofImages.findIndex(url => url === resolveMediaUrl(variant.proof_image));
-                          openGallery(productImages.length + (variantImages.findIndex(url => url === resolveMediaUrl(variant.image)) + 1) + proofIndex);
-                        }}>
-                          <Image 
-                            source={{ uri: resolveMediaUrl(variant.proof_image) }} 
-                            style={{ width: 80, height: 80, borderRadius: 4 }}
-                          />
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </View>
-                )}
-              </View>
-            ))
-          )}
         </View>
-      </ScrollView>
+      )}
 
-      {/* Image Gallery Modal */}
+      {/* ── Variant Selection Modal ─────────────────────────────────────── */}
+      {product.variants && (
+        <VariantSelectionModal
+          visible={variantModalVisible}
+          variants={product.variants}
+          selectedVariant={selectedVariant}
+          quantity={quantity}
+          onSelectVariant={setSelectedVariant}
+          onQuantityChange={setQuantity}
+          onConfirm={handleVariantConfirm}
+          onClose={() => setVariantModalVisible(false)}
+          productName={product.name}
+          productImage={productImages[0] ?? null}
+        />
+      )}
+
+      {/* ── Unified Image Gallery Modal ─────────────────────────────────── */}
       <ImageGalleryModal
         visible={galleryVisible}
-        images={allImages}
-        initialIndex={selectedImageIndex}
+        images={galleryImages}
+        initialIndex={galleryInitialIndex}
         onClose={() => setGalleryVisible(false)}
       />
     </SafeAreaView>

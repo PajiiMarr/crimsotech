@@ -93,12 +93,6 @@ interface CartApiResponse {
   error?: string;
 }
 
-interface CartCountResponse {
-  success: boolean;
-  count: number;
-  error?: string;
-}
-
 interface CartItemType {
   id: string;
   product_id: string;
@@ -124,7 +118,7 @@ interface CartStore {
 }
 
 // ------------------ CONSTANTS ------------------
-const DELIVERY_FEE = 50.0;
+const DELIVERY_FEE = 0;
 const FALLBACK_IMAGE =
   "https://images.unsplash.com/photo-1557821552-17105176677c?w=400&q=80";
 
@@ -170,7 +164,6 @@ const resolveCartItemImage = (
   return FALLBACK_IMAGE;
 };
 
-// FIXED: Set selected to false by default
 const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
   return apiItems.map((item) => {
     const productDetails = item.product_details;
@@ -198,7 +191,7 @@ const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
       image,
       shop_name: productDetails?.shop_name || "Store",
       shop_id: productDetails?.shop_id || "",
-      selected: false, // Changed from true to false
+      selected: false,
       added_at: item.added_at,
       subtotal,
       variant_title: variantLabel,
@@ -286,6 +279,7 @@ const CouponModal = ({
 // Shop Header Component
 const ShopHeader = ({
   shopName,
+  shopId,
   itemCount,
   shopTotal,
   allSelected,
@@ -294,6 +288,7 @@ const ShopHeader = ({
   onToggleExpand,
 }: {
   shopName: string;
+  shopId: string;
   itemCount: number;
   shopTotal: number;
   allSelected: boolean;
@@ -316,7 +311,11 @@ const ShopHeader = ({
 
       <TouchableOpacity
         style={styles.shopHeaderContent}
-        onPress={onToggleExpand}
+        onPress={() => {
+          if (shopId) {
+            router.push(`/customer/view-shop?shopId=${shopId}`);
+          }
+        }}
         activeOpacity={0.7}
       >
         <View style={styles.shopIconContainer}>
@@ -386,6 +385,13 @@ const CartItemComponent = ({
     onUpdateQuantity(item.id, item.quantity - 1);
   };
 
+  const handleProductPress = () => {
+    if (item.product_id) {
+      // ✅ Redirect to customer view product page
+      router.push(`/customer/view-product?id=${item.product_id}`);
+    }
+  };
+
   return (
     <View style={styles.cartItem}>
       <TouchableOpacity
@@ -406,17 +412,21 @@ const CartItemComponent = ({
         </View>
       </TouchableOpacity>
 
-      <Image
-        source={{ uri: imageError ? FALLBACK_IMAGE : item.image }}
-        style={styles.itemImage}
-        onError={() => setImageError(true)}
-      />
+      <TouchableOpacity onPress={handleProductPress} activeOpacity={0.7}>
+        <Image
+          source={{ uri: imageError ? FALLBACK_IMAGE : item.image }}
+          style={styles.itemImage}
+          onError={() => setImageError(true)}
+        />
+      </TouchableOpacity>
 
       <View style={styles.itemContent}>
         <View style={styles.itemHeader}>
-          <Text style={styles.itemName} numberOfLines={2}>
-            {item.name}
-          </Text>
+          <TouchableOpacity onPress={handleProductPress} style={{ flex: 1 }}>
+            <Text style={styles.itemName} numberOfLines={2}>
+              {item.name}
+            </Text>
+          </TouchableOpacity>
           <Text style={styles.itemPrice}>
             ₱{(item.price * item.quantity).toFixed(2)}
           </Text>
@@ -506,6 +516,7 @@ const ShopSection = ({
     <View style={styles.shopSection}>
       <ShopHeader
         shopName={shop.shop_name}
+        shopId={shop.shop_id}
         itemCount={shop.items.length}
         shopTotal={shopTotal}
         allSelected={allSelected}
@@ -551,11 +562,10 @@ const ShopSection = ({
   );
 };
 
-// Order Summary Component with Voucher Support
+// Order Summary Component
 const OrderSummary = ({
   subtotal,
   discount,
-  delivery,
   itemCount,
   appliedVoucher,
   availableVouchers = [],
@@ -566,7 +576,6 @@ const OrderSummary = ({
 }: {
   subtotal: number;
   discount: number;
-  delivery: number;
   itemCount: number;
   appliedVoucher: CartTotals['applied_voucher'];
   availableVouchers: Voucher[];
@@ -576,22 +585,16 @@ const OrderSummary = ({
   isApplyingVoucher: boolean;
 }) => {
   const [showVouchers, setShowVouchers] = useState(false);
-  const total = subtotal - discount + delivery;
+  const total = subtotal - discount;
 
   return (
     <View style={styles.orderSummary}>
-      {/* Details Section */}
       <View style={styles.detailsContainer}>
         <View style={styles.summaryRowCompact}>
           <Text style={styles.summaryLabelCompact}>
             Subtotal ({itemCount} items)
           </Text>
           <Text style={styles.summaryValueCompact}>₱{subtotal.toFixed(2)}</Text>
-        </View>
-
-        <View style={styles.summaryRowCompact}>
-          <Text style={styles.summaryLabelCompact}>Delivery Fee</Text>
-          <Text style={styles.summaryValueCompact}>₱{delivery.toFixed(2)}</Text>
         </View>
 
         {discount > 0 && (
@@ -623,7 +626,6 @@ const OrderSummary = ({
         )}
       </View>
 
-      {/* Available Vouchers Section */}
       {availableVouchers.length > 0 && !appliedVoucher && (
         <View style={styles.availableVouchersSection}>
           <TouchableOpacity
@@ -684,7 +686,6 @@ const OrderSummary = ({
 
       <View style={styles.summaryDivider} />
 
-      {/* Bottom Action Section - Edge to Edge */}
       <View style={styles.bottomActions}>
         <View style={styles.totalSection}>
           <Text style={styles.totalLabel}>Total</Text>
@@ -761,25 +762,21 @@ export default function CartPage() {
       });
 
       if (response.data.success) {
-        if (response.data.cart_items) {
+        if (response.data.cart_items && response.data.cart_items.length > 0) {
           const transformedItems = transformApiData(response.data.cart_items);
           
-          // Update cart totals
           if (response.data.totals) {
             setCartTotals(response.data.totals);
           }
 
-          // Update available vouchers
           if (response.data.available_vouchers) {
             setAvailableVouchers(response.data.available_vouchers);
           }
 
-          // Show voucher error if any
           if (response.data.voucher_error) {
             Alert.alert("Voucher Error", response.data.voucher_error);
           }
 
-          // Group items by shop
           const groupedItems = transformedItems.reduce<Record<string, CartStore>>(
             (acc, item) => {
               if (!acc[item.shop_id]) {
@@ -787,7 +784,7 @@ export default function CartPage() {
                   shop_id: item.shop_id,
                   shop_name: item.shop_name,
                   items: [],
-                  selected: false, // Changed from true to false
+                  selected: false,
                 };
               }
               acc[item.shop_id].items.push(item);
@@ -811,20 +808,9 @@ export default function CartPage() {
       }
     } catch (error: any) {
       console.error("Error fetching cart:", error);
-
-      let errorMessage = "Failed to load cart items";
-      if (error.response?.status === 404) {
-        errorMessage = "Cart is empty";
-      } else if (error.response?.status === 401) {
-        errorMessage = "Please login to view your cart";
-      } else if (!error.response) {
-        errorMessage = "Network error. Please check your connection.";
-      } else if (error.response?.data?.error) {
-        errorMessage = error.response.data.error;
-      }
-
+      
       if (error.response?.status !== 404) {
-        Alert.alert("Error", errorMessage);
+        Alert.alert("Error", "Failed to load cart items");
       }
       
       setCartStores([]);
@@ -871,28 +857,13 @@ export default function CartPage() {
           })),
         );
 
-        // Update totals from response
         if (response.data.totals) {
           setCartTotals(response.data.totals);
         }
-      } else {
-        Alert.alert(
-          "Error",
-          response.data.error || "Failed to update quantity",
-        );
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error updating quantity:", error);
-
-      let errorMessage = "Failed to update quantity";
-      if (error.response?.data?.error) {
-        errorMessage = error.response.data.error;
-        if (error.response.data.available_quantity) {
-          errorMessage += `. Only ${error.response.data.available_quantity} available.`;
-        }
-      }
-
-      Alert.alert("Error", errorMessage);
+      Alert.alert("Error", "Failed to update quantity");
       fetchCartData();
     } finally {
       setUpdatingId(null);
@@ -920,16 +891,13 @@ export default function CartPage() {
           return newStores;
         });
 
-        // Update totals from response
         if (response.data.totals) {
           setCartTotals(response.data.totals);
         }
-      } else {
-        Alert.alert("Error", response.data.error || "Failed to remove item");
       }
     } catch (error) {
       console.error("Error removing item:", error);
-      Alert.alert("Error", "Failed to remove item. Please try again.");
+      Alert.alert("Error", "Failed to remove item");
     } finally {
       setUpdatingId(null);
     }
@@ -964,7 +932,6 @@ export default function CartPage() {
         ),
       }));
       
-      // Recalculate totals after selection change
       updateTotalsFromStores(newStores);
       return newStores;
     });
@@ -984,7 +951,6 @@ export default function CartPage() {
           : store,
       );
       
-      // Recalculate totals after selection change
       updateTotalsFromStores(newStores);
       return newStores;
     });
@@ -997,13 +963,11 @@ export default function CartPage() {
         items: store.items.map((item) => ({ ...item, selected: checked })),
       }));
       
-      // Recalculate totals after selection change
       updateTotalsFromStores(newStores);
       return newStores;
     });
   };
 
-  // Helper function to update totals based on selected items
   const updateTotalsFromStores = (stores: CartStore[]) => {
     const allItems = stores.flatMap(store => store.items);
     const selected = allItems.filter(item => item.selected);
@@ -1013,7 +977,6 @@ export default function CartPage() {
       0,
     );
     
-    // Recalculate discount based on applied voucher if any
     let discount = 0;
     if (cartTotals.applied_voucher) {
       if (cartTotals.applied_voucher.discount_type === 'percentage') {
@@ -1051,7 +1014,7 @@ export default function CartPage() {
   };
 
   const handleRemoveVoucher = () => {
-    fetchCartData(); // Fetch without voucher code to remove it
+    fetchCartData();
   };
 
   const allItems = cartStores.flatMap((store) => store.items);
@@ -1108,7 +1071,6 @@ export default function CartPage() {
   return (
     <CustomerLayout disableScroll={true}>
       <View style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
-        {/* Cart Header */}
         <View style={styles.cartHeader}>
           <View>
             <Text style={styles.shopName}>Shopping Cart</Text>
@@ -1151,7 +1113,6 @@ export default function CartPage() {
           }
           contentContainerStyle={styles.scrollViewContent}
         >
-          {/* Shop Sections */}
           {cartStores.map((store) => (
             <ShopSection
               key={store.shop_id}
@@ -1164,15 +1125,12 @@ export default function CartPage() {
             />
           ))}
           
-          {/* Extra padding at bottom for the fixed summary */}
           <View style={{ height: 180 }} />
         </ScrollView>
 
-        {/* Order Summary - Fixed at bottom */}
         <OrderSummary
           subtotal={cartTotals.subtotal}
           discount={cartTotals.discount}
-          delivery={DELIVERY_FEE}
           itemCount={selectedItems.length}
           appliedVoucher={cartTotals.applied_voucher}
           availableVouchers={availableVouchers}
@@ -1183,7 +1141,6 @@ export default function CartPage() {
         />
       </View>
 
-      {/* Coupon Modal */}
       <CouponModal
         visible={couponModalVisible}
         onClose={() => setCouponModalVisible(false)}
