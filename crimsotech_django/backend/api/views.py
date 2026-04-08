@@ -8565,11 +8565,34 @@ class AdminRefunds(viewsets.ViewSet):
                 return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
 
             try:
-                refund = Refund.objects.get(refund_id=pk)
+                refund = Refund.objects.select_related('payment_detail', 'requested_by', 'processed_by').get(refund_id=pk)
             except Refund.DoesNotExist:
                 return Response({'error': 'Refund not found'}, status=status.HTTP_404_NOT_FOUND)
 
             logger.info(f"Admin process refund - Refund {pk} - Current status: {refund.status}, payment_status: {refund.refund_payment_status}")
+            
+            # DEBUG: Check payment_detail
+            logger.info(f"=== DEBUG: refund.payment_detail_id = {refund.payment_detail_id}")
+            if refund.payment_detail:
+                logger.info(f"=== DEBUG: payment_method = {refund.payment_detail.payment_method}")
+                logger.info(f"=== DEBUG: account_name = {refund.payment_detail.account_name}")
+            else:
+                logger.info(f"=== DEBUG: No payment_detail on refund object")
+                # Try to assign default payment method
+                if refund.requested_by:
+                    default_payment = UserPaymentDetail.objects.filter(
+                        user=refund.requested_by,
+                        is_default=True
+                    ).first()
+                    if default_payment:
+                        refund.payment_detail = default_payment
+                        refund.save(update_fields=['payment_detail'])
+                        logger.info(f"Assigned default payment method {default_payment.payment_id} to refund {pk}")
+    
+
+            refund = Refund.objects.select_related(
+                'payment_detail', 'requested_by', 'processed_by'
+            ).get(refund_id=pk)
 
             # Handle uploaded proof files if any
             files = request.FILES.getlist('file_data') or []
@@ -8628,17 +8651,50 @@ class AdminRefunds(viewsets.ViewSet):
                 refund.customer_note = f"{refund.customer_note or ''}\n{notes}"
                 refund.save(update_fields=['customer_note'])
 
-            return Response({
+            # Refresh the refund
+            refund = Refund.objects.select_related(
+                'payment_detail', 'requested_by', 'processed_by'
+            ).get(refund_id=pk)
+            # Build payment details response
+            payment_details = None
+            if refund.payment_detail:
+                payment_details = {
+                    "id": str(refund.payment_detail.payment_id),
+                    "payment_method": refund.payment_detail.payment_method,
+                    "bank_name": refund.payment_detail.bank_name,
+                    "account_name": refund.payment_detail.account_name,
+                    "account_number": refund.payment_detail.account_number,
+                    "masked_account_number": self._mask_account_number(refund.payment_detail.account_number),
+                    "is_default": refund.payment_detail.is_default,
+                }
+
+            # Build response data
+            response_data = {
                 'success': True,
                 'message': 'Refund payment updated',
                 'refund_payment_status': refund.refund_payment_status,
-                'refund_status': refund.status,  # include main status for debugging
-            }, status=status.HTTP_200_OK)
+                'refund_status': refund.status,
+                'refund_id': str(refund.refund_id),
+                'approved_refund_amount': float(refund.approved_refund_amount) if refund.approved_refund_amount else None,
+                'total_refund_amount': float(refund.total_refund_amount) if refund.total_refund_amount else None,
+                'final_refund_method': refund.final_refund_method,
+                'buyer_preferred_refund_method': refund.buyer_preferred_refund_method,
+                'refund_fee': float(refund.refund_fee) if refund.refund_fee else None,
+                'payment_details': payment_details,
+            }
+
+            # Print debug info
+            import json
+            logger.info("=" * 50)
+            logger.info("FINAL RESPONSE DATA:")
+            logger.info(json.dumps(response_data, indent=2, default=str))
+            logger.info("=" * 50)
+
+            return Response(response_data, status=status.HTTP_200_OK)
 
         except Exception as e:
             logger.exception(f"Unexpected error in admin_process_refund for refund {pk}: {e}")
-            return Response({'error': 'Internal server error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     @action(detail=True, methods=['get'], url_path='full-details')
     def get_full_refund_details(self, request, pk=None):
         """
@@ -33553,6 +33609,183 @@ class DisputeViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+    @action(detail=False, methods=['post'])
+    def approve_refund(self, request):
+        """
+        Admin approves dispute and processes refund.
+        Stores decision in dispute fields: adjusted_amount, liability, outcome, case_category
+        Also updates the associated refund with approved amount and status.
+        """
+        try:
+            # Get admin user from header
+            user_id = request.headers.get('X-User-Id')
+            if not user_id:
+                return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            try:
+                admin_user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Validate required fields
+            refund_id = request.data.get('refund_id')
+            dispute_id = request.data.get('dispute_id')
+            decision = request.data.get('decision')  # 'approve', 'reject', 'partial'
+            refund_type = request.data.get('refund_type')  # 'full', 'partial'
+            adjusted_amount = request.data.get('adjusted_amount')
+            liability_distribution = request.data.get('liability_distribution', {})
+            outcome = request.data.get('outcome')
+            case_category = request.data.get('case_category')
+            admin_notes = request.data.get('admin_notes', '')
+            
+            if not refund_id:
+                return Response({"error": "refund_id required"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=refund_id)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get or create dispute
+            dispute = None
+            if dispute_id:
+                try:
+                    dispute = DisputeRequest.objects.get(id=dispute_id)
+                except DisputeRequest.DoesNotExist:
+                    pass
+            
+            if not dispute:
+                # Try to find dispute by refund_id
+                try:
+                    dispute = DisputeRequest.objects.get(refund_id=refund)
+                except DisputeRequest.DoesNotExist:
+                    return Response({"error": "No dispute found for this refund"}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Update dispute with admin decision
+            with transaction.atomic():
+                # Store the adjusted amount (full or partial refund amount)
+                if adjusted_amount is not None:
+                    dispute.adjusted_amount = Decimal(str(adjusted_amount))
+                
+                # Store liability distribution as JSON
+                if liability_distribution:
+                    dispute.liability = liability_distribution
+                
+                # Store outcome if provided
+                if outcome:
+                    dispute.outcome = outcome
+                
+                # Store case category if provided
+                if case_category:
+                    dispute.case_category = case_category
+                
+                # Store admin notes
+                if admin_notes:
+                    dispute.admin_notes = admin_notes
+                
+                # Set processed_by and resolved_at
+                dispute.processed_by = admin_user
+                dispute.resolved_at = timezone.now()
+                
+                # Set status based on decision
+                if decision == 'approve':
+                    dispute.status = 'approved'
+                elif decision == 'reject':
+                    dispute.status = 'rejected'
+                elif decision == 'partial':
+                    dispute.status = 'partial'
+                else:
+                    dispute.status = 'approved'
+                
+                dispute.save()
+                
+                # Update refund based on decision
+                if decision == 'approve':
+                    # Update refund with approved amount
+                    if adjusted_amount is not None:
+                        refund.approved_refund_amount = Decimal(str(adjusted_amount))
+                    
+                    # Set refund status to approved
+                    refund.status = 'approved'
+                    refund.processed_by = admin_user
+                    refund.processed_at = timezone.now()
+                    
+                    # If full refund, set total_refund_amount to match
+                    if refund_type == 'full':
+                        refund.total_refund_amount = Decimal(str(adjusted_amount)) if adjusted_amount else refund.total_refund_amount
+                    
+                    refund.save()
+                    
+                    # Also update seller_deduction_amount and rider_deduction_amount if liability distribution provided
+                    if liability_distribution:
+                        seller_pct = liability_distribution.get('seller', 0)
+                        rider_pct = liability_distribution.get('rider', 0)
+                        
+                        if seller_pct > 0 and adjusted_amount:
+                            dispute.seller_deduction_amount = Decimal(str(adjusted_amount)) * Decimal(str(seller_pct)) / Decimal('100')
+                        if rider_pct > 0 and adjusted_amount:
+                            dispute.rider_deduction_amount = Decimal(str(adjusted_amount)) * Decimal(str(rider_pct)) / Decimal('100')
+                        dispute.save(update_fields=['seller_deduction_amount', 'rider_deduction_amount'])
+                    
+                elif decision == 'reject':
+                    # Update refund status to rejected
+                    refund.status = 'rejected'
+                    refund.processed_by = admin_user
+                    refund.processed_at = timezone.now()
+                    refund.save()
+                
+                elif decision == 'partial':
+                    # Partial decision - store adjusted amount but keep refund pending
+                    if adjusted_amount is not None:
+                        refund.approved_refund_amount = Decimal(str(adjusted_amount))
+                    refund.save(update_fields=['approved_refund_amount'])
+                
+                # Create notification for buyer
+                try:
+                    from .models import Notification
+                    
+                    if decision == 'approve':
+                        notification_title = "Dispute Approved - Refund Processing"
+                        notification_message = f"Your dispute has been approved. A {refund_type} refund of ₱{float(adjusted_amount or 0):.2f} will be processed."
+                    elif decision == 'reject':
+                        notification_title = "Dispute Rejected"
+                        notification_message = f"Your dispute has been reviewed and rejected. {admin_notes or 'Please contact support for more information.'}"
+                    else:
+                        notification_title = "Dispute Partially Resolved"
+                        notification_message = f"Your dispute has been partially resolved. {admin_notes or 'Please check your refund status for updates.'}"
+                    
+                    Notification.objects.create(
+                        user=refund.requested_by,
+                        title=notification_title,
+                        message=notification_message,
+                        type='dispute',
+                        related_refund=refund,
+                        action_url=f'/refunds/{refund.refund_id}',
+                        action_type='refund',
+                        action_id=str(refund.refund_id)
+                    )
+                except Exception as e:
+                    print(f"Failed to create notification: {e}")
+                
+                # Return updated data
+                dispute_serializer = DisputeRequestSerializer(dispute, context={'request': request})
+                refund_serializer = RefundSerializer(refund, context={'request': request})
+                
+                return Response({
+                    "message": f"Dispute {decision}ed successfully",
+                    "dispute": dispute_serializer.data,
+                    "refund": refund_serializer.data,
+                    "adjusted_amount": str(dispute.adjusted_amount) if dispute.adjusted_amount else None,
+                    "liability": dispute.liability,
+                    "outcome": dispute.outcome,
+                    "case_category": dispute.case_category
+                }, status=status.HTTP_200_OK)
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class SellerGifts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer

@@ -47,7 +47,7 @@ import { useToast } from '~/hooks/use-toast';
 import AxiosInstance from '~/components/axios/Axios';
 import {
   ArrowLeft, CheckCircle, XCircle, Eye, AlertTriangle, Package,
-  PackageCheck, Truck, Clock, MessageCircle, User, Wallet,
+  EyeOff, PackageCheck, Truck, Clock, MessageCircle, User, Wallet,
   Calendar, RefreshCw, CheckSquare, ShieldAlert, Ban,
   FileText, ShoppingBag, CreditCard, DollarSign, Shield, Camera,
   Scale, Gavel, Search, Loader2, Send, AlertCircle, Info,
@@ -449,7 +449,7 @@ function DisputeDetailsCard({ dispute }: { dispute: any }) {
         )}
         {dispute.case_category && (
           <div>
-            <span className="text-xs text-muted-foreground block">Liability / Case Category</span>
+            <span className="text-xs text-muted-foreground block">Case Category</span>
             <div className="mt-1 flex flex-wrap gap-1">
               {Array.isArray(dispute.case_category) ? (
                 dispute.case_category.map((cat: string, idx: number) => (
@@ -566,6 +566,7 @@ function StatusBanner({ status, refund }: { status: keyof typeof statusConfig, r
 }
 
 // ===== PROCESSING UI =====
+// ===== PROCESSING UI =====
 function ProcessingUI({
   refund,
   onComplete,
@@ -586,8 +587,10 @@ function ProcessingUI({
   const [proofNotes, setProofNotes] = useState('');
   const [uploadingProofs, setUploadingProofs] = useState(false);
   const [adminNotes, setAdminNotes] = useState('');
+  const [showAccountNumber, setShowAccountNumber] = useState(false);
 
-  const getPaymentDetail = () => refund.payment_details;
+  // Get payment detail from refund directly
+  const getPaymentDetail = () => refund.payment_details || refund.payment_detail || refund.paymentDetails || null;
 
   const renderSelectedPaymentDetails = () => {
     const pd = getPaymentDetail();
@@ -606,7 +609,21 @@ function ProcessingUI({
           </div>
           <div>
             <span className="text-muted-foreground text-[10px]">Account Number</span>
-            <p className="font-medium">{pd.masked_account_number || pd.account_number || 'N/A'}</p>
+            <div className="flex items-center gap-2">
+              <p className="font-medium">
+                {showAccountNumber
+                  ? (pd.account_number || 'N/A')
+                  : (pd.masked_account_number || (pd.account_number ? String(pd.account_number).replace(/\d(?=\d{4})/g, '*') : 'N/A'))}
+              </p>
+              <button
+                type="button"
+                aria-label={showAccountNumber ? 'Hide account number' : 'Show account number'}
+                onClick={() => setShowAccountNumber(s => !s)}
+                className="p-1 rounded hover:bg-gray-100" 
+              >
+                {showAccountNumber ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
           {pd.bank_name && (
             <div>
@@ -686,7 +703,7 @@ function ProcessingUI({
 
       if (response.data) {
         toast({ title: 'Success', description: 'Refund marked as failed' });
-        setRefund((prev: any) => ({ ...prev, refund_details: { ...prev.refund_details, refund_payment_status: 'failed' } }));
+        setRefund((prev: any) => ({ ...prev, refund_payment_status: 'failed' }));
         onCancel();
       }
     } catch (err: any) {
@@ -694,7 +711,9 @@ function ProcessingUI({
     } finally { setIsSubmitting(false); }
   };
 
-  const refundMethod = refund.refund_details?.final_refund_method || refund.refund_details?.buyer_preferred_refund_method || 'Not specified';
+  // Get refund method - use direct properties from refund
+  const refundMethod = refund.final_refund_method || refund.buyer_preferred_refund_method || 'Not specified';
+  const approvedAmount = refund.approved_refund_amount || refund.total_refund_amount || 0;
 
   return (
     <div className="space-y-4">
@@ -708,7 +727,7 @@ function ProcessingUI({
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
               <span className="text-xs text-muted-foreground block">Approved Amount</span>
-              <p className="text-lg font-semibold text-green-600">{formatMoney(refund.refund_details?.approved_refund_amount || refund.refund_details?.total_refund_amount)}</p>
+              <p className="text-lg font-semibold text-green-600">{formatMoney(approvedAmount)}</p>
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Refund Method</span>
@@ -717,6 +736,18 @@ function ProcessingUI({
               </div>
             </div>
           </div>
+          {refund.refund_fee !== undefined && refund.refund_fee !== null && (
+            <div className="grid grid-cols-2 gap-3 text-sm pt-2 border-t">
+              <div>
+                <span className="text-xs text-muted-foreground block">Refund Fee</span>
+                <p className="text-md font-medium text-red-500">{formatMoney(refund.refund_fee)}</p>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground block">Net Amount</span>
+                <p className="text-md font-medium text-green-600">{formatMoney(Math.max(0, Number(approvedAmount) - (refund.refund_fee || 0)))}</p>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -793,7 +824,13 @@ function ProcessingUI({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <textarea value={adminNotes} onChange={e => setAdminNotes(e.target.value)} placeholder="Add notes about the refund processing..." className="w-full border rounded-md p-2 text-xs min-h-[60px]" disabled={isSubmitting} />
+          <textarea 
+            value={adminNotes} 
+            onChange={e => setAdminNotes(e.target.value)} 
+            placeholder="Add notes about the refund processing..." 
+            className="w-full border rounded-md p-2 text-xs min-h-[60px]" 
+            disabled={isSubmitting} 
+          />
         </CardContent>
       </Card>
 
@@ -893,7 +930,14 @@ export async function loader({ request, context, params }: any) {
 
     if (detailRes.ok) {
       const details = await detailRes.json();
-      return { user: { id: userId, isAdmin: true }, refund: details };
+      // Normalize payment detail key names to `payment_details` for the UI
+      const normalized = {
+        ...details,
+        payment_details: details.payment_details || details.payment_detail || details.paymentDetails || null,
+      };
+      // also keep singular key for compatibility
+      if (!normalized.payment_detail && normalized.payment_details) normalized.payment_detail = normalized.payment_details;
+      return { user: { id: userId, isAdmin: true }, refund: normalized };
     }
   } catch (err) {
     console.error('Failed to fetch admin details', err);
@@ -928,12 +972,14 @@ export default function AdminViewRefundDetails() {
   const [refundType, setRefundType] = useState<'full' | 'partial' | ''>('');
   const [refundAmount, setRefundAmount] = useState<number>(Number(initialRefund.total_refund_amount ?? 0));
   const [selectedLiabilities, setSelectedLiabilities] = useState<string[]>([]);
-  const [splitType, setSplitType] = useState<'equal' | '70_30' | '30_70' | 'custom'>('equal');
+  const [splitType, setSplitType] = useState<'equal' | '50_50' | '70_30' | '30_70' | 'custom'>('equal');
   const [customSplits, setCustomSplits] = useState<Record<string, number>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authAction, setAuthAction] = useState<'reject' | 'confirm' | null>(null);
   const [modalAuthChecked, setModalAuthChecked] = useState(false);
+  const [outcome, setOutcome] = useState<string>('');
+  const [caseCategory, setCaseCategory] = useState<string>('');
 
   const liabilityOptions = [
     { id: 'merchant_fulfillment_issue', label: 'Merchant Fulfillment Issue (Seller)' },
@@ -969,7 +1015,7 @@ export default function AdminViewRefundDetails() {
       setProcessing(false);
       return;
     }
-
+  
     setProcessing(true);
     try {
       const response = await AxiosInstance.post(
@@ -977,38 +1023,37 @@ export default function AdminViewRefundDetails() {
         { set_status: 'processing' },
         { headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' } }
       );
+      
+      console.log('=== FULL RESPONSE ===');
+      console.log('Response status:', response.status);
+      console.log('Response data:', JSON.stringify(response.data, null, 2));
+      console.log('payment_details type:', typeof response.data.payment_details);
+      console.log('payment_details value:', response.data.payment_details);
+      
       if (response.data.success) {
         toast({ title: 'Success', description: 'Refund payment status set to processing.' });
-        setRefund(prev => ({ ...prev, refund_payment_status: 'processing', refund_details: { ...prev.refund_details, refund_payment_status: 'processing' } }));
-        try {
-          const refreshRes = await AxiosInstance.get(
-            `/admin-refunds/${encodeURIComponent(String(id))}/full-details/`,
-            { headers: { 'X-User-Id': String(user?.id || '') } }
-          );
-          if (refreshRes.data) {
-            const fullDetails = refreshRes.data;
-            setRefund(prev => ({
-              ...prev,
-              refund_id: fullDetails.refund_id,
-              ...fullDetails.refund_details,
-              order_details: fullDetails.order_details,
-              product_details: fullDetails.product_details,
-              delivery_details: fullDetails.delivery_details,
-              proof_media: fullDetails.proof_media,
-              refund_media: fullDetails.refund_media,
-              payment_details: fullDetails.payment_details,
-              dispute_details: fullDetails.dispute_details,
-            }));
-          }
-        } catch { }
-      } else {
-        toast({ title: 'Error', description: response.data.error || 'Failed to set refund to processing', variant: 'destructive' });
+        
+        // Log before update
+        console.log('Before setRefund - current refund.payment_details:', refund.payment_details);
+        
+        setRefund((prev: any) => ({ 
+          ...prev, 
+          refund_payment_status: response.data.refund_payment_status,
+          refund_status: response.data.refund_status,
+          approved_refund_amount: response.data.approved_refund_amount,
+          total_refund_amount: response.data.total_refund_amount,
+          final_refund_method: response.data.final_refund_method,
+          buyer_preferred_refund_method: response.data.buyer_preferred_refund_method,
+          refund_fee: response.data.refund_fee,
+          // Normalize payment detail into both keys so UI components can read either
+          ...(response.data.payment_details ? { payment_details: response.data.payment_details, payment_detail: response.data.payment_details } : {}),
+        }));
       }
     } catch (err: any) {
-      toast({ title: 'Error', description: err.response?.data?.error || err.response?.data?.message || 'Failed to set refund to processing', variant: 'destructive' });
+      console.error('Error response:', err.response?.data);
+      toast({ title: 'Error', description: err.response?.data?.error || err.message || 'Failed to set refund to processing', variant: 'destructive' });
     } finally { setProcessing(false); }
   };
-
   const handleCompleteRefund = () => {
     setRefund(prev => ({ ...prev, status: 'completed', refund_payment_status: 'completed', processed_at: new Date().toISOString() }));
     toast({ title: 'Completed', description: 'Refund has been marked as completed.' });
@@ -1020,23 +1065,23 @@ export default function AdminViewRefundDetails() {
   };
 
   const handleConfirmProcessRefund = async () => {
-    if (!selectedLiabilities.length) { 
-      toast({ title: 'Error', description: 'Please select at least one liability category.', variant: 'destructive' }); 
-      return; 
+    if (!selectedLiabilities.length) {
+      toast({ title: 'Error', description: 'Please select liability distribution.', variant: 'destructive' });
+      return;
     }
-    if (!refundType) { 
-      toast({ title: 'Error', description: 'Please select full or partial refund.', variant: 'destructive' }); 
-      return; 
+    if (!refundType) {
+      toast({ title: 'Error', description: 'Please select full or partial refund.', variant: 'destructive' });
+      return;
     }
-    if (refundType === 'partial' && (!refundAmount || refundAmount <= 0)) { 
-      toast({ title: 'Error', description: 'Please enter a valid partial refund amount.', variant: 'destructive' }); 
-      return; 
+    if (refundType === 'partial' && (!refundAmount || refundAmount <= 0)) {
+      toast({ title: 'Error', description: 'Please enter a valid partial refund amount.', variant: 'destructive' });
+      return;
     }
-    if (selectedLiabilities.length > 1 && splitType === 'custom' && getCustomSplitTotal() !== 100) { 
-      toast({ title: 'Error', description: 'Custom split must total 100%.', variant: 'destructive' }); 
-      return; 
+    if (selectedLiabilities.length > 1 && splitType === 'custom' && getCustomSplitTotal() !== 100) {
+      toast({ title: 'Error', description: 'Custom split must total 100%.', variant: 'destructive' });
+      return;
     }
-
+  
     setIsSubmitting(true);
     try {
       const refundId = refund?.refund_id;
@@ -1046,24 +1091,25 @@ export default function AdminViewRefundDetails() {
         return;
       }
       
-      const disputesRes = await AxiosInstance.get('/disputes/', { 
-        params: { refund_id: String(refundId) }, 
-        headers: { 'X-User-Id': String(user?.id || '') } 
+      const disputesRes = await AxiosInstance.get('/disputes/', {
+        params: { refund_id: String(refundId) },
+        headers: { 'X-User-Id': String(user?.id || '') }
       });
       
-      const disputes = Array.isArray(disputesRes?.data) ? disputesRes.data : 
+      const disputes = Array.isArray(disputesRes?.data) ? disputesRes.data :
                        Array.isArray(disputesRes?.data?.data) ? disputesRes.data.data : [];
-      const activeDispute = disputes.find((d: any) => 
-        String(d.refund) === String(refundId) || 
+      const activeDispute = disputes.find((d: any) =>
+        String(d.refund) === String(refundId) ||
         String(d.refund_id) === String(refundId)
       );
-
-      if (!activeDispute?.id) { 
-        toast({ title: 'Error', description: 'No active dispute found for this refund.', variant: 'destructive' }); 
-        setIsSubmitting(false); 
-        return; 
+  
+      if (!activeDispute?.id) {
+        toast({ title: 'Error', description: 'No active dispute found for this refund.', variant: 'destructive' });
+        setIsSubmitting(false);
+        return;
       }
-
+  
+      // Build liability distribution object
       let distribution: Record<string, number> = {};
       if (selectedLiabilities.length === 1) {
         distribution[selectedLiabilities[0]] = 100;
@@ -1079,27 +1125,33 @@ export default function AdminViewRefundDetails() {
       } else if (splitType === 'custom') {
         distribution = customSplits;
       }
-
+  
       const approveData = {
         refund_id: refundId,
         dispute_id: activeDispute.id,
         decision: 'approve',
         refund_type: refundType,
-        refund_amount: refundAmount,
+        adjusted_amount: refundAmount,  // Store in adjusted_amount field
         liability_distribution: distribution,
-        admin_notes: `Approved ${refundType} refund of ₱${refundAmount.toFixed(2)}. Liability: ${JSON.stringify(distribution)}`
+        outcome: outcome,  // Add outcome
+        case_category: caseCategory,  
+        admin_notes: `Approved ${refundType} refund of ₱${refundAmount.toFixed(2)}. Liability: ${JSON.stringify(distribution)}. Outcome: ${outcome || 'Not specified'}`
       };
-
+  
       const response = await AxiosInstance.post('/disputes/approve_refund/', approveData, {
         headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' }
       });
-
+  
       if (response.data) {
         toast({ title: 'Success', description: `Refund ${refundType === 'full' ? 'fully' : 'partially'} approved.` });
-        setRefund(prev => ({ 
-          ...prev, 
+        setRefund(prev => ({
+          ...prev,
           status: 'approved',
-          refund_details: { ...prev.refund_details, status: 'approved', approved_refund_amount: refundAmount }
+          refund_details: {
+            ...prev.refund_details,
+            status: 'approved',
+            approved_refund_amount: refundAmount
+          }
         }));
       }
     } catch (err: any) {
@@ -1753,118 +1805,302 @@ export default function AdminViewRefundDetails() {
 
                     {effectiveSt === 'under_review' && (
                       <>
+                        {/* ===== CASE CATEGORY (Single Selection) ===== */}
+                        {/* ===== CASE CATEGORY (Single Selection) ===== */}
+                          <div className="space-y-2 mb-3">
+                            <p className="text-xs font-medium">Case Category</p>
+                            <div className="space-y-1">
+                              {[
+                                { id: 'merchant_fulfillment_issue', label: 'Merchant Fulfillment Issue (Seller)' },
+                                { id: 'logistics_delivery_issue', label: 'Logistics / Delivery Issue (Delivery Partner)' },
+                                { id: 'customer_related_issue', label: 'Customer-Related Issue (Customer)' },
+                                { id: 'shared_responsibility', label: 'Shared Responsibility' },
+                                { id: 'platform_system_issue', label: 'Platform / System Issue' }
+                              ].map(option => (
+                                <div key={option.id} className="flex items-center space-x-2">
+                                  <input
+                                    type="radio"
+                                    id={`case_${option.id}`}
+                                    name="case_category"
+                                    value={option.id}
+                                    checked={caseCategory === option.id}
+                                    onChange={() => setCaseCategory(option.id)}
+                                    className="h-3 w-3"
+                                  />
+                                  <Label htmlFor={`case_${option.id}`} className="text-xs cursor-pointer">
+                                    {option.label}
+                                  </Label>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                        {/* ===== REFUND DECISION ===== */}
                         <div className="space-y-2 mb-3">
                           <p className="text-xs font-medium">Refund Decision</p>
                           <div className="space-y-1">
                             {(['full', 'partial'] as const).map(type => (
                               <div key={type} className="flex items-center space-x-2">
-                                <input type="radio" id={`${type}_refund`} name="refund_type" value={type} checked={refundType === type}
-                                  onChange={e => { setRefundType(e.target.value as 'full' | 'partial'); if (e.target.value === 'full') setRefundAmount(Number(refund.total_refund_amount) || 0); }}
-                                  className="h-3 w-3" />
-                                <Label htmlFor={`${type}_refund`} className="text-xs cursor-pointer capitalize">{type} Refund</Label>
+                                <input
+                                  type="radio"
+                                  id={`${type}_refund`}
+                                  name="refund_type"
+                                  value={type}
+                                  checked={refundType === type}
+                                  onChange={e => {
+                                    setRefundType(e.target.value as 'full' | 'partial');
+                                    if (e.target.value === 'full') {
+                                      setRefundAmount(Number(refund.total_refund_amount) || 0);
+                                    }
+                                  }}
+                                  className="h-3 w-3"
+                                />
+                                <Label htmlFor={`${type}_refund`} className="text-xs cursor-pointer capitalize">
+                                  {type} Refund
+                                </Label>
                               </div>
                             ))}
                           </div>
                         </div>
 
+                        {/* ===== REFUND AMOUNT ===== */}
                         {refundType && (
                           <div className="space-y-1 mb-3">
-                            <Label htmlFor="refund_amount" className="text-xs">Amount {refundType === 'full' && '(Full)'}</Label>
+                            <Label htmlFor="refund_amount" className="text-xs">
+                              Amount {refundType === 'full' && '(Full)'}
+                            </Label>
                             <div className="relative">
                               <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">₱</span>
-                              <Input id="refund_amount" type="number" step="0.01" min="0" max={refund.total_refund_amount || 0}
-                                value={refundAmount} onChange={e => setRefundAmount(parseFloat(e.target.value) || 0)}
-                                disabled={refundType === 'full'} className="pl-6 text-xs h-7" />
+                              <Input
+                                id="refund_amount"
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                max={refund.total_refund_amount || 0}
+                                value={refundAmount}
+                                onChange={e => setRefundAmount(parseFloat(e.target.value) || 0)}
+                                disabled={refundType === 'full'}
+                                className="pl-6 text-xs h-7"
+                              />
                             </div>
+                            <p className="text-[9px] text-muted-foreground">
+                              This amount will be stored in <strong>adjusted_amount</strong> field
+                            </p>
                           </div>
                         )}
 
-                        <div className="space-y-2 mb-3">
-                          <p className="text-xs font-medium">Liability / Case Category</p>
+{/* ===== LIABILITY SECTION (Split between parties) ===== */}
+<div className="border-t pt-2 mt-1 mb-3">
+  <p className="text-xs font-medium mb-2 flex items-center gap-1">
+    <Scale className="h-3 w-3" /> Liability Distribution
+  </p>
+  <p className="text-[9px] text-muted-foreground mb-2">
+    Assign liability percentage to each responsible party (maximum 2 parties)
+  </p>
+  
+  <div className="space-y-2">
+    {/* Liability Options - Remove Shared option */}
+    <div className="space-y-1">
+      {[
+        { id: 'buyer', label: 'Buyer' },
+        { id: 'seller', label: 'Seller' },
+        { id: 'rider', label: 'Rider' }
+      ].map(option => (
+        <div key={option.id} className="flex items-center space-x-2">
+          <Checkbox
+            id={`liability_${option.id}`}
+            checked={selectedLiabilities.includes(option.id)}
+            onCheckedChange={(checked) => {
+              if (checked) {
+                // Trying to ADD this liability
+                if (selectedLiabilities.length >= 2) {
+                  toast({ 
+                    title: 'Limit reached', 
+                    description: 'You can only select up to 2 parties for liability distribution.', 
+                    variant: 'default' 
+                  });
+                  return;
+                }
+                setSelectedLiabilities(prev => [...prev, option.id]);
+              } else {
+                // Trying to REMOVE this liability
+                setSelectedLiabilities(prev => prev.filter(x => x !== option.id));
+                // Reset split type and custom splits when unselecting
+                setSplitType('50_50');
+                setCustomSplits({});
+              }
+            }}
+            className="h-3 w-3"
+          />
+          <Label htmlFor={`liability_${option.id}`} className="text-xs cursor-pointer">
+            {option.label}
+          </Label>
+        </div>
+      ))}
+    </div>
+
+    {/* Split Options - Only show when exactly 2 liabilities selected */}
+    {selectedLiabilities.length === 2 && (
+      <div className="mt-2 pt-2 border-t">
+        <p className="text-xs font-medium mb-2">Split Type</p>
+        <div className="flex flex-wrap gap-2 mb-2">
+          {['50_50', '70_30', '30_70', 'custom'].map(type => {
+            let displayLabel = type;
+            if (type === '50_50') displayLabel = '50/50';
+            else if (type === '70_30') displayLabel = '70/30';
+            else if (type === '30_70') displayLabel = '30/70';
+            else if (type === 'custom') displayLabel = 'Custom';
+            
+            return (
+              <label key={type} className="flex items-center gap-1 text-xs">
+                <input
+                  type="radio"
+                  name="splitType"
+                  checked={splitType === type}
+                  onChange={() => setSplitType(type as any)}
+                  className="h-3 w-3"
+                />
+                {displayLabel}
+              </label>
+            );
+          })}
+        </div>
+
+        {splitType === 'custom' && (
+          <div className="space-y-1 mt-1">
+            {selectedLiabilities.map(id => {
+              const partyLabel = id === 'buyer' ? 'Buyer' : id === 'seller' ? 'Seller' : 'Rider';
+              return (
+                <div key={id} className="flex items-center gap-2 text-xs">
+                  <span className="w-16">{partyLabel}:</span>
+                  <div className="relative w-16">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={customSplits[id] || 0}
+                      onChange={e => handleCustomSplitChange(id, e.target.value)}
+                      className="text-xs h-6 pr-5"
+                    />
+                    <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] text-muted-foreground">%</span>
+                  </div>
+                </div>
+              );
+            })}
+            {getCustomSplitTotal() !== 100 && (
+              <p className="text-[9px] text-red-500">Total: {getCustomSplitTotal()}% (must be 100%)</p>
+            )}
+          </div>
+        )}
+
+        {splitType !== 'custom' && (
+          <div className="bg-purple-50 rounded p-1.5 text-[10px] mt-1">
+            <p className="font-medium text-purple-700 mb-0.5">Preview:</p>
+            {selectedLiabilities.map((id, idx) => {
+              let pct = 0;
+              if (splitType === '50_50') {
+                pct = 50;
+              } else if (splitType === '70_30') {
+                pct = idx === 0 ? 70 : 30;
+              } else if (splitType === '30_70') {
+                pct = idx === 0 ? 30 : 70;
+              }
+              
+              const partyLabel = id === 'buyer' ? 'Buyer' : id === 'seller' ? 'Seller' : 'Rider';
+              
+              return (
+                <div key={id} className="flex justify-between">
+                  <span>{partyLabel}:</span>
+                  <span>{pct}% (₱{((refundAmount * pct) / 100).toFixed(2)})</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* Single Liability Selected - Show 100% */}
+    {selectedLiabilities.length === 1 && (
+      <div className="bg-green-50 border border-green-200 rounded p-1.5 mt-2">
+        <div className="flex items-center gap-1">
+          <CheckCircle className="h-3 w-3 text-green-600" />
+          <span className="text-[10px] font-medium text-green-700">
+            100% Liability on {selectedLiabilities[0] === 'buyer' ? 'Buyer' : selectedLiabilities[0] === 'seller' ? 'Seller' : 'Rider'}
+          </span>
+        </div>
+      </div>
+    )}
+  </div>
+</div>
+
+                        {/* ===== OUTCOME SELECTION ===== */}
+                        {/* <div className="border-t pt-2 mt-1 mb-3">
+                          <p className="text-xs font-medium mb-2">Outcome</p>
                           <div className="space-y-1">
-                            {liabilityOptions.map(option => (
+                            {[
+                              { id: 'favor_buyer', label: 'Favor Buyer' },
+                              { id: 'favor_seller', label: 'Favor Seller' },
+                              { id: 'favor_rider', label: 'Favor Rider' },
+                              { id: 'partial_resolution', label: 'Partial Resolution' }
+                            ].map(option => (
                               <div key={option.id} className="flex items-center space-x-2">
-                                <Checkbox id={option.id} checked={selectedLiabilities.includes(option.id)} onCheckedChange={() => handleLiabilityChange(option.id)} className="h-3 w-3" />
-                                <Label htmlFor={option.id} className="text-xs cursor-pointer">{option.label}</Label>
+                                <input
+                                  type="radio"
+                                  id={`outcome_${option.id}`}
+                                  name="outcome"
+                                  value={option.id}
+                                  checked={outcome === option.id}
+                                  onChange={e => setOutcome(e.target.value as any)}
+                                  className="h-3 w-3"
+                                />
+                                <Label htmlFor={`outcome_${option.id}`} className="text-xs cursor-pointer">
+                                  {option.label}
+                                </Label>
                               </div>
                             ))}
                           </div>
-                        </div>
+                        </div> */}
 
-                        {selectedLiabilities.length > 1 && (
-                          <div className="border-t pt-2 mt-1 mb-3">
-                            <p className="text-xs font-medium mb-2 flex items-center gap-1"><Scale className="h-3 w-3" />Split Options</p>
-                            <div className="space-y-2">
-                              <div className="flex flex-wrap gap-2">
-                                {['equal', ...(selectedLiabilities.length === 2 ? ['70_30', '30_70'] : []), 'custom'].map(type => (
-                                  <label key={type} className="flex items-center gap-1 text-xs">
-                                    <input type="radio" name="splitType" checked={splitType === type} onChange={() => setSplitType(type as any)} className="h-3 w-3" />
-                                    {type === 'equal' ? 'Equal' : type === '70_30' ? '70/30' : type === '30_70' ? '30/70' : 'Custom'}
-                                  </label>
-                                ))}
-                              </div>
-
-                              {splitType === 'custom' && (
-                                <div className="space-y-1 mt-1">
-                                  {selectedLiabilities.map(id => {
-                                    const opt = liabilityOptions.find(o => o.id === id);
-                                    return (
-                                      <div key={id} className="flex items-center gap-2 text-xs">
-                                        <span className="w-20 truncate">{opt?.label.split('(')[0].trim()}</span>
-                                        <div className="relative w-16">
-                                          <Input type="number" min="0" max="100" step="1" value={customSplits[id] || 0}
-                                            onChange={e => handleCustomSplitChange(id, e.target.value)} className="text-xs h-6 pr-5" />
-                                          <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] text-muted-foreground">%</span>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                  {getCustomSplitTotal() !== 100 && <p className="text-[9px] text-red-500">Total: {getCustomSplitTotal()}% (must be 100%)</p>}
-                                </div>
-                              )}
-
-                              {splitType !== 'custom' && selectedLiabilities.length > 0 && (
-                                <div className="bg-purple-50 rounded p-1.5 text-[10px] mt-1">
-                                  <p className="font-medium text-purple-700 mb-0.5">Preview:</p>
-                                  {selectedLiabilities.map((id, idx) => {
-                                    const opt = liabilityOptions.find(o => o.id === id);
-                                    let pct = splitType === 'equal' ? 100 / selectedLiabilities.length : (splitType.split('_').map(Number))[idx] || 0;
-                                    return (
-                                      <div key={id} className="flex justify-between">
-                                        <span>{opt?.label.split('(')[0].trim()}:</span>
-                                        <span>{pct.toFixed(1)}% (₱{((refundAmount * pct) / 100).toFixed(2)})</span>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {selectedLiabilities.length === 1 && (
-                          <div className="bg-green-50 border border-green-200 rounded p-1.5 mb-3">
-                            <div className="flex items-center gap-1"><CheckCircle className="h-3 w-3 text-green-600" /><span className="text-[10px] font-medium text-green-700">100% Liability</span></div>
-                            <p className="text-[9px] text-green-600">{liabilityOptions.find(o => o.id === selectedLiabilities[0])?.label}</p>
-                          </div>
-                        )}
-
+                        {/* Action Buttons */}
                         <div className="space-y-2 pt-1">
-                          <Button size="sm" variant="destructive" className="w-full text-xs h-7"
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="w-full text-xs h-7"
                             disabled={!selectedLiabilities.length || !refundType}
-                            onClick={() => { setAuthAction('reject'); setModalAuthChecked(false); setShowAuthModal(true); }}>
-                            <XCircle className="w-3 h-3 mr-1" /> Reject
+                            onClick={() => { setAuthAction('reject'); setModalAuthChecked(false); setShowAuthModal(true); }}
+                          >
+                            <XCircle className="w-3 h-3 mr-1" /> Reject Dispute
                           </Button>
-                          <Button size="sm" className="w-full text-xs h-7 bg-purple-600 hover:bg-purple-700"
+                          <Button
+                            size="sm"
+                            className="w-full text-xs h-7 bg-purple-600 hover:bg-purple-700"
                             disabled={!selectedLiabilities.length || !refundType || isSubmitting}
                             onClick={() => {
-                              if (!selectedLiabilities.length) { toast({ title: 'Error', description: 'Select liability', variant: 'destructive' }); return; }
-                              if (!refundType) { toast({ title: 'Error', description: 'Select refund type', variant: 'destructive' }); return; }
-                              if (refundType === 'partial' && (!refundAmount || refundAmount <= 0)) { toast({ title: 'Error', description: 'Enter valid amount', variant: 'destructive' }); return; }
-                              if (selectedLiabilities.length > 1 && splitType === 'custom' && getCustomSplitTotal() !== 100) { toast({ title: 'Error', description: 'Split must total 100%', variant: 'destructive' }); return; }
-                              setAuthAction('confirm'); setModalAuthChecked(false); setShowAuthModal(true);
-                            }}>
-                            {isSubmitting ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Approve Refund'}
+                              if (!selectedLiabilities.length) {
+                                toast({ title: 'Error', description: 'Select liability distribution', variant: 'destructive' });
+                                return;
+                              }
+                              if (!refundType) {
+                                toast({ title: 'Error', description: 'Select refund type', variant: 'destructive' });
+                                return;
+                              }
+                              if (refundType === 'partial' && (!refundAmount || refundAmount <= 0)) {
+                                toast({ title: 'Error', description: 'Enter valid amount', variant: 'destructive' });
+                                return;
+                              }
+                              if (selectedLiabilities.length > 1 && splitType === 'custom' && getCustomSplitTotal() !== 100) {
+                                toast({ title: 'Error', description: 'Custom split must total 100%.', variant: 'destructive' });
+                                return;
+                              }
+                              setAuthAction('confirm');
+                              setModalAuthChecked(false);
+                              setShowAuthModal(true);
+                            }}
+                          >
+                            {isSubmitting ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Approve & Process Refund'}
                           </Button>
                         </div>
                       </>
