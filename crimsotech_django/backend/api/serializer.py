@@ -1075,6 +1075,11 @@ class DisputeRequestSerializer(serializers.ModelSerializer):
     requested_by = UserSerializer(read_only=True)
     processed_by = UserSerializer(read_only=True)
     refund = serializers.SerializerMethodField()
+    
+    # Add serializers for buyer, seller, rider details
+    buyer_details = serializers.SerializerMethodField()
+    seller_details = serializers.SerializerMethodField()
+    rider_details = serializers.SerializerMethodField()
 
     class Meta:
         model = DisputeRequest
@@ -1088,37 +1093,66 @@ class DisputeRequestSerializer(serializers.ModelSerializer):
                 'total_refund_amount': float(obj.refund_id.total_refund_amount) if getattr(obj.refund_id, 'total_refund_amount', None) is not None else None
             }
         return None
+    
+    def get_buyer_details(self, obj):
+        if obj.buyer:
+            return {
+                'id': str(obj.buyer.id),
+                'username': obj.buyer.username,
+                'email': obj.buyer.email,
+            }
+        return None
+    
+    def get_seller_details(self, obj):
+        if obj.seller:
+            return {
+                'id': str(obj.seller.id),
+                'username': obj.seller.username,
+                'email': obj.seller.email,
+            }
+        return None
+    
+    def get_rider_details(self, obj):
+        if obj.rider:
+            return {
+                'id': str(obj.rider.id),
+                'username': obj.rider.username,
+                'email': obj.rider.email,
+            }
+        return None
 
     def to_representation(self, instance):
-        # case_category is stored as JSON (list) in model; ensure response is a list
         rep = super().to_representation(instance)
+        
+        # Ensure case_category is a list (backward compatibility)
         cc = rep.get('case_category')
         if cc is None:
             rep['case_category'] = []
         elif isinstance(cc, str):
-            # backward compatibility: single string stored
             rep['case_category'] = [cc]
+        
+        # Ensure liability is always a list
+        liability = rep.get('liability')
+        if liability is None:
+            rep['liability'] = []
+        
         return rep
 
 
 class DisputeRequestCreateSerializer(serializers.ModelSerializer):
-    # Accept an optional 'description' in the creation payload (write-only). It's not a model field,
-    # so pop it during create to avoid trying to assign it to the model.
-    description = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    # reason should be optional/blank when dispute is filed simply via confirmation
-    reason = serializers.CharField(required=False, allow_blank=True)
-
     # Accept either a single string or a list of category keys
     case_category = serializers.ListField(child=serializers.CharField(), required=False)
+    requested_by_entity = serializers.ChoiceField(
+        choices=['buyer', 'seller', 'rider'],
+        required=False,
+        default='buyer'
+    )
 
     class Meta:
         model = DisputeRequest
-        fields = ['reason', 'description', 'case_category']
+        fields = ['reason', 'case_category', 'requested_by_entity']
 
     def create(self, validated_data):
-        # Remove non-model 'description' before creating the model instance
-        validated_data.pop('description', None)
-
         # Map 'refund' (from serializer.save(refund=...)) to model field 'refund_id'
         refund_obj = validated_data.pop('refund', None)
         if refund_obj is not None:
@@ -1129,13 +1163,18 @@ class DisputeRequestCreateSerializer(serializers.ModelSerializer):
         if isinstance(case_cat, list):
             validated_data['case_category'] = [str(c).strip() for c in case_cat if c is not None]
         elif isinstance(case_cat, str):
-            # single string provided
             validated_data['case_category'] = [case_cat.strip()] if case_cat.strip() else []
+        else:
+            validated_data.pop('case_category', None)  # Remove if not provided
 
+        # Get the user who is filing the dispute
         filed_by = self.context.get('filed_by')
         if not filed_by:
             raise serializers.ValidationError({'filed_by': 'X-User-Id header is required'})
+        
+        # Set requested_by (legacy field)
         validated_data['requested_by'] = filed_by
+        
         return super().create(validated_data)
     
 

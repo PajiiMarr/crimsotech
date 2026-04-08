@@ -32408,6 +32408,7 @@ class RefundViewSet(viewsets.ViewSet):
                 "uploaded_by": str(media.uploaded_by.id),
                 "uploaded_by_username": media.uploaded_by.username if media.uploaded_by else None,
                 "uploaded_by_email": media.uploaded_by.email if media.uploaded_by else None,
+                "uploaded_by_entity": media.uploaded_by_entity, 
                 "uploaded_at": media.uploaded_at.isoformat()
             }
             for media in media_files
@@ -32920,7 +32921,6 @@ class RefundViewSet(viewsets.ViewSet):
     def file_dispute(self, request, pk=None):
         """
         BUYER/SELLER VIEW: File a dispute for this refund. Accepts optional files.
-        Payload: { dispute_reason?: string, description?: string }
         """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
@@ -32936,78 +32936,110 @@ class RefundViewSet(viewsets.ViewSet):
         except Refund.DoesNotExist:
             return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Authorization: buyer or seller associated with this refund can file a dispute
+        # Determine requested_by_entity and get buyer/seller/rider
         is_buyer = str(refund.requested_by.id) == str(user.id)
-        is_seller = False
+        seller_user = None
+        rider_user = None
+        
+        # Get seller from the refund's order items
         try:
-            shop_ids = list(Checkout.objects.filter(
-                order=refund.order_id,
-                cart_item__product__shop__customer__customer=user,
-            ).values_list('cart_item__product__shop_id', flat=True).distinct())
-            is_seller = len(shop_ids) > 0
-        except Exception:
-            pass
+            first_checkout = Checkout.objects.filter(
+                order=refund.order_id
+            ).select_related('cart_item__product__shop__customer__customer').first()
+            
+            if first_checkout and first_checkout.cart_item and first_checkout.cart_item.product and first_checkout.cart_item.product.shop:
+                shop = first_checkout.cart_item.product.shop
+                if shop.customer and shop.customer.customer:
+                    seller_user = shop.customer.customer  # This is already a User instance
+        except Exception as e:
+            print(f"Error getting seller: {e}")
+        
+        # Get rider from the order's delivery - FIX HERE: get the User, not Rider model
+        try:
+            from .models import Delivery
+            delivery = Delivery.objects.filter(order=refund.order_id, status='delivered').select_related('rider__rider').first()
+            if delivery and delivery.rider:
+                # delivery.rider is a Rider model instance, we need the underlying User
+                rider_user = delivery.rider.rider  # This gets the User instance from the Rider model
+        except Exception as e:
+            print(f"Error getting rider: {e}")
 
+        # Authorization check
+        is_seller = seller_user and str(seller_user.id) == str(user.id)
         if not (is_buyer or is_seller or user.is_admin):
             return Response({"error": "Not authorized to file dispute"}, status=status.HTTP_403_FORBIDDEN)
 
-        # Prevent duplicate disputes for the same refund (use model's FK name 'refund_id')
+        # Prevent duplicate disputes
         existing = DisputeRequest.objects.filter(refund_id=refund).first()
         if existing:
             return Response({"error": "A dispute has already been filed for this refund", "dispute_id": str(existing.id)}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Get the reason from request
         reason = request.data.get('dispute_reason') or request.data.get('reason') or ''
-        description = request.data.get('description') or ''
-
-        # Use create serializer to validate (pass only reason/description; attach refund object on save)
-        serializer = DisputeRequestCreateSerializer(data={'reason': reason, 'description': description}, context={'filed_by': user})
-        serializer.is_valid(raise_exception=True)
+        if not reason:
+            return Response({"error": "Dispute reason is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Determine requested_by_entity
+        requested_by_entity = 'buyer'
+        if is_seller:
+            requested_by_entity = 'seller'
+        elif rider_user and str(rider_user.id) == str(user.id):
+            requested_by_entity = 'rider'
 
         try:
             with transaction.atomic():
-                dispute = serializer.save(refund=refund)
+                # Create dispute with all party references
+                dispute = DisputeRequest.objects.create(
+                    refund_id=refund,
+                    requested_by_entity=requested_by_entity,
+                    reason=reason,
+                    status='filed',
+                    buyer=refund.requested_by,  # This is already a User instance
+                    seller=seller_user,          # This is a User instance
+                    rider=rider_user,            # This is now a User instance (fixed!)
+                )
+                
+                # If case_category was provided, set it
+                case_category = request.data.get('case_category')
+                if case_category:
+                    dispute.case_category = case_category
+                    dispute.save(update_fields=['case_category'])
 
-                # Attach any uploaded files as evidence
+                # Attach uploaded files as evidence
                 files = request.FILES.getlist('file') or request.FILES.getlist('files') or []
                 for f in files:
-                    ev = DisputeEvidence()
-                    # Link FK - model uses 'dispute_id' as the ForeignKey field name
                     try:
-                        setattr(ev, 'dispute_id', dispute)
-                    except Exception:
-                        try:
-                            setattr(ev, 'dispute', dispute)
-                        except Exception:
-                            pass
-                    ev.uploaded_by = user
-                    # Support both 'file' and 'file_data' field names in different schemas
-                    if hasattr(ev, 'file'):
-                        setattr(ev, 'file', f)
-                    elif hasattr(ev, 'file_data'):
-                        setattr(ev, 'file_data', f)
-                    else:
-                        # fallback: try to set 'file' attribute
-                        setattr(ev, 'file', f)
-                    ev.save()
+                        ev = DisputeEvidence()
+                        ev.dispute_id = dispute
+                        ev.uploaded_by = user
+                        if hasattr(ev, 'file'):
+                            ev.file = f
+                        elif hasattr(ev, 'file_data'):
+                            ev.file_data = f
+                        else:
+                            ev.file = f
+                        ev.save()
+                    except Exception as e:
+                        print(f"Failed to save dispute evidence: {e}")
 
-                # Move refund into dispute status
+                # Update refund status
                 refund.status = 'dispute'
-                # Only set optional dispute metadata if those fields exist on the model
-                update_fields = ['status']
-                if hasattr(refund, 'dispute_filed_by'):
-                    refund.dispute_filed_by = user
-                    update_fields.append('dispute_filed_by')
                 if hasattr(refund, 'dispute_reason'):
-                    refund.dispute_reason = description or reason
-                    update_fields.append('dispute_reason')
-                if hasattr(refund, 'dispute_filed_at'):
-                    if not getattr(refund, 'dispute_filed_at', None):
-                        refund.dispute_filed_at = timezone.now()
-                    update_fields.append('dispute_filed_at')
-                # Save only the fields we actually set
-                refund.save(update_fields=update_fields)
+                    refund.dispute_reason = reason
+                    refund.dispute_filed_by = user
+                    refund.dispute_filed_at = timezone.now()
+                    refund.save(update_fields=['status', 'dispute_reason', 'dispute_filed_by', 'dispute_filed_at'])
+                else:
+                    refund.save(update_fields=['status'])
 
-            return Response(DisputeRequestSerializer(dispute, context={'request': request}).data, status=status.HTTP_201_CREATED)
+                # Serialize and return
+                result_serializer = DisputeRequestSerializer(dispute, context={'request': request})
+                return Response({
+                    "message": "Dispute filed successfully",
+                    "dispute": result_serializer.data,
+                    "dispute_id": str(dispute.id)
+                }, status=status.HTTP_201_CREATED)
+                
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 

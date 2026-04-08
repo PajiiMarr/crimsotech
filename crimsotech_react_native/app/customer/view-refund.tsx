@@ -142,8 +142,7 @@ const NegotiationStatus = ({ refund, formatCurrency }: { refund: any; formatCurr
   );
 };
 
-// ========== 3. REJECTED STATUS ==========
-// ========== 3. REJECTED STATUS ==========
+
 // ========== 3. REJECTED STATUS ==========
 const RejectedStatus = ({ refund, formatCurrency, onDispute }: { refund: any; formatCurrency: (amount: string | number) => string; onDispute?: () => void }) => {
   const latestCounter = refund?.counter_requests?.[0];
@@ -1533,9 +1532,10 @@ const renderActionButtons = () => {
         })()}
 
         {/* Items with refund quantities */}
+        {/* Items with refund quantities */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Items to Refund</Text>
-          {refundItemsWithDetails.map((item, idx) => {
+          {refundItemsWithDetails.map((item: any, idx: number) => {
             const variantName = item.product_variant || item.variant_title;
             return (
               <View key={item.checkout_id || idx} style={styles.productItem}>
@@ -1593,35 +1593,83 @@ const renderActionButtons = () => {
 )}
 
         {/* Evidence */}
+        {/* Evidence - Separated by Buyer and Seller */}
+        {/* Evidence - Separated by Buyer and Seller */}
         {medias.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Evidence</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.evidenceScroll}>
-              {medias.map((media, idx) => (
-                <TouchableOpacity
-                  key={media.id || idx}
-                  onPress={() => isVideoMedia(media) ? openVideoViewer(media.file_url) : openProofViewer(idx)}
-                  style={styles.evidenceThumb}
-                >
-                  {isVideoMedia(media) ? (
-                    <>
-                      <View style={styles.videoThumbContainer}>
-                        <Image source={{ uri: media.file_url }} style={styles.evidenceImage} />
-                        <View style={styles.playOverlay}>
-                          <Play size={30} color="#FFF" />
-                        </View>
-                      </View>
-                      <Text style={styles.evidenceDate}>Video</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Image source={{ uri: media.file_url }} style={styles.evidenceImage} />
-                      <Text style={styles.evidenceDate}>{formatDate(media.uploaded_at)}</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            
+            {/* Buyer Evidence */}
+            {medias.filter((m: any) => m.uploaded_by_entity === 'buyer').length > 0 && (
+              <>
+                <View style={styles.evidencePartyHeader}>
+                  <ShoppingBag size={16} color="#3B82F6" />
+                  <Text style={[styles.evidencePartyTitle, { color: '#3B82F6' }]}>Your Evidence (Buyer)</Text>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.evidenceScroll}>
+                  {medias.filter((m: any) => m.uploaded_by_entity === 'buyer').map((media: any, idx: number) => (
+                    <TouchableOpacity
+                      key={media.id || idx}
+                      onPress={() => isVideoMedia(media) ? openVideoViewer(media.file_url) : openProofViewer(idx)}
+                      style={styles.evidenceThumb}
+                    >
+                      {isVideoMedia(media) ? (
+                        <>
+                          <View style={styles.videoThumbContainer}>
+                            <Image source={{ uri: media.file_url }} style={styles.evidenceImage} />
+                            <View style={styles.playOverlay}>
+                              <Play size={30} color="#FFF" />
+                            </View>
+                          </View>
+                          <Text style={styles.evidenceDate}>Video</Text>
+                        </>
+                      ) : (
+                        <>
+                          <Image source={{ uri: media.file_url }} style={styles.evidenceImage} />
+                          <Text style={styles.evidenceDate}>{formatDate(media.uploaded_at)}</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            )}
+            
+            {/* Seller Evidence */}
+            {medias.filter((m: any) => m.uploaded_by_entity === 'seller').length > 0 && (
+              <>
+                <View style={[styles.evidencePartyHeader, { marginTop: medias.filter((m: any) => m.uploaded_by_entity === 'buyer').length > 0 ? 16 : 0 }]}>
+                  <Store size={16} color="#EF4444" />
+                  <Text style={[styles.evidencePartyTitle, { color: '#EF4444' }]}>Seller Evidence</Text>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.evidenceScroll}>
+                  {medias.filter((m: any) => m.uploaded_by_entity === 'seller').map((media: any, idx: number) => (
+                    <TouchableOpacity
+                      key={media.id || idx}
+                      onPress={() => isVideoMedia(media) ? openVideoViewer(media.file_url) : openProofViewer(idx)}
+                      style={styles.evidenceThumb}
+                    >
+                      {isVideoMedia(media) ? (
+                        <>
+                          <View style={styles.videoThumbContainer}>
+                            <Image source={{ uri: media.file_url }} style={styles.evidenceImage} />
+                            <View style={styles.playOverlay}>
+                              <Play size={30} color="#FFF" />
+                            </View>
+                          </View>
+                          <Text style={styles.evidenceDate}>Video</Text>
+                        </>
+                      ) : (
+                        <>
+                          <Image source={{ uri: media.file_url }} style={styles.evidenceImage} />
+                          <Text style={styles.evidenceDate}>{formatDate(media.uploaded_at)}</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            )}
           </View>
         )}
 
@@ -1959,5 +2007,15 @@ const styles = StyleSheet.create({
   returnDeadlineDate: {
     fontWeight: '700',
     color: '#F59E0B',
+  },
+  evidencePartyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  evidencePartyTitle: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
