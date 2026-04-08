@@ -1736,6 +1736,7 @@ class DisputeRequest(models.Model):
     REQUESTED_BY_CHOICES = [
         ('buyer', 'Buyer'),
         ('seller', 'Seller'),
+        ('rider', 'Rider'),
     ]
 
     STATUS_CHOICES = [
@@ -1754,27 +1755,50 @@ class DisputeRequest(models.Model):
         ('platform_system_issue', 'Platform System Issue'),
     ]
 
+    OUTCOME_CHOICES = [ 
+        ('favor_buyer', 'Favor Buyer'), 
+        ('favor_seller', 'Favor Seller'), 
+        ('favor_rider', 'Favor Rider'), 
+        ('partial_resolution', 'Partial Resolution'), 
+    ] 
+    
+    LIABILITY_CHOICES = [ 
+        ('buyer', 'Buyer'), 
+        ('seller', 'Seller'), 
+        ('rider', 'Rider'), 
+        ('shared', 'Shared'), 
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     refund_id = models.OneToOneField(Refund, on_delete=models.CASCADE, related_name='dispute', null=True, blank=True)
-    requested_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    # requested_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    requested_by_entity = models.CharField(max_length=10, default='buyer')
     reason = models.TextField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='filed')
     processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_disputes')
+    outcome = models.CharField(max_length=30, choices=OUTCOME_CHOICES, null=True, blank=True) 
+    adjusted_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    liability = models.JSONField(null=True, blank=True, default=list)
+    seller_deduction_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0) 
+    rider_deduction_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    buyer = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='buyer_disputes')
+    seller = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='seller_disputes')
+    rider = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='rider_disputes')
     resolved_at = models.DateTimeField(null=True, blank=True)
     admin_notes = models.TextField(blank=True, null=True)
-    case_category = models.JSONField(blank=True, null=True)
+    case_category = models.CharField(max_length=50, choices=CASE_TYPES, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         indexes = [
             models.Index(fields=['refund_id', 'status']),
-            models.Index(fields=['requested_by', 'created_at']),
+            models.Index(fields=['requested_by_entity', 'created_at']),
         ]
 
     def __str__(self):
         return f"Dispute for Refund {self.refund_id.refund_id}"
-
+    
 class DisputeEvidence(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     file_type = models.CharField(max_length=50, null=True, blank=True)
