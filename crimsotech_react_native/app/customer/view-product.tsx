@@ -990,7 +990,51 @@ export default function CustomerViewProductScreen() {
       Alert.alert("Sign In Required", "Please sign in to add to favorites");
       return;
     }
-    Alert.alert("Coming Soon", "Favorite functionality will be implemented");
+    
+    try {
+      if (product?.is_favorite) {
+        // Remove from favorites - DELETE request
+        const response = await AxiosInstance.delete(`/customer-favorites/${productId}/`, {
+          headers: { 
+            'X-User-Id': userId
+          }
+        });
+        
+        if (response.data.success) {
+          setProduct(prev => prev ? { ...prev, is_favorite: false } : null);
+          showToast("Removed from favorites", "success");
+        }
+      } else {
+        // Add to favorites - POST request
+        const response = await AxiosInstance.post(
+          '/customer-favorites/',
+          { 
+            product: productId
+          },
+          { 
+            headers: { 
+              'X-User-Id': userId
+            } 
+          }
+        );
+        
+        if (response.data.success) {
+          setProduct(prev => prev ? { ...prev, is_favorite: true } : null);
+          showToast("Added to favorites", "success");
+        }
+      }
+    } catch (error: any) {
+      console.error("Favorite error:", error);
+      
+      // Handle case where product is already in favorites
+      if (error.response?.status === 400 && error.response?.data?.message === "Product is already in favorites") {
+        // Refresh the product to get correct favorite status
+        fetchProduct();
+        showToast("Product is already in your favorites", "info");
+      } else {
+        showToast(error.response?.data?.message || "Failed to update favorites", "error");
+      }
+    }
   };
 
   // ── Add to Cart with Toast ───────────────────────────────────────────────
