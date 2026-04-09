@@ -253,7 +253,7 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: { isOpen: boolea
               <div className="p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600">Revenue by Period</p>
                 <div className="mt-2 space-y-2 max-h-60 overflow-y-auto">
-                  {(data.revenueByPeriod as Array<{period: string; revenue: string}>).map((item, idx) => (
+                  {(data.revenueByPeriod as Array<{period: string; revenue: string}>).map((item: {period: string; revenue: string}, idx: number) => (
                     <div key={idx} className="flex justify-between p-2 border-b">
                       <span className="font-medium">{item.period}</span>
                       <span className="text-blue-600">{item.revenue}</span>
@@ -289,7 +289,7 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: { isOpen: boolea
               <div className="p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600">User Role Distribution</p>
                 <div className="mt-2 space-y-2">
-                  {Object.entries(data.roleDistribution || {}).map(([role, count]) => (
+                  {Object.entries(data.roleDistribution || {}).map(([role, count]: [string, any]) => (
                     <div key={role} className="flex justify-between p-2 border-b">
                       <span className="font-medium capitalize">{role}</span>
                       <span className="text-gray-600">{count as number}</span>
@@ -325,7 +325,7 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: { isOpen: boolea
               <div className="p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600">Order Status Distribution</p>
                 <div className="mt-2 space-y-2">
-                  {Object.entries(data.statusDistribution || {}).map(([status, count]) => (
+                  {Object.entries(data.statusDistribution || {}).map(([status, count]: [string, any]) => (
                     <div key={status} className="flex justify-between p-2 border-b">
                       <span className="font-medium capitalize">{status}</span>
                       <span className="text-gray-600">{count as number}</span>
@@ -361,7 +361,7 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: { isOpen: boolea
               <div className="p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600">Top Performing Shops</p>
                 <div className="mt-2 space-y-2 max-h-60 overflow-y-auto">
-                  {(data.topShops as Array<{name: string; sales: string}>).map((shop, idx) => (
+                  {(data.topShops as Array<{name: string; sales: string}>).map((shop: {name: string; sales: string}, idx: number) => (
                     <div key={idx} className="flex justify-between p-2 border-b">
                       <span className="font-medium">{shop.name}</span>
                       <span className="text-blue-600">{shop.sales}</span>
@@ -642,8 +642,367 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
             />
           </MetricGrid>
 
-          {/* The rest of your JSX for charts remains exactly the same as before */}
-          {/* I'm omitting the chart sections for brevity, but they should remain unchanged */}
+          {/* 📊 ORDER & SALES ANALYTICS */}
+          <div className="space-y-4">
+            <h2 className="text-2xl font-semibold flex items-center gap-2">
+              <ShoppingCart className="w-6 h-6" />
+              Order & Sales Analytics
+            </h2>
+            
+            {isLoading ? (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <LoadingSkeleton className="h-96 lg:col-span-2" />
+                <LoadingSkeleton className="h-80" />
+                <LoadingSkeleton className="h-80" />
+              </div>
+            ) : orderMetricsData.length === 0 ? (
+              <Card>
+                <CardContent className="p-6 text-center">
+                  <p className="text-muted-foreground">No order data available for the selected period</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <Card className="lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle>Order Performance Trends</CardTitle>
+                    <CardDescription>Revenue, orders, and AOV over time</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <ComposedChart data={orderMetricsData}>
+                        <XAxis dataKey="month" />
+                        <YAxis yAxisId="left" />
+                        <YAxis yAxisId="right" orientation="right" />
+                        <Tooltip />
+                        <Legend />
+                        <Bar yAxisId="left" dataKey="revenue" fill="#3b82f6" name="Revenue (₱)" />
+                        <Line yAxisId="right" type="monotone" dataKey="orders" stroke="#10b981" strokeWidth={2} name="Orders" />
+                        <Line yAxisId="right" type="monotone" dataKey="avgOrderValue" stroke="#f59e0b" strokeWidth={2} name="AOV (₱)" />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Order Status Distribution</CardTitle>
+                    <CardDescription>Current order status breakdown</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <PieChart>
+                        <Pie
+                          data={orderStatusDistribution as any[]}
+                          dataKey="count"
+                          nameKey="status"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={80}
+                          label={({ percent = 0 }) => `${(percent * 100).toFixed(1)}%`}
+                        >
+                          {orderStatusDistribution.map((entry: OrderStatus, index: number) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Payment Method Usage</CardTitle>
+                    <CardDescription>Customer payment preferences</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <BarChart data={paymentMethodData as any[]} layout="vertical">
+                        <XAxis type="number" />
+                        <YAxis type="category" dataKey="method" width={100} />
+                        <Tooltip />
+                        <Bar dataKey="count" fill="#8b5cf6" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </div>
+
+          {/* 👥 USER & CUSTOMER ANALYTICS */}
+          <div className="space-y-4">
+            <h2 className="text-2xl font-semibold flex items-center gap-2">
+              <Users className="w-6 h-6" />
+              User & Customer Analytics
+            </h2>
+            
+            {isLoading ? (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <LoadingSkeleton className="h-80" />
+                <LoadingSkeleton className="h-80" />
+                <LoadingSkeleton className="h-80 lg:col-span-2" />
+              </div>
+            ) : userGrowthData.length === 0 ? (
+              <Card>
+                <CardContent className="p-6 text-center">
+                  <p className="text-muted-foreground">No user data available for the selected period</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>User Growth Trends</CardTitle>
+                    <CardDescription>New vs returning user acquisition</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <AreaChart data={userGrowthData}>
+                        <XAxis dataKey="month" />
+                        <YAxis />
+                        <Tooltip />
+                        <Legend />
+                        <Area type="monotone" dataKey="new" stackId="1" stroke="#3b82f6" fill="#3b82f6" name="New Users" />
+                        <Area type="monotone" dataKey="returning" stackId="1" stroke="#10b981" fill="#10b981" name="Returning" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>User Role Distribution</CardTitle>
+                    <CardDescription>Platform user types breakdown</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <PieChart>
+                        <Pie
+                          data={userRoleDistribution as any[]}
+                          dataKey="count"
+                          nameKey="role"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={80}
+                          label
+                        >
+                          {userRoleDistribution.map((entry: UserRole, index: number) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                
+                {registrationStageData.length > 0 && (
+                  <Card className="lg:col-span-2">
+                    <CardHeader>
+                      <CardTitle>Registration Stage Progress</CardTitle>
+                      <CardDescription>User onboarding completion rates</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <ResponsiveContainer width="100%" height={250}>
+                        <BarChart data={registrationStageData as any[]}>
+                          <XAxis dataKey="stage" />
+                          <YAxis />
+                          <Tooltip />
+                          <Bar dataKey="count" fill="#3b82f6">
+                            {registrationStageData.map((entry: RegistrationStage, index: number) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 📦 PRODUCT & INVENTORY ANALYTICS */}
+          <div className="space-y-4">
+            <h2 className="text-2xl font-semibold flex items-center gap-2">
+              <Package className="w-6 h-6" />
+              Product & Inventory Analytics
+            </h2>
+            
+            {isLoading ? (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <LoadingSkeleton className="h-96 lg:col-span-2" />
+                <LoadingSkeleton className="h-80" />
+                <LoadingSkeleton className="h-80" />
+              </div>
+            ) : productPerformanceData.length === 0 ? (
+              <Card>
+                <CardContent className="p-6 text-center">
+                  <p className="text-muted-foreground">No product data available for the selected period</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <Card className="lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle>Top Performing Products</CardTitle>
+                    <CardDescription>By orders, revenue, and engagement</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart data={productPerformanceData as any[]}>
+                        <XAxis dataKey="name" />
+                        <YAxis yAxisId="left" />
+                        <YAxis yAxisId="right" orientation="right" />
+                        <Tooltip />
+                        <Legend />
+                        <Bar yAxisId="left" dataKey="orders" fill="#3b82f6" name="Orders" />
+                        <Bar yAxisId="right" dataKey="revenue" fill="#10b981" name="Revenue (₱)" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Category Performance</CardTitle>
+                    <CardDescription>Revenue by product category</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <BarChart data={categoryPerformanceData as any[]} layout="vertical">
+                        <XAxis type="number" />
+                        <YAxis type="category" dataKey="category" width={100} />
+                        <Tooltip />
+                        <Bar dataKey="revenue" fill="#f59e0b" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Inventory Status</CardTitle>
+                    <CardDescription>Stock level distribution</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <PieChart>
+                        <Pie
+                          data={inventoryStatusData as any[]}
+                          dataKey="count"
+                          nameKey="status"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={80}
+                          label
+                        >
+                          {inventoryStatusData.map((entry: InventoryStatus, index: number) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </div>
+
+          {/* 🏪 SHOP & MERCHANT ANALYTICS */}
+          <div className="space-y-4">
+            <h2 className="text-2xl font-semibold flex items-center gap-2">
+              <Store className="w-6 h-6" />
+              Shop & Merchant Analytics
+            </h2>
+            
+            {isLoading ? (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <LoadingSkeleton className="h-80" />
+                <LoadingSkeleton className="h-80" />
+                <LoadingSkeleton className="h-96 lg:col-span-2" />
+              </div>
+            ) : shopPerformanceData.length === 0 ? (
+              <Card>
+                <CardContent className="p-6 text-center">
+                  <p className="text-muted-foreground">No shop data available for the selected period</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Shop Growth Trends</CardTitle>
+                    <CardDescription>New shops and follower growth</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <LineChart data={shopGrowthData}>
+                        <XAxis dataKey="month" />
+                        <YAxis yAxisId="left" />
+                        <YAxis yAxisId="right" orientation="right" />
+                        <Tooltip />
+                        <Legend />
+                        <Line yAxisId="left" type="monotone" dataKey="totalShops" stroke="#3b82f6" strokeWidth={2} name="Total Shops" />
+                        <Line yAxisId="right" type="monotone" dataKey="followers" stroke="#10b981" strokeWidth={2} name="Followers" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Shop Distribution by Location</CardTitle>
+                    <CardDescription>Geographic shop concentration</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={250}>
+                      <BarChart data={shopLocationData as any[]}>
+                        <XAxis dataKey="location" />
+                        <YAxis />
+                        <Tooltip />
+                        <Bar dataKey="shops" fill="#8b5cf6" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+                
+                <Card className="lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle>Top Performing Shops</CardTitle>
+                    <CardDescription>By sales and customer ratings</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {shopPerformanceData.map((shop: ShopPerformance, index: number) => (
+                        <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold">
+                              {shop.name.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="font-medium">{shop.name}</p>
+                              <p className="text-sm text-muted-foreground">{shop.followers} followers • {shop.products} products</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold">{formatCurrency(shop.sales || 0)}</p>
+                            <p className="text-sm text-muted-foreground">{shop.rating}★ • {shop.orders} orders</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </div>
         </div>
         
         <BreakdownModal 
