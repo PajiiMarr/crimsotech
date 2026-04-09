@@ -22102,8 +22102,8 @@ class SellerOrderList(viewsets.ViewSet):
                     accepted_delivery = delivery
                 responses.append(response_info)
             if accepted_delivery:
-                order.status = 'ready_to_ship'
-                order.save()
+                # order.status = 'ready_to_ship'
+                # order.save()
                 Delivery.objects.filter(order=order, status='pending').exclude(id=accepted_delivery.id).update(status='cancelled')
             return Response({
                 "success": True,
@@ -22343,8 +22343,11 @@ class SellerOrderList(viewsets.ViewSet):
         status_mapping = {
             'pending': 'pending_shipment',
             'processing': 'processing',
+            'rider_assigned': 'rider_assigned', 
+            'rider_accepted': 'rider_accepted', 
+            'pending_rider': 'pending_rider',  
             'ready_to_ship': 'ready_to_ship',
-            'waiting_for_rider': 'waiting_for_rider',
+            'waiting_for_rider': 'waiting_for_pickup',
             'shipped': 'shipped',
             'to_deliver': 'to_deliver',
             'delivered': 'delivered',
@@ -22360,7 +22363,7 @@ class SellerOrderList(viewsets.ViewSet):
 
         if delivery_status:
             delivery_map = {
-                'accepted': 'shipped',
+                # 'accepted': 'rider_accepted',
                 'picked_up': 'to_deliver',
                 'delivered': 'delivered',
             }
@@ -22428,7 +22431,15 @@ class SellerOrderList(viewsets.ViewSet):
                 if is_pickup:
                     available_actions = ['ready_for_pickup']
                 else:
+                    available_actions = ['arrange_shipment']
+
+            elif current_shipping_status == 'rider_assigned' or current_shipping_status == 'rider_accepted':
+                if not is_pickup:
                     available_actions = ['ready_to_ship']
+
+            elif current_shipping_status == 'pending_rider':
+                if not is_pickup:
+                    available_actions = ['arrange_shipment']
                     
             elif current_shipping_status == 'ready_to_ship':
                 available_actions = ['arrange_shipment']
@@ -22436,8 +22447,9 @@ class SellerOrderList(viewsets.ViewSet):
                     available_actions.append('view_offer')
                     
             elif current_shipping_status == 'waiting_for_rider':
+                available_actions = ['ready_to_ship']  # Add this line
                 if has_pending_offer:
-                    available_actions = ['view_offer']
+                    available_actions.append('view_offer')
                     
             elif current_shipping_status == 'shipped':
                 available_actions = ['to_deliver']
@@ -22538,14 +22550,20 @@ class SellerOrderList(viewsets.ViewSet):
             elif action_type == 'ready_to_ship':
                 if is_pickup:
                     return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
-                order.status = 'ready_to_ship'
-                message = "Order marked as ready to ship"
                 
+                # Check current status to determine which action to take
+                if original_status == 'rider_assigned' or original_status == 'rider_accepted':
+                    # Coming from rider_assigned/rider_accepted - move to waiting_for_rider
+                    order.status = 'waiting_for_rider'
+                    message = "Order marked as ready to ship - waiting for rider to accept"
+                else:
+                    # Regular ready_to_ship action
+                    order.status = 'ready_to_ship'
+                    message = "Order marked as ready to ship"
+                    
             elif action_type == 'arrange_shipment':
                 if is_pickup:
                     return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
-                order.status = 'waiting_for_rider'
-                message = "Waiting for rider assignment"
                 
                 # Create delivery assignments for available riders
                 available_riders = Rider.objects.filter(
@@ -22555,6 +22573,10 @@ class SellerOrderList(viewsets.ViewSet):
                 ).select_related('rider')
                 
                 if available_riders.exists():
+                    # Riders found - set status to rider_assigned
+                    order.status = 'rider_assigned'
+                    message = "Rider assigned successfully"
+                    
                     for rider in available_riders[:5]:
                         delivery = Delivery.objects.create(
                             order=order, 
@@ -22571,6 +22593,10 @@ class SellerOrderList(viewsets.ViewSet):
                             message=f'You have a new delivery assignment for order #{str(order.order)[:8]}',
                             is_read=False
                         )
+                else:
+                    # No riders available - set status to pending_rider
+                    order.status = 'pending_rider'
+                    message = "No riders available. Order is pending rider assignment."
                 
             elif action_type == 'shipped':
                 if is_pickup:
@@ -22658,16 +22684,13 @@ class SellerOrderList(viewsets.ViewSet):
                 updated_available_actions = ['confirm']
             elif current_shipping_status == 'processing':
                 if is_pickup:
-                    updated_available_actions = ['ready_for_pickup']
+                    updated_available_actions = ['arrange_shipment']
                 else:
                     updated_available_actions = ['ready_to_ship']
-            elif current_shipping_status == 'ready_to_ship':
-                updated_available_actions = ['arrange_shipment']
+            elif current_shipping_status == 'waiting_for_rider':
+                updated_available_actions = ['ready_to_ship']
                 if has_pending_offer:
                     updated_available_actions.append('view_offer')
-            elif current_shipping_status == 'waiting_for_rider':
-                if has_pending_offer:
-                    updated_available_actions = ['view_offer']
             elif current_shipping_status == 'shipped':
                 updated_available_actions = ['to_deliver']
             elif current_shipping_status == 'to_deliver':

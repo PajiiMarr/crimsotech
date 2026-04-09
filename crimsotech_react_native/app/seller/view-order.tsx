@@ -129,10 +129,30 @@ const getStatusConfig = (status: string) => {
       color: '#3B82F6', bgColor: '#EFF6FF', icon: 'cube-outline',
       description: 'Items are packed and ready. Arrange shipment to assign a rider.',
     },
+    rider_assigned: {
+      label: 'Rider Assigned',
+      color: '#8B5CF6', bgColor: '#F5F3FF', icon: 'person-outline',
+      description: 'Rider has been assigned. Click "Ready to Ship" when items are packed.',
+    },
+    rider_accepted: {
+      label: 'Rider Accepted',
+      color: '#10B981', bgColor: '#ECFDF5', icon: 'checkmark-circle-outline',
+      description: 'Rider has accepted the delivery. Click "Ready to Ship" when items are packed.',
+    },
+    pending_rider: {
+      label: 'Pending Rider',
+      color: '#F97316', bgColor: '#FFF7ED', icon: 'time-outline',
+      description: 'No riders available. Click "Arrange Shipment" to try again.',
+    },
     waiting_for_rider: {
       label: 'Waiting for Rider',
       color: '#F97316', bgColor: '#FFF7ED', icon: 'person-outline',
       description: 'Waiting for a rider to accept the delivery assignment.',
+    },
+    waiting_for_pickup: {
+      label: 'Waiting for Rider Pickup',
+      color: '#F97316', bgColor: '#FFF7ED', icon: 'package-outline',
+      description: 'Order is ready. Waiting for rider to pick up the item from your store.',
     },
     shipped: {
       label: 'Shipped',
@@ -250,20 +270,21 @@ const [selectedImage, setSelectedImage] = useState<string | null>(null);
   }
 };
 
-  const fetchAvailableActions = async () => {
-    if (!orderId || !shopId) return;
-    try {
-      const response = await AxiosInstance.get(
-        `/seller-order-list/${orderId}/available_actions/`,
-        { params: { shop_id: shopId } },
-      );
-      if (response.data.success) {
-        setAvailableActions(response.data.data.available_actions || []);
-      }
-    } catch (error) {
-      console.error('Error fetching available actions:', error);
+const fetchAvailableActions = async () => {
+  if (!orderId || !shopId) return;
+  try {
+    const response = await AxiosInstance.get(
+      `/seller-order-list/${orderId}/available_actions/`,
+      { params: { shop_id: shopId } },
+    );
+    if (response.data.success) {
+      console.log('Available actions from backend:', response.data.data.available_actions);
+      setAvailableActions(response.data.data.available_actions || []);
     }
-  };
+  } catch (error) {
+    console.error('Error fetching available actions:', error);
+  }
+};
 
   const handleUpdateStatus = async (actionType: string) => {
     setProcessing(true);
@@ -351,7 +372,20 @@ const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   const renderStatusCard = () => {
     if (!order) return null;
-    const config = getStatusConfig(order.status);
+    
+    let displayStatus = order.status;
+    let customDescription = '';
+    
+    // For waiting_for_pickup status, add context about rider pickup
+    if (displayStatus === 'waiting_for_pickup') {
+      customDescription = 'Order is ready. Waiting for rider to pick up the item from your store for delivery to the customer.';
+    }
+    // For ready_for_pickup status, clarify it's store pickup
+    else if (displayStatus === 'ready_for_pickup') {
+      customDescription = 'Order is ready at your store. Customer has been notified and can pick up the item.';
+    }
+    
+    const config = getStatusConfig(displayStatus);
     return (
       <View style={[styles.statusCard, { backgroundColor: config.bgColor, borderLeftColor: config.color }]}>
         <View style={styles.statusCardHeader}>
@@ -362,7 +396,9 @@ const [selectedImage, setSelectedImage] = useState<string | null>(null);
             </Text>
           </View>
         </View>
-        <Text style={styles.statusCardDescription}>{config.description}</Text>
+        <Text style={styles.statusCardDescription}>
+          {customDescription || config.description}
+        </Text>
       </View>
     );
   };
@@ -443,145 +479,191 @@ const renderProofOfDelivery = () => {
     </View>
   );
 };
-  const renderActionButtons = () => {
-    const isCompleted = order?.status === 'completed';
-    const isCancelled = order?.status === 'cancelled';
-    if (isCompleted || isCancelled) return null;
+const renderActionButtons = () => {
+  const isCompleted = order?.status === 'completed';
+  const isCancelled = order?.status === 'cancelled';
+  if (isCompleted || isCancelled) return null;
 
-    const {
-      showConfirm, showCancel, showReadyToShip, showArrangeShipment,
-      showReadyForPickup, showPickedUp, showToDeliver, showDelivered, showComplete,
-    } = getActionButtons();
+  const {
+    showConfirm, showCancel, showReadyToShip, showArrangeShipment,
+    showReadyForPickup, showPickedUp, showToDeliver, showDelivered, showComplete,
+  } = getActionButtons();
 
-    const hasAnyAction = showConfirm || showCancel || showReadyToShip ||
-      showArrangeShipment || showReadyForPickup || showPickedUp ||
-      showToDeliver || showDelivered || showComplete;
+  // Get current order status
+  const currentStatus = order?.status?.toLowerCase() || '';
+  const isProcessing = currentStatus === 'processing';
+  const isReadyToShip = currentStatus === 'ready_to_ship';
 
-    if (!hasAnyAction) return null;
+  const hasAnyAction = showConfirm || showCancel || showReadyToShip ||
+    showArrangeShipment || showReadyForPickup || showPickedUp ||
+    showToDeliver || showDelivered || showComplete;
 
-    return (
-      <View style={styles.stickyFooter}>
-        <View style={styles.buttonContainer}>
+  if (!hasAnyAction) return null;
 
-          {/* --- DELIVERY FLOW --- */}
-          {showConfirm && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.confirmButton]}
-              onPress={() => showActionConfirmation(
-                'confirm', 'Confirm Order', 'Confirm this order and start processing?'
-              )}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Confirm Order</Text>
-            </TouchableOpacity>
-          )}
+  return (
+    <View style={styles.stickyFooter}>
+      <View style={styles.buttonContainer}>
 
-          {showReadyToShip && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.readyToShipButton]}
-              onPress={() => showActionConfirmation(
-                'ready_to_ship', 'Ready to Ship', 'Mark this order as ready to ship?'
-              )}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Ready to Ship</Text>
-            </TouchableOpacity>
-          )}
+        {/* Confirm Order Button */}
+        {showConfirm && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.confirmButton]}
+            onPress={() => showActionConfirmation(
+              'confirm', 'Confirm Order', 'Confirm this order and start processing?'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Confirm Order</Text>
+          </TouchableOpacity>
+        )}
 
-          {showArrangeShipment && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.readyToShipButton]}
-              onPress={() => showActionConfirmation(
-                'arrange_shipment', 'Arrange Shipment',
-                'Assign riders for this delivery? Nearby riders will be notified.'
-              )}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Arrange Shipment</Text>
-            </TouchableOpacity>
-          )}
+        {/* For processing status: Show Arrange Shipment */}
+       
+{isProcessing && showArrangeShipment && (
+  <TouchableOpacity
+    style={[styles.actionButton, styles.readyToShipButton]}
+    onPress={() => showActionConfirmation(
+      'arrange_shipment', 'Arrange Shipment',
+      'Assign riders for this delivery? Nearby riders will be notified.'
+    )}
+    disabled={processing}
+  >
+    <Text style={styles.actionButtonText}>Arrange Shipment</Text>
+  </TouchableOpacity>
+)}
 
-          {showToDeliver && (
-            <TouchableOpacity
-              style={[styles.actionButton, { backgroundColor: '#8B5CF6' }]}
-              onPress={() => showActionConfirmation(
-                'to_deliver', 'Out for Delivery', 'Mark this order as out for delivery?'
-              )}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Out for Delivery</Text>
-            </TouchableOpacity>
-          )}
 
-          {/* {showDelivered && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.confirmButton]}
-              onPress={() => showActionConfirmation(
-                'delivered', 'Mark Delivered', 'Confirm this order has been delivered to the customer?'
-              )}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Mark Delivered</Text>
-            </TouchableOpacity>
-          )} */}
 
-          {/* --- PICKUP FLOW --- */}
-          {showReadyForPickup && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.readyToShipButton]}
-              onPress={() => showActionConfirmation(
-                'ready_for_pickup', 'Ready for Pickup',
-                'Notify the customer their order is ready for pickup?'
-              )}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Ready for Pickup</Text>
-            </TouchableOpacity>
-          )}
+{/* For waiting_for_rider status: Show Ready to Ship button (disabled until rider accepts) */}
+{currentStatus === 'waiting_for_pickup' && showReadyToShip && (
+  <TouchableOpacity
+    style={[
+      styles.actionButton, 
+      styles.readyToShipButton,
+      (order?.delivery_info?.status !== 'accepted') && styles.readyToShipButtonDisabled
+    ]}
+    onPress={() => showActionConfirmation(
+      'ready_to_ship', 'Ready to Ship', 
+      'Mark order as ready to ship? Rider will be notified to pick up.'
+    )}
+    disabled={processing || order?.delivery_info?.status !== 'accepted'}
+  >
+    <Text style={styles.actionButtonText}>Ready to Ship</Text>
+  </TouchableOpacity>
+)}
 
-          {showPickedUp && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.confirmButton]}
-              onPress={() => showActionConfirmation(
-                'picked_up', 'Order Picked Up', 'Confirm the customer has collected the order?'
-              )}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Mark Picked Up</Text>
-            </TouchableOpacity>
-          )}
+{/* For rider_accepted status OR when delivery.status === 'accepted': Show Ready to Ship button */}
+{(currentStatus === 'rider_accepted' || (currentStatus === 'rider_assigned' && order?.delivery_info?.status === 'accepted')) && showReadyToShip && (
+  <TouchableOpacity
+    style={[styles.actionButton, styles.readyToShipButton]}
+    onPress={() => showActionConfirmation(
+      'ready_to_ship', 'Ready to Ship', 
+      'Mark order as ready to ship? Rider will be notified to pick up.'
+    )}
+    disabled={processing}
+  >
+    <Text style={styles.actionButtonText}>Ready to Ship</Text>
+  </TouchableOpacity>
+)}
 
-          {/* --- SHARED --- */}
-          {/* {showComplete && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.confirmButton]}
-              onPress={() => showActionConfirmation(
-                'complete', 'Complete Order',
-                'Mark this order as completed? This finalizes the transaction.'
-              )}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Complete Order</Text>
-            </TouchableOpacity>
-          )} */}
+{currentStatus === 'pending_rider' && showArrangeShipment && (
+  <TouchableOpacity
+    style={[styles.actionButton, styles.readyToShipButton]}
+    onPress={() => showActionConfirmation(
+      'arrange_shipment', 'Arrange Shipment',
+      'No riders available. Try assigning riders again?'
+    )}
+    disabled={processing}
+  >
+    <Text style={styles.actionButtonText}>Retry Arrange Shipment</Text>
+  </TouchableOpacity>
+)}
 
-          {showCancel && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.cancelButton]}
-              onPress={() => showActionConfirmation(
-                'cancel', 'Cancel Order',
-                'Are you sure you want to cancel this order? This cannot be undone.'
-              )}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Cancel Order</Text>
-            </TouchableOpacity>
-          )}
+        {/* For ready_to_ship status: Show Ready to Ship button */}
+        {isReadyToShip && showReadyToShip && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.readyToShipButton]}
+            onPress={() => showActionConfirmation(
+              'ready_to_ship', 'Ready to Ship', 'Mark this order as ready to ship?'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Ready to Ship</Text>
+          </TouchableOpacity>
+        )}
 
-        </View>
+        {/* For other statuses that need Arrange Shipment */}
+        {!isProcessing && !isReadyToShip && showArrangeShipment && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.readyToShipButton]}
+            onPress={() => showActionConfirmation(
+              'arrange_shipment', 'Arrange Shipment',
+              'Assign riders for this delivery? Nearby riders will be notified.'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Arrange Shipment</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Out for Delivery Button */}
+        {showToDeliver && (
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: '#8B5CF6' }]}
+            onPress={() => showActionConfirmation(
+              'to_deliver', 'Out for Delivery', 'Mark this order as out for delivery?'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Out for Delivery</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Ready for Pickup Button (Pickup orders) */}
+        {showReadyForPickup && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.readyToShipButton]}
+            onPress={() => showActionConfirmation(
+              'ready_for_pickup', 'Ready for Pickup',
+              'Notify the customer their order is ready for pickup?'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Ready for Pickup</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Picked Up Button (Pickup orders) */}
+        {showPickedUp && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.confirmButton]}
+            onPress={() => showActionConfirmation(
+              'picked_up', 'Order Picked Up', 'Confirm the customer has collected the order?'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Mark Picked Up</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Cancel Order Button */}
+        {showCancel && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.cancelButton]}
+            onPress={() => showActionConfirmation(
+              'cancel', 'Cancel Order',
+              'Are you sure you want to cancel this order? This cannot be undone.'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Cancel Order</Text>
+          </TouchableOpacity>
+        )}
+
       </View>
-    );
-  };
+    </View>
+  );
+};
 
   const renderConfirmationModal = () => {
     if (!showConfirmation || !selectedAction) return null;
@@ -1250,5 +1332,9 @@ previewImage: {
     fontSize: 12,
     color: '#3B82F6',
     fontWeight: '500',
+  },
+  readyToShipButtonDisabled: {
+    backgroundColor: '#9CA3AF',
+    opacity: 0.7,
   },
 });

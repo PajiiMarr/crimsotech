@@ -463,7 +463,7 @@ export default function RiderViewOrder() {
   const getStatusMessage = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'accepted':
-        return 'You have accepted this delivery. Please proceed to the seller\'s location to pick up the items.';
+        return 'You have accepted this delivery. Waiting for the seller to mark it as ready for pickup.';
       case 'pending':
         return 'This order is pending your response. Please accept or decline within the time limit.';
       case 'picked_up':
