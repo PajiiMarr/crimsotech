@@ -341,6 +341,7 @@ const ShopHeader = ({
 };
 
 // Cart Item Component
+// Update the CartItemComponent - add this near the top of the component
 const CartItemComponent = ({
   item,
   onUpdateQuantity,
@@ -355,8 +356,15 @@ const CartItemComponent = ({
   isUpdating: boolean;
 }) => {
   const [imageError, setImageError] = useState(false);
+  
+  // Check if item is out of stock
+  const isOutOfStock = item.max_available === 0 || (item.max_available !== undefined && item.max_available <= 0);
 
   const handleIncrement = () => {
+    if (isOutOfStock) {
+      Alert.alert("Out of Stock", "This item is currently out of stock");
+      return;
+    }
     if (
       item.max_available !== undefined &&
       item.quantity >= item.max_available
@@ -387,23 +395,23 @@ const CartItemComponent = ({
 
   const handleProductPress = () => {
     if (item.product_id) {
-      // ✅ Redirect to customer view product page
       router.push(`/customer/view-product?id=${item.product_id}`);
     }
   };
 
   return (
-    <View style={styles.cartItem}>
+    <View style={[styles.cartItem, isOutOfStock && styles.cartItemOutOfStock]}>
       <TouchableOpacity
-        onPress={() => onSelect(item.id, !item.selected)}
+        onPress={() => !isOutOfStock && onSelect(item.id, !item.selected)}
         style={{ padding: 4 }}
-        disabled={isUpdating}
+        disabled={isUpdating || isOutOfStock}
       >
         <View
           style={[
             styles.checkbox,
             { marginRight: 0 },
             item.selected && styles.checkboxChecked,
+            isOutOfStock && styles.checkboxDisabled,
           ]}
         >
           {item.selected && (
@@ -415,7 +423,7 @@ const CartItemComponent = ({
       <TouchableOpacity onPress={handleProductPress} activeOpacity={0.7}>
         <Image
           source={{ uri: imageError ? FALLBACK_IMAGE : item.image }}
-          style={styles.itemImage}
+          style={[styles.itemImage, isOutOfStock && styles.itemImageDimmed]}
           onError={() => setImageError(true)}
         />
       </TouchableOpacity>
@@ -423,59 +431,64 @@ const CartItemComponent = ({
       <View style={styles.itemContent}>
         <View style={styles.itemHeader}>
           <TouchableOpacity onPress={handleProductPress} style={{ flex: 1 }}>
-            <Text style={styles.itemName} numberOfLines={2}>
+            <Text style={[styles.itemName, isOutOfStock && styles.textDimmed]} numberOfLines={2}>
               {item.name}
             </Text>
           </TouchableOpacity>
-          <Text style={styles.itemPrice}>
+          <Text style={[styles.itemPrice, isOutOfStock && styles.textDimmed]}>
             ₱{(item.price * item.quantity).toFixed(2)}
           </Text>
         </View>
 
         {item.variant_title && (
-          <Text style={styles.variantText}>{item.variant_title}</Text>
+          <Text style={[styles.variantText, isOutOfStock && styles.textDimmed]}>
+            {item.variant_title}
+          </Text>
         )}
 
         <View style={styles.itemDetails}>
-          <Text style={styles.itemPriceEach}>
+          <Text style={[styles.itemPriceEach, isOutOfStock && styles.textDimmed]}>
             ₱{item.price.toFixed(2)} each
           </Text>
 
-          <View style={styles.quantityControl}>
-            <TouchableOpacity
-              onPress={handleDecrement}
-              style={[styles.qtyBtn, isUpdating && styles.qtyBtnDisabled]}
-              disabled={isUpdating}
-            >
-              <MaterialIcons name="remove" size={16} color="#4B5563" />
-            </TouchableOpacity>
+          {isOutOfStock ? (
+            <View style={styles.outOfStockBadge}>
+              <Text style={styles.outOfStockText}>Out of Stock</Text>
+            </View>
+          ) : (
+            <View style={styles.quantityControl}>
+              <TouchableOpacity
+                onPress={handleDecrement}
+                style={[styles.qtyBtn, isUpdating && styles.qtyBtnDisabled]}
+                disabled={isUpdating}
+              >
+                <MaterialIcons name="remove" size={16} color="#4B5563" />
+              </TouchableOpacity>
 
-            {isUpdating ? (
-              <ActivityIndicator
-                size="small"
-                color="#F97316"
-                style={styles.qtyValue}
-              />
-            ) : (
-              <Text style={styles.qtyValue}>{item.quantity}</Text>
-            )}
+              {isUpdating ? (
+                <ActivityIndicator
+                  size="small"
+                  color="#F97316"
+                  style={styles.qtyValue}
+                />
+              ) : (
+                <Text style={styles.qtyValue}>{item.quantity}</Text>
+              )}
 
-            <TouchableOpacity
-              onPress={handleIncrement}
-              style={[styles.qtyBtn, isUpdating && styles.qtyBtnDisabled]}
-              disabled={
-                isUpdating ||
-                (item.max_available !== undefined &&
-                  item.quantity >= item.max_available)
-              }
-            >
-              <MaterialIcons name="add" size={16} color="#4B5563" />
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity
+                onPress={handleIncrement}
+                style={[styles.qtyBtn, isUpdating && styles.qtyBtnDisabled]}
+                disabled={isUpdating || isOutOfStock}
+              >
+                <MaterialIcons name="add" size={16} color="#4B5563" />
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {item.max_available !== undefined &&
-          item.quantity >= item.max_available && (
+          item.quantity >= item.max_available &&
+          !isOutOfStock && (
             <Text style={styles.maxAvailableText}>Max available quantity</Text>
           )}
       </View>
@@ -1682,5 +1695,30 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#FFFFFF",
+  },
+  cartItemOutOfStock: {
+    opacity: 0.7,
+    backgroundColor: '#F9FAFB',
+  },
+  checkboxDisabled: {
+    borderColor: '#D1D5DB',
+    backgroundColor: '#F3F4F6',
+  },
+  itemImageDimmed: {
+    opacity: 0.5,
+  },
+  textDimmed: {
+    color: '#9CA3AF',
+  },
+  outOfStockBadge: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  outOfStockText: {
+    fontSize: 11,
+    color: '#DC2626',
+    fontWeight: '600',
   },
 });

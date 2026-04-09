@@ -22508,6 +22508,13 @@ class SellerOrderList(viewsets.ViewSet):
             original_status = order.status
 
             if action_type == 'confirm':
+                stock_errors = self._decrease_stock_for_order(order, shop)
+                if stock_errors:
+                    return Response({
+                        "success": False, 
+                        "message": "Stock validation failed", 
+                        "details": stock_errors
+                    }, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'processing'
                 message = "Pickup order confirmed" if is_pickup else "Order confirmed"
 
@@ -22691,6 +22698,56 @@ class SellerOrderList(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": f"Error updating order: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _decrease_stock_for_order(self, order, shop):
+        """Decrease stock for items in this order that belong to the shop"""
+        from decimal import Decimal
+        
+        # Get checkouts for this shop
+        checkouts = Checkout.objects.filter(
+            Q(order=order, cart_item__product__shop=shop) |
+            Q(order=order, direct_shop_id=str(shop.id))
+        ).select_related('cart_item__product', 'cart_item__variant')
+        
+        stock_errors = []
+        
+        for checkout in checkouts:
+            # Handle direct product checkout (Buy Now)
+            if checkout.direct_variant_id and not checkout.cart_item:
+                try:
+                    variant = Variants.objects.get(id=checkout.direct_variant_id)
+                    if checkout.quantity > variant.quantity:
+                        stock_errors.append(f"Insufficient stock for {variant.title}. Available: {variant.quantity}")
+                        continue
+                    variant.quantity -= checkout.quantity
+                    variant.save()
+                except Variants.DoesNotExist:
+                    stock_errors.append(f"Variant not found for checkout item {checkout.id}")
+                    
+            # Handle cart checkout
+            elif checkout.cart_item:
+                cart_item = checkout.cart_item
+                
+                # Mark cart item as ordered (remove from cart)
+                cart_item.is_ordered = True
+                cart_item.save()
+                
+                if cart_item.variant:
+                    variant = cart_item.variant
+                    if checkout.quantity > variant.quantity:
+                        stock_errors.append(f"Insufficient stock for {variant.title}. Available: {variant.quantity}")
+                        continue
+                    variant.quantity -= checkout.quantity
+                    variant.save()
+                elif cart_item.product:
+                    product = cart_item.product
+                    if checkout.quantity > product.quantity:
+                        stock_errors.append(f"Insufficient stock for {product.name}. Available: {product.quantity}")
+                        continue
+                    product.quantity -= checkout.quantity
+                    product.save()
+        
+        return stock_errors
 
     @action(detail=True, methods=['post'])
     def prepare_shipment(self, request, pk=None):
@@ -24069,8 +24126,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 })
 
                 # Update stock
-                direct_variant.quantity -= direct_quantity
-                direct_variant.save()
+                # direct_variant.quantity -= direct_quantity
+                # direct_variant.save()
                 
             else:
                 # Process cart items
@@ -24112,16 +24169,16 @@ class CheckoutOrder(viewsets.ViewSet):
                     })
 
                     # Update stock
-                    if cart_item.variant:
-                        cart_item.variant.quantity -= cart_item.quantity
-                        cart_item.variant.save()
-                    elif cart_item.product:
-                        cart_item.product.quantity -= cart_item.quantity
-                        cart_item.product.save()
+                    # if cart_item.variant:
+                    #     cart_item.variant.quantity -= cart_item.quantity
+                    #     cart_item.variant.save()
+                    # elif cart_item.product:
+                    #     cart_item.product.quantity -= cart_item.quantity
+                    #     cart_item.product.save()
 
                     # Mark as ordered
-                    cart_item.is_ordered = True
-                    cart_item.save()
+                    # cart_item.is_ordered = True
+                    # cart_item.save()
 
             # If payment method is Maya, initiate payment
             if payment_method.lower() == 'maya':
@@ -24923,6 +24980,44 @@ class CheckoutOrder(viewsets.ViewSet):
 
         except Exception as e:
             logger.error(f"Error processing seller payments: {str(e)}")
+
+    def _decrease_stock_for_order(self, order):
+        """Decrease stock for all items in an order"""
+        checkout_items = Checkout.objects.filter(order=order)
+        stock_errors = []
+        
+        for checkout_item in checkout_items:
+            # Check for direct checkout (Buy Now)
+            if checkout_item.direct_variant_id:
+                try:
+                    variant = Variants.objects.get(id=checkout_item.direct_variant_id)
+                    if checkout_item.quantity > variant.quantity:
+                        stock_errors.append(f"Insufficient stock for {variant.title}")
+                        continue
+                    variant.quantity -= checkout_item.quantity
+                    variant.save()
+                except Variants.DoesNotExist:
+                    stock_errors.append(f"Variant not found")
+                    
+            # Check for cart checkout
+            elif checkout_item.cart_item:
+                cart_item = checkout_item.cart_item
+                if cart_item.variant:
+                    variant = cart_item.variant
+                    if checkout_item.quantity > variant.quantity:
+                        stock_errors.append(f"Insufficient stock for {variant.title}")
+                        continue
+                    variant.quantity -= checkout_item.quantity
+                    variant.save()
+                elif cart_item.product:
+                    product = cart_item.product
+                    if checkout_item.quantity > product.quantity:
+                        stock_errors.append(f"Insufficient stock for {product.name}")
+                        continue
+                    product.quantity -= checkout_item.quantity
+                    product.save()
+        
+        return stock_errors
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
