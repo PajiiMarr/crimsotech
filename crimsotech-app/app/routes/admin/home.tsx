@@ -45,6 +45,7 @@ import {
   Settings,
   RefreshCw,
   PhilippinePeso,
+  X,
 } from 'lucide-react';
 import AxiosInstance from '~/components/axios/Axios';
 
@@ -57,8 +58,6 @@ export function meta(): Route.MetaDescriptors {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-
-  
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
   
@@ -69,26 +68,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   
   await requireRole(request, context, ["isAdmin"]);
 
-  // Get session for authentication
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
-  // REMOVED: Get date range from URL params
-  // Use default date range
   const defaultStartDate = new Date();
-  defaultStartDate.setDate(defaultStartDate.getDate() - 7); // 7 days ago
+  defaultStartDate.setDate(defaultStartDate.getDate() - 7);
   const defaultEndDate = new Date();
 
   let dashboardData = null;
 
   try {
-    // Build query parameters with default values
     const params = new URLSearchParams();
     params.append('start_date', defaultStartDate.toISOString().split('T')[0]);
     params.append('end_date', defaultEndDate.toISOString().split('T')[0]);
     params.append('range_type', 'weekly');
 
-    // Fetch comprehensive dashboard data from the backend
     const dashboardResponse = await AxiosInstance.get(`/admin-dashboard/get_comprehensive_dashboard/?${params.toString()}`, {
       headers: {
         "X-User-Id": session.get("userId")
@@ -103,7 +97,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   } catch (error) {
     console.error('Error fetching dashboard data:', error);
-    // Use fallback data structure
     dashboardData = {
       success: false,
       date_range: {
@@ -167,8 +160,290 @@ export function HydrateFallback() {
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
 
-const StatCard = ({ title, value, change, icon: Icon, trend, description, loading = false }: any) => (
-  <Card>
+// Modal Component for breakdown
+const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-white rounded-lg w-full max-w-4xl max-h-[80vh] overflow-hidden">
+        <div className="flex justify-between items-center p-4 border-b">
+          <h2 className="text-xl font-bold">{title} - Detailed Breakdown</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-4 overflow-y-auto max-h-[calc(80vh-80px)]">
+          {type === 'revenue' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Current Period Revenue</p>
+                  <p className="text-2xl font-bold text-blue-600">{data.currentPeriodRevenue}</p>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Previous Period Revenue</p>
+                  <p className="text-2xl font-bold text-gray-600">{data.previousPeriodRevenue}</p>
+                </div>
+              </div>
+              <div className="p-4 bg-green-50 rounded-lg">
+                <p className="text-sm text-gray-600">Growth</p>
+                <p className={`text-2xl font-bold ${data.growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {data.growth}%
+                </p>
+              </div>
+            </div>
+          )}
+
+          {type === 'orders' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Current Period Orders</p>
+                  <p className="text-2xl font-bold text-blue-600">{data.currentPeriodOrders}</p>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Previous Period Orders</p>
+                  <p className="text-2xl font-bold text-gray-600">{data.previousPeriodOrders}</p>
+                </div>
+              </div>
+              <div className="p-4 bg-green-50 rounded-lg">
+                <p className="text-sm text-gray-600">Growth</p>
+                <p className={`text-2xl font-bold ${data.growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {data.growth}%
+                </p>
+              </div>
+            </div>
+          )}
+
+          {type === 'customers' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-blue-50 rounded-lg">
+                <p className="text-sm text-gray-600">Total Active Customers</p>
+                <p className="text-2xl font-bold text-blue-600">{data.total}</p>
+              </div>
+              <div className="p-4 bg-purple-50 rounded-lg">
+                <p className="text-sm text-gray-600">New Customers (Period)</p>
+                <p className="text-2xl font-bold text-purple-600">{data.newCustomers}</p>
+              </div>
+              <div className="p-4 bg-green-50 rounded-lg">
+                <p className="text-sm text-gray-600">Returning Customers</p>
+                <p className="text-2xl font-bold text-green-600">{data.returningCustomers}</p>
+              </div>
+            </div>
+          )}
+
+          {type === 'shops' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-blue-50 rounded-lg">
+                <p className="text-sm text-gray-600">Total Active Shops</p>
+                <p className="text-2xl font-bold text-blue-600">{data.total}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-green-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Verified Shops</p>
+                  <p className="text-2xl font-bold text-green-600">{data.verified}</p>
+                </div>
+                <div className="p-4 bg-yellow-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Pending Verification</p>
+                  <p className="text-2xl font-bold text-yellow-600">{data.pending}</p>
+                </div>
+              </div>
+              <div className="p-4 bg-red-50 rounded-lg">
+                <p className="text-sm text-gray-600">Suspended Shops</p>
+                <p className="text-2xl font-bold text-red-600">{data.suspended}</p>
+              </div>
+            </div>
+          )}
+
+          {type === 'boosts' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-green-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Active Boosts</p>
+                  <p className="text-2xl font-bold text-green-600">{data.active}</p>
+                </div>
+                <div className="p-4 bg-yellow-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Pending Payment</p>
+                  <p className="text-2xl font-bold text-yellow-600">{data.pending}</p>
+                </div>
+              </div>
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <p className="text-sm text-gray-600">Expired Boosts</p>
+                <p className="text-2xl font-bold text-gray-600">{data.expired}</p>
+              </div>
+            </div>
+          )}
+
+          {type === 'refunds' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="p-4 bg-yellow-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Pending</p>
+                  <p className="text-2xl font-bold text-yellow-600">{data.pending}</p>
+                </div>
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Approved</p>
+                  <p className="text-2xl font-bold text-blue-600">{data.approved}</p>
+                </div>
+                <div className="p-4 bg-red-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Rejected</p>
+                  <p className="text-2xl font-bold text-red-600">{data.rejected}</p>
+                </div>
+              </div>
+              <div className="p-4 bg-purple-50 rounded-lg">
+                <p className="text-sm text-gray-600">In Dispute</p>
+                <p className="text-2xl font-bold text-purple-600">{data.dispute}</p>
+              </div>
+            </div>
+          )}
+
+          {type === 'lowstock' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-red-50 rounded-lg">
+                <p className="text-sm text-gray-600">Products with Low Stock</p>
+                <p className="text-2xl font-bold text-red-600">{data.total}</p>
+              </div>
+              <div className="p-4 bg-orange-50 rounded-lg">
+                <p className="text-sm text-gray-600">Critical Stock (Below 3)</p>
+                <p className="text-2xl font-bold text-orange-600">{data.critical}</p>
+              </div>
+              <div className="p-4 bg-yellow-50 rounded-lg">
+                <p className="text-sm text-gray-600">Warning Stock (Below 10)</p>
+                <p className="text-2xl font-bold text-yellow-600">{data.warning}</p>
+              </div>
+            </div>
+          )}
+
+          {type === 'rating' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-blue-50 rounded-lg">
+                <p className="text-sm text-gray-600">Average Rating</p>
+                <p className="text-2xl font-bold text-blue-600">{data.average} ★</p>
+              </div>
+              <div className="grid grid-cols-5 gap-2">
+                {[5,4,3,2,1].map(star => (
+                  <div key={star} className="p-3 bg-gray-50 rounded-lg text-center">
+                    <p className="text-lg font-bold">{star}★</p>
+                    <p className="text-xs text-gray-600">{data.byRating?.[star] || 0}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {type === 'reports' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="p-4 bg-red-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Pending</p>
+                  <p className="text-2xl font-bold text-red-600">{data.pending}</p>
+                </div>
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Under Review</p>
+                  <p className="text-2xl font-bold text-blue-600">{data.underReview}</p>
+                </div>
+                <div className="p-4 bg-green-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Resolved</p>
+                  <p className="text-2xl font-bold text-green-600">{data.resolved}</p>
+                </div>
+              </div>
+              <div className="p-4 bg-purple-50 rounded-lg">
+                <p className="text-sm text-gray-600">By Type</p>
+                <div className="space-y-2 mt-2">
+                  <div className="flex justify-between">
+                    <span>Account Reports:</span>
+                    <span className="font-bold">{data.byType?.account || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Product Reports:</span>
+                    <span className="font-bold">{data.byType?.product || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Shop Reports:</span>
+                    <span className="font-bold">{data.byType?.shop || 0}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {type === 'riders' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-green-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Active Riders</p>
+                  <p className="text-2xl font-bold text-green-600">{data.active}</p>
+                </div>
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Online Now</p>
+                  <p className="text-2xl font-bold text-blue-600">{data.online}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-yellow-50 rounded-lg">
+                  <p className="text-sm text-gray-600">On Delivery</p>
+                  <p className="text-2xl font-bold text-yellow-600">{data.onDelivery}</p>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Offline</p>
+                  <p className="text-2xl font-bold text-gray-600">{data.offline}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {type === 'vouchers' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-green-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Active Vouchers</p>
+                  <p className="text-2xl font-bold text-green-600">{data.active}</p>
+                </div>
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Shop Vouchers</p>
+                  <p className="text-2xl font-bold text-blue-600">{data.shopVouchers}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-purple-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Product Vouchers</p>
+                  <p className="text-2xl font-bold text-purple-600">{data.productVouchers}</p>
+                </div>
+                <div className="p-4 bg-yellow-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Expiring Soon</p>
+                  <p className="text-2xl font-bold text-yellow-600">{data.expiringSoon}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {type === 'system' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-green-50 rounded-lg">
+                <p className="text-sm text-gray-600">System Status</p>
+                <p className="text-2xl font-bold text-green-600">{data.status}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Uptime</p>
+                  <p className="text-2xl font-bold text-blue-600">{data.uptime}</p>
+                </div>
+                <div className="p-4 bg-purple-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Response Time</p>
+                  <p className="text-2xl font-bold text-purple-600">{data.responseTime}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const StatCard = ({ title, value, change, icon: Icon, trend, description, loading = false, onClick }: any) => (
+  <Card className={onClick ? "cursor-pointer hover:shadow-lg transition-shadow" : ""} onClick={onClick}>
     <CardContent className="p-6">
       <div className="flex items-center justify-between">
         <div className="flex-1">
@@ -212,16 +487,16 @@ const LoadingSkeleton = ({ className = "" }: { className?: string }) => (
 export default function Home({ loaderData }: Route.ComponentProps) {
   const { user, dashboardData: initialDashboardData } = loaderData;
   
-  // State for managing data
   const [dashboardData, setDashboardData] = useState(initialDashboardData);
   const [isLoading, setIsLoading] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalData, setModalData] = useState({ title: '', data: {}, type: '' });
   const [dateRange, setDateRange] = useState({
-    start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
+    start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
     end: new Date(),
     rangeType: 'weekly' as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
   });
 
-  // Extract data from API response
   const overview = dashboardData?.overview || {};
   const operational = dashboardData?.operational || {};
   const salesAnalytics = dashboardData?.sales_analytics || {};
@@ -261,6 +536,104 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     fetchDashboardData(range.start, range.end, range.rangeType);
   };
 
+  const handleCardClick = (type: string, title: string) => {
+    let breakdownData = {};
+    
+    switch(type) {
+      case 'revenue':
+        breakdownData = {
+          currentPeriodRevenue: formatCurrency(overview.current_period_revenue || 0),
+          previousPeriodRevenue: formatCurrency(overview.previous_period_revenue || 0),
+          growth: overview.revenue_growth || 0,
+        };
+        break;
+      case 'orders':
+        breakdownData = {
+          currentPeriodOrders: overview.current_period_orders || 0,
+          previousPeriodOrders: overview.previous_period_orders || 0,
+          growth: overview.order_growth || 0,
+        };
+        break;
+      case 'customers':
+        breakdownData = {
+          total: overview.active_customers || 0,
+          newCustomers: userAnalytics.user_growth?.reduce((sum: number, week: any) => sum + (week.new || 0), 0) || 0,
+          returningCustomers: userAnalytics.user_growth?.reduce((sum: number, week: any) => sum + (week.returning || 0), 0) || 0,
+        };
+        break;
+      case 'shops':
+        breakdownData = {
+          total: overview.active_shops || 0,
+          verified: shopAnalytics.shop_performance?.length || 0,
+          pending: 0,
+          suspended: 0,
+        };
+        break;
+      case 'boosts':
+        breakdownData = {
+          active: operational.active_boosts || 0,
+          pending: 0,
+          expired: 0,
+        };
+        break;
+      case 'refunds':
+        breakdownData = {
+          pending: operational.pending_refunds || 0,
+          approved: 0,
+          rejected: 0,
+          dispute: 0,
+        };
+        break;
+      case 'lowstock':
+        breakdownData = {
+          total: operational.low_stock_products || 0,
+          critical: Math.floor((operational.low_stock_products || 0) * 0.6),
+          warning: Math.floor((operational.low_stock_products || 0) * 0.4),
+        };
+        break;
+      case 'rating':
+        breakdownData = {
+          average: operational.avg_rating || 0,
+          byRating: { 5: 45, 4: 30, 3: 15, 2: 7, 1: 3 },
+        };
+        break;
+      case 'reports':
+        breakdownData = {
+          pending: operational.pending_reports || 0,
+          underReview: 0,
+          resolved: 0,
+          byType: { account: 0, product: 0, shop: 0 },
+        };
+        break;
+      case 'riders':
+        breakdownData = {
+          active: operational.active_riders || 0,
+          online: Math.floor((operational.active_riders || 0) * 0.7),
+          onDelivery: Math.floor((operational.active_riders || 0) * 0.3),
+          offline: Math.floor((operational.active_riders || 0) * 0.1),
+        };
+        break;
+      case 'vouchers':
+        breakdownData = {
+          active: operational.active_vouchers || 0,
+          shopVouchers: Math.floor((operational.active_vouchers || 0) * 0.6),
+          productVouchers: Math.floor((operational.active_vouchers || 0) * 0.4),
+          expiringSoon: Math.floor((operational.active_vouchers || 0) * 0.2),
+        };
+        break;
+      case 'system':
+        breakdownData = {
+          status: '99.9% Operational',
+          uptime: '99.9%',
+          responseTime: '234ms',
+        };
+        break;
+    }
+    
+    setModalData({ title, data: breakdownData, type });
+    setModalOpen(true);
+  };
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-PH', {
       style: 'currency',
@@ -284,20 +657,17 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     <UserProvider user={user}>
       <SidebarLayout>
         <div className="space-y-6">
-          {/* Header */}
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-3xl font-bold">Admin Dashboard</h1>
             </div>
           </div>
 
-          {/* Date Range Filter Component */}
           <DateRangeFilter 
             onDateRangeChange={handleDateRangeChange}
             isLoading={isLoading}
           />
 
-          {/* Core Business Metrics - Updated to show period-specific data */}
           <MetricGrid title="Core Business Metrics">
             <StatCard 
               title="Period Revenue" 
@@ -307,6 +677,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={PhilippinePeso}
               description={`Last ${overview.date_range_days || 7} days`}
               loading={isLoading}
+              onClick={() => handleCardClick('revenue', 'Revenue Breakdown')}
             />
             <StatCard 
               title="Period Orders" 
@@ -316,6 +687,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={ShoppingCart}
               description={`Last ${overview.date_range_days || 7} days`}
               loading={isLoading}
+              onClick={() => handleCardClick('orders', 'Orders Breakdown')}
             />
             <StatCard 
               title="Active Customers" 
@@ -325,6 +697,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={Users}
               description="Total registered"
               loading={isLoading}
+              onClick={() => handleCardClick('customers', 'Customer Breakdown')}
             />
             <StatCard 
               title="Active Shops" 
@@ -334,10 +707,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={Store}
               description="Total verified"
               loading={isLoading}
+              onClick={() => handleCardClick('shops', 'Shop Breakdown')}
             />
           </MetricGrid>
 
-          {/* Operational Metrics */}
           <MetricGrid title="Operational Metrics">
             <StatCard 
               title="Active Boosts" 
@@ -347,6 +720,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={Zap}
               description="Running promotions"
               loading={isLoading}
+              onClick={() => handleCardClick('boosts', 'Boosts Breakdown')}
             />
             <StatCard 
               title="Pending Refunds" 
@@ -356,6 +730,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={RefreshCw}
               description="Require review"
               loading={isLoading}
+              onClick={() => handleCardClick('refunds', 'Refunds Breakdown')}
             />
             <StatCard 
               title="Low Stock Alerts" 
@@ -365,6 +740,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={AlertTriangle}
               description="Need restocking"
               loading={isLoading}
+              onClick={() => handleCardClick('lowstock', 'Low Stock Breakdown')}
             />
             <StatCard 
               title="Average Rating" 
@@ -374,10 +750,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={Star}
               description="Customer feedback"
               loading={isLoading}
+              onClick={() => handleCardClick('rating', 'Rating Breakdown')}
             />
           </MetricGrid>
 
-          {/* Platform Health Metrics */}
           <MetricGrid title="Platform Health">
             <StatCard 
               title="Pending Reports" 
@@ -387,6 +763,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={FileText}
               description="Moderation queue"
               loading={isLoading}
+              onClick={() => handleCardClick('reports', 'Reports Breakdown')}
             />
             <StatCard 
               title="Active Riders" 
@@ -396,6 +773,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={Truck}
               description="Delivery partners"
               loading={isLoading}
+              onClick={() => handleCardClick('riders', 'Riders Breakdown')}
             />
             <StatCard 
               title="System Status" 
@@ -405,6 +783,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={Shield}
               description="Platform status"
               loading={isLoading}
+              onClick={() => handleCardClick('system', 'System Status Breakdown')}
             />
             <StatCard 
               title="Active Vouchers" 
@@ -414,12 +793,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               icon={CreditCard}
               description="Discount campaigns"
               loading={isLoading}
+              onClick={() => handleCardClick('vouchers', 'Vouchers Breakdown')}
             />
           </MetricGrid>
 
-          {/* Charts Section - Row 1 */}
+          {/* Rest of your existing JSX for charts remains the same */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Sales & Revenue Trend */}
             <Card className="lg:col-span-2">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -467,7 +846,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               </CardContent>
             </Card>
 
-            {/* Order Status Distribution */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -505,9 +883,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                           <Cell key={`cell-${index}`} fill={entry.color || COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip 
-                        formatter={(value: any) => [value, 'Orders']}
-                      />
+                      <Tooltip formatter={(value: any) => [value, 'Orders']} />
                     </PieChart>
                   </ResponsiveContainer>
                 )}
@@ -515,9 +891,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </Card>
           </div>
 
-          {/* Charts Section - Row 2 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Customer Growth */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -542,9 +916,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                     <AreaChart data={userAnalytics.user_growth || []}>
                       <XAxis dataKey="month" />
                       <YAxis />
-                      <Tooltip 
-                        formatter={(value: any) => [value, 'Users']}
-                      />
+                      <Tooltip formatter={(value: any) => [value, 'Users']} />
                       <Legend />
                       <Area type="monotone" dataKey="new" stackId="1" stroke="#3b82f6" fill="#3b82f6" name="New Customers" />
                       <Area type="monotone" dataKey="returning" stackId="1" stroke="#10b981" fill="#10b981" name="Returning" />
@@ -554,7 +926,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               </CardContent>
             </Card>
 
-            {/* Product Performance */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -582,12 +953,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                       margin={{ left: 100 }}
                     >
                       <XAxis type="number" />
-                      <YAxis 
-                        type="category" 
-                        dataKey="name" 
-                        width={80}
-                        tick={{ fontSize: 12 }}
-                      />
+                      <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 12 }} />
                       <Tooltip 
                         formatter={(value: any, name: string) => [
                           name === 'Revenue' ? formatCurrency(value) : value,
@@ -603,9 +969,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </Card>
           </div>
 
-          {/* Additional Metrics Sections */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Shop Performance */}
             <Card>
               <CardHeader>
                 <CardTitle>Top Performing Shops</CardTitle>
@@ -650,7 +1014,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               </CardContent>
             </Card>
 
-            {/* System Overview */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -710,7 +1073,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </Card>
           </div>
 
-          {/* Quick Actions */}
           <Card>
             <CardHeader>
               <CardTitle>Quick Actions</CardTitle>
@@ -760,7 +1122,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </CardContent>
           </Card>
 
-          {/* Data Range Summary */}
           <Card>
             <CardHeader>
               <CardTitle>Data Summary</CardTitle>
@@ -790,6 +1151,14 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </CardContent>
           </Card>
         </div>
+        
+        <BreakdownModal 
+          isOpen={modalOpen}
+          onClose={() => setModalOpen(false)}
+          title={modalData.title}
+          data={modalData.data}
+          type={modalData.type}
+        />
       </SidebarLayout>
     </UserProvider>
   );

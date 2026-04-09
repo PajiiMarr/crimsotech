@@ -1181,8 +1181,10 @@ class AdminDashboard(viewsets.ViewSet):
             valid_range_types = ['daily', 'weekly', 'monthly', 'yearly', 'custom']
             if date_range_type not in valid_range_types:
                 date_range_type = 'weekly'
+            
             start_date = None
             end_date = None
+            
             if start_date_str and end_date_str:
                 try:
                     start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
@@ -1247,6 +1249,7 @@ class AdminDashboard(viewsets.ViewSet):
             previous_start_date = start_date - timedelta(days=date_range_days)
             previous_end_date = start_date - timedelta(days=1)
 
+            # Current period metrics
             current_orders = Order.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
@@ -1370,7 +1373,7 @@ class AdminDashboard(viewsets.ViewSet):
                 ).order_by('month')
 
                 for month_data in monthly_sales:
-                    if month_data['month']:  # Check if month exists
+                    if month_data['month']:
                         sales_data.append({
                             'date': month_data['month'].strftime('%Y-%m-%d'),
                             'name': month_data['month'].strftime('%b %Y'),
@@ -1453,7 +1456,7 @@ class AdminDashboard(viewsets.ViewSet):
                 ).order_by('month')
 
                 for month_data in monthly_users:
-                    if month_data['month']:  # Check if month exists
+                    if month_data['month']:
                         # Calculate returning users (users with orders in this month)
                         month_start = month_data['month'].date()
                         month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
@@ -1512,7 +1515,6 @@ class AdminDashboard(viewsets.ViewSet):
         """Extract product analytics data with date filtering"""
         try:
             # Get products with order counts in date range
-            # Using Checkout model which links to orders and cart_items
             product_stats = Checkout.objects.filter(
                 created_at__gte=start_date,
                 created_at__lte=end_date,
@@ -1545,76 +1547,78 @@ class AdminDashboard(viewsets.ViewSet):
             raise
 
     def _get_shop_analytics_data(self, start_date, end_date):
-            try:
-                shop_stats = Checkout.objects.filter(
-                    created_at__gte=start_date,
-                    created_at__lte=end_date,
-                    cart_item__product__shop__isnull=False
-                ).values(
-                    'cart_item__product__shop__id',
-                    'cart_item__product__shop__name'
-                ).annotate(
-                    total_sales=Sum('total_amount'),
-                    order_count=Count('order', distinct=True)
-                ).order_by('-total_sales')[:10]
+        try:
+            shop_stats = Checkout.objects.filter(
+                created_at__gte=start_date,
+                created_at__lte=end_date,
+                cart_item__product__shop__isnull=False
+            ).values(
+                'cart_item__product__shop__id',
+                'cart_item__product__shop__name'
+            ).annotate(
+                total_sales=Sum('total_amount'),
+                order_count=Count('order', distinct=True)
+            ).order_by('-total_sales')[:10]
 
-                shop_performance = []
-                for stat in shop_stats:
-                    shop_id = stat['cart_item__product__shop__id']
-                    shop_name = stat['cart_item__product__shop__name'] or 'Unknown Shop'
+            shop_performance = []
+            for stat in shop_stats:
+                shop_id = stat['cart_item__product__shop__id']
+                shop_name = stat['cart_item__product__shop__name'] or 'Unknown Shop'
 
-                    try:
-                        shop = Shop.objects.get(id=shop_id)
+                try:
+                    shop = Shop.objects.get(id=shop_id)
 
-                        avg_rating = Review.objects.filter(
-                            shop=shop,
-                            created_at__date__gte=start_date,
-                            created_at__date__lte=end_date
-                        ).aggregate(avg=Avg('average_rating'))['avg'] or 0
+                    avg_rating = Review.objects.filter(
+                        shop=shop,
+                        created_at__date__gte=start_date,
+                        created_at__date__lte=end_date
+                    ).aggregate(avg=Avg('average_rating'))['avg'] or 0
 
-                        follower_count = ShopFollow.objects.filter(shop=shop).count()
+                    follower_count = ShopFollow.objects.filter(shop=shop).count()
 
-                        product_count = Product.objects.filter(
-                            shop=shop,
-                            is_removed=False,
-                            upload_status='published'
-                        ).count()
+                    product_count = Product.objects.filter(
+                        shop=shop,
+                        is_removed=False,
+                        upload_status='published'
+                    ).count()
 
-                        shop_performance.append({
-                            'name': shop_name,
-                            'sales': float(stat['total_sales'] or 0),
-                            'orders': stat['order_count'] or 0,
-                            'rating': round(float(avg_rating), 1),
-                            'followers': follower_count,
-                            'products': product_count,
-                        })
-                    except Shop.DoesNotExist:
-                        continue
+                    shop_performance.append({
+                        'name': shop_name,
+                        'sales': float(stat['total_sales'] or 0),
+                        'orders': stat['order_count'] or 0,
+                        'rating': round(float(avg_rating), 1),
+                        'followers': follower_count,
+                        'products': product_count,
+                    })
+                except Shop.DoesNotExist:
+                    continue
 
-                return {
-                    'shop_performance': shop_performance,
-                }
-            except Exception as e:
-                print(f"Error in _get_shop_analytics_data: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                raise
-        
+            return {
+                'shop_performance': shop_performance,
+            }
+        except Exception as e:
+            print(f"Error in _get_shop_analytics_data: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     def _get_operational_data(self, start_date, end_date):
         try:
+            # Active Boosts
             active_boosts = Boost.objects.filter(
                 start_date__date__lte=end_date,
                 end_date__date__gte=start_date,
                 status='active'
             ).count()
 
+            # Pending Refunds
             pending_refunds = Refund.objects.filter(
                 requested_at__date__gte=start_date,
                 requested_at__date__lte=end_date,
                 status='pending'
             ).count()
 
+            # Low Stock Products (quantity < 5)
             low_stock_variants = Variants.objects.filter(
                 quantity__lt=5,
                 is_active=True,
@@ -1622,6 +1626,7 @@ class AdminDashboard(viewsets.ViewSet):
                 product__upload_status='published'
             ).values('product').distinct().count()
 
+            # Average Rating
             avg_rating = Review.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
@@ -1629,20 +1634,23 @@ class AdminDashboard(viewsets.ViewSet):
                 avg_rating=Avg('average_rating')
             )['avg_rating'] or 0
 
+            # Pending Reports
             pending_reports = Report.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date,
                 status='pending'
             ).count()
 
+            # Active Riders
             active_riders = Rider.objects.filter(
                 verified=True
             ).count()
 
+            # Active Vouchers - FIXED: Changed 'valid_until' to 'end_date'
             active_vouchers = Voucher.objects.filter(
                 is_active=True,
-                added_at__lte=end_date,
-                valid_until__gte=start_date
+                start_date__lte=end_date,
+                end_date__gte=start_date
             ).count()
 
             return {
@@ -1660,8 +1668,6 @@ class AdminDashboard(viewsets.ViewSet):
             traceback.print_exc()
             raise
 
-    
-    # Helper methods
     def _get_status_color(self, status):
         """Get color code for order status"""
         color_map = {
@@ -1671,10 +1677,9 @@ class AdminDashboard(viewsets.ViewSet):
             'delivered': '#10b981',
             'completed': '#10b981',
             'cancelled': '#ef4444',
-            'refunded': '#6b7280',  # Changed from 'returned' to 'refunded' based on Order model
+            'refunded': '#6b7280',
         }
-        return color_map.get(status.lower(), '#6b7280')
-    
+        return color_map.get(status.lower(), '#6b7280')   
 
 class AdminAnalytics(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
