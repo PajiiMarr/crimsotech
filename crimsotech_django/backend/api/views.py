@@ -19748,9 +19748,20 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                     item['primary_image_url'] = None
             else:
                 item['primary_image_url'] = None
+
+            if item.get('variants'):
+                # Keep only necessary fields for price display
+                minimal_variants = []
+                for variant in item['variants']:
+                    minimal_variants.append({
+                        'price': variant.get('price'),
+                        'original_price': variant.get('original_price'),
+                        'compare_price': variant.get('compare_price'),
+                    })
+                item['variants'] = minimal_variants
             
             # Remove variant details from list view to keep it light
-            item.pop('variants', None)
+            # item.pop('variants', None)
         
         return Response(data)
     

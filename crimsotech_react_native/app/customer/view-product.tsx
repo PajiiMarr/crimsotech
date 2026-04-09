@@ -1343,20 +1343,35 @@ export default function CustomerViewProductScreen() {
                 product.category?.name ||
                 "Uncategorized"}
             </Text>
-            <Text
-              style={{
-                fontSize: 26,
-                fontWeight: "700",
-                color: "#EA580C",
-                marginTop: 8,
-              }}
-            >
-              {selectedVariant
-                ? (formatCurrency(selectedVariant.price) ?? "₱0.00")
-                : product.price_range?.min === product.price_range?.max
-                  ? (formatCurrency(product.price_range?.min) ?? "₱0.00")
-                  : `${formatCurrency(product.price_range?.min) ?? "₱0.00"} – ${formatCurrency(product.price_range?.max) ?? "₱0.00"}`}
-            </Text>
+            <View style={{ marginTop: 8 }}>
+  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+    <Text
+      style={{
+        fontSize: 26,
+        fontWeight: "700",
+        color: "#EA580C",
+      }}
+    >
+      {selectedVariant
+        ? (formatCurrency(selectedVariant.price) ?? "₱0.00")
+        : product.price_range?.min === product.price_range?.max
+          ? (formatCurrency(product.price_range?.min) ?? "₱0.00")
+          : `${formatCurrency(product.price_range?.min) ?? "₱0.00"} – ${formatCurrency(product.price_range?.max) ?? "₱0.00"}`}
+    </Text>
+    {selectedVariant?.original_price && 
+     parseFloat(selectedVariant.original_price) > parseFloat(selectedVariant.price || "0") && (
+      <Text
+        style={{
+          fontSize: 16,
+          color: "#9CA3AF",
+          textDecorationLine: "line-through",
+        }}
+      >
+        {formatCurrency(selectedVariant.original_price)}
+      </Text>
+    )}
+  </View>
+</View>
             <View
               style={{
                 marginTop: 10,
@@ -1515,34 +1530,24 @@ export default function CustomerViewProductScreen() {
                     >
                       {variant.title || variant.sku_code || "Variant"}
                     </Text>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        color: "#EA580C",
-                        fontWeight: "700",
-                      }}
-                    >
-                      {formatCurrency(variant.price) ?? "₱0.00"}
-                    </Text>
-                    {variant.original_price && (
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 4,
-                          marginTop: 2,
-                        }}
-                      >
-                        <Ionicons
-                          name="time-outline"
-                          size={10}
-                          color="#6B7280"
-                        />
-                        <Text style={{ fontSize: 10, color: "#6B7280" }}>
-                          Pre-owned
-                        </Text>
-                      </View>
-                    )}
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+  <Text style={{ fontSize: 14, color: "#EA580C", fontWeight: "700" }}>
+    {formatCurrency(variant.price) ?? "₱0.00"}
+  </Text>
+  {variant.original_price && parseFloat(variant.original_price) > parseFloat(variant.price || "0") && (
+    <Text style={{ fontSize: 12, color: "#9CA3AF", textDecorationLine: "line-through" }}>
+      {formatCurrency(variant.original_price)}
+    </Text>
+  )}
+</View>
+{variant.original_price && (
+  <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+    <Ionicons name="time-outline" size={10} color="#6B7280" />
+    <Text style={{ fontSize: 10, color: "#6B7280" }}>
+      Pre-owned
+    </Text>
+  </View>
+)}
                     <Text
                       style={{
                         fontSize: 11,

@@ -23,6 +23,12 @@ const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 40) / 2;
 
 interface Product {
+  variants?: Array<{
+    id: string;
+    price: number;
+    original_price: number | null;
+    compare_price: number | null;
+  }>;
   id: string;
   name: string;
   description: string;
@@ -77,8 +83,11 @@ interface Category {
 // ----------------------------
 // Get product price (always show lowest price)
 // ----------------------------
+// Update the getProductPrice function to handle original price comparison
 const getProductPrice = (product: Product): { 
   displayPrice: string; 
+  originalPrice: string | null;
+  hasDiscount: boolean;
   isGift: boolean;
   hasStock: boolean;
 } => {
@@ -87,6 +96,8 @@ const getProductPrice = (product: Product): {
   if (nameLower.includes('gift') || nameLower.includes('free')) {
     return {
       displayPrice: "FREE GIFT",
+      originalPrice: null,
+      hasDiscount: false,
       isGift: true,
       hasStock: product.has_stock || false,
     };
@@ -100,14 +111,54 @@ const getProductPrice = (product: Product): {
     if (minPrice === 0 && product.max_variant_price === 0) {
       return {
         displayPrice: "FREE GIFT",
+        originalPrice: null,
+        hasDiscount: false,
         isGift: true,
         hasStock: product.has_stock || false,
       };
     }
     
+    // Get the lowest original price from variants (if available)
+    let lowestOriginalPrice = null;
+    let hasDiscount = false;
+    
+    // Check if product has variants with original_price or compare_price data
+    if (product.variants && product.variants.length > 0) {
+      // Check for original_price first, then compare_price
+      const variantsWithOriginal = product.variants.filter(v => 
+        (v.original_price && v.original_price > 0) || 
+        (v.compare_price && v.compare_price > 0)
+      );
+      
+      console.log(`Product ${product.name} - Variants with original/compare price:`, variantsWithOriginal.length);
+      
+      if (variantsWithOriginal.length > 0) {
+        // Find the variant with the lowest current price that has original/compare price
+        const lowestPriceVariant = variantsWithOriginal.reduce((lowest, current) => {
+          const currentPrice = current.price || 0;
+          const lowestPrice = lowest.price || 0;
+          return currentPrice < lowestPrice ? current : lowest;
+        }, variantsWithOriginal[0]);
+        
+        // Use original_price if available, otherwise use compare_price
+        const originalPriceValue = lowestPriceVariant.original_price || lowestPriceVariant.compare_price;
+        lowestOriginalPrice = originalPriceValue;
+        const currentPrice = lowestPriceVariant.price || minPrice;
+        
+        console.log(`Product ${product.name} - Original: ${lowestOriginalPrice}, Current: ${currentPrice}`);
+        
+        // Check if there's a discount (original price > current price)
+        if (lowestOriginalPrice && lowestOriginalPrice > currentPrice) {
+          hasDiscount = true;
+        }
+      }
+    }
+    
     // Show only the lowest price
     return {
       displayPrice: `₱${minPrice.toFixed(2)}`,
+      originalPrice: hasDiscount ? `₱${lowestOriginalPrice?.toFixed(2)}` : null,
+      hasDiscount: hasDiscount,
       isGift: false,
       hasStock: product.has_stock || false,
     };
@@ -120,6 +171,8 @@ const getProductPrice = (product: Product): {
       const lowestPrice = product.price_display.split(' - ')[0];
       return {
         displayPrice: lowestPrice,
+        originalPrice: null,
+        hasDiscount: false,
         isGift: false,
         hasStock: product.has_stock || false,
       };
@@ -132,6 +185,8 @@ const getProductPrice = (product: Product): {
     
     return {
       displayPrice: product.price_display,
+      originalPrice: null,
+      hasDiscount: false,
       isGift,
       hasStock: product.has_stock || false,
     };
@@ -140,11 +195,12 @@ const getProductPrice = (product: Product): {
   // Default fallback
   return {
     displayPrice: "Price unavailable",
+    originalPrice: null,
+    hasDiscount: false,
     isGift: false,
     hasStock: false,
   };
 };
-
 // ----------------------------
 // Product Card Component
 // ----------------------------
@@ -158,7 +214,15 @@ const CompactProductCard = ({
   const [productInfo, setProductInfo] = useState(getProductPrice(product));
 
   useEffect(() => {
-    setProductInfo(getProductPrice(product));
+    const info = getProductPrice(product);
+    console.log(`Product: ${product.name}`, {
+      hasDiscount: info.hasDiscount,
+      originalPrice: info.originalPrice,
+      displayPrice: info.displayPrice,
+      variantsCount: product.variants?.length,
+      minPrice: product.min_variant_price
+    });
+    setProductInfo(info);
   }, [product]);
 
   const categoryName = typeof product.category === 'string'
@@ -209,6 +273,13 @@ const CompactProductCard = ({
 
   return (
     <TouchableOpacity style={styles.productCard} onPress={onPress} activeOpacity={0.7}>
+      {/* Discount Badge */}
+      {productInfo.hasDiscount && (
+        <View style={styles.discountBadge}>
+          <Text style={styles.discountText}>SALE</Text>
+        </View>
+      )}
+
       {/* Gift Badge */}
       {productInfo.isGift && (
         <View style={styles.giftBadge}>
@@ -256,11 +327,18 @@ const CompactProductCard = ({
           </Text>
         </View>
 
-        {/* Price - Always shows lowest price */}
+        {/* Price with original price strikethrough */}
         <View style={styles.priceContainer}>
-          <Text style={productInfo.isGift ? styles.freePrice : styles.price}>
-            {productInfo.displayPrice}
-          </Text>
+          <View style={styles.priceWrapper}>
+            {productInfo.originalPrice && (
+              <Text style={styles.originalPrice}>
+                {productInfo.originalPrice}
+              </Text>
+            )}
+            <Text style={productInfo.isGift ? styles.freePrice : styles.price}>
+              {productInfo.displayPrice}
+            </Text>
+          </View>
         </View>
       </View>
     </TouchableOpacity>
@@ -286,13 +364,12 @@ export default function CustomerHome() {
       setRefreshing(false);
     }
   };
-
   const fetchProducts = async () => {
     try {
       const response = await AxiosInstance.get('/public-products/', {
         headers: { 'X-User-Id': String(user?.id || '') },
       });
-
+  
       let productsData = response.data;
       let productsList = [];
       
@@ -303,8 +380,27 @@ export default function CustomerHome() {
       } else {
         productsList = [];
       }
-
+  
       console.log(`Fetched ${productsList.length} products from public endpoint`);
+      
+      // Debug: Check the first product's variants
+      if (productsList.length > 0) {
+        const firstProduct = productsList[0];
+        console.log('First product details:', {
+          id: firstProduct.id,
+          name: firstProduct.name,
+          min_variant_price: firstProduct.min_variant_price,
+          hasVariants: !!firstProduct.variants,
+          variantsCount: firstProduct.variants?.length || 0,
+          variants: firstProduct.variants,
+          allKeys: Object.keys(firstProduct)
+        });
+        
+        // Check if any variant has original_price
+        if (firstProduct.variants && firstProduct.variants.length > 0) {
+          console.log('First variant:', firstProduct.variants[0]);
+        }
+      }
       
       setProducts(productsList);
       
@@ -324,7 +420,6 @@ export default function CustomerHome() {
       setCategories([]);
     }
   };
-
   useEffect(() => { 
     fetchData(); 
   }, []);
@@ -589,7 +684,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   freePrice: { fontSize: 12, fontWeight: '700', color: '#059669' },
-  price: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  price: { fontSize: 14, fontWeight: '700', color: '#EF4444' },
   emptyContainer: { 
     alignItems: 'center', 
     justifyContent: 'center', 
@@ -603,6 +698,32 @@ const styles = StyleSheet.create({
     textAlign: 'center', 
     fontWeight: '500' 
   },
+  discountBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    zIndex: 2,
+  },
+  discountText: {
+    fontSize: 10,
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  priceWrapper: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+  },
+  originalPrice: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
+    marginBottom: 2,
+  },
+  
   conditionText: { fontSize: 12, color: '#9CA3AF', marginTop: 4, textAlign: 'center' },
   bottomPadding: { height: Platform.OS === 'ios' ? 74 : 64 },
 });

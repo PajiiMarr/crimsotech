@@ -370,6 +370,9 @@ class ProductSerializer(serializers.ModelSerializer):
     total_stock = serializers.IntegerField(source='total_variant_stock', read_only=True)
     open_for_swap = serializers.BooleanField(read_only=True)
 
+    min_variant_price = serializers.FloatField(read_only=True, required=False, allow_null=True)
+    max_variant_price = serializers.FloatField(read_only=True, required=False, allow_null=True)
+
     class Meta:
         model = Product
         fields = [
@@ -377,7 +380,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'is_refundable', 'refund_days', 'created_at', 'updated_at',
             'shop', 'category', 'category_admin', 'variants', 'media_files', 
             'primary_image', 'price_display', 'price_range', 'total_stock',
-            'open_for_swap'
+            'open_for_swap', 'min_variant_price', 'max_variant_price'
         ]
     
     def get_primary_image(self, obj):
@@ -404,16 +407,29 @@ class ProductSerializer(serializers.ModelSerializer):
         return media_files
 
     def get_variants(self, obj):
-        """Return all variants with full details including ownership info"""
+        """Return variants with minimal info for list view, full details for detail view"""
         request = self.context.get('request')
-        # Check if this is a detail view by looking at the URL or action
-        if request and request.parser_context.get('kwargs', {}).get('pk'):
-            # This is a detail view - return all variants with full details
-            variants = obj.variants.filter(is_active=True)
+        
+        # Check if this is a detail view
+        is_detail_view = request and request.parser_context.get('kwargs', {}).get('pk')
+        
+        variants = obj.variants.filter(is_active=True)
+        
+        if is_detail_view:
+            # Detail view - return all variants with full details
             context = self.context.copy()
             return VariantsSerializer(variants, many=True, context=context).data
-        # This is a list view - return empty list to keep response light
-        return []
+        else:
+            # List view - return minimal variant data including original_price for discounts
+            minimal_variants = []
+            for variant in variants:
+                minimal_variants.append({
+                    'id': str(variant.id),
+                    'price': float(variant.price) if variant.price else None,
+                    'original_price': float(variant.original_price) if variant.original_price else None,
+                    'compare_price': float(variant.compare_price) if variant.compare_price else None,
+                })
+            return minimal_variants
     
     def get_price_display(self, obj):
         """Get formatted price display for the product"""
