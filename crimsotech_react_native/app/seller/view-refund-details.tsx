@@ -378,7 +378,7 @@ const handleReject = async () => {
     
     // Also include the media IDs in the notes (optional)
     if (uploadedMedia.length > 0) {
-      const mediaIds = uploadedMedia.map(m => m.id).join(', ');
+      const mediaIds = uploadedMedia.map((m: any) => m.id).join(', ');
       formData.append('media_note', `Evidence uploaded: ${mediaIds}`);
     }
     
@@ -1416,11 +1416,11 @@ const renderActionButtons = () => {
   ['mp4','mov','m4v','3gp','mkv','webm'].includes(
     selectedMedia?.url?.split('?')[0].split('.').pop()?.toLowerCase() || ''
   )) ? (
-  <Image source={{ uri: selectedMedia.url }} style={styles.fullscreenImage} resizeMode="contain" />
+  <Image source={{ uri: selectedMedia.url || '' }} style={styles.fullscreenImage} resizeMode="contain" />
 ) : (
   <Video
     ref={videoRef}
-    source={{ uri: selectedMedia?.url }}
+    source={{ uri: selectedMedia?.url || '' }}
     style={styles.fullscreenVideo}
     useNativeControls
     resizeMode={ResizeMode.CONTAIN}
@@ -1548,7 +1548,7 @@ const renderActionButtons = () => {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Items to Refund</Text>
           {mergedItems.length > 0 ? (
-            mergedItems.map((item, idx) => {
+            mergedItems.map((item: any, idx: number) => {
               const name = item.product_name || item.product?.name || 'Product';
               const imageUrl = item.product_image || item.product?.image;
               const originalQty = parseInt(item.quantity) || 0;

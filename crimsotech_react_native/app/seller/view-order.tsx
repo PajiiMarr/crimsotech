@@ -1,5 +1,6 @@
 // app/seller/view-order.tsx
 import React, { useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   SafeAreaView,
   View,
@@ -104,8 +105,11 @@ interface OrderDetails {
   items: OrderItem[];
   delivery_info?: DeliveryInfo;
   pickup_date?: string;
-  proof_images?: ProofImage[];  // ADD THIS LINE
+  pickup_expire_date?: string; 
+  proof_images?: ProofImage[];  
 }
+
+
 
 // Status configuration — covers full delivery + pickup flow
 const getStatusConfig = (status: string) => {
@@ -130,9 +134,11 @@ const getStatusConfig = (status: string) => {
       description: 'Items are packed and ready. Arrange shipment to assign a rider.',
     },
     rider_assigned: {
-      label: 'Rider Assigned',
-      color: '#8B5CF6', bgColor: '#F5F3FF', icon: 'person-outline',
-      description: 'Rider has been assigned. Click "Ready to Ship" when items are packed.',
+      label: 'Rider Assigned - Waiting for Confirmation',
+      color: '#8B5CF6', 
+      bgColor: '#F5F3FF', 
+      icon: 'person-outline',
+      description: 'A rider has been assigned and is waiting to confirm the delivery. Once confirmed, you can mark the order as ready for pickup.',
     },
     rider_accepted: {
       label: 'Rider Accepted',
@@ -373,31 +379,76 @@ const fetchAvailableActions = async () => {
   const renderStatusCard = () => {
     if (!order) return null;
     
+    // DEBUG: Log the actual values
+    console.log('=== STATUS DEBUG ===');
+    console.log('Order status:', order.status);
+    console.log('Delivery info status:', order?.delivery_info?.status);
+    console.log('Rider name:', order?.delivery_info?.rider_name);
+    
     let displayStatus = order.status;
     let customDescription = '';
+    let customLabel = '';
+    let customIcon = undefined;
     
-    // For waiting_for_pickup status, add context about rider pickup
-    if (displayStatus === 'waiting_for_pickup') {
-      customDescription = 'Order is ready. Waiting for rider to pick up the item from your store for delivery to the customer.';
+    // Case 1: Rider assigned but waiting for confirmation
+    if ((displayStatus === 'rider_assigned' || displayStatus === 'waiting_for_rider') && 
+        order?.delivery_info?.rider_name && 
+        (!order?.delivery_info?.status || order?.delivery_info?.status === 'pending')) {
+      customLabel = 'Rider Assigned - Waiting for Confirmation';
+      customDescription = 'A rider has been assigned and is waiting to confirm the delivery. Once the rider accepts, you can mark the order as ready for pickup.';
+      customIcon = 'person-outline';
     }
-    // For ready_for_pickup status, clarify it's store pickup
+    // Case 2: Rider accepted the delivery - waiting for pickup
+    else if ((displayStatus === 'rider_assigned' || displayStatus === 'waiting_for_rider') && 
+             order?.delivery_info?.status === 'accepted') {
+      customLabel = 'Rider Assigned - Accepted';
+      customDescription = 'The rider has accepted the delivery and will pick up the items from your store. Please prepare the items and click "Ready to Ship" when ready.';
+      customIcon = 'checkmark-circle-outline';
+    }
+    // Case 3: Waiting for rider (no rider assigned yet)
+    else if (displayStatus === 'waiting_for_rider' && !order?.delivery_info?.rider_name) {
+      customLabel = 'Waiting for Rider';
+      customDescription = 'Waiting for a rider to accept the delivery assignment.';
+      customIcon = 'time-outline';
+    }
+    // Case 4: Out for Delivery - rider picked up and on the way (to_deliver status)
+    else if (displayStatus === 'to_deliver') {
+      customLabel = 'Item Shipped - Rider Picked Up';
+      customDescription = 'The rider has picked up the items from your store and is on the way to deliver to the customer.';
+      customIcon = 'car-outline';
+    }
+    // For waiting_for_pickup status
+    else if (displayStatus === 'waiting_for_pickup') {
+      customDescription = 'Order is ready. Waiting for rider to pick up the item from your store for delivery to the customer.';
+      customIcon = 'package-outline';
+    }
+    // For ready_for_pickup status
     else if (displayStatus === 'ready_for_pickup') {
       customDescription = 'Order is ready at your store. Customer has been notified and can pick up the item.';
+      customIcon = 'storefront-outline';
     }
     
     const config = getStatusConfig(displayStatus);
+    
+    // Use custom values if available, otherwise use config values
+    const finalLabel = customLabel || config.label;
+    const finalDescription = customDescription || config.description;
+    const finalIcon = customIcon || config.icon;
+    const finalColor = config.color;
+    const finalBgColor = config.bgColor;
+    
     return (
-      <View style={[styles.statusCard, { backgroundColor: config.bgColor, borderLeftColor: config.color }]}>
+      <View style={[styles.statusCard, { backgroundColor: finalBgColor, borderLeftColor: finalColor }]}>
         <View style={styles.statusCardHeader}>
           <View style={styles.statusRow}>
-            <Ionicons name={config.icon as any} size={22} color={config.color} />
-            <Text style={[styles.statusCardTitle, { color: config.color }]}>
-              {config.label}
+            <Ionicons name={finalIcon as any} size={22} color={finalColor} />
+            <Text style={[styles.statusCardTitle, { color: finalColor }]}>
+              {finalLabel}
             </Text>
           </View>
         </View>
         <Text style={styles.statusCardDescription}>
-          {customDescription || config.description}
+          {finalDescription}
         </Text>
       </View>
     );
@@ -449,6 +500,8 @@ const fetchAvailableActions = async () => {
       </View>
     );
   };
+
+  
 const renderProofOfDelivery = () => {
   if (order?.status !== 'delivered') return null;
   
@@ -479,6 +532,48 @@ const renderProofOfDelivery = () => {
     </View>
   );
 };
+
+const renderPickupInfo = () => {
+  if (!isPickupOrder()) return null;
+  
+  // Note: You need to have pickup_expire_date in your OrderDetails interface
+  // Add this to your OrderDetails interface if not already there
+  const pickupExpireDate = (order as any)?.pickup_expire_date;
+  if (!pickupExpireDate) return null;
+  
+  const expireDate = new Date(pickupExpireDate);
+  const now = new Date();
+  const isExpired = now > expireDate;
+  
+  return (
+    <View style={styles.infoCard}>
+      <View style={styles.cardHeader}>
+        <MaterialIcons name="schedule" size={20} color="#111827" />
+        <Text style={styles.cardTitle}>Pickup Information</Text>
+      </View>
+      <View style={styles.cardContent}>
+        <View style={styles.pickupInfoRow}>
+          <Ionicons name="calendar-outline" size={16} color="#6B7280" />
+          <Text style={styles.pickupExpireText}>
+            {isExpired ? 'Expired on: ' : 'Expires on: '}
+            {expireDate.toLocaleDateString('en-PH', {
+              month: 'short', day: 'numeric', year: 'numeric',
+              hour: '2-digit', minute: '2-digit'
+            })}
+          </Text>
+        </View>
+        {isExpired && (
+          <View style={styles.expiredWarning}>
+            <Ionicons name="warning-outline" size={16} color="#EF4444" />
+            <Text style={styles.expiredWarningText}>
+              This pickup order has expired. Please contact the customer.
+            </Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+};
 const renderActionButtons = () => {
   const isCompleted = order?.status === 'completed';
   const isCancelled = order?.status === 'cancelled';
@@ -489,20 +584,55 @@ const renderActionButtons = () => {
     showReadyForPickup, showPickedUp, showToDeliver, showDelivered, showComplete,
   } = getActionButtons();
 
+  // Check for print_waybill in available actions
+  const showPrintWaybill = availableActions.includes('print_waybill');
+
   // Get current order status
   const currentStatus = order?.status?.toLowerCase() || '';
   const isProcessing = currentStatus === 'processing';
   const isReadyToShip = currentStatus === 'ready_to_ship';
+  const isPickup = isPickupOrder();
 
   const hasAnyAction = showConfirm || showCancel || showReadyToShip ||
     showArrangeShipment || showReadyForPickup || showPickedUp ||
-    showToDeliver || showDelivered || showComplete;
+    showToDeliver || showDelivered || showComplete || showPrintWaybill;
 
   if (!hasAnyAction) return null;
+
+  // Handle print waybill - Open in browser
+  const handlePrintWaybill = async () => {
+    try {
+      setProcessing(true);
+      
+      // Construct the URL
+      const waybillUrl = `${AxiosInstance.defaults.baseURL}/seller-order-list/${orderId}/generate_waybill/?shop_id=${shopId}`;
+      
+      // Open in browser - the browser will handle PDF display and printing
+      const { Linking } = await import('react-native');
+      await Linking.openURL(waybillUrl);
+      
+      Alert.alert('Success', 'Waybill opened in browser. You can print from there.');
+    } catch (error: any) {
+      console.error('Error generating waybill:', error);
+      Alert.alert('Error', error?.message || 'Failed to generate waybill');
+    } finally {
+      setProcessing(false);
+    }
+  };
 
   return (
     <View style={styles.stickyFooter}>
       <View style={styles.buttonContainer}>
+        {/* Print Waybill Button - for delivery orders only */}
+        {!isPickup && showPrintWaybill && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.printWaybillButton]}
+            onPress={handlePrintWaybill}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Print Waybill</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Confirm Order Button */}
         {showConfirm && (
@@ -518,69 +648,67 @@ const renderActionButtons = () => {
         )}
 
         {/* For processing status: Show Arrange Shipment */}
-       
-{isProcessing && showArrangeShipment && (
-  <TouchableOpacity
-    style={[styles.actionButton, styles.readyToShipButton]}
-    onPress={() => showActionConfirmation(
-      'arrange_shipment', 'Arrange Shipment',
-      'Assign riders for this delivery? Nearby riders will be notified.'
-    )}
-    disabled={processing}
-  >
-    <Text style={styles.actionButtonText}>Arrange Shipment</Text>
-  </TouchableOpacity>
-)}
+        {isProcessing && showArrangeShipment && !isPickup && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.readyToShipButton]}
+            onPress={() => showActionConfirmation(
+              'arrange_shipment', 'Arrange Shipment',
+              'Assign riders for this delivery? Nearby riders will be notified.'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Arrange Shipment</Text>
+          </TouchableOpacity>
+        )}
 
+        {/* For waiting_for_pickup status: Show Ready to Ship button (disabled until rider accepts) */}
+        {currentStatus === 'waiting_for_pickup' && showReadyToShip && !isPickup && (
+          <TouchableOpacity
+            style={[
+              styles.actionButton, 
+              styles.readyToShipButton,
+              (order?.delivery_info?.status !== 'accepted') && styles.readyToShipButtonDisabled
+            ]}
+            onPress={() => showActionConfirmation(
+              'ready_to_ship', 'Ready to Ship', 
+              'Mark order as ready to ship? Rider will be notified to pick up.'
+            )}
+            disabled={processing || order?.delivery_info?.status !== 'accepted'}
+          >
+            <Text style={styles.actionButtonText}>Ready to Ship</Text>
+          </TouchableOpacity>
+        )}
 
+        {/* For rider_accepted status OR when delivery.status === 'accepted': Show Ready to Ship button */}
+        {(currentStatus === 'rider_accepted' || (currentStatus === 'rider_assigned' && order?.delivery_info?.status === 'accepted')) && showReadyToShip && !isPickup && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.readyToShipButton]}
+            onPress={() => showActionConfirmation(
+              'ready_to_ship', 'Ready to Ship', 
+              'Mark order as ready to ship? Rider will be notified to pick up.'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Ready to Ship</Text>
+          </TouchableOpacity>
+        )}
 
-{/* For waiting_for_rider status: Show Ready to Ship button (disabled until rider accepts) */}
-{currentStatus === 'waiting_for_pickup' && showReadyToShip && (
-  <TouchableOpacity
-    style={[
-      styles.actionButton, 
-      styles.readyToShipButton,
-      (order?.delivery_info?.status !== 'accepted') && styles.readyToShipButtonDisabled
-    ]}
-    onPress={() => showActionConfirmation(
-      'ready_to_ship', 'Ready to Ship', 
-      'Mark order as ready to ship? Rider will be notified to pick up.'
-    )}
-    disabled={processing || order?.delivery_info?.status !== 'accepted'}
-  >
-    <Text style={styles.actionButtonText}>Ready to Ship</Text>
-  </TouchableOpacity>
-)}
-
-{/* For rider_accepted status OR when delivery.status === 'accepted': Show Ready to Ship button */}
-{(currentStatus === 'rider_accepted' || (currentStatus === 'rider_assigned' && order?.delivery_info?.status === 'accepted')) && showReadyToShip && (
-  <TouchableOpacity
-    style={[styles.actionButton, styles.readyToShipButton]}
-    onPress={() => showActionConfirmation(
-      'ready_to_ship', 'Ready to Ship', 
-      'Mark order as ready to ship? Rider will be notified to pick up.'
-    )}
-    disabled={processing}
-  >
-    <Text style={styles.actionButtonText}>Ready to Ship</Text>
-  </TouchableOpacity>
-)}
-
-{currentStatus === 'pending_rider' && showArrangeShipment && (
-  <TouchableOpacity
-    style={[styles.actionButton, styles.readyToShipButton]}
-    onPress={() => showActionConfirmation(
-      'arrange_shipment', 'Arrange Shipment',
-      'No riders available. Try assigning riders again?'
-    )}
-    disabled={processing}
-  >
-    <Text style={styles.actionButtonText}>Retry Arrange Shipment</Text>
-  </TouchableOpacity>
-)}
+        {/* For pending_rider status: Show Arrange Shipment */}
+        {currentStatus === 'pending_rider' && showArrangeShipment && !isPickup && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.readyToShipButton]}
+            onPress={() => showActionConfirmation(
+              'arrange_shipment', 'Arrange Shipment',
+              'No riders available. Try assigning riders again?'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Retry Arrange Shipment</Text>
+          </TouchableOpacity>
+        )}
 
         {/* For ready_to_ship status: Show Ready to Ship button */}
-        {isReadyToShip && showReadyToShip && (
+        {isReadyToShip && showReadyToShip && !isPickup && (
           <TouchableOpacity
             style={[styles.actionButton, styles.readyToShipButton]}
             onPress={() => showActionConfirmation(
@@ -593,7 +721,7 @@ const renderActionButtons = () => {
         )}
 
         {/* For other statuses that need Arrange Shipment */}
-        {!isProcessing && !isReadyToShip && showArrangeShipment && (
+        {!isProcessing && !isReadyToShip && showArrangeShipment && !isPickup && (
           <TouchableOpacity
             style={[styles.actionButton, styles.readyToShipButton]}
             onPress={() => showActionConfirmation(
@@ -607,7 +735,7 @@ const renderActionButtons = () => {
         )}
 
         {/* Out for Delivery Button */}
-        {showToDeliver && (
+        {showToDeliver && !isPickup && (
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: '#8B5CF6' }]}
             onPress={() => showActionConfirmation(
@@ -620,7 +748,7 @@ const renderActionButtons = () => {
         )}
 
         {/* Ready for Pickup Button (Pickup orders) */}
-        {showReadyForPickup && (
+        {showReadyForPickup && isPickup && (
           <TouchableOpacity
             style={[styles.actionButton, styles.readyToShipButton]}
             onPress={() => showActionConfirmation(
@@ -634,7 +762,7 @@ const renderActionButtons = () => {
         )}
 
         {/* Picked Up Button (Pickup orders) */}
-        {showPickedUp && (
+        {showPickedUp && isPickup && (
           <TouchableOpacity
             style={[styles.actionButton, styles.confirmButton]}
             onPress={() => showActionConfirmation(
@@ -645,6 +773,32 @@ const renderActionButtons = () => {
             <Text style={styles.actionButtonText}>Mark Picked Up</Text>
           </TouchableOpacity>
         )}
+
+        {/* Delivered Button */}
+        {/* {showDelivered && !isPickup && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.confirmButton]}
+            onPress={() => showActionConfirmation(
+              'delivered', 'Mark as Delivered', 'Mark this order as delivered?'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Mark as Delivered</Text>
+          </TouchableOpacity>
+        )} */}
+
+        {/* Complete Button */}
+        {/* {showComplete && (
+          <TouchableOpacity
+            style={[styles.actionButton, styles.confirmButton]}
+            onPress={() => showActionConfirmation(
+              'complete', 'Complete Order', 'Mark this order as completed?'
+            )}
+            disabled={processing}
+          >
+            <Text style={styles.actionButtonText}>Complete Order</Text>
+          </TouchableOpacity>
+        )} */}
 
         {/* Cancel Order Button */}
         {showCancel && (
@@ -659,7 +813,6 @@ const renderActionButtons = () => {
             <Text style={styles.actionButtonText}>Cancel Order</Text>
           </TouchableOpacity>
         )}
-
       </View>
     </View>
   );
@@ -790,6 +943,7 @@ const renderActionButtons = () => {
 
         {/* Rider Information - Display if available */}
         {renderRiderInfo()}
+        {renderPickupInfo()}
         {renderProofOfDelivery()} 
 
         {/* Delivery Address & Buyer Info */}
@@ -1336,5 +1490,34 @@ previewImage: {
   readyToShipButtonDisabled: {
     backgroundColor: '#9CA3AF',
     opacity: 0.7,
+  },
+  printWaybillButton: { backgroundColor: '#8B5CF6' },
+  deliveredButton: { backgroundColor: '#10B981' },
+  pickupInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  pickupExpireText: {
+    fontSize: 13,
+    color: '#6B7280',
+  },
+  expiredWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#FEE2E2',
+    backgroundColor: '#FEF2F2',
+    padding: 8,
+    borderRadius: 8,
+  },
+  expiredWarningText: {
+    fontSize: 12,
+    color: '#DC2626',
+    flex: 1,
   },
 });

@@ -101,13 +101,14 @@ interface OrderData {
     status_color: string;
     created_at: string;
     updated_at: string | null;
+    completed_at: string | null;
     payment_method: string;
     payment_status: string | null;
     delivery_status: string | null;
     delivery_rider: string | null;
     delivery_notes: string | null;
     delivery_date: string | null;
-    shop_name?: string; // Added shop_name at order level
+    shop_name?: string; 
     shop_id?: string;
   };
   shipping_info: ShippingInfo;
@@ -342,6 +343,43 @@ if (data.proof_images && data.proof_images.length > 0) {
               }
             } catch (error: any) {
               Alert.alert('Error', error.response?.data?.error || 'Failed to cancel order');
+            }
+          }
+        }
+      ]
+    );
+  };
+  const handleOrderReceived = async () => {
+    if (!orderId || !user?.id) return;
+    
+    Alert.alert(
+      'Confirm Order Received',
+      'Have you received your order? This will mark the order as completed.',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes',
+          onPress: async () => {
+            try {
+              const response = await AxiosInstance.patch(
+                `/purchases-buyer/${orderId}/complete/`,
+                {},
+                {
+                  headers: {
+                    'X-User-Id': user.id,
+                  },
+                }
+              );
+              
+              if (response.data.success) {
+                Alert.alert('Success', 'Order marked as completed successfully');
+                fetchOrderData(); // Refresh data
+              } else {
+                Alert.alert('Error', response.data.message || 'Failed to complete order');
+              }
+            } catch (error: any) {
+              console.error('Error completing order:', error);
+              Alert.alert('Error', error.response?.data?.message || 'Failed to complete order');
             }
           }
         }
@@ -684,6 +722,30 @@ const renderRiderInfo = () => {
             </>
           );
         })()}
+        {/* Completed Information - for completed orders */}
+{orderStatusLower === 'completed' && (
+  <View style={styles.infoCard}>
+    <View style={styles.cardHeader}>
+      <MaterialIcons name="check-circle" size={20} color="#10B981" />
+      <Text style={styles.cardTitle}>Order Completed</Text>
+    </View>
+    <View style={styles.cardContent}>
+      <View style={styles.completedRow}>
+        <Ionicons name="calendar-outline" size={16} color="#6B7280" />
+        <Text style={styles.completedLabel}>Completed on:</Text>
+        <Text style={styles.completedValue}>
+          {order.completed_at ? formatDateTime(order.completed_at) : formatDateTime(order.updated_at)}
+        </Text>
+      </View>
+      <View style={styles.completedMessageContainer}>
+        <Ionicons name="happy-outline" size={20} color="#10B981" />
+        <Text style={styles.completedMessage}>
+          Your order has been successfully completed! Thank you for shopping with us.
+        </Text>
+      </View>
+    </View>
+  </View>
+)}
 
         {/* Order Timeline */}
         {timeline.length > 0 && (
@@ -883,33 +945,52 @@ const renderRiderInfo = () => {
         </View>
 
         {/* Action Buttons */}
-        <View style={styles.actionButtonsContainer}>
-          {actions.can_cancel && (
-            <TouchableOpacity
-              style={styles.cancelOrderButton}
-              onPress={handleCancelOrder}
-            >
-              <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
-            </TouchableOpacity>
-          )}
+        {/* Action Buttons */}
+<View style={styles.actionButtonsContainer}>
+  {actions.can_cancel && (
+    <TouchableOpacity
+      style={styles.cancelOrderButton}
+      onPress={handleCancelOrder}
+    >
+      <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
+    </TouchableOpacity>
+  )}
 
-          {/* Request Refund (order-level) - visible for picked_up or delivered orders */}
-          {(orderStatusLower === 'picked_up' || orderStatusLower === 'delivered') && (
-            <TouchableOpacity
-              style={styles.requestRefundButton}
-              onPress={() => router.push(`/customer/request-refund?orderId=${order.id}`)}
-            >
-              <Text style={styles.requestRefundButtonText}>Request Refund</Text>
-            </TouchableOpacity>
-          )}
+  {/* Order Received Button - for delivered or picked_up orders */}
+  {(orderStatusLower === 'delivered' || orderStatusLower === 'picked_up') && (
+    <TouchableOpacity
+      style={styles.orderReceivedButton}
+      onPress={handleOrderReceived}
+    >
+      <Text style={styles.orderReceivedButtonText}>Order Received</Text>
+    </TouchableOpacity>
+  )}
 
-          <TouchableOpacity
-            style={styles.helpButton}
-            // onPress={() => router.push('/help')}
-          >
-            <Text style={styles.helpButtonText}>Need Help?</Text>
-          </TouchableOpacity>
-        </View>
+  {/* Request Refund Button - for completed orders */}
+  {orderStatusLower === 'completed' && (
+    <TouchableOpacity
+      style={styles.requestRefundButton}
+      onPress={() => router.push(`/customer/request-refund?orderId=${order.id}`)}
+    >
+      <Text style={styles.requestRefundButtonText}>Request Refund</Text>
+    </TouchableOpacity>
+  )}
+
+  {/* Rate Button - for completed orders */}
+  {orderStatusLower === 'completed' && (
+    <TouchableOpacity
+      style={styles.rateButton}
+      onPress={() => {
+        // Navigate to rate products page
+        router.push(`/customer/rate?orderId=${order.id}`);
+      }}
+    >
+      <Text style={styles.rateButtonText}>Rate</Text>
+    </TouchableOpacity>
+  )}
+
+  {/* Need Help button removed */}
+</View>
       </ScrollView>
 
       {/* Image Preview Modal */}
@@ -1476,5 +1557,61 @@ closeButton: {
 fullScreenImage: {
   width: '100%',
   height: '80%',
+},
+orderReceivedButton: {
+  flex: 1,
+  backgroundColor: '#10B981',
+  paddingVertical: 12,
+  borderRadius: 8,
+  alignItems: 'center',
+},
+orderReceivedButtonText: {
+  color: '#FFFFFF',
+  fontSize: 14,
+  fontWeight: '600',
+},
+rateButton: {
+  flex: 1,
+  backgroundColor: '#3B82F6',
+  paddingVertical: 12,
+  borderRadius: 8,
+  alignItems: 'center',
+},
+rateButtonText: {
+  color: '#FFFFFF',
+  fontSize: 14,
+  fontWeight: '600',
+},
+completedRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  marginBottom: 12,
+  flexWrap: 'wrap',
+},
+completedLabel: {
+  fontSize: 14,
+  color: '#6B7280',
+  marginLeft: 8,
+  marginRight: 4,
+},
+completedValue: {
+  fontSize: 14,
+  color: '#111827',
+  fontWeight: '600',
+},
+completedMessageContainer: {
+  flexDirection: 'row',
+  alignItems: 'flex-start',
+  backgroundColor: '#ECFDF5',
+  padding: 12,
+  borderRadius: 8,
+  marginTop: 8,
+  gap: 8,
+},
+completedMessage: {
+  fontSize: 13,
+  color: '#065F46',
+  flex: 1,
+  lineHeight: 18,
 },
 });

@@ -22441,6 +22441,9 @@ class SellerOrderList(viewsets.ViewSet):
             elif current_shipping_status == 'rider_assigned' or current_shipping_status == 'rider_accepted':
                 if not is_pickup:
                     available_actions = ['ready_to_ship']
+                    # Add print_waybill when delivery is accepted
+                    if latest_delivery and latest_delivery.status == 'accepted':
+                        available_actions.append('print_waybill')
 
             elif current_shipping_status == 'pending_rider':
                 if not is_pickup:
@@ -22635,6 +22638,9 @@ class SellerOrderList(viewsets.ViewSet):
                 if not is_pickup:
                     return Response({"success": False, "message": "This action is only for pickup orders"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'ready_for_pickup'
+                
+                order.pickup_expire_date = timezone.now() + timedelta(days=3)
+                
                 message = "Order ready for pickup"
                 
             elif action_type == 'picked_up':
