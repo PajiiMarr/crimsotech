@@ -10,14 +10,14 @@ import {
   ActivityIndicator,
   Alert,
   TextInput,
-  Platform
+  Platform,
+  StatusBar
 } from 'react-native';
 import {
   MaterialIcons
 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
-import CustomerLayout from './CustomerLayout';
 import AxiosInstance from '../../contexts/axios';
 
 // ================================
@@ -213,13 +213,14 @@ export default function RatePage() {
   const [currentItem, setCurrentItem] = useState<OrderItem | null>(null);
   const [riderInfo, setRiderInfo] = useState<RiderInfo | null>(null);
   const [existingReview, setExistingReview] = useState<ReviewData | null>(null);
+  const [isPickupOrder, setIsPickupOrder] = useState(false);
 
   // Product ratings
   const [conditionRating, setConditionRating] = useState(0);
   const [accuracyRating, setAccuracyRating] = useState(0);
   const [valueRating, setValueRating] = useState(0);
 
-  // Rider rating (delivery_rating)
+  // Rider rating (delivery_rating) - only for delivery orders
   const [deliveryRating, setDeliveryRating] = useState(0);
 
   // Comments
@@ -228,8 +229,11 @@ export default function RatePage() {
   // Review status
   const [hasReviewed, setHasReviewed] = useState(false);
 
-  // Check if all criteria are rated
-  const allRated = conditionRating > 0 && accuracyRating > 0 && valueRating > 0 && deliveryRating > 0;
+  // Check if product ratings are complete
+  const productRated = conditionRating > 0 && accuracyRating > 0 && valueRating > 0;
+  
+  // For delivery orders, need rider rating; for pickup orders, only product ratings needed
+  const allRated = isPickupOrder ? productRated : (productRated && deliveryRating > 0);
 
   // ================================
   // Fetch Functions
@@ -253,28 +257,35 @@ export default function RatePage() {
         if (product) {
           setCurrentItem(product);
         }
+        
+        // Check if this is a pickup order
+        const deliveryMethod = orderResponse.data.shipping_info?.delivery_method || '';
+        const isPickup = deliveryMethod.toLowerCase().includes('pickup');
+        setIsPickupOrder(isPickup);
       }
       
-      // Fetch rider info to get rider_id
-      try {
-        const riderResponse = await AxiosInstance.get(`/purchases-buyer/${orderId}/get-rider-info/`, {
-          headers: {
-            'X-User-Id': userId
-          }
-        });
-        
-        if (riderResponse.data?.success && riderResponse.data?.riders?.length > 0) {
-          const rider = riderResponse.data.riders[0];
-          setRiderInfo({
-            id: rider.id,
-            rider_id: rider.rider_id,
-            name: rider.user ? `${rider.user.first_name || ''} ${rider.user.last_name || ''}`.trim() : 'Rider',
-            vehicle_type: 'Motorcycle',
-            plate_number: 'N/A'
+      // Fetch rider info only for delivery orders (not pickup)
+      if (!isPickupOrder) {
+        try {
+          const riderResponse = await AxiosInstance.get(`/purchases-buyer/${orderId}/get-rider-info/`, {
+            headers: {
+              'X-User-Id': userId
+            }
           });
+          
+          if (riderResponse.data?.success && riderResponse.data?.riders?.length > 0) {
+            const rider = riderResponse.data.riders[0];
+            setRiderInfo({
+              id: rider.id,
+              rider_id: rider.rider_id,
+              name: rider.user ? `${rider.user.first_name || ''} ${rider.user.last_name || ''}`.trim() : 'Rider',
+              vehicle_type: 'Motorcycle',
+              plate_number: 'N/A'
+            });
+          }
+        } catch (riderErr) {
+          console.log("No rider info available for this delivery order");
         }
-      } catch (riderErr) {
-        console.log("No rider info available");
       }
       
       // Check existing reviews
@@ -324,14 +335,15 @@ export default function RatePage() {
   // Submit Function
   // ================================
   const handleSubmitReview = async () => {
-    // Validate all ratings are provided
-    if (!hasReviewed && !allRated) {
-      setError("Please rate all criteria: Condition, Accuracy, Value, and Delivery");
+    // Validate based on order type
+    if (!hasReviewed && !productRated) {
+      setError("Please rate all product criteria: Condition, Accuracy, and Value");
       return;
     }
-
-    if (!riderInfo?.rider_id) {
-      setError("No rider information found for this order");
+    
+    // For delivery orders, validate rider rating
+    if (!isPickupOrder && !hasReviewed && deliveryRating === 0) {
+      setError("Please rate the delivery experience");
       return;
     }
 
@@ -339,17 +351,23 @@ export default function RatePage() {
       setSubmitting(true);
       setError(null);
 
-      // Submit ONE review with both product and rider
-      const payload = {
+      // Prepare payload based on order type
+      let payload: any = {
         customer_id: userId,
         product_id: productId,
-        rider_id: riderInfo.rider_id,
         condition_rating: conditionRating,
         accuracy_rating: accuracyRating,
         value_rating: valueRating,
-        delivery_rating: deliveryRating,
         comment: comment
       };
+      
+      // Add rider rating only for delivery orders
+      if (!isPickupOrder && riderInfo?.rider_id) {
+        payload.rider_id = riderInfo.rider_id;
+        payload.delivery_rating = deliveryRating;
+      }
+
+      console.log("Submitting review payload:", payload);
 
       const response = await AxiosInstance.post('/reviews/', payload, {
         headers: {
@@ -357,17 +375,23 @@ export default function RatePage() {
         }
       });
 
-      setSubmitted(true);
-      
-      // Redirect after 2 seconds
-      setTimeout(() => {
-        router.push('/customer/purchases');
-      }, 2000);
+      if (response.data?.status === 'success') {
+        setSubmitted(true);
+        
+        setTimeout(() => {
+          router.push('/customer/purchases');
+        }, 2000);
+      } else {
+        setError(response.data?.message || "Failed to submit review");
+      }
 
     } catch (err: any) {
       console.error("Error submitting review:", err);
       if (err.response) {
-        setError(err.response.data?.message || JSON.stringify(err.response.data));
+        const errorMsg = err.response.data?.message || 
+                         err.response.data?.error || 
+                         JSON.stringify(err.response.data);
+        setError(errorMsg);
       } else {
         setError(err.message || "Failed to submit review");
       }
@@ -387,18 +411,20 @@ export default function RatePage() {
   // ================================
   if (loading) {
     return (
-      <CustomerLayout disableScroll>
+      <View style={styles.fullScreenContainer}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#10B981" />
           <Text style={styles.loadingText}>Loading order details...</Text>
         </View>
-      </CustomerLayout>
+      </View>
     );
   }
 
   if (submitted) {
     return (
-      <CustomerLayout disableScroll>
+      <View style={styles.fullScreenContainer}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
         <View style={styles.successContainer}>
           <View style={styles.successIconContainer}>
             <MaterialIcons name="check-circle" size={64} color="#10B981" />
@@ -407,7 +433,7 @@ export default function RatePage() {
           <Text style={styles.successText}>Your review has been submitted successfully.</Text>
           <Text style={styles.redirectText}>Redirecting to purchases page...</Text>
         </View>
-      </CustomerLayout>
+      </View>
     );
   }
 
@@ -418,28 +444,31 @@ export default function RatePage() {
     : null;
 
   return (
-    <CustomerLayout>
+    <View style={styles.fullScreenContainer}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      
+      {/* Edge-to-Edge Header */}
+      <View style={styles.edgeHeader}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.edgeBackButton}
+        >
+          <MaterialIcons name="arrow-back" size={24} color="#374151" />
+        </TouchableOpacity>
+        <View style={styles.edgeHeaderTextContainer}>
+          <Text style={styles.edgeHeaderTitle}>Rate Your Experience</Text>
+          <Text style={styles.edgeHeaderSubtitle}>
+            Order #{orderId?.slice(0,8)} • {currentItem?.product_name || 'Product'}
+            {isPickupOrder && <Text style={styles.pickupBadge}> (Pickup)</Text>}
+          </Text>
+        </View>
+      </View>
+
       <ScrollView 
-        style={styles.container}
-        contentContainerStyle={styles.contentContainer}
+        style={styles.scrollContent}
+        contentContainerStyle={styles.scrollContentContainer}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => router.back()}
-            style={styles.backButton}
-          >
-            <MaterialIcons name="arrow-back" size={24} color="#374151" />
-          </TouchableOpacity>
-          <View style={styles.headerTextContainer}>
-            <Text style={styles.headerTitle}>Rate Your Experience</Text>
-            <Text style={styles.headerSubtitle}>
-              Order #{orderId?.slice(0,8)} • {currentItem?.product_name || 'Product'}
-            </Text>
-          </View>
-        </View>
-
         {/* Error Message */}
         {error && (
           <View style={styles.errorContainer}>
@@ -461,7 +490,6 @@ export default function RatePage() {
                     <Image 
                       source={{ uri: imageUrl }} 
                       style={styles.productImage}
-                      defaultSource={require('../../assets/images/icon.png')}
                     />
                   ) : (
                     <View style={styles.productImagePlaceholder}>
@@ -478,7 +506,7 @@ export default function RatePage() {
                 </View>
               </View>
 
-              {/* Product Ratings Section */}
+              {/* Product Ratings Section - Always show for both pickup and delivery */}
               <View style={styles.ratingsSection}>
                 <Text style={styles.sectionTitle}>Rate the Product</Text>
                 <View style={styles.criteriaGrid}>
@@ -506,8 +534,8 @@ export default function RatePage() {
                 </View>
               </View>
 
-              {/* Rider Ratings Section */}
-              {riderInfo && (
+              {/* Rider Ratings Section - Only show for delivery orders (not pickup) */}
+              {!isPickupOrder && riderInfo && (
                 <View style={styles.ratingsSection}>
                   <View style={styles.riderHeader}>
                     <MaterialIcons name="person" size={20} color="#6B7280" />
@@ -553,10 +581,10 @@ export default function RatePage() {
               <TouchableOpacity
                 style={[
                   styles.submitButton,
-                  (submitting || !allRated || !riderInfo?.rider_id) && styles.submitButtonDisabled
+                  (submitting || !allRated) && styles.submitButtonDisabled
                 ]}
                 onPress={handleSubmitReview}
-                disabled={submitting || !allRated || !riderInfo?.rider_id}
+                disabled={submitting || !allRated}
               >
                 {submitting ? (
                   <View style={styles.submittingContainer}>
@@ -570,8 +598,11 @@ export default function RatePage() {
             </View>
           </>
         )}
+        
+        {/* Bottom padding for safe area */}
+        <View style={styles.bottomPadding} />
       </ScrollView>
-    </CustomerLayout>
+    </View>
   );
 }
 
@@ -579,19 +610,21 @@ export default function RatePage() {
 // Styles
 // ================================
 const styles = StyleSheet.create({
-  container: {
+  fullScreenContainer: {
     flex: 1,
     backgroundColor: '#F9FAFB',
   },
-  contentContainer: {
-    padding: 16,
-    paddingBottom: 32,
+  scrollContent: {
+    flex: 1,
+  },
+  scrollContentContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 20,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    minHeight: 400,
   },
   loadingText: {
     marginTop: 12,
@@ -603,7 +636,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 32,
-    minHeight: 400,
   },
   successIconContainer: {
     marginBottom: 16,
@@ -625,27 +657,37 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     textAlign: 'center',
   },
-  header: {
+  // Edge-to-Edge Header Styles
+  edgeHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
+    backgroundColor: '#FFFFFF',
+    paddingTop: Platform.OS === 'ios' ? 50 : StatusBar.currentHeight ? StatusBar.currentHeight + 10 : 40,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
   },
-  backButton: {
+  edgeBackButton: {
     padding: 8,
     marginRight: 8,
   },
-  headerTextContainer: {
+  edgeHeaderTextContainer: {
     flex: 1,
   },
-  headerTitle: {
+  edgeHeaderTitle: {
     fontSize: 20,
     fontWeight: '600',
     color: '#111827',
   },
-  headerSubtitle: {
+  edgeHeaderSubtitle: {
     fontSize: 14,
     color: '#6B7280',
     marginTop: 2,
+  },
+  pickupBadge: {
+    color: '#F97316',
+    fontWeight: '500',
   },
   errorContainer: {
     flexDirection: 'row',
@@ -797,6 +839,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     gap: 12,
     marginTop: 8,
+    marginBottom: 20,
   },
   cancelButton: {
     paddingHorizontal: 20,
@@ -907,5 +950,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#4B5563',
     fontStyle: 'italic',
+  },
+  bottomPadding: {
+    height: Platform.OS === 'ios' ? 20 : 10,
   },
 });

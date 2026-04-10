@@ -977,17 +977,26 @@ const renderRiderInfo = () => {
   )}
 
   {/* Rate Button - for completed orders */}
-  {orderStatusLower === 'completed' && (
-    <TouchableOpacity
-      style={styles.rateButton}
-      onPress={() => {
-        // Navigate to rate products page
-        router.push(`/customer/rate?orderId=${order.id}`);
-      }}
-    >
-      <Text style={styles.rateButtonText}>Rate</Text>
-    </TouchableOpacity>
-  )}
+  {/* Rate Button - for completed orders */}
+{orderStatusLower === 'completed' && items.length > 0 && (
+  <TouchableOpacity
+    style={styles.rateButton}
+    onPress={() => {
+      // Navigate to rate page with first product
+      const firstItem = items[0];
+      router.push({
+        pathname: '/customer/rate',
+        params: {
+          orderId: order.id,
+          productId: firstItem.product_id,
+          productName: firstItem.product_name
+        }
+      });
+    }}
+  >
+    <Text style={styles.rateButtonText}>Rate</Text>
+  </TouchableOpacity>
+)}
 
   {/* Need Help button removed */}
 </View>

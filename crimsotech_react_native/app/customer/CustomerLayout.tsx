@@ -30,6 +30,7 @@ export default function CustomerLayout({
     '/customer/product/',
     '/customer/checkout',
     '/customer/order-confirmation',
+    '/customer/rate',
   ];
 
   // Determine interface type based on current route

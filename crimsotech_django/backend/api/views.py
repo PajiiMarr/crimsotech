@@ -38045,13 +38045,18 @@ class ReviewView(APIView):
             try:
                 # First get the User
                 user = User.objects.get(id=user_id)
-                # Then get the Customer profile (Customer uses customer field as OneToOne to User)
-                return Customer.objects.get(customer=user)
-            except (User.DoesNotExist, Customer.DoesNotExist) as e:
+                # Then get or create the Customer profile
+                customer, created = Customer.objects.get_or_create(customer=user)
+                if created:
+                    print(f"Created new customer profile for user {user.username}")
+                return customer
+            except User.DoesNotExist as e:
+                print(f"User not found: {e}")
+                return None
+            except Exception as e:
                 print(f"Error getting customer: {e}")
                 return None
         return None
-
 
     def get(self, request, review_id=None):
         """
@@ -38365,7 +38370,7 @@ class ReviewView(APIView):
             data = request.data.copy()  # Make a copy to modify
             
             # Set the customer field to the Customer instance
-            data['customer'] = customer
+            data['customer'] = customer.id  # Use the customer ID (same as user ID)
             
             # Get product_id and rider_id
             product_id = data.get('product_id')
@@ -38380,7 +38385,7 @@ class ReviewView(APIView):
             
             # Handle product if provided
             if product_id:
-                # Check for existing review (optional - you might want to allow multiple?)
+                # Check for existing review
                 existing_review = Review.objects.filter(
                     customer=customer,
                     product_id=product_id
@@ -38398,8 +38403,8 @@ class ReviewView(APIView):
                 # Get product and its shop
                 try:
                     product = Product.objects.get(id=product_id)
-                    data['product'] = product.id
-                    data['shop'] = product.shop.id if product.shop else None
+                    data['product'] = product
+                    data['shop'] = product.shop if product.shop else None
                 except Product.DoesNotExist:
                     return Response({
                         'status': 'error',
@@ -38407,9 +38412,8 @@ class ReviewView(APIView):
                     }, status=status.HTTP_404_NOT_FOUND)
             
             # Handle rider if provided
-            # Handle rider if provided
             if rider_id:
-                # Check for existing review (optional)
+                # Check for existing review
                 existing_rider_review = Review.objects.filter(
                     customer=customer,
                     rider_id=rider_id
@@ -38424,10 +38428,10 @@ class ReviewView(APIView):
                         }
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Get rider instance - FIXED: use rider_id instead of id
+                # Get rider instance
                 try:
-                    rider = Rider.objects.get(rider_id=rider_id)  # Changed from id=rider_id
-                    data['rider'] = rider  # Set the Rider instance
+                    rider = Rider.objects.get(rider_id=rider_id)
+                    data['rider'] = rider
                 except Rider.DoesNotExist:
                     return Response({
                         'status': 'error',
@@ -38438,6 +38442,9 @@ class ReviewView(APIView):
             data.pop('attitude_rating', None)
             data.pop('handling_rating', None)
             data.pop('safety_rating', None)
+            data.pop('product_id', None)
+            data.pop('rider_id', None)
+            data.pop('customer_id', None)
             
             # Use serializer to create the review
             serializer = ReviewSerializer(data=data, context={'request': request})
@@ -38473,8 +38480,7 @@ class ReviewView(APIView):
                 'status': 'error',
                 'message': 'Failed to create review',
                 'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)  
     def put(self, request, review_id):
         """Handle PUT requests for full update"""
         return self._update_review(request, review_id, partial=False)
