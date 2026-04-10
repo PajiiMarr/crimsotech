@@ -103,6 +103,41 @@ export default function RiderViewOrder() {
   const [previewVisible, setPreviewVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
+  const [confirmationModalVisible, setConfirmationModalVisible] = useState(false);
+const [confirmationConfig, setConfirmationConfig] = useState({
+  title: '',
+  message: '',
+  confirmText: 'Confirm',
+  cancelText: 'Cancel',
+  confirmColor: '#EE4D2D',
+  onConfirm: () => {},
+  icon: 'warning-outline' as keyof typeof Ionicons.glyphMap,
+  iconColor: '#EE4D2D',
+});
+
+const showConfirmationModal = (config: {
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  confirmColor?: string;
+  icon?: keyof typeof Ionicons.glyphMap;
+  iconColor?: string;
+  onConfirm: () => void;
+}) => {
+  setConfirmationConfig({
+    title: config.title,
+    message: config.message,
+    confirmText: config.confirmText || 'Confirm',
+    cancelText: config.cancelText || 'Cancel',
+    confirmColor: config.confirmColor || '#EE4D2D',
+    icon: config.icon || 'warning-outline',
+    iconColor: config.iconColor || config.confirmColor || '#EE4D2D',
+    onConfirm: config.onConfirm,
+  });
+  setConfirmationModalVisible(true);
+};
+
   // Fetch proof images
   const fetchProofImages = async (deliveryIdParam: string) => {
     if (!deliveryIdParam) return;
@@ -165,123 +200,118 @@ export default function RiderViewOrder() {
   };
 
   // Handle accept delivery
+  // Handle accept delivery
   const handleAcceptDelivery = async () => {
     if (!orderDetails?.delivery?.id) return;
     
-    Alert.alert(
-      'Accept Order',
-      'Are you sure you want to accept this delivery?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Accept',
-          onPress: async () => {
-            try {
-              setIsActionLoading(true);
-              const formData = new FormData();
-              formData.append('order_id', orderDetails.delivery.id);
-
-              const response = await AxiosInstance.post('/rider-orders-active/accept_order/', formData, {
-                headers: { 'X-User-Id': user?.user_id }
-              });
-
-              if (response.data.success) {
-                Alert.alert('Success', 'Order accepted successfully');
-                fetchOrderDetails(); // Refresh to show updated status
-              } else {
-                Alert.alert('Error', response.data.error || 'Failed to accept order');
-              }
-            } catch (err: any) {
-              console.error('Error accepting delivery:', err);
-              Alert.alert('Error', err?.response?.data?.error || 'Failed to accept order');
-            } finally {
-              setIsActionLoading(false);
-            }
+    showConfirmationModal({
+      title: 'Accept Order',
+      message: 'Are you sure you want to accept this delivery?',
+      confirmText: 'Accept',
+      confirmColor: '#EE4D2D',
+      icon: 'checkmark-circle-outline',
+      iconColor: '#10B981',
+      onConfirm: async () => {
+        try {
+          setIsActionLoading(true);
+          const formData = new FormData();
+          formData.append('order_id', orderDetails.delivery.id);
+  
+          const response = await AxiosInstance.post('/rider-orders-active/accept_order/', formData, {
+            headers: { 'X-User-Id': user?.user_id }
+          });
+  
+          if (response.data.success) {
+            Alert.alert('Success', 'Order accepted successfully');
+            fetchOrderDetails();
+          } else {
+            Alert.alert('Error', response.data.error || 'Failed to accept order');
           }
+        } catch (err: any) {
+          console.error('Error accepting delivery:', err);
+          Alert.alert('Error', err?.response?.data?.error || 'Failed to accept order');
+        } finally {
+          setIsActionLoading(false);
         }
-      ]
-    );
+      },
+    });
   };
 
+  // Handle decline delivery
   // Handle decline delivery
   const handleDeclineDelivery = async () => {
     if (!orderDetails?.delivery?.id) return;
     
-    Alert.alert(
-      'Decline Order',
-      'Are you sure you want to decline this delivery?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Decline',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setIsActionLoading(true);
-              const formData = new FormData();
-              formData.append('order_id', orderDetails.delivery.id);
-
-              const response = await AxiosInstance.post('/rider-orders-active/decline_order/', formData, {
-                headers: { 'X-User-Id': user?.user_id }
-              });
-
-              if (response.data.success) {
-                Alert.alert('Success', 'Order declined successfully');
-                router.back();
-              } else {
-                Alert.alert('Error', response.data.error || 'Failed to decline order');
-              }
-            } catch (err: any) {
-              console.error('Error declining delivery:', err);
-              Alert.alert('Error', err?.response?.data?.error || 'Failed to decline order');
-            } finally {
-              setIsActionLoading(false);
-            }
+    showConfirmationModal({
+      title: 'Decline Order',
+      message: 'Are you sure you want to decline this delivery?',
+      confirmText: 'Decline',
+      confirmColor: '#DC2626',
+      icon: 'close-circle-outline',
+      iconColor: '#DC2626',
+      onConfirm: async () => {
+        try {
+          setIsActionLoading(true);
+          const formData = new FormData();
+          formData.append('order_id', orderDetails.delivery.id);
+  
+          const response = await AxiosInstance.post('/rider-orders-active/decline_order/', formData, {
+            headers: { 'X-User-Id': user?.user_id }
+          });
+  
+          if (response.data.success) {
+            Alert.alert('Success', 'Order declined successfully');
+            router.back();
+          } else {
+            Alert.alert('Error', response.data.error || 'Failed to decline order');
           }
+        } catch (err: any) {
+          console.error('Error declining delivery:', err);
+          Alert.alert('Error', err?.response?.data?.error || 'Failed to decline order');
+        } finally {
+          setIsActionLoading(false);
         }
-      ]
-    );
+      },
+    });
   };
 
   // Handle mark as picked up
-  const handleMarkPickedUp = async () => {
-    if (!orderDetails?.delivery?.id) return;
-    
-    Alert.alert(
-      'Mark as Picked Up',
-      'Have you picked up the items from the seller?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Yes, Picked Up',
-          onPress: async () => {
-            try {
-              setIsActionLoading(true);
-              const formData = new FormData();
-              formData.append('delivery_id', orderDetails.delivery.id);
+  // Handle mark as picked up
+const handleMarkPickedUp = async () => {
+  if (!orderDetails?.delivery?.id) return;
+  
+  showConfirmationModal({
+    title: 'Mark as Picked Up',
+    message: 'Have you picked up the items from the seller?',
+    confirmText: 'Yes, Picked Up',
+    confirmColor: '#3B82F6',
+    icon: 'cube-outline',
+    iconColor: '#3B82F6',
+    onConfirm: async () => {
+      try {
+        setIsActionLoading(true);
+        const formData = new FormData();
+        formData.append('delivery_id', orderDetails.delivery.id);
 
-              const response = await AxiosInstance.post('/rider-orders-active/pickup_order/', formData, {
-                headers: { 'X-User-Id': user?.user_id }
-              });
+        const response = await AxiosInstance.post('/rider-orders-active/pickup_order/', formData, {
+          headers: { 'X-User-Id': user?.user_id }
+        });
 
-              if (response.data.success) {
-                Alert.alert('Success', 'Order marked as picked up successfully');
-                fetchOrderDetails(); // Refresh to show updated status
-              } else {
-                Alert.alert('Error', response.data.error || 'Failed to mark as picked up');
-              }
-            } catch (err: any) {
-              console.error('Error marking as picked up:', err);
-              Alert.alert('Error', err?.response?.data?.error || 'Failed to mark as picked up');
-            } finally {
-              setIsActionLoading(false);
-            }
-          }
+        if (response.data.success) {
+          Alert.alert('Success', 'Order marked as picked up successfully');
+          fetchOrderDetails();
+        } else {
+          Alert.alert('Error', response.data.error || 'Failed to mark as picked up');
         }
-      ]
-    );
-  };
-
+      } catch (err: any) {
+        console.error('Error marking as picked up:', err);
+        Alert.alert('Error', err?.response?.data?.error || 'Failed to mark as picked up');
+      } finally {
+        setIsActionLoading(false);
+      }
+    },
+  });
+};
   // Handle mark as delivered - Navigate to add proof page first
   const handleMarkDelivered = async () => {
     if (!orderDetails?.delivery?.id) return;
@@ -293,109 +323,99 @@ export default function RiderViewOrder() {
   };
 
   // Handle failed delivery
+  // Handle failed delivery
   const handleFailedDelivery = async () => {
     if (!orderDetails?.delivery?.id) return;
     
-    Alert.alert(
-      'Failed Delivery',
-      'Why did the delivery fail?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Customer Not Available',
-          onPress: () => showFailedReasonDialog('Customer not available'),
-        },
-        {
-          text: 'Wrong Address',
-          onPress: () => showFailedReasonDialog('Wrong address provided'),
-        },
-        {
-          text: 'Other',
-          onPress: () => showFailedReasonDialog('Other reason'),
-        },
-      ]
-    );
+    // First modal for selecting reason
+    showConfirmationModal({
+      title: 'Failed Delivery',
+      message: 'Why did the delivery fail?',
+      confirmText: 'Customer Not Available',
+      cancelText: 'Cancel',
+      confirmColor: '#F59E0B',
+      icon: 'alert-circle-outline',
+      iconColor: '#F59E0B',
+      onConfirm: () => showFailedReasonDialog('Customer not available'),
+    });
   };
-
+  
   const showFailedReasonDialog = (reason: string) => {
-    Alert.alert(
-      'Confirm Failed Delivery',
-      `Reason: ${reason}\n\nAre you sure you want to mark this delivery as failed?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setIsActionLoading(true);
-              const formData = new FormData();
-              formData.append('delivery_id', orderDetails?.delivery?.id || '');
-              formData.append('status', 'cancelled');
-              formData.append('reason', reason);
-
-              const response = await AxiosInstance.post('/rider-orders-active/update_delivery_status/', formData, {
-                headers: { 'X-User-Id': user?.user_id }
-              });
-
-              if (response.data.success) {
-                Alert.alert('Info', 'Delivery marked as failed');
-                router.back();
-              } else {
-                Alert.alert('Error', response.data.error || 'Failed to mark delivery as failed');
-              }
-            } catch (err: any) {
-              console.error('Error marking delivery as failed:', err);
-              Alert.alert('Error', err?.response?.data?.error || 'Failed to mark delivery as failed');
-            } finally {
-              setIsActionLoading(false);
-            }
+    showConfirmationModal({
+      title: 'Confirm Failed Delivery',
+      message: `Reason: ${reason}\n\nAre you sure you want to mark this delivery as failed?`,
+      confirmText: 'Confirm',
+      confirmColor: '#DC2626',
+      icon: 'warning-outline',
+      iconColor: '#DC2626',
+      onConfirm: async () => {
+        try {
+          setIsActionLoading(true);
+          const formData = new FormData();
+          formData.append('delivery_id', orderDetails?.delivery?.id || '');
+          formData.append('status', 'cancelled');
+          formData.append('reason', reason);
+  
+          const response = await AxiosInstance.post('/rider-orders-active/update_delivery_status/', formData, {
+            headers: { 'X-User-Id': user?.user_id }
+          });
+  
+          if (response.data.success) {
+            Alert.alert('Info', 'Delivery marked as failed');
+            router.back();
+          } else {
+            Alert.alert('Error', response.data.error || 'Failed to mark delivery as failed');
           }
+        } catch (err: any) {
+          console.error('Error marking delivery as failed:', err);
+          Alert.alert('Error', err?.response?.data?.error || 'Failed to mark delivery as failed');
+        } finally {
+          setIsActionLoading(false);
         }
-      ]
-    );
+      },
+    });
   };
+
+  
 
   // Handle cancel order (for accepted status)
-  const handleCancelAcceptedOrder = async () => {
-    if (!orderDetails?.delivery?.id) return;
-    
-    Alert.alert(
-      'Cancel Order',
-      'Are you sure you want to cancel this delivery? This action cannot be undone.',
-      [
-        { text: 'No, Go Back', style: 'cancel' },
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setIsActionLoading(true);
-              const formData = new FormData();
-              formData.append('order_id', orderDetails.delivery.id);
-              formData.append('reason', 'Rider cancelled the delivery');
+  // Handle cancel order (for accepted status)
+const handleCancelAcceptedOrder = async () => {
+  if (!orderDetails?.delivery?.id) return;
+  
+  showConfirmationModal({
+    title: 'Cancel Order',
+    message: 'Are you sure you want to cancel this delivery? This action cannot be undone.',
+    confirmText: 'Yes, Cancel',
+    confirmColor: '#DC2626',
+    icon: 'warning-outline',
+    iconColor: '#DC2626',
+    onConfirm: async () => {
+      try {
+        setIsActionLoading(true);
+        const formData = new FormData();
+        formData.append('order_id', orderDetails.delivery.id);
+        formData.append('reason', 'Rider cancelled the delivery');
 
-              const response = await AxiosInstance.post('/rider-orders-active/decline_order/', formData, {
-                headers: { 'X-User-Id': user?.user_id }
-              });
+        const response = await AxiosInstance.post('/rider-orders-active/decline_order/', formData, {
+          headers: { 'X-User-Id': user?.user_id }
+        });
 
-              if (response.data.success) {
-                Alert.alert('Success', 'Order cancelled successfully');
-                router.back();
-              } else {
-                Alert.alert('Error', response.data.error || 'Failed to cancel order');
-              }
-            } catch (err: any) {
-              console.error('Error cancelling order:', err);
-              Alert.alert('Error', err?.response?.data?.error || 'Failed to cancel order');
-            } finally {
-              setIsActionLoading(false);
-            }
-          }
+        if (response.data.success) {
+          Alert.alert('Success', 'Order cancelled successfully');
+          router.back();
+        } else {
+          Alert.alert('Error', response.data.error || 'Failed to cancel order');
         }
-      ]
-    );
-  };
+      } catch (err: any) {
+        console.error('Error cancelling order:', err);
+        Alert.alert('Error', err?.response?.data?.error || 'Failed to cancel order');
+      } finally {
+        setIsActionLoading(false);
+      }
+    },
+  });
+};
 
   // Handle image loading error
   const handleImageError = (productId: string) => {
@@ -426,6 +446,7 @@ export default function RiderViewOrder() {
   };
 
   // Get status color
+  // Get status color
   const getStatusColor = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'pending':
@@ -433,9 +454,13 @@ export default function RiderViewOrder() {
       case 'pending_offer':
         return '#F59E0B';
       case 'accepted':
-        return '#3B82F6';
+        // Different color for waiting_for_rider (ready for pickup)
+        if (orderDetails?.order_status === 'waiting_for_rider') {
+          return '#10B981'; // Green to indicate ready for pickup
+        }
+        return '#F59E0B'; // Orange/yellow for waiting
       case 'picked_up':
-        return '#10B981';
+        return '#3B82F6'; // Blue for in transit
       case 'delivered':
         return '#10B981';
       case 'cancelled':
@@ -446,7 +471,7 @@ export default function RiderViewOrder() {
         return '#6B7280';
     }
   };
-
+  // Get status label
   // Get status label
   const getStatusLabel = (status: string) => {
     switch (status?.toLowerCase()) {
@@ -454,15 +479,33 @@ export default function RiderViewOrder() {
         return 'In Transit';
       case 'pending_offer':
         return 'Pending';
+      case 'accepted':
+        // Check if order status is rider_assigned
+        if (orderDetails?.order_status === 'rider_assigned') {
+          return 'Accepted - Waiting for pick up';
+        }
+        // Check if order status is waiting_for_rider
+        if (orderDetails?.order_status === 'waiting_for_rider') {
+          return 'Approved - Waiting';
+        }
+        return 'Accepted';
       default:
         return status?.charAt(0).toUpperCase() + status?.slice(1) || 'Unknown';
     }
   };
-
+  // Get status message
   // Get status message
   const getStatusMessage = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'accepted':
+        // Check if order status is rider_assigned
+        if (orderDetails?.order_status === 'rider_assigned') {
+          return 'You have accepted this delivery. Waiting for the seller to mark the order as ready for pickup.';
+        }
+        // Check if order status is waiting_for_rider
+        if (orderDetails?.order_status === 'waiting_for_rider') {
+          return 'Order is approved and ready for pickup. Please proceed to the seller to pick up the items.';
+        }
         return 'You have accepted this delivery. Waiting for the seller to mark it as ready for pickup.';
       case 'pending':
         return 'This order is pending your response. Please accept or decline within the time limit.';
@@ -791,6 +834,8 @@ export default function RiderViewOrder() {
           </View>
         </View>
 
+      
+
         {/* CARD 3: Order Items - Edge to Edge */}
         <View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: (showAcceptDecline || showAcceptedActions || showInTransitActions || showDelivered) ? 0 : 80, marginTop: -1 }}>
           <View style={{ padding: 16 }}>
@@ -858,6 +903,127 @@ export default function RiderViewOrder() {
         </View>
       </ScrollView>
 
+      {/* Custom Confirmation Modal */}
+<Modal
+  visible={confirmationModalVisible}
+  transparent={true}
+  animationType="none"
+  onRequestClose={() => setConfirmationModalVisible(false)}
+>
+  <View style={{
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  }}>
+    <View style={{
+      backgroundColor: '#FFFFFF',
+      borderRadius: 20,
+      width: width - 48,
+      maxWidth: 340,
+      padding: 24,
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+      elevation: 5,
+    }}>
+      {/* Icon */}
+      <View style={{
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: `${confirmationConfig.iconColor}15`,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 16,
+      }}>
+        <Ionicons
+          name={confirmationConfig.icon}
+          size={32}
+          color={confirmationConfig.iconColor}
+        />
+      </View>
+
+      {/* Title */}
+      <Text style={{
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#1F2937',
+        textAlign: 'center',
+        marginBottom: 8,
+      }}>
+        {confirmationConfig.title}
+      </Text>
+
+      {/* Message */}
+      <Text style={{
+        fontSize: 14,
+        color: '#6B7280',
+        textAlign: 'center',
+        marginBottom: 24,
+        lineHeight: 20,
+      }}>
+        {confirmationConfig.message}
+      </Text>
+
+      {/* Buttons */}
+      <View style={{
+        flexDirection: 'row',
+        gap: 12,
+        width: '100%',
+      }}>
+       <TouchableOpacity
+  onPress={() => {
+    setConfirmationModalVisible(false);
+    // Just close the modal, don't call onConfirm
+  }}
+  style={{
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  }}
+>
+          <Text style={{
+            fontSize: 15,
+            fontWeight: '600',
+            color: '#6B7280',
+            textAlign: 'center',
+          }}>
+            {confirmationConfig.cancelText}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => {
+            setConfirmationModalVisible(false);
+            confirmationConfig.onConfirm();
+          }}
+          style={{
+            flex: 1,
+            backgroundColor: confirmationConfig.confirmColor,
+            paddingVertical: 12,
+            borderRadius: 10,
+          }}
+        >
+          <Text style={{
+            fontSize: 15,
+            fontWeight: '600',
+            color: '#FFFFFF',
+            textAlign: 'center',
+          }}>
+            {confirmationConfig.confirmText}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
+
       {/* Edge-to-Edge Action Buttons for Pending/Accept/Decline */}
       {showAcceptDecline && (
         <View style={{ 
@@ -917,60 +1083,63 @@ export default function RiderViewOrder() {
 
       {/* Edge-to-Edge Action Buttons for Accepted Status - Mark as Picked Up and Cancel */}
       {showAcceptedActions && (
-        <View style={{ 
-          backgroundColor: '#FFFFFF', 
-          borderTopWidth: 1, 
-          borderTopColor: '#E5E7EB',
-          paddingTop: 12,
-          paddingBottom: 20,
+  <View style={{ 
+    backgroundColor: '#FFFFFF', 
+    borderTopWidth: 1, 
+    borderTopColor: '#E5E7EB',
+    paddingTop: 12,
+    paddingBottom: 20,
+  }}>
+    <View style={{ flexDirection: 'row', gap: 12 }}>
+      <TouchableOpacity
+        onPress={handleCancelAcceptedOrder}
+        disabled={isActionLoading}
+        style={{
+          flex: 1,
+          backgroundColor: '#FFFFFF',
+          paddingVertical: 14,
+          borderRadius: 0,
+          borderWidth: 1,
+          borderColor: '#DC2626',
+          marginLeft: 16,
+        }}
+      >
+        <Text style={{ 
+          fontSize: 16, 
+          fontWeight: '600', 
+          color: '#DC2626', 
+          textAlign: 'center' 
         }}>
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <TouchableOpacity
-              onPress={handleCancelAcceptedOrder}
-              disabled={isActionLoading}
-              style={{
-                flex: 1,
-                backgroundColor: '#FFFFFF',
-                paddingVertical: 14,
-                borderRadius: 0,
-                borderWidth: 1,
-                borderColor: '#DC2626',
-                marginLeft: 16,
-              }}
-            >
-              <Text style={{ 
-                fontSize: 16, 
-                fontWeight: '600', 
-                color: '#DC2626', 
-                textAlign: 'center' 
-              }}>
-                {isActionLoading ? 'Processing...' : 'Cancel'}
-              </Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              onPress={handleMarkPickedUp}
-              disabled={isActionLoading}
-              style={{
-                flex: 1,
-                backgroundColor: '#3B82F6',
-                paddingVertical: 14,
-                borderRadius: 0,
-                marginRight: 16,
-              }}
-            >
-              <Text style={{ 
-                fontSize: 16, 
-                fontWeight: '600', 
-                color: '#FFFFFF', 
-                textAlign: 'center' 
-              }}>
-                {isActionLoading ? 'Processing...' : 'Mark as Picked Up'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+          {isActionLoading ? 'Processing...' : 'Cancel'}
+        </Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity
+        onPress={handleMarkPickedUp}
+        disabled={isActionLoading || orderDetails?.order_status === 'rider_assigned'}
+        style={{
+          flex: 1,
+          backgroundColor: orderDetails?.order_status === 'rider_assigned' ? '#9CA3AF' : '#3B82F6',
+          paddingVertical: 14,
+          borderRadius: 0,
+          marginRight: 16,
+          opacity: orderDetails?.order_status === 'rider_assigned' ? 0.7 : 1,
+        }}
+      >
+        <Text style={{ 
+          fontSize: 16, 
+          fontWeight: '600', 
+          color: '#FFFFFF', 
+          textAlign: 'center' 
+        }}>
+          {orderDetails?.order_status === 'rider_assigned' 
+            ? 'Waiting for Seller' 
+            : (isActionLoading ? 'Processing...' : 'Mark as Picked Up')}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+)}
 
       {/* Edge-to-Edge Action Buttons for In Transit Status - Mark as Delivered and Failed */}
       {showInTransitActions && (
@@ -1030,7 +1199,7 @@ export default function RiderViewOrder() {
       )}
 
       {/* Image Preview Modal */}
-      <Modal visible={previewVisible} transparent animationType="fade">
+      <Modal visible={previewVisible} transparent animationType="none">
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
           <TouchableOpacity
             style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 }}
