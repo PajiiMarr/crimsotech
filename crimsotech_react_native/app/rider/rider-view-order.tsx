@@ -43,6 +43,8 @@ interface OrderItem {
   shop_barangay?: string;
   shop_city?: string;
   shop_province?: string;
+  shop_latitude?: number;
+  shop_longitude?: number;
 }
 
 interface OrderDetails {
@@ -67,6 +69,8 @@ interface OrderDetails {
     province: string;
     barangay: string;
     zip_code: string;
+    latitude?: number;
+    longitude?: number;
   };
   delivery: {
     id: string;
@@ -319,6 +323,45 @@ const handleMarkPickedUp = async () => {
     router.push({
       pathname: '/rider/add-proof',
       params: { deliveryId: orderDetails.delivery.id }
+    });
+  };
+
+  // Handle view route - Navigate to map
+  const handleViewRoute = () => {
+    const sellerInfo = orderDetails?.items?.[0];
+    const customerAddress = orderDetails?.shipping_address;
+    
+    // Check if buyer has pinned location coordinates
+    if (!customerAddress?.latitude || !customerAddress?.longitude) {
+      Alert.alert(
+        'Location Not Available',
+        'The buyer has not pinned their exact location on the map yet. Please contact the buyer for directions.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    console.log('Buyer coordinates:', {
+      lat: customerAddress.latitude,
+      lng: customerAddress.longitude,
+      address: customerAddress.full_address
+    });
+    
+    // Navigate to map with buyer's pinned coordinates
+    router.push({
+      pathname: '/rider/RiderMapScreen',
+      params: {
+        // Buyer's pinned location (destination)
+        destLat: customerAddress.latitude.toString(),
+        destLng: customerAddress.longitude.toString(),
+        // Seller's location (optional - for pickup)
+        sellerLat: sellerInfo?.shop_latitude?.toString() || '',
+        sellerLng: sellerInfo?.shop_longitude?.toString() || '',
+        // Address strings for display
+        customerAddress: customerAddress.full_address || '',
+        sellerAddress: sellerInfo ? formatShopAddress(sellerInfo) : '',
+        deliveryId: orderDetails?.delivery?.id || '',
+      }
     });
   };
 
@@ -1141,7 +1184,7 @@ const handleCancelAcceptedOrder = async () => {
   </View>
 )}
 
-      {/* Edge-to-Edge Action Buttons for In Transit Status - Mark as Delivered and Failed */}
+      {/* Edge-to-Edge Action Buttons for In Transit Status - View Route, Failed, and Mark as Delivered */}
       {showInTransitActions && (
         <View style={{ 
           backgroundColor: '#FFFFFF', 
@@ -1152,6 +1195,27 @@ const handleCancelAcceptedOrder = async () => {
         }}>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <TouchableOpacity
+              onPress={handleViewRoute}
+              disabled={isActionLoading}
+              style={{
+                flex: 1,
+                backgroundColor: '#3B82F6',
+                paddingVertical: 14,
+                borderRadius: 0,
+                marginLeft: 16,
+              }}
+            >
+              <Text style={{ 
+                fontSize: 16, 
+                fontWeight: '600', 
+                color: '#FFFFFF', 
+                textAlign: 'center' 
+              }}>
+                View Route
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
               onPress={handleFailedDelivery}
               disabled={isActionLoading}
               style={{
@@ -1161,7 +1225,6 @@ const handleCancelAcceptedOrder = async () => {
                 borderRadius: 0,
                 borderWidth: 1,
                 borderColor: '#DC2626',
-                marginLeft: 16,
               }}
             >
               <Text style={{ 
@@ -1191,7 +1254,7 @@ const handleCancelAcceptedOrder = async () => {
                 color: '#FFFFFF', 
                 textAlign: 'center' 
               }}>
-                {isActionLoading ? 'Processing...' : 'Mark as Delivered'}
+                {isActionLoading ? 'Processing...' : 'Delivered'}
               </Text>
             </TouchableOpacity>
           </View>

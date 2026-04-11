@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../../contexts/AuthContext';
 import { router, useLocalSearchParams } from 'expo-router';
 import AxiosInstance from '../../../contexts/axios';
+import MapPickerModal from '../components/MapPickerModal';
 import AddressDropdowns from '../../components/address/AddressDropdowns';
 
 interface AddressFormData {
@@ -65,6 +66,11 @@ export default function AddAddressPage() {
     city: '',
     barangay: '',
   });
+  const [showMapPicker, setShowMapPicker] = useState(false);
+const [selectedCoordinates, setSelectedCoordinates] = useState<{
+  latitude: number;
+  longitude: number;
+} | null>(null);
 
   useEffect(() => {
     const initializeForm = async () => {
@@ -94,13 +100,18 @@ export default function AddAddressPage() {
             address_type: parsedAddress.address_type || 'home',
             is_default: parsedAddress.is_default || false,
           });
+
+          if (parsedAddress.latitude && parsedAddress.longitude) {
+            setSelectedCoordinates({
+              latitude: parseFloat(parsedAddress.latitude),
+              longitude: parseFloat(parsedAddress.longitude),
+            });
+          }
         } catch (error) {
           console.error('Error parsing address data:', error);
           Alert.alert('Error', 'Failed to load address data');
           router.back();
         }
-      } else {
-        setIsEditMode(false);
       }
       
       setLoading(false);
@@ -111,6 +122,22 @@ export default function AddAddressPage() {
 
   const handleInputChange = (field: keyof AddressFormData, value: string | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleLocationSelect = (location: {
+    latitude: number;
+    longitude: number;
+    address: string;
+  }) => {
+    setSelectedCoordinates({
+      latitude: location.latitude,
+      longitude: location.longitude,
+    });
+    setShowMapPicker(false);
+    // Optional: Auto-fill landmark with pinned location
+    if (location.address) {
+      handleInputChange('landmark', `📍 Pinned: ${location.address}`);
+    }
   };
 
   const handleAddressChange = (addressData: {
@@ -175,19 +202,21 @@ export default function AddAddressPage() {
       Alert.alert('Error', 'User not found');
       return;
     }
-
+  
     if (!validateForm()) {
       Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
-
+  
     try {
       setSaving(true);
       const response = await AxiosInstance.post(
         '/shipping-address/add_shipping_address/',
         {
           user_id: user.id,
-          ...formData
+          ...formData,
+          latitude: selectedCoordinates?.latitude || null,  // ADD THIS
+          longitude: selectedCoordinates?.longitude || null, // ADD THIS
         }
       );
       
@@ -206,18 +235,18 @@ export default function AddAddressPage() {
       setSaving(false);
     }
   };
-
+  
   const handleUpdateAddress = async () => {
     if (!user?.id || !addressId) {
       Alert.alert('Error', 'Missing required information');
       return;
     }
-
+  
     if (!validateForm()) {
       Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
-
+  
     try {
       setSaving(true);
       const response = await AxiosInstance.put(
@@ -225,7 +254,9 @@ export default function AddAddressPage() {
         {
           address_id: addressId,
           user_id: user.id,
-          ...formData
+          ...formData,
+          latitude: selectedCoordinates?.latitude || null,  // ADD THIS
+          longitude: selectedCoordinates?.longitude || null, // ADD THIS
         }
       );
       
@@ -432,6 +463,28 @@ export default function AddAddressPage() {
             />
           </View>
         </View>
+        {/* Map Pin Button - Add this entire block */}
+<View style={styles.inputGroup}>
+  <TouchableOpacity
+    style={styles.mapButton}
+    onPress={() => setShowMapPicker(true)}
+  >
+    <Ionicons name="map-outline" size={24} color="#F97316" />
+    <Text style={styles.mapButtonText}>
+      {selectedCoordinates ? 'Update Pinned Location' : 'Pin Location on Map'}
+    </Text>
+  </TouchableOpacity>
+  
+  {selectedCoordinates && (
+    <View style={styles.coordinatesInfo}>
+      <Ionicons name="location" size={14} color="#10B981" />
+      <Text style={styles.coordinatesText} numberOfLines={1}>
+        📍 Lat: {selectedCoordinates.latitude.toFixed(6)}, 
+        Lng: {selectedCoordinates.longitude.toFixed(6)}
+      </Text>
+    </View>
+  )}
+</View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Additional Information</Text>
@@ -513,6 +566,13 @@ export default function AddAddressPage() {
           )}
         </TouchableOpacity>
       </ScrollView>
+      <MapPickerModal
+        visible={showMapPicker}
+        onClose={() => setShowMapPicker(false)}
+        onSelect={handleLocationSelect}
+        initialLatitude={selectedCoordinates?.latitude}
+        initialLongitude={selectedCoordinates?.longitude}
+      />
     </SafeAreaView>
   );
 }
@@ -647,5 +707,35 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 14,
     color: '#6B7280',
+  },
+  mapButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#F97316',
+    borderRadius: 8,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  mapButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F97316',
+  },
+  coordinatesInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 6,
+    gap: 6,
+  },
+  coordinatesText: {
+    fontSize: 11,
+    color: '#065F46',
+    flex: 1,
   },
 });

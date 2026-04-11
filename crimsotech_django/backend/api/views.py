@@ -25234,7 +25234,9 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
                     'instructions',
                     'address_type',
                     'is_default',
-                    'created_at'
+                    'created_at',
+                    'latitude',  
+                    'longitude'  
                 )[:20]  # Limit to 20 addresses
             )
             
@@ -25334,7 +25336,9 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
                 landmark=request.data.get('landmark', ''),
                 instructions=request.data.get('instructions', ''),
                 address_type=request.data.get('address_type', 'home'),
-                is_default=request.data.get('is_default', False)
+                is_default=request.data.get('is_default', False),
+                latitude=request.data.get('latitude'),  
+                longitude=request.data.get('longitude') 
             )
             
             # Create full address string
@@ -25494,7 +25498,9 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
                 "address_type": address.address_type,
                 "is_default": address.is_default,
                 "full_address": full_address,
-                "created_at": address.created_at.isoformat() if address.created_at else None
+                "created_at": address.created_at.isoformat() if address.created_at else None,
+                "latitude": str(address.latitude) if address.latitude else None, 
+                "longitude": str(address.longitude) if address.longitude else None  
             }
             
             return Response({
@@ -25536,7 +25542,7 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
                 'recipient_name', 'recipient_phone', 'street', 'barangay',
                 'city', 'province', 'zip_code', 'country', 'building_name',
                 'floor_number', 'unit_number', 'landmark', 'instructions',
-                'address_type', 'is_default'
+                'address_type', 'is_default', 'latitude', 'longitude'
             ]
             
             for field in update_fields:
@@ -27802,7 +27808,9 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "city": order.shipping_address.city,
                 "province": order.shipping_address.province,
                 "barangay": order.shipping_address.barangay,
-                "zip_code": order.shipping_address.zip_code
+                "zip_code": order.shipping_address.zip_code,
+                "latitude": float(order.shipping_address.latitude) if order.shipping_address.latitude else None,
+                "longitude": float(order.shipping_address.longitude) if order.shipping_address.longitude else None
             } if order.shipping_address else None,
             "delivery": {
                 "id": str(delivery.id) if delivery else None,
@@ -28098,6 +28106,8 @@ class RiderOrdersActive(viewsets.ViewSet):
                     "city": shipping_address.city,
                     "province": shipping_address.province,
                     "full_address": shipping_address.get_full_address(),
+                    "latitude": float(shipping_address.latitude) if shipping_address.latitude else None,
+                    "longitude": float(shipping_address.longitude) if shipping_address.longitude else None
                 }
             
             # Calculate time elapsed
