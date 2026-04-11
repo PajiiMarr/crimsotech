@@ -1020,6 +1020,9 @@ class ShippingAddress(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+
     
     class Meta:
         ordering = ['-is_default', '-created_at']
@@ -1239,6 +1242,25 @@ class Review(models.Model):
     def __str__(self):
         return f"Review by {self.customer} - {self.average_rating} stars"
 
+class ReviewMedia(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    review = models.ForeignKey(
+        Review,
+        on_delete=models.CASCADE,
+        related_name='medias'
+    )
+    file_data = models.FileField(upload_to="reviews/media/")
+    file_type = models.CharField(max_length=50)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['review']),
+            models.Index(fields=['uploaded_at']),
+        ]
+
+    def __str__(self):
+        return f"Media for Review {self.review.id}"
 
 class Delivery(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
