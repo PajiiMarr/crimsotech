@@ -9104,7 +9104,19 @@ class AdminRefunds(viewsets.ViewSet):
             return "*" * len(account_str)
         return "*" * (len(account_str) - 4) + account_str[-4:]
 
+
 class AdminUsers(viewsets.ViewSet):
+    
+    from api.utils.storage_utils import convert_s3_to_public_url
+    def _convert_to_public_url(self, file_url):
+        """Helper method to convert S3 URL to public URL"""
+        if not file_url:
+            return None
+        try:
+            return convert_s3_to_public_url(file_url)
+        except Exception:
+            return None
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """Get user metrics for admin dashboard"""
@@ -9356,12 +9368,15 @@ class AdminUsers(viewsets.ViewSet):
             # Serialize data with all model fields
             users_data = []
             for user in users_page:
+                # Get profile picture URL using helper
+                profile_picture_url = self._convert_to_public_url(user.profile_picture.url if user.profile_picture else None)
+                
                 user_data = {
                     # Core User model fields
                     'id': str(user.id),
                     'username': user.username,
                     'email': user.email,
-                    'password': user.password,  # Included but should be handled securely in production
+                    'password': user.password,
                     'first_name': user.first_name,
                     'last_name': user.last_name,
                     'middle_name': user.middle_name,
@@ -9383,6 +9398,7 @@ class AdminUsers(viewsets.ViewSet):
                     'registration_stage': user.registration_stage,
                     'created_at': user.created_at.isoformat(),
                     'updated_at': user.updated_at.isoformat(),
+                    'profile_picture_url': profile_picture_url,
                     
                     # Related model data
                     'customer_data': None,
@@ -9411,15 +9427,11 @@ class AdminUsers(viewsets.ViewSet):
                 
                 # Add moderator data if exists
                 if hasattr(user, 'moderator'):
-                    user_data['moderator_data'] = {
-                        # Add moderator specific fields if needed
-                    }
+                    user_data['moderator_data'] = {}
                 
                 # Add admin data if exists
                 if hasattr(user, 'admin'):
-                    user_data['admin_data'] = {
-                        # Add admin specific fields if needed
-                    }
+                    user_data['admin_data'] = {}
                 
                 users_data.append(user_data)
             
@@ -9456,6 +9468,140 @@ class AdminUsers(viewsets.ViewSet):
             5: 'Complete'
         }
         return stages.get(stage, f'Stage {stage}')
+
+    @action(detail=False, methods=['get'], url_path='user/(?P<user_id>[^/.]+)')
+    def get_user(self, request, user_id=None):
+        """Get single user by ID with shops and personal listings"""
+        try:
+            user = User.objects.select_related().get(id=user_id)
+            
+            # Get profile picture URL using helper
+            profile_picture_url = self._convert_to_public_url(user.profile_picture.url if user.profile_picture else None)
+            
+            # Get shops owned by user (if user is a customer)
+            shops_data = []
+            if hasattr(user, 'customer') and user.customer:
+                shops = Shop.objects.filter(customer=user.customer)
+                for shop in shops:
+                    shops_data.append({
+                        'id': str(shop.id),
+                        'name': shop.name,
+                        'description': shop.description,
+                        'shop_picture_url': self._convert_to_public_url(shop.shop_picture.url if shop.shop_picture else None),
+                        'verified': shop.verified,
+                        'status': shop.status,
+                        'total_sales': float(shop.total_sales),
+                        'is_suspended': shop.is_suspended,
+                        'created_at': shop.created_at.isoformat(),
+                        'city': shop.city,
+                        'province': shop.province,
+                        'contact_number': shop.contact_number,
+                    })
+            
+            # Get personal listings (products with no shop)
+            personal_listings_data = []
+            personal_products = Product.objects.filter(customer=user.customer, shop__isnull=True) if hasattr(user, 'customer') and user.customer else []
+            for product in personal_products:
+                # Get primary image
+                primary_image = None
+                media = product.productmedia_set.first()
+                if media and media.file_data:
+                    primary_image = self._convert_to_public_url(media.file_data.url if media.file_data else None)
+                
+                # Get price range
+                variants = product.variants.filter(is_active=True)
+                min_price = None
+                max_price = None
+                if variants.exists():
+                    prices = [v.price for v in variants if v.price]
+                    if prices:
+                        min_price = float(min(prices))
+                        max_price = float(max(prices))
+                
+                personal_listings_data.append({
+                    'id': str(product.id),
+                    'name': product.name,
+                    'description': product.description,
+                    'condition': product.condition,
+                    'upload_status': product.upload_status,
+                    'status': product.status,
+                    'is_refundable': product.is_refundable,
+                    'refund_days': product.refund_days,
+                    'created_at': product.created_at.isoformat(),
+                    'updated_at': product.updated_at.isoformat(),
+                    'is_removed': product.is_removed,
+                    'primary_image': primary_image,
+                    'min_price': min_price,
+                    'max_price': max_price,
+                    'variants_count': variants.count(),
+                    'total_stock': sum(v.quantity for v in variants),
+                    'favorites_count': product.favorites_set.count(),
+                })
+            
+            # Get customer data
+            customer_data = None
+            if hasattr(user, 'customer') and user.customer:
+                customer_data = {
+                    'product_limit': user.customer.product_limit,
+                    'current_product_count': user.customer.current_product_count
+                }
+            
+            # Get rider data
+            rider_data = None
+            if hasattr(user, 'rider') and user.rider:
+                rider_data = {
+                    'vehicle_type': user.rider.vehicle_type,
+                    'plate_number': user.rider.plate_number,
+                    'vehicle_brand': user.rider.vehicle_brand,
+                    'vehicle_model': user.rider.vehicle_model,
+                    'license_number': user.rider.license_number,
+                    'verified': user.rider.verified
+                }
+            
+            user_data = {
+                'id': str(user.id),
+                'username': user.username,
+                'email': user.email,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'middle_name': user.middle_name,
+                'contact_number': user.contact_number,
+                'date_of_birth': user.date_of_birth.isoformat() if user.date_of_birth else None,
+                'age': user.age,
+                'sex': user.sex,
+                'street': user.street,
+                'barangay': user.barangay,
+                'city': user.city,
+                'province': user.province,
+                'state': user.state,
+                'zip_code': user.zip_code,
+                'country': user.country,
+                'is_admin': user.is_admin,
+                'is_customer': user.is_customer,
+                'is_moderator': user.is_moderator,
+                'is_rider': user.is_rider,
+                'registration_stage': user.registration_stage,
+                'created_at': user.created_at.isoformat(),
+                'updated_at': user.updated_at.isoformat(),
+                'is_suspended': user.is_suspended,
+                'suspension_reason': user.suspension_reason,
+                'suspended_until': user.suspended_until.isoformat() if user.suspended_until else None,
+                'profile_picture_url': profile_picture_url,
+                'customer_data': customer_data,
+                'rider_data': rider_data,
+                'moderator_data': {},
+                'admin_data': {},
+                'shops': shops_data,
+                'personal_listings': personal_listings_data,
+            }
+            
+            return Response(user_data, status=status.HTTP_200_OK)
+            
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"Error in get_user: {str(e)}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class AdminTeam(viewsets.ViewSet):
     @action(detail=False, methods=['get'])

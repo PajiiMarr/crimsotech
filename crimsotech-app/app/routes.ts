@@ -23,6 +23,7 @@ export default [
     route('create-shop', 'routes/customer/create-shop.tsx'),
     route('pending-approval', 'routes/customer/pending-approval-shop.tsx'),
     
+    
     route('personal-listing', 'routes/customer/personal-listing.tsx'),
     route("product/:id", "components/customer/view-product.tsx"),
     route("favorites", "routes/customer/favorites.tsx"),
@@ -113,6 +114,7 @@ export default [
         route('admin-view-withdrawal-details/:id', 'routes/admin/admin-view-withdrawal-details.tsx'),
         route('view-refund-details/:refundId', 'routes/admin/view_refund/view-refund-details.tsx'),
         route('users', 'routes/admin/users.tsx'),
+        route('users/:user_id', 'routes/admin/view_user/view_user.tsx'),
         route('team', 'routes/admin/team.tsx'), 
         route('reports', 'routes/admin/reports.tsx'),
         route('activity-log', 'routes/admin/logs.tsx'),

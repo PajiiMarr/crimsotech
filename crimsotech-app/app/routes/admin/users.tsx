@@ -26,10 +26,12 @@ import {
   Truck,
   Settings,
   AlertCircle,
+  Eye,
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
 import AxiosInstance from '~/components/axios/Axios';
+import { Link } from "react-router";
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -484,18 +486,6 @@ const columns: ColumnDef<UserData>[] = [
     ),
   },
   {
-    accessorKey: "email",
-    header: "Email",
-    cell: ({ row }) => (
-      <div className="flex items-center gap-1 text-xs sm:text-sm">
-        <Mail className="w-3 h-3 text-muted-foreground" />
-        {row.original.email || (
-          <span className="text-muted-foreground italic">No email</span>
-        )}
-      </div>
-    ),
-  },
-  {
     id: "user_type",
     accessorFn: (row) => getUserPrimaryType(row),
     header: "Primary Role",
@@ -613,5 +603,23 @@ const columns: ColumnDef<UserData>[] = [
         </div>
       );
     },
-  }
+  },
+  {
+    id: "actions",
+    header: "Actions",
+    cell: ({ row }) => {
+      const user = row.original;
+      return (
+        <div className="flex items-center gap-2">
+          <Link
+            to={`/admin/users/${user.id}`}
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            title="View User Details"
+          >
+            <Eye className="w-4 h-4" />
+          </Link>
+        </div>
+      );
+    },
+  },
 ];
