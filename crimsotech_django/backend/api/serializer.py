@@ -149,9 +149,21 @@ class ShopFollowSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['id', 'followed_at']
 
+class ReviewMediaSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ReviewMedia
+        fields = ['id', 'file_data', 'file_type', 'file_url', 'uploaded_at']
+        read_only_fields = ['id', 'uploaded_at']
+    
+    def get_file_url(self, obj):
+        return get_media_url(obj.file_data)
+
 class ReviewSerializer(serializers.ModelSerializer):
     # Add computed field for product average
     product_average = serializers.SerializerMethodField(read_only=True)
+    media = ReviewMediaSerializer(many=True, read_only=True, source='medias')
     
     class Meta:
         model = Review
@@ -195,21 +207,6 @@ class ReviewSerializer(serializers.ModelSerializer):
                     "At least one rating must be provided for product review"
                 )
         
-        # Validate rider ratings if rider is provided
-        if data.get('rider'):
-            # Your model doesn't have rider rating fields, so we'll just validate that
-            # the rider field is present
-            if not data.get('rider'):
-                raise serializers.ValidationError(
-                    "Rider ID must be provided for rider review"
-                )
-            
-            # Remove any rider rating fields that might be in the data
-            # since your model doesn't have them
-            data.pop('attitude_rating', None)
-            data.pop('handling_rating', None)
-            data.pop('safety_rating', None)
-        
         return data
 
     def create(self, validated_data):
@@ -230,7 +227,6 @@ class ReviewSerializer(serializers.ModelSerializer):
         if ratings:
             validated_data['average_rating'] = round(sum(ratings) / len(ratings), 2)
         else:
-            # For rider-only reviews with no ratings, set a default or leave as None
             validated_data['average_rating'] = None
         
         return super().create(validated_data)
@@ -261,7 +257,8 @@ class ReviewSerializer(serializers.ModelSerializer):
         
         instance.save()
         return instance
-      
+
+        
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
@@ -1969,3 +1966,5 @@ class MessageSerializer(serializers.ModelSerializer):
         model = Message
         fields = '__all__'
         read_only_fields = ['id', 'created_at', 'updated_at', 'delivered_at', 'read_at', 'edited_at', 'deleted_at']
+
+
