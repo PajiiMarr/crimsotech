@@ -38244,7 +38244,7 @@ class ReviewView(APIView):
                 'product',
                 'rider',
                 'shop'
-            ).get(id=review_id)
+            ).prefetch_related('medias').get(id=review_id)
             
             # Get customer info - FIXED: removed get_full_name()
             customer_info = None
@@ -38301,6 +38301,7 @@ class ReviewView(APIView):
                 'product': product_info,
                 'rider': rider_info,
                 'shop': shop_info,
+                'media': ReviewMediaSerializer(review.medias.all(), many=True).data
             }
             
             return Response({
@@ -38324,7 +38325,7 @@ class ReviewView(APIView):
             'product',
             'rider',
             'shop'
-        ).all()
+        ).prefetch_related('medias').all()
         
         # Apply filters
         # Filter by product
@@ -38485,6 +38486,7 @@ class ReviewView(APIView):
                 'product': product_info,
                 'rider': rider_info,
                 'shop': shop_info,
+                'media': ReviewMediaSerializer(review.medias.all(), many=True).data 
             }
             
             reviews_data.append(review_data)
@@ -38523,14 +38525,9 @@ class ReviewView(APIView):
                     'message': 'Customer not found. Please ensure you have a customer profile.'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            data = request.data.copy()  # Make a copy to modify
-            
-            # Set the customer field to the Customer instance
-            data['customer'] = customer.id  # Use the customer ID (same as user ID)
-            
-            # Get product_id and rider_id
-            product_id = data.get('product_id')
-            rider_id = data.get('rider_id')
+            # Get product_id and rider_id from request data
+            product_id = request.data.get('product_id')
+            rider_id = request.data.get('rider_id')
             
             # Check if at least one is provided
             if not product_id and not rider_id:
@@ -38538,6 +38535,19 @@ class ReviewView(APIView):
                     'status': 'error',
                     'message': 'Either product_id or rider_id must be provided'
                 }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Prepare data for serializer
+            data = {}
+            
+            # Set customer
+            data['customer'] = customer.customer.id
+            
+            # Get ratings from request
+            data['condition_rating'] = request.data.get('condition_rating')
+            data['accuracy_rating'] = request.data.get('accuracy_rating')
+            data['value_rating'] = request.data.get('value_rating')
+            data['delivery_rating'] = request.data.get('delivery_rating')
+            data['comment'] = request.data.get('comment', '')
             
             # Handle product if provided
             if product_id:
@@ -38556,11 +38566,11 @@ class ReviewView(APIView):
                         }
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Get product and its shop
+                # Get product
                 try:
                     product = Product.objects.get(id=product_id)
-                    data['product'] = product
-                    data['shop'] = product.shop if product.shop else None
+                    data['product'] = product.id
+                    data['shop'] = product.shop.id if product.shop else None
                 except Product.DoesNotExist:
                     return Response({
                         'status': 'error',
@@ -38584,29 +38594,48 @@ class ReviewView(APIView):
                         }
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Get rider instance
+                # Get rider
                 try:
                     rider = Rider.objects.get(rider_id=rider_id)
-                    data['rider'] = rider
+                    data['rider'] = rider.rider.id
                 except Rider.DoesNotExist:
                     return Response({
                         'status': 'error',
                         'message': f'Rider with id {rider_id} not found'
                     }, status=status.HTTP_404_NOT_FOUND)
             
-            # Remove any unwanted fields
-            data.pop('attitude_rating', None)
-            data.pop('handling_rating', None)
-            data.pop('safety_rating', None)
-            data.pop('product_id', None)
-            data.pop('rider_id', None)
-            data.pop('customer_id', None)
+            # Debug: Print what we're sending to serializer
+            print("=== DATA FOR SERIALIZER ===")
+            print(data)
             
             # Use serializer to create the review
             serializer = ReviewSerializer(data=data, context={'request': request})
             
             if serializer.is_valid():
                 review = serializer.save()
+                
+                # Handle media files if provided
+                media_files = request.FILES.getlist('media')
+                if media_files:
+                    for media_file in media_files:
+                        # Determine file type
+                        file_name = media_file.name
+                        if file_name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')):
+                            file_type = 'image'
+                        elif file_name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv')):
+                            file_type = 'video'
+                        else:
+                            file_type = 'file'
+                        
+                        ReviewMedia.objects.create(
+                            review=review,
+                            file_data=media_file,
+                            file_type=file_type
+                        )
+                
+                # Get serialized data with media
+                response_data = ReviewSerializer(review).data
+                response_data['media'] = ReviewMediaSerializer(review.medias.all(), many=True).data
                 
                 # Determine message based on what was reviewed
                 if product_id and rider_id:
@@ -38619,9 +38648,11 @@ class ReviewView(APIView):
                 return Response({
                     'status': 'success',
                     'message': message,
-                    'data': serializer.data
+                    'data': response_data
                 }, status=status.HTTP_201_CREATED)
             else:
+                print("=== SERIALIZER ERRORS ===")
+                print(serializer.errors)
                 return Response({
                     'status': 'error',
                     'message': 'Validation failed',
@@ -38636,7 +38667,7 @@ class ReviewView(APIView):
                 'status': 'error',
                 'message': 'Failed to create review',
                 'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)  
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     def put(self, request, review_id):
         """Handle PUT requests for full update"""
         return self._update_review(request, review_id, partial=False)

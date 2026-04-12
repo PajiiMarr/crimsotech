@@ -11,14 +11,18 @@ import {
   Alert,
   TextInput,
   Platform,
-  StatusBar
+  StatusBar,
+  Modal,
+  FlatList,
 } from 'react-native';
 import {
-  MaterialIcons
+  MaterialIcons,
+  Ionicons
 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import AxiosInstance from '../../contexts/axios';
+import * as ImagePicker from 'expo-image-picker';
 
 // ================================
 // Interfaces
@@ -50,6 +54,13 @@ interface RiderInfo {
   plate_number?: string;
 }
 
+interface ReviewMedia {
+  id: string;
+  file_url: string;
+  file_type: string;
+  uploaded_at: string;
+}
+
 interface ReviewData {
   id: string;
   condition_rating: number;
@@ -58,6 +69,13 @@ interface ReviewData {
   delivery_rating: number;
   comment: string;
   created_at: string;
+  media?: ReviewMedia[];
+}
+
+interface SelectedMedia {
+  uri: string;
+  type: 'image' | 'video';
+  name: string;
 }
 
 // ================================
@@ -137,7 +155,225 @@ function CriteriaCard({
 }
 
 // ================================
-// ViewReviewCard Component - Mobile Optimized
+// MediaItem Component
+// ================================
+function MediaItem({ media, onRemove, readonly }: { media: SelectedMedia | ReviewMedia; onRemove?: () => void; readonly?: boolean }) {
+  const getMediaUrl = (media: SelectedMedia | ReviewMedia): string => {
+    if ('file_url' in media) {
+      return media.file_url;
+    }
+    return media.uri;
+  };
+
+  const getMediaType = (media: SelectedMedia | ReviewMedia): string => {
+    if ('file_type' in media) {
+      return media.file_type;
+    }
+    return media.type;
+  };
+
+  const isVideo = getMediaType(media) === 'video';
+  const mediaUrl = getMediaUrl(media);
+
+  return (
+    <View style={styles.mediaItem}>
+      {isVideo ? (
+        <View style={styles.videoPreview}>
+          <View style={styles.mediaPlaceholder}>
+            <Ionicons name="videocam" size={32} color="#6B7280" />
+          </View>
+          <View style={styles.videoBadge}>
+            <Ionicons name="play-circle" size={20} color="#FFFFFF" />
+          </View>
+        </View>
+      ) : (
+        <Image source={{ uri: mediaUrl }} style={styles.mediaImage} />
+      )}
+      {!readonly && onRemove && (
+        <TouchableOpacity style={styles.removeMediaButton} onPress={onRemove}>
+          <Ionicons name="close-circle" size={24} color="#EF4444" />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// ================================
+// MediaPicker Component
+// ================================
+function MediaPicker({ onMediaSelected, existingMedia = [], readonly = false }: { 
+  onMediaSelected?: (media: SelectedMedia[]) => void;
+  existingMedia?: ReviewMedia[];
+  readonly?: boolean;
+}) {
+  const [mediaItems, setMediaItems] = useState<SelectedMedia[]>([]);
+  const [showMediaOptions, setShowMediaOptions] = useState(false);
+
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to upload images.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      const newMedia: SelectedMedia = {
+        uri: result.assets[0].uri,
+        type: 'image',
+        name: result.assets[0].fileName || `image_${Date.now()}.jpg`,
+      };
+      const updatedMedia = [...mediaItems, newMedia];
+      setMediaItems(updatedMedia);
+      onMediaSelected?.(updatedMedia);
+    }
+    setShowMediaOptions(false);
+  };
+
+  const pickVideo = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to upload videos.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      const newMedia: SelectedMedia = {
+        uri: result.assets[0].uri,
+        type: 'video',
+        name: result.assets[0].fileName || `video_${Date.now()}.mp4`,
+      };
+      const updatedMedia = [...mediaItems, newMedia];
+      setMediaItems(updatedMedia);
+      onMediaSelected?.(updatedMedia);
+    }
+    setShowMediaOptions(false);
+  };
+
+  const takePhoto = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Sorry, we need camera permissions to take photos.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      const newMedia: SelectedMedia = {
+        uri: result.assets[0].uri,
+        type: 'image',
+        name: `photo_${Date.now()}.jpg`,
+      };
+      const updatedMedia = [...mediaItems, newMedia];
+      setMediaItems(updatedMedia);
+      onMediaSelected?.(updatedMedia);
+    }
+    setShowMediaOptions(false);
+  };
+
+  const removeMedia = (index: number) => {
+    const updatedMedia = mediaItems.filter((_, i) => i !== index);
+    setMediaItems(updatedMedia);
+    onMediaSelected?.(updatedMedia);
+  };
+
+  if (readonly) {
+    return (
+      <View style={styles.existingMediaContainer}>
+        <Text style={styles.reviewSectionTitle}>Review Media</Text>
+        <FlatList
+          data={existingMedia}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          renderItem={({ item }) => <MediaItem media={item} readonly />}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.mediaList}
+          ListEmptyComponent={
+            <Text style={styles.noMediaText}>No media attached</Text>
+          }
+        />
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <View style={styles.mediaSection}>
+        <Text style={styles.sectionTitle}>Add Photos or Videos (Optional)</Text>
+        <TouchableOpacity 
+          style={styles.addMediaButton}
+          onPress={() => setShowMediaOptions(true)}
+        >
+          <Ionicons name="add-circle-outline" size={24} color="#10B981" />
+          <Text style={styles.addMediaText}>Add photos or videos</Text>
+        </TouchableOpacity>
+        
+        {mediaItems.length > 0 && (
+          <FlatList
+            data={mediaItems}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            renderItem={({ item, index }) => (
+              <MediaItem media={item} onRemove={() => removeMedia(index)} />
+            )}
+            keyExtractor={(item, index) => index.toString()}
+            contentContainerStyle={styles.mediaList}
+          />
+        )}
+      </View>
+
+      <Modal
+        visible={showMediaOptions}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowMediaOptions(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowMediaOptions(false)}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Add Media</Text>
+            <TouchableOpacity style={styles.modalOption} onPress={takePhoto}>
+              <Ionicons name="camera" size={24} color="#3B82F6" />
+              <Text style={styles.modalOptionText}>Take Photo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalOption} onPress={pickImage}>
+              <Ionicons name="images" size={24} color="#10B981" />
+              <Text style={styles.modalOptionText}>Choose from Gallery</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalOption} onPress={pickVideo}>
+              <Ionicons name="videocam" size={24} color="#F59E0B" />
+              <Text style={styles.modalOptionText}>Choose Video</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalCancel} onPress={() => setShowMediaOptions(false)}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
+}
+
+// ================================
+// ViewReviewCard Component - Mobile Optimized with Media
 // ================================
 function ViewReviewCard({ review }: { review: ReviewData }) {
   return (
@@ -189,6 +425,11 @@ function ViewReviewCard({ review }: { review: ReviewData }) {
             </View>
           </View>
         )}
+
+        {/* Media */}
+        {review.media && review.media.length > 0 && (
+          <MediaPicker existingMedia={review.media} readonly />
+        )}
       </View>
     </View>
   );
@@ -225,6 +466,9 @@ export default function RatePage() {
 
   // Comments
   const [comment, setComment] = useState('');
+
+  // Media
+  const [selectedMedia, setSelectedMedia] = useState<SelectedMedia[]>([]);
 
   // Review status
   const [hasReviewed, setHasReviewed] = useState(false);
@@ -322,7 +566,8 @@ export default function RatePage() {
           value_rating: review.value_rating || 0,
           delivery_rating: review.delivery_rating || 0,
           comment: review.comment || '',
-          created_at: review.created_at
+          created_at: review.created_at,
+          media: review.media || []
         });
       }
       
@@ -332,7 +577,7 @@ export default function RatePage() {
   };
 
   // ================================
-  // Submit Function
+  // Submit Function with Media Upload
   // ================================
   const handleSubmitReview = async () => {
     // Validate based on order type
@@ -351,28 +596,55 @@ export default function RatePage() {
       setSubmitting(true);
       setError(null);
 
-      // Prepare payload based on order type
-      let payload: any = {
-        customer_id: userId,
-        product_id: productId,
-        condition_rating: conditionRating,
-        accuracy_rating: accuracyRating,
-        value_rating: valueRating,
-        comment: comment
-      };
+      // Create form data for multipart upload
+      const formData = new FormData();
+      formData.append('customer_id', userId || '');
+      formData.append('product_id', productId);
+      formData.append('condition_rating', conditionRating.toString());
+      formData.append('accuracy_rating', accuracyRating.toString());
+      formData.append('value_rating', valueRating.toString());
+      formData.append('comment', comment);
       
       // Add rider rating only for delivery orders
       if (!isPickupOrder && riderInfo?.rider_id) {
-        payload.rider_id = riderInfo.rider_id;
-        payload.delivery_rating = deliveryRating;
+        formData.append('rider_id', riderInfo.rider_id);
+        formData.append('delivery_rating', deliveryRating.toString());
       }
 
-      console.log("Submitting review payload:", payload);
+      // Append media files
+      for (let i = 0; i < selectedMedia.length; i++) {
+        const media = selectedMedia[i];
+        const uriParts = media.uri.split('.');
+        const fileExtension = uriParts[uriParts.length - 1];
+        
+        formData.append('media', {
+          uri: media.uri,
+          name: media.name,
+          type: media.type === 'image' ? `image/${fileExtension}` : `video/${fileExtension}`,
+        } as any);
+      }
+      console.log("=== SUBMITTING REVIEW ===");
+      console.log("customer_id:", userId);
+      console.log("product_id:", productId);
+      console.log("condition_rating:", conditionRating);
+      console.log("accuracy_rating:", accuracyRating);
+      console.log("value_rating:", valueRating);
+      console.log("comment:", comment);
+      console.log("delivery_rating:", deliveryRating);
+      console.log("rider_id:", riderInfo?.rider_id);
+      console.log("selectedMedia count:", selectedMedia.length);
+      console.log("FormData entries:");
+      for (let pair of (formData as any)._parts) {
+        console.log(pair[0], pair[1]);
+      }
 
-      const response = await AxiosInstance.post('/reviews/', payload, {
+      console.log("Submitting review with media:", selectedMedia.length);
+
+      const response = await AxiosInstance.post('/reviews/', formData, {
         headers: {
-          'X-User-Id': userId
-        }
+          'X-User-Id': userId,
+          'Content-Type': 'multipart/form-data',
+        },
       });
 
       if (response.data?.status === 'success') {
@@ -506,7 +778,7 @@ export default function RatePage() {
                 </View>
               </View>
 
-              {/* Product Ratings Section - Always show for both pickup and delivery */}
+              {/* Product Ratings Section */}
               <View style={styles.ratingsSection}>
                 <Text style={styles.sectionTitle}>Rate the Product</Text>
                 <View style={styles.criteriaGrid}>
@@ -534,7 +806,7 @@ export default function RatePage() {
                 </View>
               </View>
 
-              {/* Rider Ratings Section - Only show for delivery orders (not pickup) */}
+              {/* Rider Ratings Section - Only for delivery orders */}
               {!isPickupOrder && riderInfo && (
                 <View style={styles.ratingsSection}>
                   <View style={styles.riderHeader}>
@@ -552,6 +824,13 @@ export default function RatePage() {
                   </View>
                 </View>
               )}
+
+              {/* Media Picker */}
+              <MediaPicker 
+                onMediaSelected={setSelectedMedia} 
+                existingMedia={[]}
+                readonly={false}
+              />
 
               {/* Comment */}
               <View style={styles.commentSection}>
@@ -657,7 +936,6 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     textAlign: 'center',
   },
-  // Edge-to-Edge Header Styles
   edgeHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -953,5 +1231,113 @@ const styles = StyleSheet.create({
   },
   bottomPadding: {
     height: Platform.OS === 'ios' ? 20 : 10,
+  },
+  // Media styles
+  mediaSection: {
+    marginBottom: 16,
+  },
+  addMediaButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+    marginBottom: 12,
+    gap: 8,
+  },
+  addMediaText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#10B981',
+  },
+  mediaList: {
+    gap: 8,
+    paddingVertical: 8,
+  },
+  mediaItem: {
+    position: 'relative',
+    marginRight: 8,
+  },
+  mediaImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+  },
+  mediaPlaceholder: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoPreview: {
+    position: 'relative',
+  },
+  videoBadge: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: [{ translateX: -10 }, { translateY: -10 }],
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 12,
+    padding: 4,
+  },
+  removeMediaButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+  },
+  existingMediaContainer: {
+    marginTop: 8,
+  },
+  noMediaText: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  modalOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  modalOptionText: {
+    fontSize: 16,
+    color: '#374151',
+  },
+  modalCancel: {
+    marginTop: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#EF4444',
   },
 });
