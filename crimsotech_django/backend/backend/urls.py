@@ -44,6 +44,8 @@ router.register(r'customer-products', CustomerProducts, basename='customer-produ
 router.register(r'public-products', PublicProducts, basename='public-products')
 router.register(r'seller-vouchers', SellerVouchers, basename='seller-vouchers')
 
+router.register(r'customer-personal-listing-dashboard', PersonalListingViewSet, basename='customer-personal-listing-dashboard')
+
 router.register(r'checkout', CheckoutView, basename='checkout')
 router.register(r'customer-boost-plans', CustomerBoostPlan, basename='customer-boost-plans')
 router.register(r'seller-order-list', SellerOrderList, basename='seller-order-list')

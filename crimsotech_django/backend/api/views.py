@@ -47106,6 +47106,844 @@ class SellerVouchers(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class PersonalListingViewSet(viewsets.ViewSet):
+    """
+    Personal Listing viewset for customers who don't have a shop.
+    Only returns products where shop_id is NULL (personal products).
+    """
+    
+    @action(detail=False, methods=['get'])
+    def get_personal_listings(self, request):
+        """
+        Get comprehensive personal listing data for a customer
+        Only includes products with shop_id = NULL
+        """
+        try:
+            # Get parameters
+            customer_id = request.query_params.get('customer_id')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            range_type = request.query_params.get('range_type', 'monthly')
+            
+            if not customer_id:
+                return Response(
+                    {'error': 'customer_id is required', 'success': False},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                customer = Customer.objects.get(customer_id=customer_id)
+            except Customer.DoesNotExist:
+                return Response(
+                    {'error': 'Customer not found', 'success': False},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Parse dates
+            if start_date:
+                try:
+                    start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                except:
+                    start_date = timezone.now().date() - timedelta(days=30)
+            else:
+                start_date = timezone.now().date() - timedelta(days=30)
+            
+            if end_date:
+                try:
+                    end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+                except:
+                    end_date = timezone.now().date()
+            else:
+                end_date = timezone.now().date()
+            
+            # Calculate previous period for comparison
+            previous_start_date, previous_end_date = self._get_previous_period_dates(
+                start_date, end_date, range_type
+            )
+            
+            # Build response data
+            data = {
+                'success': True,
+                'date_range': {
+                    'start_date': start_date.isoformat(),
+                    'end_date': end_date.isoformat(),
+                    'range_type': range_type,
+                },
+                'summary': self._get_summary_data(customer, start_date, end_date, previous_start_date, previous_end_date),
+                'latest_orders': self._get_latest_orders(customer, start_date, end_date),
+                'low_stock': self._get_low_stock_data(customer),
+                'refunds': self._get_refund_data(customer, start_date, end_date),
+                'personal_performance': self._get_personal_performance_data(customer, start_date, end_date),
+                'reports': self._get_report_data(customer),
+                'product_counts': self._get_product_counts(customer),
+            }
+            
+            return Response(data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in get_personal_listings: {str(e)}")
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_previous_period_dates(self, start_date, end_date, range_type):
+        """Calculate previous period dates for comparison"""
+        period_days = (end_date - start_date).days + 1
+        
+        if range_type == 'daily':
+            previous_start_date = start_date - timedelta(days=1)
+            previous_end_date = end_date - timedelta(days=1)
+        elif range_type == 'weekly':
+            previous_start_date = start_date - timedelta(days=7)
+            previous_end_date = end_date - timedelta(days=7)
+        elif range_type == 'monthly':
+            previous_start_date = start_date - timedelta(days=30)
+            previous_end_date = end_date - timedelta(days=30)
+        elif range_type == 'yearly':
+            previous_start_date = start_date - timedelta(days=365)
+            previous_end_date = end_date - timedelta(days=365)
+        else:
+            previous_start_date = start_date - timedelta(days=period_days)
+            previous_end_date = end_date - timedelta(days=period_days)
+        
+        return previous_start_date, previous_end_date
+    
+    def _get_summary_data(self, customer, start_date, end_date, previous_start_date, previous_end_date):
+        """
+        Get summary statistics for the dashboard cards
+        ONLY includes products with shop_id = NULL (personal products)
+        """
+        
+        start_datetime = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+        end_datetime = timezone.make_aware(datetime.combine(end_date, datetime.max.time()))
+        prev_start_datetime = timezone.make_aware(datetime.combine(previous_start_date, datetime.min.time()))
+        prev_end_datetime = timezone.make_aware(datetime.combine(previous_end_date, datetime.max.time()))
+        
+        # Current period orders from personal products (shop_id IS NULL)
+        current_period_orders = Order.objects.filter(
+            checkout__cart_item__product__customer=customer,
+            checkout__cart_item__product__shop__isnull=True,  # KEY: Only personal products
+            created_at__range=[start_datetime, end_datetime]
+        ).exclude(
+            status__in=['cancelled', 'refunded']
+        ).distinct()
+        
+        current_period_sales = current_period_orders.filter(
+            status='delivered'
+        ).aggregate(
+            total_sales=Sum('total_amount')
+        )['total_sales'] or Decimal('0.00')
+        
+        current_period_earnings = current_period_sales
+        current_period_order_count = current_period_orders.count()
+        
+        # Previous period orders for comparison
+        previous_period_orders = Order.objects.filter(
+            checkout__cart_item__product__customer=customer,
+            checkout__cart_item__product__shop__isnull=True,  # KEY: Only personal products
+            created_at__range=[prev_start_datetime, prev_end_datetime]
+        ).exclude(
+            status__in=['cancelled', 'refunded']
+        ).distinct()
+        
+        previous_period_sales = previous_period_orders.filter(
+            status='delivered'
+        ).aggregate(
+            total_sales=Sum('total_amount')
+        )['total_sales'] or Decimal('0.00')
+        
+        previous_period_order_count = previous_period_orders.count()
+        
+        # Calculate percentage changes
+        sales_change = 0
+        if previous_period_sales > 0:
+            sales_change = ((current_period_sales - previous_period_sales) / previous_period_sales) * 100
+        
+        orders_change = 0
+        if previous_period_order_count > 0:
+            orders_change = ((current_period_order_count - previous_period_order_count) / previous_period_order_count) * 100
+        
+        # Product counts - ONLY personal products (shop_id IS NULL)
+        total_products = Product.objects.filter(
+            customer=customer,
+            shop__isnull=True,  # KEY: Only personal products
+            is_removed=False
+        ).count()
+        
+        published_products = Product.objects.filter(
+            customer=customer,
+            shop__isnull=True,  # KEY: Only personal products
+            upload_status='published',
+            is_removed=False
+        ).count()
+        
+        draft_products = Product.objects.filter(
+            customer=customer,
+            shop__isnull=True,  # KEY: Only personal products
+            upload_status='draft',
+            is_removed=False
+        ).count()
+        
+        # Total favorites on personal products
+        total_favorites = Favorites.objects.filter(
+            product__customer=customer,
+            product__shop__isnull=True,  # KEY: Only personal products
+        ).count()
+        
+        # Product limit info
+        product_limit_info = {
+            'current_count': total_products,
+            'limit': customer.product_limit,
+            'remaining': customer.product_limit - total_products
+        }
+        
+        return {
+            'period_sales': float(current_period_sales),
+            'period_earnings': float(current_period_earnings),
+            'period_orders': current_period_order_count,
+            'sales_change': round(float(sales_change), 1),
+            'orders_change': round(float(orders_change), 1),
+            'total_products': total_products,
+            'published_products': published_products,
+            'draft_products': draft_products,
+            'total_favorites': total_favorites,
+            'product_limit_info': product_limit_info,
+            'date_range_days': (end_date - start_date).days + 1,
+        }
+    
+    def _get_latest_orders(self, customer, start_date, end_date, limit=5):
+        """
+        Get latest orders for customer's personal products
+        ONLY includes orders with personal products (shop_id IS NULL)
+        """
+        try:
+            start_datetime = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+            end_datetime = timezone.make_aware(datetime.combine(end_date, datetime.max.time()))
+            
+            orders = Order.objects.filter(
+                checkout__cart_item__product__customer=customer,
+                checkout__cart_item__product__shop__isnull=True,  # KEY: Only personal products
+                created_at__range=[start_datetime, end_datetime]
+            ).select_related(
+                'shipping_address__user'
+            ).distinct().order_by('-created_at')[:limit]
+            
+            return [
+                {
+                    'id': str(order.order),
+                    'order_id': str(order.order),
+                    'customer_name': order.shipping_address.recipient_name if order.shipping_address else 'Unknown',
+                    'status': order.status,
+                    'total_amount': float(order.total_amount),
+                    'created_at': order.created_at.isoformat(),
+                    'product_count': order.checkout_set.filter(
+                        cart_item__product__customer=customer,
+                        cart_item__product__shop__isnull=True  # KEY: Only personal products
+                    ).count()
+                }
+                for order in orders
+            ]
+        except Exception as e:
+            print(f"Error in _get_latest_orders: {str(e)}")
+            return []
+    
+    def _get_low_stock_data(self, customer, limit=5):
+        """
+        Get low stock variants for customer's personal products
+        ONLY includes personal products (shop_id IS NULL)
+        """
+        try:
+            low_stock_variants = Variants.objects.filter(
+                product__customer=customer,
+                product__shop__isnull=True,  # KEY: Only personal products
+                product__upload_status='published',
+                product__is_removed=False,
+                is_active=True,
+                quantity__gt=0,
+                quantity__lte=F('critical_trigger')
+            ).filter(
+                critical_trigger__isnull=False
+            ).select_related('product').order_by('quantity')[:limit]
+            
+            low_stock_items = []
+            for variant in low_stock_variants:
+                low_stock_items.append({
+                    'id': str(variant.id),
+                    'product_id': str(variant.product.id),
+                    'product_name': variant.product.name,
+                    'quantity': variant.quantity,
+                    'critical_stock': variant.critical_trigger,
+                    'sku_code': variant.sku_code,
+                    'variant_title': variant.title,
+                })
+            
+            return low_stock_items
+        except Exception as e:
+            print(f"Error in _get_low_stock_data: {str(e)}")
+            return []
+    
+    def _get_refund_data(self, customer, start_date, end_date, limit=3):
+        """
+        Get refund data for customer's personal products
+        ONLY includes personal products (shop_id IS NULL)
+        """
+        try:
+            start_datetime = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+            end_datetime = timezone.make_aware(datetime.combine(end_date, datetime.max.time()))
+            
+            refunds = Refund.objects.filter(
+                order_id__checkout__cart_item__product__customer=customer,
+                order_id__checkout__cart_item__product__shop__isnull=True,  # KEY: Only personal products
+                requested_at__range=[start_datetime, end_datetime]
+            ).select_related('order_id').distinct().order_by('-requested_at')[:limit]
+            
+            pending_count = Refund.objects.filter(
+                order_id__checkout__cart_item__product__customer=customer,
+                order_id__checkout__cart_item__product__shop__isnull=True,  # KEY: Only personal products
+                status='pending'
+            ).distinct().count()
+            
+            disputes_count = Refund.objects.filter(
+                order_id__checkout__cart_item__product__customer=customer,
+                order_id__checkout__cart_item__product__shop__isnull=True,  # KEY: Only personal products
+                status='dispute'
+            ).distinct().count()
+            
+            total_count = Refund.objects.filter(
+                order_id__checkout__cart_item__product__customer=customer,
+                order_id__checkout__cart_item__product__shop__isnull=True,  # KEY: Only personal products
+            ).distinct().count()
+            
+            latest_refunds = [
+                {
+                    'id': str(refund.refund_id),
+                    'reason': refund.reason,
+                    'requested_amount': float(refund.total_refund_amount or 0),
+                    'status': refund.status,
+                    'order_id': str(refund.order_id.order),
+                    'requested_at': refund.requested_at.isoformat(),
+                }
+                for refund in refunds
+            ]
+            
+            return {
+                'pending_count': pending_count,
+                'disputes_count': disputes_count,
+                'total_count': total_count,
+                'latest': latest_refunds,
+            }
+        except Exception as e:
+            print(f"Error in _get_refund_data: {str(e)}")
+            return {
+                'pending_count': 0,
+                'disputes_count': 0,
+                'total_count': 0,
+                'latest': [],
+            }
+    
+    def _get_personal_performance_data(self, customer, start_date, end_date):
+        """
+        Get personal performance metrics
+        ONLY includes personal products (shop_id IS NULL)
+        """
+        try:
+            start_datetime = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+            end_datetime = timezone.make_aware(datetime.combine(end_date, datetime.max.time()))
+            
+            # Reviews on customer's personal products
+            reviews = Review.objects.filter(
+                product__customer=customer,
+                product__shop__isnull=True  # KEY: Only personal products
+            )
+            average_rating = reviews.aggregate(avg_rating=Avg('average_rating'))['avg_rating'] or 0
+            
+            # Recent reviews (last 30 days)
+            recent_reviews = Review.objects.filter(
+                product__customer=customer,
+                product__shop__isnull=True,  # KEY: Only personal products
+                created_at__range=[start_datetime, end_datetime]
+            ).count()
+            
+            # Total favorites on customer's personal products
+            total_favorites = Favorites.objects.filter(
+                product__customer=customer,
+                product__shop__isnull=True  # KEY: Only personal products
+            ).count()
+            
+            # New favorites in period
+            new_favorites = Favorites.objects.filter(
+                product__customer=customer,
+                product__shop__isnull=True,  # KEY: Only personal products
+                created_at__range=[start_datetime, end_datetime]
+            ).count()
+            
+            # Product views (from CustomerActivity) - personal products only
+            total_views = customer.customeractivity_set.filter(
+                activity_type='view',
+                product__shop__isnull=True  # KEY: Only personal products
+            ).count()
+            
+            recent_views = customer.customeractivity_set.filter(
+                activity_type='view',
+                product__shop__isnull=True,  # KEY: Only personal products
+                created_at__range=[start_datetime, end_datetime]
+            ).count()
+            
+            return {
+                'average_rating': round(float(average_rating), 1),
+                'total_reviews': reviews.count(),
+                'recent_reviews': recent_reviews,
+                'total_favorites': total_favorites,
+                'new_favorites': new_favorites,
+                'total_views': total_views,
+                'recent_views': recent_views,
+            }
+        except Exception as e:
+            print(f"Error in _get_personal_performance_data: {str(e)}")
+            return {
+                'average_rating': 0,
+                'total_reviews': 0,
+                'recent_reviews': 0,
+                'total_favorites': 0,
+                'new_favorites': 0,
+                'total_views': 0,
+                'recent_views': 0,
+            }
+    
+    def _get_report_data(self, customer):
+        """
+        Get report and notification data for customer
+        ONLY includes reports on personal products
+        """
+        try:
+            # Active reports against customer's personal products
+            active_reports = Report.objects.filter(
+                reported_product__customer=customer,
+                reported_product__shop__isnull=True,  # KEY: Only personal products
+                status__in=['pending', 'under_review']
+            ).count()
+            
+            total_reports = Report.objects.filter(
+                reported_product__customer=customer,
+                reported_product__shop__isnull=True  # KEY: Only personal products
+            ).count()
+            
+            # Latest notifications for the customer
+            notifications = Notification.objects.filter(
+                user=customer.customer,
+                created_at__gte=timezone.now() - timedelta(days=7)
+            ).order_by('-created_at')[:3]
+            
+            latest_notifications = [
+                {
+                    'id': str(notification.id),
+                    'title': notification.title,
+                    'message': notification.message,
+                    'type': notification.type,
+                    'time': self._get_time_ago(notification.created_at),
+                    'is_read': notification.is_read,
+                }
+                for notification in notifications
+            ]
+            
+            return {
+                'active_count': active_reports,
+                'total_count': total_reports,
+                'latest_notifications': latest_notifications,
+            }
+        except Exception as e:
+            print(f"Error in _get_report_data: {str(e)}")
+            return {
+                'active_count': 0,
+                'total_count': 0,
+                'latest_notifications': [],
+            }
+    
+    def _get_product_counts(self, customer):
+        """
+        Get product counts by status
+        ONLY counts personal products (shop_id IS NULL)
+        """
+        try:
+            return {
+                'all': Product.objects.filter(
+                    customer=customer, 
+                    shop__isnull=True,  # KEY: Only personal products
+                    is_removed=False
+                ).count(),
+                'published': Product.objects.filter(
+                    customer=customer, 
+                    shop__isnull=True,  # KEY: Only personal products
+                    upload_status='published', 
+                    is_removed=False
+                ).count(),
+                'draft': Product.objects.filter(
+                    customer=customer, 
+                    shop__isnull=True,  # KEY: Only personal products
+                    upload_status='draft', 
+                    is_removed=False
+                ).count(),
+                'archived': Product.objects.filter(
+                    customer=customer, 
+                    shop__isnull=True,  # KEY: Only personal products
+                    upload_status='archived', 
+                    is_removed=False
+                ).count(),
+                'removed': Product.objects.filter(
+                    customer=customer, 
+                    shop__isnull=True,  # KEY: Only personal products
+                    is_removed=True
+                ).count(),
+            }
+        except Exception as e:
+            print(f"Error in _get_product_counts: {str(e)}")
+            return {
+                'all': 0,
+                'published': 0,
+                'draft': 0,
+                'archived': 0,
+                'removed': 0,
+            }
+    
+    def _get_time_ago(self, date):
+        """Convert datetime to human-readable time ago"""
+        try:
+            now = timezone.now()
+            diff = now - date
+            
+            if diff.days > 365:
+                years = diff.days // 365
+                return f"{years} year{'s' if years > 1 else ''} ago"
+            elif diff.days > 30:
+                months = diff.days // 30
+                return f"{months} month{'s' if months > 1 else ''} ago"
+            elif diff.days > 0:
+                return f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
+            elif diff.seconds > 3600:
+                hours = diff.seconds // 3600
+                return f"{hours} hour{'s' if hours > 1 else ''} ago"
+            elif diff.seconds > 60:
+                minutes = diff.seconds // 60
+                return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+            else:
+                return "just now"
+        except Exception:
+            return "unknown"
+    
+    @action(detail=False, methods=['get'])
+    def get_all_products(self, request):
+        """
+        Get all personal products with pagination and filtering
+        ONLY returns products with shop_id = NULL
+        """
+        try:
+            customer_id = request.query_params.get('customer_id')
+            status_filter = request.query_params.get('status')  # published, draft, archived
+            search = request.query_params.get('search', '')
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            
+            if not customer_id:
+                return Response(
+                    {'error': 'customer_id is required', 'success': False},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # KEY: Only products with shop_id IS NULL (personal products)
+            products = Product.objects.filter(
+                customer_id=customer_id,
+                shop__isnull=True,  # CRITICAL: Only personal products
+                is_removed=False
+            ).select_related('category').prefetch_related('variants')
+            
+            if status_filter:
+                products = products.filter(upload_status=status_filter)
+            
+            if search:
+                products = products.filter(name__icontains=search)
+            
+            total_count = products.count()
+            products = products.order_by('-created_at')[(page-1)*page_size:page*page_size]
+            
+            results = []
+            for product in products:
+                primary_image = None
+                variants_data = []
+                
+                for variant in product.variants.filter(is_active=True):
+                    if variant.image and not primary_image:
+                        primary_image = variant.image.url
+                    variants_data.append({
+                        'id': str(variant.id),
+                        'title': variant.title,
+                        'price': float(variant.price) if variant.price else None,
+                        'quantity': variant.quantity,
+                        'is_active': variant.is_active,
+                    })
+                
+                results.append({
+                    'id': str(product.id),
+                    'name': product.name,
+                    'description': product.description,
+                    'upload_status': product.upload_status,
+                    'status': product.status,
+                    'condition': product.condition,
+                    'total_stock': product.total_stock,
+                    'min_price': float(product.min_price) if product.min_price else None,
+                    'max_price': float(product.max_price) if product.max_price else None,
+                    'primary_image': primary_image,
+                    'variants_count': len(variants_data),
+                    'variants': variants_data,
+                    'created_at': product.created_at.isoformat(),
+                    'updated_at': product.updated_at.isoformat(),
+                })
+            
+            return Response({
+                'success': True,
+                'total_count': total_count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': (total_count + page_size - 1) // page_size,
+                'results': results,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in get_all_products: {str(e)}")
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_product_detail(self, request):
+        """
+        Get single product details with all variants
+        ONLY returns product if shop_id is NULL (personal product)
+        """
+        try:
+            product_id = request.query_params.get('product_id')
+            customer_id = request.query_params.get('customer_id')
+            
+            if not product_id:
+                return Response(
+                    {'error': 'product_id is required', 'success': False},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                # KEY: Ensure shop_id IS NULL (personal product)
+                product = Product.objects.get(
+                    id=product_id,
+                    customer_id=customer_id,
+                    shop__isnull=True,  # CRITICAL: Only personal products
+                    is_removed=False
+                )
+            except Product.DoesNotExist:
+                return Response(
+                    {'error': 'Personal product not found', 'success': False},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get all media
+            media_files = []
+            for media in product.productmedia_set.all():
+                media_files.append({
+                    'id': str(media.id),
+                    'file_url': media.file_data.url if media.file_data else None,
+                    'file_type': media.file_type,
+                })
+            
+            # Get all variants
+            variants_data = []
+            for variant in product.variants.filter(is_active=True):
+                variants_data.append({
+                    'id': str(variant.id),
+                    'title': variant.title,
+                    'option_title': variant.option_title,
+                    'sku_code': variant.sku_code,
+                    'price': float(variant.price) if variant.price else None,
+                    'compare_price': float(variant.compare_price) if variant.compare_price else None,
+                    'quantity': variant.quantity,
+                    'weight': float(variant.weight) if variant.weight else None,
+                    'weight_unit': variant.weight_unit,
+                    'critical_trigger': variant.critical_trigger,
+                    'is_refundable': variant.is_refundable,
+                    'refund_days': variant.refund_days,
+                    'allow_swap': variant.allow_swap,
+                    'swap_type': variant.swap_type,
+                    'minimum_additional_payment': float(variant.minimum_additional_payment) if variant.minimum_additional_payment else 0,
+                    'maximum_additional_payment': float(variant.maximum_additional_payment) if variant.maximum_additional_payment else 0,
+                    'swap_description': variant.swap_description,
+                    'image': variant.image.url if variant.image else None,
+                    'proof_image': variant.proof_image.url if variant.proof_image else None,
+                    'critical_stock': variant.critical_stock,
+                    'created_at': variant.created_at.isoformat(),
+                })
+            
+            return Response({
+                'success': True,
+                'product': {
+                    'id': str(product.id),
+                    'name': product.name,
+                    'description': product.description,
+                    'upload_status': product.upload_status,
+                    'status': product.status,
+                    'condition': product.condition,
+                    'is_refundable': product.is_refundable,
+                    'refund_days': product.refund_days,
+                    'created_at': product.created_at.isoformat(),
+                    'updated_at': product.updated_at.isoformat(),
+                    'category': {
+                        'id': str(product.category.id) if product.category else None,
+                        'name': product.category.name if product.category else None,
+                    },
+                    'media': media_files,
+                    'variants': variants_data,
+                    'total_stock': product.total_stock,
+                    'min_price': float(product.min_price) if product.min_price else None,
+                    'max_price': float(product.max_price) if product.max_price else None,
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in get_product_detail: {str(e)}")
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_sales_chart_data(self, request):
+        """
+        Get sales data for charts (daily/weekly/monthly)
+        ONLY includes personal products (shop_id IS NULL)
+        """
+        try:
+            customer_id = request.query_params.get('customer_id')
+            period = request.query_params.get('period', 'monthly')
+            
+            if not customer_id:
+                return Response(
+                    {'error': 'customer_id is required', 'success': False},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            end_date = timezone.now().date()
+            
+            if period == 'daily':
+                start_date = end_date - timedelta(days=30)
+                date_format = '%Y-%m-%d'
+            elif period == 'weekly':
+                start_date = end_date - timedelta(weeks=12)
+                date_format = '%Y-W%W'
+            else:
+                start_date = end_date - timedelta(days=365)
+                date_format = '%Y-%m'
+            
+            start_datetime = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+            end_datetime = timezone.make_aware(datetime.combine(end_date, datetime.max.time()))
+            
+            # Get orders for customer's personal products ONLY
+            orders = Order.objects.filter(
+                checkout__cart_item__product__customer_id=customer_id,
+                checkout__cart_item__product__shop__isnull=True,  # KEY: Only personal products
+                created_at__range=[start_datetime, end_datetime],
+                status='delivered'
+            ).distinct()
+            
+            # Group by date
+            sales_by_date = {}
+            for order in orders:
+                date_key = order.created_at.strftime(date_format)
+                sales_by_date[date_key] = sales_by_date.get(date_key, 0) + float(order.total_amount)
+            
+            # Generate date range
+            data = []
+            current_date = start_date
+            while current_date <= end_date:
+                if period == 'daily':
+                    date_key = current_date.strftime(date_format)
+                    current_date += timedelta(days=1)
+                elif period == 'weekly':
+                    date_key = current_date.strftime(date_format)
+                    current_date += timedelta(weeks=1)
+                else:
+                    date_key = current_date.strftime(date_format)
+                    if current_date.month == 12:
+                        current_date = current_date.replace(year=current_date.year + 1, month=1)
+                    else:
+                        current_date = current_date.replace(month=current_date.month + 1)
+                
+                data.append({
+                    'date': date_key,
+                    'sales': sales_by_date.get(date_key, 0)
+                })
+            
+            return Response({
+                'success': True,
+                'period': period,
+                'data': data,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in get_sales_chart_data: {str(e)}")
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def get_limit_info(self, request):
+        """
+        Get product limit information for customer
+        ONLY counts personal products (shop_id IS NULL)
+        """
+        try:
+            customer_id = request.query_params.get('customer_id')
+            
+            if not customer_id:
+                return Response(
+                    {'error': 'customer_id is required', 'success': False},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                customer = Customer.objects.get(customer_id=customer_id)
+            except Customer.DoesNotExist:
+                return Response(
+                    {'error': 'Customer not found', 'success': False},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # KEY: Only count personal products (shop_id IS NULL)
+            current_count = Product.objects.filter(
+                customer=customer,
+                shop__isnull=True,  # CRITICAL: Only personal products
+                is_removed=False
+            ).count()
+            
+            return Response({
+                'success': True,
+                'product_limit_info': {
+                    'current_count': current_count,
+                    'limit': customer.product_limit,
+                    'remaining': customer.product_limit - current_count,
+                    'can_add': current_count < customer.product_limit,
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in get_limit_info: {str(e)}")
+            return Response(
+                {'error': str(e), 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 class UserPaymentDetailsViewSet(viewsets.ViewSet):
     """
     User's saved payment details (e-wallets, bank accounts, etc.)
