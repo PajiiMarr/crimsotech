@@ -1,22 +1,22 @@
 // app/customer/create-product.tsx
 import React, { useState, useEffect } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   ScrollView,
+  TouchableOpacity,
   ActivityIndicator,
   Alert,
-  Platform
+  SafeAreaView,
+  StatusBar,
+  Platform,
 } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../../contexts/AuthContext';
-import RoleGuard from '../../guards/RoleGuard';
-import CreateProductForm from '../components/listing-create-product-form';
 import AxiosInstance from '../../../contexts/axios';
+import CreateProductForm from '../components/listing-create-product-form';
 
 interface Category {
   id: string;
@@ -28,162 +28,140 @@ interface Category {
   };
 }
 
-export default function CreateProductPage() {
+export default function CreateProduct() {
+  const router = useRouter();
   const { userId } = useAuth();
+  
+  const [loading, setLoading] = useState(true);
   const [globalCategories, setGlobalCategories] = useState<Category[]>([]);
   const [modelClasses, setModelClasses] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchInitialData();
   }, []);
 
+  const fetchInitialData = async () => {
+    try {
+      const categoriesResponse = await AxiosInstance.get('/customer-products/global-categories/');
+      if (categoriesResponse.data.success) {
+        setGlobalCategories(categoriesResponse.data.categories || []);
+      }
 
-
-const fetchInitialData = async () => {
-  try {
-    setLoading(true);
-    
-    // Fix: Use the correct endpoint with '-viewset'
-    const categoriesResponse = await AxiosInstance.get('/customer-products/global-categories/');
-    if (categoriesResponse.data.success) {
-      setGlobalCategories(categoriesResponse.data.categories || []);
+      const classesResponse = await AxiosInstance.get('/classes/');
+      if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
+        setModelClasses(classesResponse.data.classes);
+      }
+    } catch (error) {
+      console.error('Error fetching initial data:', error);
+    } finally {
+      setLoading(false);
     }
-    
-    // Get model classes
-    const classesResponse = await AxiosInstance.get('/classes/');
-    if (classesResponse.data && Array.isArray(classesResponse.data.classes)) {
-      setModelClasses(classesResponse.data.classes);
-    }
-    
-    setError(null);
-  } catch (err) {
-    console.error('Failed to fetch data:', err);
-    setError('Failed to load required data. Please try again.');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
-  if (loading) {
-    return (
-      <RoleGuard allowedRoles={['customer']}>
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#F97316" />
-            <Text style={styles.loadingText}>Loading...</Text>
-          </View>
-      </RoleGuard>
-    );
-  }
+  const handleBack = () => {
+    router.back();
+  };
+
+  const RenderHeader = ({ subtitle }: { subtitle?: string }) => (
+    <View style={styles.topBar}>
+      <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
+        <Ionicons name="arrow-back" size={22} color="#111827" />
+      </TouchableOpacity>
+      <View style={styles.topBarCenter}>
+        <Text style={styles.topBarTitle}>Create Product</Text>
+        {subtitle && (
+          <Text style={styles.topBarSubtitle} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        )}
+      </View>
+      <View style={{ width: 38 }} />
+    </View>
+  );
 
   return (
-    <RoleGuard allowedRoles={['customer']}>
-        <SafeAreaView style={styles.container}>
-          <View style={styles.header}>
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => router.back()}
-            >
-              <MaterialIcons name="arrow-back" size={24} color="#374151" />
-            </TouchableOpacity>
-            <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitle}>Create New Product</Text>
-              <Text style={styles.headerSubtitle}>Personal Listing</Text>
-            </View>
-            <View style={styles.headerRight} />
+    <View style={styles.mainWrapper}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <SafeAreaView style={styles.safeArea}>
+        <RenderHeader subtitle="Personal Listing" />
+        
+        {loading ? (
+          <View style={styles.centerContent}>
+            <ActivityIndicator size="large" color="#EA580C" />
+            <Text style={styles.loadingText}>Loading...</Text>
           </View>
-
-          {error ? (
-            <View style={styles.errorContainer}>
-              <MaterialIcons name="error-outline" size={48} color="#EF4444" />
-              <Text style={styles.errorText}>{error}</Text>
-              <TouchableOpacity 
-                style={styles.retryButton}
-                onPress={fetchInitialData}
-              >
-                <Text style={styles.retryButtonText}>Retry</Text>
-              </TouchableOpacity>
+        ) : (
+          <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+            <View style={styles.formContainer}>
+              <CreateProductForm 
+                globalCategories={globalCategories}
+                modelClasses={modelClasses}
+              />
             </View>
-          ) : (
-            <CreateProductForm 
-              globalCategories={globalCategories}
-              modelClasses={modelClasses}
-            />
-          )}
-        </SafeAreaView>
-    </RoleGuard>
+          </ScrollView>
+        )}
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  mainWrapper: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  safeArea: {
     flex: 1,
     backgroundColor: '#F9FAFB',
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    minHeight: 400,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  header: {
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 50 : 40,
     paddingVertical: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: '#E5E7EB',
   },
-  backButton: {
-    padding: 4,
-  },
-  headerTitleContainer: {
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  headerRight: {
-    width: 32,
-  },
-  errorContainer: {
-    flex: 1,
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 32,
   },
-  errorText: {
+  topBarCenter: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  topBarTitle: {
     fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  topBarSubtitle: {
+    fontSize: 12,
     color: '#6B7280',
-    textAlign: 'center',
-    marginTop: 16,
-    marginBottom: 24,
+    marginTop: 1,
   },
-  retryButton: {
-    backgroundColor: '#F97316',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+  scrollView: {
+    flex: 1,
   },
-  retryButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+  centerContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 8,
+  },
+  formContainer: {
+    paddingBottom: 24,
   },
 });

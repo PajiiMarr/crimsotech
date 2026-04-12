@@ -1,4 +1,4 @@
-// app/components/customer/CreateProductForm.tsx
+// app/customer/components/listing-create-product.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -13,9 +13,9 @@ import {
   Modal,
   FlatList,
   Switch,
-  Platform
+  Platform,
 } from 'react-native';
-import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import AxiosInstance from '../../../contexts/axios';
@@ -99,11 +99,11 @@ const generateId = () => {
 
 // Condition options
 const conditionOptions = [
-  'Like New',
-  'New',
-  'Refurbished',
-  'Used - Excellent',
-  'Used - Good'
+  { value: 5, label: 'Like New', stars: 5 },
+  { value: 4, label: 'Very Good', stars: 4 },
+  { value: 3, label: 'Good', stars: 3 },
+  { value: 2, label: 'Fair', stars: 2 },
+  { value: 1, label: 'Poor', stars: 1 },
 ];
 
 // Weight unit options
@@ -116,13 +116,22 @@ const usageUnitOptions = [
   { label: 'Years', value: 'years' }
 ];
 
+// Star component
+const StarRow = ({ count }: { count: number }) => (
+  <View style={{ flexDirection: 'row', gap: 2 }}>
+    {[1, 2, 3, 4, 5].map((i) => (
+      <Text key={i} style={{ color: i <= count ? '#F59E0B' : '#D1D5DB', fontSize: 12 }}>★</Text>
+    ))}
+  </View>
+);
+
 export default function CreateProductForm({ globalCategories, modelClasses }: CreateProductFormProps) {
   const { userId } = useAuth();
 
   // Form state
   const [productName, setProductName] = useState('');
   const [productDescription, setProductDescription] = useState('');
-  const [productCondition, setProductCondition] = useState('');
+  const [productCondition, setProductCondition] = useState<number | null>(null);
   const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
   const [productRefundable, setProductRefundable] = useState(true);
 
@@ -133,7 +142,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
   const [variants, setVariants] = useState<Variant[]>([
     {
       id: generateId(),
-      title: '', // Start empty, will be updated by productName
+      title: '',
       price: '',
       quantity: '',
       sku_code: '',
@@ -153,26 +162,21 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
   // UI state
   const [currentStep, setCurrentStep] = useState(1);
   const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
-  const [expandedAdvanced, setExpandedAdvanced] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Modal state
   const [conditionModalVisible, setConditionModalVisible] = useState(false);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
-  const [weightUnitModalVisible, setWeightUnitModalVisible] = useState(false);
-  const [usageUnitModalVisible, setUsageUnitModalVisible] = useState<{ visible: boolean; variantId: string | null }>({
-    visible: false,
-    variantId: null
-  });
+  const [weightUnitModal, setWeightUnitModal] = useState<{ visible: boolean; variantId: string | null }>({ visible: false, variantId: null });
+  const [usageUnitModal, setUsageUnitModal] = useState<{ visible: boolean; variantId: string | null }>({ visible: false, variantId: null });
 
   // Prediction state
   const [isPredicting, setIsPredicting] = useState(false);
   const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
-  const [showPrediction, setShowPrediction] = useState(false);
   const [predictionError, setPredictionError] = useState<string | null>(null);
 
-  // Update first variant title when product name changes - exactly like web version
+  // Update first variant title when product name changes
   useEffect(() => {
     setVariants(prev => prev.map((variant, index) => 
       index === 0 ? { ...variant, title: productName || "Default" } : variant
@@ -183,7 +187,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
   const calculateDepreciatedPrice = (originalPrice: number, usagePeriod: number, usageUnit: string, depreciationRate: number): number => {
     if (!originalPrice || !usagePeriod || !depreciationRate) return originalPrice;
     
-    // Convert usage period to years for calculation
     let years = usagePeriod;
     if (usageUnit === 'months') {
       years = usagePeriod / 12;
@@ -191,11 +194,8 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
       years = usagePeriod / 52;
     }
     
-    // Calculate depreciated value: original * (1 - rate/100)^years
     const rate = depreciationRate / 100;
     const depreciatedValue = originalPrice * Math.pow((1 - rate), years);
-    
-    // Ensure price doesn't go below 0 and round to 2 decimal places
     return Math.max(0, Math.round(depreciatedValue * 100) / 100);
   };
 
@@ -208,7 +208,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
           [field]: value
         };
         
-        // Calculate new price if all required fields are present
         if (updatedDepreciation.originalPrice && 
             updatedDepreciation.usagePeriod && 
             updatedDepreciation.depreciationRate) {
@@ -216,13 +215,12 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
           const calculatedPrice = calculateDepreciatedPrice(
             Number(updatedDepreciation.originalPrice),
             Number(updatedDepreciation.usagePeriod),
-            updatedDepreciation.usageUnit || 'months',
+            updatedDepreciation.usageUnit,
             Number(updatedDepreciation.depreciationRate)
           );
           
           updatedDepreciation.calculatedPrice = calculatedPrice;
           
-          // Auto-update the variant price (read-only field)
           return {
             ...v,
             depreciation: updatedDepreciation,
@@ -253,36 +251,31 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       quality: 0.8,
     });
 
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-      const isVideo = asset.type?.startsWith('video') || false;
-      const fileName = asset.uri.split('/').pop() || 'file';
+      const fileName = asset.uri.split('/').pop() || 'photo.jpg';
       
       const newMedia = {
         file: {
           uri: asset.uri,
           name: fileName,
-          type: isVideo ? 'video/mp4' : 'image/jpeg',
+          type: 'image/jpeg',
         },
         preview: asset.uri,
-        type: isVideo ? 'video' : 'image' as 'image' | 'video',
+        type: 'image' as const,
       };
 
       setMainMedia(prev => [...prev, newMedia]);
-
-      // Auto-analyze images for category prediction
-      if (!isVideo) {
-        analyzeImages([{
-          uri: asset.uri,
-          name: fileName,
-          type: 'image/jpeg',
-        }]);
-      }
+      analyzeImages([{
+        uri: asset.uri,
+        name: fileName,
+        type: 'image/jpeg',
+      }]);
     }
   };
 
@@ -338,7 +331,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
           const conf = Number(p.confidence || 1);
           aggregateScores[cls] = (aggregateScores[cls] || 0) + conf;
         }
-
         count += 1;
       });
 
@@ -366,7 +358,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
       };
 
       setPredictionResult(mapped);
-      setShowPrediction(true);
 
       if (mapped.predicted_category?.category_name && globalCategories) {
         const predictedName = mapped.predicted_category.category_name.toLowerCase();
@@ -413,15 +404,13 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
       Alert.alert('Cannot Remove', 'Products must have at least one variant');
       return;
     }
-    
     setVariants(prev => prev.filter(v => v.id !== variantId));
   };
 
   const updateVariantField = (variantId: string, field: keyof Variant, value: any) => {
     if (field === 'price') {
-      return; // Price is auto-calculated
+      return;
     }
-    
     setVariants(prev => prev.map(v => 
       v.id === variantId ? { ...v, [field]: value } : v
     ));
@@ -471,29 +460,14 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
     }));
   };
 
-  const toggleAdvancedExpand = (variantId: string) => {
-    setExpandedAdvanced(prev => ({
-      ...prev,
-      [variantId]: !prev[variantId]
-    }));
-  };
-
   // Validation
   const validateForm = () => {
     if (!productName.trim()) {
       Alert.alert('Validation Error', 'Product name is required');
       return false;
     }
-    if (productName.length < 2) {
-      Alert.alert('Validation Error', 'Product name must be at least 2 characters');
-      return false;
-    }
     if (!productDescription.trim()) {
       Alert.alert('Validation Error', 'Description is required');
-      return false;
-    }
-    if (productDescription.length < 10) {
-      Alert.alert('Validation Error', 'Description must be at least 10 characters');
       return false;
     }
     if (!productCondition) {
@@ -538,15 +512,13 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
     try {
       const formData = new FormData();
 
-      // Basic fields
       formData.append('name', productName.trim());
       formData.append('description', productDescription.trim());
-      formData.append('condition', productCondition);
+      formData.append('condition', productCondition.toString());
       formData.append('status', 'active');
       formData.append('upload_status', 'draft');
       formData.append('customer_id', userId);
 
-      // Handle category
       if (selectedCategoryName?.trim()) {
         const match = globalCategories.find(gc => gc.name.toLowerCase() === selectedCategoryName.toLowerCase());
         if (match) {
@@ -556,8 +528,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
         }
       }
 
-      // Add media files
-      mainMedia.forEach((media, index) => {
+      mainMedia.forEach((media) => {
         formData.append('media_files', {
           uri: media.file.uri,
           name: media.file.name,
@@ -565,7 +536,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
         } as any);
       });
 
-      // Prepare variants payload
       const variantsPayload = variants.map(v => ({
         id: v.id,
         title: v.title,
@@ -591,7 +561,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
 
       formData.append('variants', JSON.stringify(variantsPayload));
 
-      // Add variant images
       variants.forEach(v => {
         if (v.image) {
           formData.append(`variant_image_${v.id}`, {
@@ -643,7 +612,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
       case 1:
         return productName.trim() && productDescription.trim() && productCondition;
       case 2:
-        return true; // Media is optional
+        return true;
       case 3:
         return variants.length > 0 && variants.every(v => v.depreciation.calculatedPrice && v.quantity);
       default:
@@ -715,9 +684,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
               placeholderTextColor="#9CA3AF"
               maxLength={100}
             />
-            <Text style={styles.hintText}>
-              This will be used as the title for the first variant
-            </Text>
           </View>
 
           <View style={styles.formGroup}>
@@ -728,9 +694,16 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
               style={styles.selectButton}
               onPress={() => setConditionModalVisible(true)}
             >
-              <Text style={productCondition ? styles.selectButtonText : styles.selectButtonPlaceholder}>
-                {productCondition || 'Select condition'}
-              </Text>
+              {productCondition ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <StarRow count={conditionOptions.find(c => c.value === productCondition)?.stars || 0} />
+                  <Text style={styles.selectButtonText}>
+                    {conditionOptions.find(c => c.value === productCondition)?.label || 'Select condition'}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.selectButtonPlaceholder}>Select condition rating</Text>
+              )}
               <MaterialIcons name="arrow-drop-down" size={24} color="#9CA3AF" />
             </TouchableOpacity>
           </View>
@@ -770,30 +743,26 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
             <View style={styles.sectionIconContainer}>
               <MaterialIcons name="photo-library" size={20} color="#F97316" />
             </View>
-            <Text style={styles.sectionTitle}>Product Media</Text>
+            <Text style={styles.sectionTitle}>Product Photos</Text>
+            <View style={styles.mediaCountBadge}>
+              <Text style={styles.mediaCountBadgeText}>{mainMedia.length}/9</Text>
+            </View>
           </View>
 
-          <View style={styles.mediaContainer}>
-            <View style={styles.mediaHeader}>
-              <Text style={styles.mediaLabel}>Take photos/videos (max 9)</Text>
-              <Text style={styles.mediaCount}>{mainMedia.length}/9</Text>
+          <TouchableOpacity style={styles.cameraArea} onPress={pickMedia}>
+            <MaterialIcons name="photo-camera" size={40} color="#9CA3AF" />
+            <Text style={styles.cameraAreaText}>Take photos of your product (max 9 photos)</Text>
+            <View style={styles.cameraButton}>
+              <MaterialIcons name="camera-alt" size={16} color="#F97316" />
+              <Text style={styles.cameraButtonText}>Open Camera</Text>
             </View>
+          </TouchableOpacity>
 
+          {mainMedia.length > 0 && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
-              <TouchableOpacity style={styles.addMediaButton} onPress={pickMedia}>
-                <MaterialIcons name="photo-camera" size={32} color="#9CA3AF" />
-                <Text style={styles.addMediaText}>Take Photo</Text>
-              </TouchableOpacity>
-
               {mainMedia.map((item, index) => (
                 <View key={index} style={styles.mediaPreviewContainer}>
-                  {item.type === 'image' ? (
-                    <Image source={{ uri: item.preview }} style={styles.mediaPreview} />
-                  ) : (
-                    <View style={[styles.mediaPreview, styles.videoPreview]}>
-                      <MaterialIcons name="play-circle-fill" size={32} color="#FFFFFF" />
-                    </View>
-                  )}
+                  <Image source={{ uri: item.preview }} style={styles.mediaPreview} />
                   {index === 0 && (
                     <View style={styles.coverBadge}>
                       <Text style={styles.coverBadgeText}>Cover</Text>
@@ -808,7 +777,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
                 </View>
               ))}
             </ScrollView>
-          </View>
+          )}
 
           {/* AI Category Prediction */}
           <View style={styles.aiSection}>
@@ -834,7 +803,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
               ) : (
                 <>
                   <MaterialIcons name="analytics" size={20} color="#F97316" />
-                  <Text style={styles.analyzeButtonText}>Analyze Images</Text>
+                  <Text style={styles.analyzeButtonText}>Analyze Photos</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -863,11 +832,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
                     {Math.round((predictionResult.predicted_category.confidence || 0) * 100)}% confidence
                   </Text>
                 </View>
-                {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
-                  <Text style={styles.alternativeText}>
-                    Also considered: {predictionResult.alternative_categories.map(a => a.category_name).join(', ')}
-                  </Text>
-                )}
               </View>
             )}
 
@@ -910,7 +874,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
 
           {variants.map((variant, index) => (
             <View key={variant.id} style={styles.variantCard}>
-              {/* Variant Header */}
               <TouchableOpacity 
                 style={styles.variantHeader}
                 onPress={() => toggleVariantExpand(variant.id)}
@@ -948,10 +911,11 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
               {expandedVariants[variant.id] && (
                 <View style={styles.variantContent}>
                   {/* Variant Image */}
-                  <View style={styles.variantImageSection}>
-                    <View style={styles.variantImageContainer}>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>Variant Image</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                       {variant.imagePreview ? (
-                        <>
+                        <View style={styles.variantImageContainer}>
                           <Image source={{ uri: variant.imagePreview }} style={styles.variantImage} />
                           <TouchableOpacity
                             style={styles.removeVariantImageButton}
@@ -959,21 +923,20 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
                           >
                             <MaterialIcons name="close" size={16} color="#FFFFFF" />
                           </TouchableOpacity>
-                        </>
+                        </View>
                       ) : (
                         <TouchableOpacity
                           style={styles.addVariantImageButton}
                           onPress={() => handleVariantImagePick(variant.id)}
                         >
                           <MaterialIcons name="photo-camera" size={24} color="#9CA3AF" />
-                          <Text style={styles.addVariantImageText}>Take Photo</Text>
+                          <Text style={styles.addVariantImageText}>Add Photo</Text>
                         </TouchableOpacity>
                       )}
                     </View>
-                    <Text style={styles.variantImageHint}>Optional variant-specific image</Text>
                   </View>
 
-                  {/* Basic Variant Fields */}
+                  {/* Title */}
                   <View style={styles.formGroup}>
                     <Text style={styles.label}>
                       Title <Text style={styles.required}>*</Text>
@@ -990,21 +953,13 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
                       placeholderTextColor="#9CA3AF"
                       editable={index !== 0}
                     />
-                    {index === 0 && (
-                      <Text style={styles.hintText}>
-                        First variant title is linked to product name
-                      </Text>
-                    )}
                   </View>
 
                   {/* Depreciation Section */}
                   <View style={styles.depreciationSection}>
                     <View style={styles.depreciationHeader}>
-                      <MaterialIcons name="calculate" size={18} color="#F97316" />
+                      <MaterialIcons name="calculate" size={16} color="#F97316" />
                       <Text style={styles.depreciationTitle}>Price Depreciation Calculator</Text>
-                      <View style={styles.autoBadge}>
-                        <Text style={styles.autoBadgeText}>Auto</Text>
-                      </View>
                     </View>
 
                     <View style={styles.formGroup}>
@@ -1038,7 +993,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
                         <Text style={styles.label}>Unit</Text>
                         <TouchableOpacity
                           style={styles.selectButton}
-                          onPress={() => setUsageUnitModalVisible({ visible: true, variantId: variant.id })}
+                          onPress={() => setUsageUnitModal({ visible: true, variantId: variant.id })}
                         >
                           <Text style={styles.selectButtonText}>
                             {variant.depreciation.usageUnit}
@@ -1071,14 +1026,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
                         </Text>
                       </View>
                     </View>
-
-                    {variant.depreciation.calculatedPrice && (
-                      <View style={styles.calculationInfo}>
-                        <Text style={styles.calculationText}>
-                          ₱{Number(variant.depreciation.originalPrice).toFixed(2)} × (1 - {variant.depreciation.depreciationRate}% ÷ 100)^{variant.depreciation.usagePeriod} {variant.depreciation.usageUnit}
-                        </Text>
-                      </View>
-                    )}
                   </View>
 
                   <View style={styles.formGroup}>
@@ -1127,64 +1074,6 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
                       />
                     </View>
                   </View>
-
-                  {/* Advanced Options */}
-                  <TouchableOpacity
-                    style={styles.advancedToggle}
-                    onPress={() => toggleAdvancedExpand(variant.id)}
-                  >
-                    <MaterialIcons 
-                      name={expandedAdvanced[variant.id] ? "expand-less" : "expand-more"} 
-                      size={20} 
-                      color="#6B7280" 
-                    />
-                    <Text style={styles.advancedToggleText}>Additional Details</Text>
-                    <View style={styles.optionalBadge}>
-                      <Text style={styles.optionalBadgeText}>Optional</Text>
-                    </View>
-                  </TouchableOpacity>
-
-                  {expandedAdvanced[variant.id] && (
-                    <View style={styles.advancedContent}>
-                      <View style={styles.row}>
-                        <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
-                          <Text style={styles.label}>Weight</Text>
-                          <TextInput
-                            style={styles.input}
-                            value={variant.weight?.toString() || ''}
-                            onChangeText={(text) => updateVariantField(variant.id, 'weight', parseFloat(text) || '')}
-                            keyboardType="numeric"
-                            placeholder="0.00"
-                            placeholderTextColor="#9CA3AF"
-                          />
-                        </View>
-                        <View style={[styles.formGroup, { flex: 1 }]}>
-                          <Text style={styles.label}>Unit</Text>
-                          <TouchableOpacity
-                            style={styles.selectButton}
-                            onPress={() => setWeightUnitModalVisible(true)}
-                          >
-                            <Text style={styles.selectButtonText}>
-                              {variant.weight_unit || 'g'}
-                            </Text>
-                            <MaterialIcons name="arrow-drop-down" size={24} color="#9CA3AF" />
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-
-                      <View style={styles.formGroup}>
-                        <Text style={styles.label}>Low Stock Alert</Text>
-                        <TextInput
-                          style={styles.input}
-                          value={variant.critical_trigger?.toString() || ''}
-                          onChangeText={(text) => updateVariantField(variant.id, 'critical_trigger', parseInt(text) || '')}
-                          keyboardType="numeric"
-                          placeholder="Alert when stock below"
-                          placeholderTextColor="#9CA3AF"
-                        />
-                      </View>
-                    </View>
-                  )}
                 </View>
               )}
             </View>
@@ -1196,9 +1085,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
           </TouchableOpacity>
 
           <View style={styles.variantSummary}>
-            <Text style={styles.variantSummaryText}>
-              Total Variants: {variants.length}
-            </Text>
+            <Text style={styles.variantSummaryText}>Total Variants: {variants.length}</Text>
             <Text style={styles.variantSummaryText}>
               Total Stock: {variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units
             </Text>
@@ -1245,7 +1132,9 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
             
             <View style={styles.reviewRow}>
               <Text style={styles.reviewLabel}>Condition:</Text>
-              <Text style={styles.reviewValue}>{productCondition}</Text>
+              <Text style={styles.reviewValue}>
+                {conditionOptions.find(c => c.value === productCondition)?.label || 'Not set'}
+              </Text>
             </View>
             
             <View style={styles.reviewRow}>
@@ -1319,24 +1208,29 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
         >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Condition</Text>
+              <Text style={styles.modalTitle}>Select Condition Rating</Text>
               <TouchableOpacity onPress={() => setConditionModalVisible(false)}>
                 <MaterialIcons name="close" size={24} color="#374151" />
               </TouchableOpacity>
             </View>
             <FlatList
               data={conditionOptions}
-              keyExtractor={(item) => item}
+              keyExtractor={(item) => item.value.toString()}
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={styles.modalItem}
+                  style={[styles.modalItem, productCondition === item.value && styles.modalItemActive]}
                   onPress={() => {
-                    setProductCondition(item);
+                    setProductCondition(item.value);
                     setConditionModalVisible(false);
                   }}
                 >
-                  <Text style={styles.modalItemText}>{item}</Text>
-                  {productCondition === item && (
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                      <StarRow count={item.stars} />
+                      <Text style={[styles.modalItemText, { fontWeight: '600' }]}>{item.label}</Text>
+                    </View>
+                  </View>
+                  {productCondition === item.value && (
                     <MaterialIcons name="check" size={20} color="#F97316" />
                   )}
                 </TouchableOpacity>
@@ -1370,7 +1264,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
               keyExtractor={(item) => item}
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={styles.modalItem}
+                  style={[styles.modalItem, selectedCategoryName === item && styles.modalItemActive]}
                   onPress={() => {
                     setSelectedCategoryName(item);
                     setCategoryModalVisible(false);
@@ -1387,59 +1281,22 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
         </TouchableOpacity>
       </Modal>
 
-      {/* Weight Unit Modal */}
-      <Modal
-        visible={weightUnitModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setWeightUnitModalVisible(false)}
-      >
-        <TouchableOpacity 
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setWeightUnitModalVisible(false)}
-        >
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Weight Unit</Text>
-              <TouchableOpacity onPress={() => setWeightUnitModalVisible(false)}>
-                <MaterialIcons name="close" size={24} color="#374151" />
-              </TouchableOpacity>
-            </View>
-            <FlatList
-              data={weightUnitOptions}
-              keyExtractor={(item) => item}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.modalItem}
-                  onPress={() => {
-                    setWeightUnitModalVisible(false);
-                  }}
-                >
-                  <Text style={styles.modalItemText}>{item}</Text>
-                </TouchableOpacity>
-              )}
-            />
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
       {/* Usage Unit Modal */}
       <Modal
-        visible={usageUnitModalVisible.visible}
+        visible={usageUnitModal.visible}
         transparent
         animationType="slide"
-        onRequestClose={() => setUsageUnitModalVisible({ visible: false, variantId: null })}
+        onRequestClose={() => setUsageUnitModal({ visible: false, variantId: null })}
       >
         <TouchableOpacity 
           style={styles.modalOverlay}
           activeOpacity={1}
-          onPress={() => setUsageUnitModalVisible({ visible: false, variantId: null })}
+          onPress={() => setUsageUnitModal({ visible: false, variantId: null })}
         >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Time Unit</Text>
-              <TouchableOpacity onPress={() => setUsageUnitModalVisible({ visible: false, variantId: null })}>
+              <TouchableOpacity onPress={() => setUsageUnitModal({ visible: false, variantId: null })}>
                 <MaterialIcons name="close" size={24} color="#374151" />
               </TouchableOpacity>
             </View>
@@ -1448,12 +1305,12 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
               keyExtractor={(item) => item.value}
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={styles.modalItem}
+                  style={[styles.modalItem]}
                   onPress={() => {
-                    if (usageUnitModalVisible.variantId) {
-                      handleDepreciationChange(usageUnitModalVisible.variantId, 'usageUnit', item.value);
+                    if (usageUnitModal.variantId) {
+                      handleDepreciationChange(usageUnitModal.variantId, 'usageUnit', item.value);
                     }
-                    setUsageUnitModalVisible({ visible: false, variantId: null });
+                    setUsageUnitModal({ visible: false, variantId: null });
                   }}
                 >
                   <Text style={styles.modalItemText}>{item.label}</Text>
@@ -1483,9 +1340,9 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F3F4F6',
   },
   stepIndicator: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: '#F3F4F6',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1502,10 +1359,10 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   stepLine: {
-    width: 40,
+    width: 50,
     height: 2,
     backgroundColor: '#F3F4F6',
-    marginHorizontal: 4,
+    marginHorizontal: 8,
   },
   stepLineActive: {
     backgroundColor: '#F97316',
@@ -1548,6 +1405,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#111827',
+    flex: 1,
   },
   formGroup: {
     marginBottom: 16,
@@ -1570,12 +1428,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#111827',
     backgroundColor: '#FFFFFF',
-  },
-  hintText: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginTop: 4,
-    fontStyle: 'italic',
   },
   inputDisabled: {
     backgroundColor: '#F3F4F6',
@@ -1638,70 +1490,75 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 14,
     gap: 8,
+    backgroundColor: '#FFFFFF',
   },
   backButtonText: {
     fontSize: 14,
     fontWeight: '500',
     color: '#6B7280',
   },
-  mediaContainer: {
-    marginBottom: 20,
+  mediaCountBadge: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
   },
-  mediaHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
+  mediaCountBadgeText: {
+    fontSize: 12,
+    color: '#6B7280',
   },
-  mediaLabel: {
-    fontSize: 14,
-    color: '#374151',
-  },
-  mediaCount: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#F97316',
-  },
-  mediaScroll: {
-    flexDirection: 'row',
-  },
-  addMediaButton: {
-    width: 100,
-    height: 100,
+  cameraArea: {
     borderWidth: 2,
     borderColor: '#D1D5DB',
     borderStyle: 'dashed',
-    borderRadius: 8,
+    borderRadius: 12,
+    padding: 24,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
+    marginBottom: 16,
     backgroundColor: '#F9FAFB',
   },
-  addMediaText: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    marginTop: 4,
+  cameraAreaText: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginTop: 8,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  cameraButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  cameraButtonText: {
+    fontSize: 14,
+    color: '#F97316',
+    fontWeight: '500',
+  },
+  mediaScroll: {
+    flexDirection: 'row',
+    marginBottom: 16,
   },
   mediaPreviewContainer: {
     position: 'relative',
     marginRight: 12,
   },
   mediaPreview: {
-    width: 100,
-    height: 100,
+    width: 80,
+    height: 80,
     borderRadius: 8,
-  },
-  videoPreview: {
-    backgroundColor: '#374151',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   coverBadge: {
     position: 'absolute',
     top: 4,
     left: 4,
     backgroundColor: '#F97316',
-    paddingHorizontal: 6,
+    paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 4,
   },
@@ -1741,12 +1598,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   aiTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#111827',
   },
   aiReadyBadge: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: '#DCFCE7',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
@@ -1761,31 +1618,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#F97316',
-    borderRadius: 8,
-    padding: 12,
+    borderColor: '#FED7AA',
+    borderRadius: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
     marginBottom: 16,
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFF7ED',
     gap: 8,
   },
   analyzeButtonDisabled: {
-    borderColor: '#9CA3AF',
     opacity: 0.5,
   },
   analyzeButtonText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
     color: '#F97316',
   },
   predictionCard: {
-    backgroundColor: '#F0F9FF',
+    backgroundColor: '#FFF7ED',
     borderRadius: 8,
     padding: 12,
-    marginTop: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#FED7AA',
   },
   predictionTitle: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#0369A1',
+    color: '#C2410C',
     marginBottom: 4,
   },
   predictionRow: {
@@ -1796,22 +1657,17 @@ const styles = StyleSheet.create({
   predictionCategory: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#0C4A6E',
+    color: '#7C2D12',
   },
   predictionConfidence: {
     fontSize: 12,
-    color: '#0369A1',
-  },
-  alternativeText: {
-    fontSize: 11,
-    color: '#0369A1',
-    marginTop: 4,
+    color: '#F97316',
   },
   errorCard: {
     backgroundColor: '#FEF2F2',
     borderRadius: 8,
     padding: 12,
-    marginTop: 12,
+    marginTop: 8,
   },
   errorCardText: {
     fontSize: 12,
@@ -1838,16 +1694,16 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   variantNumber: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#F97316',
     alignItems: 'center',
     justifyContent: 'center',
   },
   variantNumberText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#FFFFFF',
   },
   variantTitle: {
@@ -1858,6 +1714,7 @@ const styles = StyleSheet.create({
   variantPrice: {
     fontSize: 12,
     color: '#F97316',
+    marginTop: 2,
   },
   variantHeaderRight: {
     flexDirection: 'row',
@@ -1865,37 +1722,35 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   defaultBadge: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: '#FFF7ED',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#FED7AA',
   },
   defaultBadgeText: {
     fontSize: 10,
     fontWeight: '600',
-    color: '#1E40AF',
+    color: '#F97316',
   },
   variantContent: {
     padding: 16,
   },
-  variantImageSection: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
   variantImageContainer: {
-    width: 100,
-    height: 100,
+    position: 'relative',
+    width: 80,
+    height: 80,
     borderRadius: 8,
     overflow: 'hidden',
-    marginBottom: 4,
   },
   variantImage: {
     width: '100%',
     height: '100%',
   },
   addVariantImageButton: {
-    width: '100%',
-    height: '100%',
+    width: 80,
+    height: 80,
     borderWidth: 2,
     borderColor: '#D1D5DB',
     borderStyle: 'dashed',
@@ -1907,7 +1762,7 @@ const styles = StyleSheet.create({
   addVariantImageText: {
     fontSize: 10,
     color: '#9CA3AF',
-    marginTop: 2,
+    marginTop: 4,
   },
   removeVariantImageButton: {
     position: 'absolute',
@@ -1920,38 +1775,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  variantImageHint: {
-    fontSize: 11,
-    color: '#9CA3AF',
-  },
   depreciationSection: {
-    backgroundColor: '#F0F9FF',
+    backgroundColor: '#FFF7ED',
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FED7AA',
   },
   depreciationHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 12,
     gap: 6,
-    flexWrap: 'wrap',
   },
   depreciationTitle: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#0369A1',
-  },
-  autoBadge: {
-    backgroundColor: '#DBEAFE',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  autoBadgeText: {
-    fontSize: 9,
-    fontWeight: '600',
-    color: '#1E40AF',
+    color: '#C2410C',
   },
   priceInputContainer: {
     flexDirection: 'row',
@@ -1980,16 +1821,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     paddingVertical: 12,
   },
-  calculationInfo: {
-    marginTop: 8,
-    padding: 8,
-    backgroundColor: '#E6F7FF',
-    borderRadius: 6,
-  },
-  calculationText: {
-    fontSize: 11,
-    color: '#0369A1',
-  },
   row: {
     flexDirection: 'row',
   },
@@ -2007,35 +1838,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#374151',
   },
-  advancedToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 8,
-  },
-  advancedToggleText: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  optionalBadge: {
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  optionalBadgeText: {
-    fontSize: 9,
-    color: '#6B7280',
-  },
-  advancedContent: {
-    marginTop: 12,
-  },
   addVariantButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#F97316',
+    borderColor: '#FED7AA',
     borderStyle: 'dashed',
     borderRadius: 8,
     padding: 16,
@@ -2129,8 +1937,8 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     maxHeight: '80%',
   },
   modalHeader: {
@@ -2153,6 +1961,9 @@ const styles = StyleSheet.create({
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
+  },
+  modalItemActive: {
+    backgroundColor: '#FFF7ED',
   },
   modalItemText: {
     fontSize: 15,
