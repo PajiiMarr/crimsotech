@@ -341,7 +341,7 @@ const handleMarkPickedUp = async () => {
       return;
     }
     
-    console.log('Buyer coordinates:', {
+    console.log('Buyer pinned coordinates:', {
       lat: customerAddress.latitude,
       lng: customerAddress.longitude,
       address: customerAddress.full_address
@@ -354,13 +354,14 @@ const handleMarkPickedUp = async () => {
         // Buyer's pinned location (destination)
         destLat: customerAddress.latitude.toString(),
         destLng: customerAddress.longitude.toString(),
-        // Seller's location (optional - for pickup)
+        // Seller's location (pickup)
         sellerLat: sellerInfo?.shop_latitude?.toString() || '',
         sellerLng: sellerInfo?.shop_longitude?.toString() || '',
         // Address strings for display
         customerAddress: customerAddress.full_address || '',
         sellerAddress: sellerInfo ? formatShopAddress(sellerInfo) : '',
         deliveryId: orderDetails?.delivery?.id || '',
+        orderId: orderDetails?.order_id || '',
       }
     });
   };
