@@ -97,14 +97,36 @@ const generateId = () => {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
 };
 
-// Condition options
-const conditionOptions = [
-  { value: 5, label: 'Like New', stars: 5 },
-  { value: 4, label: 'Very Good', stars: 4 },
-  { value: 3, label: 'Good', stars: 3 },
-  { value: 2, label: 'Fair', stars: 2 },
-  { value: 1, label: 'Poor', stars: 1 },
-];
+// Condition scale matching seller version (1 = Poor, 5 = Like New)
+const CONDITION_SCALE = {
+  1: {
+    label: 'Poor - Heavy signs of use, may not function perfectly',
+    shortLabel: 'Poor',
+    stars: 1,
+  },
+  2: {
+    label: 'Fair - Visible wear, fully functional',
+    shortLabel: 'Fair',
+    stars: 2,
+  },
+  3: {
+    label: 'Good - Normal wear, well-maintained',
+    shortLabel: 'Good',
+    stars: 3,
+  },
+  4: {
+    label: 'Very Good - Minimal wear, almost like new',
+    shortLabel: 'Very Good',
+    stars: 4,
+  },
+  5: {
+    label: 'Like New - No signs of use, original packaging',
+    shortLabel: 'Like New',
+    stars: 5,
+  },
+} as const;
+
+type ConditionValue = keyof typeof CONDITION_SCALE;
 
 // Weight unit options
 const weightUnitOptions = ['g', 'kg', 'lb', 'oz'];
@@ -131,7 +153,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
   // Form state
   const [productName, setProductName] = useState('');
   const [productDescription, setProductDescription] = useState('');
-  const [productCondition, setProductCondition] = useState<number | null>(null);
+  const [productCondition, setProductCondition] = useState<ConditionValue | ''>('');
   const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
   const [productRefundable, setProductRefundable] = useState(true);
 
@@ -471,7 +493,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
       return false;
     }
     if (!productCondition) {
-      Alert.alert('Validation Error', 'Condition is required');
+      Alert.alert('Validation Error', 'Condition rating is required');
       return false;
     }
     if (variants.length === 0) {
@@ -688,17 +710,17 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
 
           <View style={styles.formGroup}>
             <Text style={styles.label}>
-              Condition <Text style={styles.required}>*</Text>
+              Condition Rating <Text style={styles.required}>*</Text>
             </Text>
             <TouchableOpacity
               style={styles.selectButton}
               onPress={() => setConditionModalVisible(true)}
             >
               {productCondition ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <StarRow count={conditionOptions.find(c => c.value === productCondition)?.stars || 0} />
-                  <Text style={styles.selectButtonText}>
-                    {conditionOptions.find(c => c.value === productCondition)?.label || 'Select condition'}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                  <StarRow count={CONDITION_SCALE[productCondition].stars} />
+                  <Text style={styles.selectButtonText} numberOfLines={1}>
+                    {CONDITION_SCALE[productCondition].shortLabel}
                   </Text>
                 </View>
               ) : (
@@ -706,6 +728,14 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
               )}
               <MaterialIcons name="arrow-drop-down" size={24} color="#9CA3AF" />
             </TouchableOpacity>
+            {productCondition ? (
+              <View style={styles.conditionBadge}>
+                <StarRow count={CONDITION_SCALE[productCondition].stars} />
+                <Text style={styles.conditionBadgeText}>
+                  {CONDITION_SCALE[productCondition].label}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.formGroup}>
@@ -832,6 +862,11 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
                     {Math.round((predictionResult.predicted_category.confidence || 0) * 100)}% confidence
                   </Text>
                 </View>
+                {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
+                  <Text style={styles.alternativeText}>
+                    Also considered: {predictionResult.alternative_categories.map(a => a.category_name).join(', ')}
+                  </Text>
+                )}
               </View>
             )}
 
@@ -953,6 +988,9 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
                       placeholderTextColor="#9CA3AF"
                       editable={index !== 0}
                     />
+                    {index === 0 && (
+                      <Text style={styles.hintText}>First variant title is linked to product name</Text>
+                    )}
                   </View>
 
                   {/* Depreciation Section */}
@@ -1133,7 +1171,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
             <View style={styles.reviewRow}>
               <Text style={styles.reviewLabel}>Condition:</Text>
               <Text style={styles.reviewValue}>
-                {conditionOptions.find(c => c.value === productCondition)?.label || 'Not set'}
+                {productCondition ? `${CONDITION_SCALE[productCondition].shortLabel} (${CONDITION_SCALE[productCondition].stars}★)` : 'Not set'}
               </Text>
             </View>
             
@@ -1194,7 +1232,7 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
         </View>
       )}
 
-      {/* Condition Modal */}
+      {/* Condition Modal - Matching seller version */}
       <Modal
         visible={conditionModalVisible}
         transparent
@@ -1214,27 +1252,30 @@ export default function CreateProductForm({ globalCategories, modelClasses }: Cr
               </TouchableOpacity>
             </View>
             <FlatList
-              data={conditionOptions}
-              keyExtractor={(item) => item.value.toString()}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[styles.modalItem, productCondition === item.value && styles.modalItemActive]}
-                  onPress={() => {
-                    setProductCondition(item.value);
-                    setConditionModalVisible(false);
-                  }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                      <StarRow count={item.stars} />
-                      <Text style={[styles.modalItemText, { fontWeight: '600' }]}>{item.label}</Text>
+              data={Object.entries(CONDITION_SCALE) as [string, typeof CONDITION_SCALE[1]][]}
+              keyExtractor={([key]) => key}
+              renderItem={({ item: [key, cond] }) => {
+                const val = parseInt(key) as ConditionValue;
+                const isSelected = productCondition === val;
+                return (
+                  <TouchableOpacity
+                    style={[styles.modalItem, isSelected && styles.modalItemActive]}
+                    onPress={() => {
+                      setProductCondition(val);
+                      setConditionModalVisible(false);
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                        <StarRow count={cond.stars} />
+                        <Text style={[styles.modalItemText, { fontWeight: '600' }]}>{cond.shortLabel}</Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#6B7280' }}>{cond.label}</Text>
                     </View>
-                  </View>
-                  {productCondition === item.value && (
-                    <MaterialIcons name="check" size={20} color="#F97316" />
-                  )}
-                </TouchableOpacity>
-              )}
+                    {isSelected && <MaterialIcons name="check" size={20} color="#F97316" />}
+                  </TouchableOpacity>
+                );
+              }}
             />
           </View>
         </TouchableOpacity>
@@ -1419,6 +1460,12 @@ const styles = StyleSheet.create({
   required: {
     color: '#EF4444',
   },
+  hintText: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
   input: {
     borderWidth: 1,
     borderColor: '#D1D5DB',
@@ -1455,6 +1502,21 @@ const styles = StyleSheet.create({
   selectButtonPlaceholder: {
     fontSize: 14,
     color: '#9CA3AF',
+  },
+  conditionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+  },
+  conditionBadgeText: {
+    fontSize: 12,
+    color: '#4B5563',
+    flex: 1,
   },
   nextButton: {
     backgroundColor: '#F97316',
@@ -1662,6 +1724,11 @@ const styles = StyleSheet.create({
   predictionConfidence: {
     fontSize: 12,
     color: '#F97316',
+  },
+  alternativeText: {
+    fontSize: 11,
+    color: '#F97316',
+    marginTop: 4,
   },
   errorCard: {
     backgroundColor: '#FEF2F2',
