@@ -170,6 +170,8 @@ const formatDate = (dateString: string) => {
   });
 };
 
+
+
 const formatDateTime = (dateString: string) => {
   if (!dateString) return "N/A";
   const d = new Date(dateString);
@@ -262,11 +264,100 @@ export default function ProfileScreen() {
   const [profile, setProfile] = useState<ProfileResponse["profile"] | null>(
     null,
   );
+
+  // ─── Fetch shipping addresses ────────────────────────────────────────────────
+
+const fetchShippingAddresses = async () => {
+  if (!userId) return;
+  try {
+    setLoadingAddresses(true);
+    const response = await AxiosInstance.get(
+      `/shipping-address/get_shipping_addresses/?user_id=${userId}`,
+      {
+        headers: { "X-User-Id": userId, "Content-Type": "application/json" },
+      }
+    );
+    if (response.data.success) {
+      setAddresses(response.data.shipping_addresses || []);
+    }
+  } catch (error: any) {
+    console.error("Error fetching addresses:", error);
+  } finally {
+    setLoadingAddresses(false);
+  }
+};
+
+// ─── Address actions ─────────────────────────────────────────────────────────
+
+const handleSetDefaultAddress = async (addressId: string) => {
+  if (!userId) return;
+  
+  try {
+    const response = await AxiosInstance.post(
+      "/shipping-address/set_default_address/",
+      {
+        address_id: addressId,
+        user_id: userId,
+      },
+      {
+        headers: { "X-User-Id": userId, "Content-Type": "application/json" },
+      }
+    );
+    
+    if (response.data.success) {
+      showSuccess("Default address updated!");
+      fetchShippingAddresses(); // Refresh the list
+    }
+  } catch (error: any) {
+    console.error("Error setting default address:", error);
+    showError(error.response?.data?.error || "Failed to set default address");
+  }
+};
+
+const handleDeleteAddress = async (addressId: string) => {
+  Alert.alert(
+    "Delete Address",
+    "Are you sure you want to delete this address?",
+    [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          if (!userId) return;
+          
+          try {
+            const response = await AxiosInstance.delete(
+              "/shipping-address/delete_shipping_address/",
+              {
+                data: {
+                  address_id: addressId,
+                  user_id: userId,
+                },
+                headers: { "X-User-Id": userId, "Content-Type": "application/json" },
+              }
+            );
+            
+            if (response.data.success) {
+              showSuccess("Address deleted successfully!");
+              fetchShippingAddresses(); // Refresh the list
+            }
+          } catch (error: any) {
+            console.error("Error deleting address:", error);
+            showError(error.response?.data?.error || "Failed to delete address");
+          }
+        },
+      },
+    ]
+  );
+};
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [hasShop, setHasShop] = useState<boolean | null>(null);
   const [loadingShop, setLoadingShop] = useState(false);
+  const [addresses, setAddresses] = useState<any[]>([]);
+  const [loadingAddresses, setLoadingAddresses] = useState(false);
 
   // ── Tab state
   const [activeTab, setActiveTab] = useState<ActiveTab>("profile");
@@ -674,6 +765,7 @@ export default function ProfileScreen() {
       fetchProfile();
       fetchWalletData();
       fetchWithdrawals();
+      fetchShippingAddresses();
     }
   }, [authLoading, userId]);
 
@@ -693,6 +785,7 @@ export default function ProfileScreen() {
     fetchProfile();
     fetchWalletData();
     fetchWithdrawals();
+    fetchShippingAddresses(); 
   };
 
   // ─── Shop navigation ──────────────────────────────────────────────────────
@@ -870,554 +963,739 @@ export default function ProfileScreen() {
               PROFILE TAB
           ══════════════════════════════════════════ */}
           {activeTab === "profile" && (
-            <View style={styles.tabContent}>
-              {/* Shop Management Card */}
-              {profile?.customer?.is_customer && (
-                <TouchableOpacity
-                  style={styles.shopCard}
-                  onPress={handleSwitchToShop}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.shopIconCircle}>
-                    <MaterialIcons name="store" size={26} color="#374151" />
-                  </View>
-                  <View style={styles.shopCardText}>
-                    <Text style={styles.shopCardTitle}>
-                      {loadingShop
-                        ? "Checking..."
-                        : effectiveHasShop
-                          ? "Manage Your Shop"
-                          : "You Don't Have a Shop"}
-                    </Text>
-                    <Text style={styles.shopCardSubtitle}>
-                      {effectiveHasShop
-                        ? "View and manage your products"
-                        : "Create your shop to start selling"}
-                    </Text>
-                  </View>
-                  <MaterialIcons
-                    name="arrow-forward"
-                    size={22}
-                    color="#9CA3AF"
-                  />
-                </TouchableOpacity>
-              )}
+  <View style={styles.tabContent}>
+    {/* Shop Management Card */}
+    {profile?.customer?.is_customer && (
+      <TouchableOpacity
+        style={styles.shopCard}
+        onPress={handleSwitchToShop}
+        activeOpacity={0.7}
+      >
+        <View style={styles.shopIconCircle}>
+          <MaterialIcons name="store" size={26} color="#374151" />
+        </View>
+        <View style={styles.shopCardText}>
+          <Text style={styles.shopCardTitle}>
+            {loadingShop
+              ? "Checking..."
+              : effectiveHasShop
+                ? "Manage Your Shop"
+                : "You Don't Have a Shop"}
+          </Text>
+          <Text style={styles.shopCardSubtitle}>
+            {effectiveHasShop
+              ? "View and manage your products"
+              : "Create your shop to start selling"}
+          </Text>
+        </View>
+        <MaterialIcons name="arrow-forward" size={22} color="#9CA3AF" />
+      </TouchableOpacity>
+    )}
 
-              {/* My Account grid */}
-              <View style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <MaterialIcons
-                    name="account-circle"
-                    size={18}
-                    color="#F97316"
-                  />
-                  <Text style={styles.cardTitle}>My Account</Text>
-                </View>
-                <View style={styles.accountGrid}>
-                  {[
-                    {
-                      label: "Profile",
-                      icon: "person",
-                      route: "/customer/account-profile",
-                    },
-                    {
-                      label: "Vouchers",
-                      icon: "local-offer",
-                      route: "/customer/my-vouchers",
-                    },
-                  ].map((item) => (
-                    <TouchableOpacity
-                      key={item.label}
-                      style={styles.accountGridItem}
-                      onPress={() => pushRoute(item.route)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.accountIconBg}>
-                        <MaterialIcons
-                          name={item.icon as any}
-                          size={22}
-                          color="#374151"
-                        />
-                      </View>
-                      <Text style={styles.accountGridLabel}>{item.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
+    {/* My Account grid */}
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <MaterialIcons name="account-circle" size={18} color="#F97316" />
+        <Text style={styles.cardTitle}>My Account</Text>
+      </View>
+      <View style={styles.accountGrid}>
+        {[
+          {
+            label: "Profile",
+            icon: "person",
+            route: "/customer/account-profile",
+          },
+          {
+            label: "Vouchers",
+            icon: "local-offer",
+            route: "/customer/my-vouchers",
+          },
+        ].map((item) => (
+          <TouchableOpacity
+            key={item.label}
+            style={styles.accountGridItem}
+            onPress={() => pushRoute(item.route)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.accountIconBg}>
+              <MaterialIcons
+                name={item.icon as any}
+                size={22}
+                color="#374151"
+              />
             </View>
-          )}
+            <Text style={styles.accountGridLabel}>{item.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+
+    {/* Address Card */}
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <MaterialIcons name="location-on" size={18} color="#F97316" />
+        <Text style={styles.cardTitle}>Default Address</Text>
+      </View>
+      
+      {profile?.user?.street || profile?.user?.barangay ? (
+        <View style={styles.addressContainer}>
+          <View style={styles.addressRow}>
+            <MaterialIcons name="home" size={16} color="#6B7280" />
+            <Text style={styles.addressText}>
+              {[
+                profile?.user?.street,
+                profile?.user?.barangay,
+                profile?.user?.city,
+                profile?.user?.province,
+                profile?.user?.zip_code,
+                profile?.user?.country,
+              ]
+                .filter(Boolean)
+                .join(", ")}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.editAddressButton}
+            onPress={() => pushRoute("/customer/components/shipping-address")}
+          >
+            <MaterialIcons name="edit" size={14} color="#F97316" />
+            <Text style={styles.editAddressButtonText}>Manage Addresses</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.emptyAddressContainer}>
+          <MaterialIcons name="location-off" size={32} color="#D1D5DB" />
+          <Text style={styles.emptyAddressText}>No address added yet</Text>
+          <TouchableOpacity
+            style={styles.addAddressButton}
+            onPress={() => pushRoute("/customer/create/add-address")}
+          >
+            <MaterialIcons name="add" size={16} color="#FFFFFF" />
+            <Text style={styles.addAddressButtonText}>Add Address</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  </View>
+)}
 
           {/* ══════════════════════════════════════════
               ADDRESSES TAB
           ══════════════════════════════════════════ */}
-          {activeTab === "addresses" && (
-            <View style={styles.tabContent}>
-              <View style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <View>
-                    <Text style={styles.cardTitle}>Shipping Addresses</Text>
-                    <Text style={styles.cardSubtitle}>
-                      Manage your delivery addresses
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.smallButton}
-                    onPress={() =>
-                      pushRoute("/customer/components/shipping-address")
-                    }
-                  >
-                    <MaterialIcons name="add" size={16} color="#374151" />
-                    <Text style={styles.smallButtonText}>Manage</Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.emptyState}>
-                  <MaterialIcons name="location-on" size={40} color="#D1D5DB" />
-                  <Text style={styles.emptyStateText}>
-                    Open Addresses to manage your delivery locations
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.linkBtn}
-                    onPress={() =>
-                      pushRoute("/customer/components/shipping-address")
-                    }
-                  >
-                    <Text style={styles.linkBtnText}>Go to Addresses →</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          )}
-
           {/* ══════════════════════════════════════════
-              PAYMENTS TAB
-          ══════════════════════════════════════════ */}
-          {activeTab === "payments" && (
-            <View style={styles.tabContent}>
-              <View style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <View>
-                    <Text style={styles.cardTitle}>Payment Methods</Text>
-                    <Text style={styles.cardSubtitle}>
-                      Manage your payout options
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.smallButton}
-                    onPress={() => pushRoute("/customer/wallet")}
-                  >
-                    <MaterialIcons name="add" size={16} color="#374151" />
-                    <Text style={styles.smallButtonText}>Add</Text>
-                  </TouchableOpacity>
-                </View>
+    ADDRESSES TAB
+══════════════════════════════════════════ */}
+{activeTab === "addresses" && (
+  <View style={styles.tabContent}>
+    <View style={styles.card}>
+      <View style={styles.cardHeaderRow}>
+        <View>
+          <Text style={styles.cardTitle}>Shipping Addresses</Text>
+          <Text style={styles.cardSubtitle}>
+            Manage your delivery addresses
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={styles.smallButton}
+          onPress={() => pushRoute("/customer/create/add-address")}
+        >
+          <MaterialIcons name="add" size={16} color="#374151" />
+          <Text style={styles.smallButtonText}>Add New</Text>
+        </TouchableOpacity>
+      </View>
 
-                {paymentMethods.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <MaterialIcons
-                      name="credit-card"
-                      size={40}
-                      color="#D1D5DB"
-                    />
-                    <Text style={styles.emptyStateText}>
-                      No payment methods added yet
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.linkBtn}
-                      onPress={() => pushRoute("/customer/wallet")}
-                    >
-                      <Text style={styles.linkBtnText}>
-                        Add a payment method →
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <View style={styles.paymentList}>
-                    {paymentMethods.map((m) => (
-                      <View key={m.payment_id} style={styles.paymentItem}>
-                        <View style={styles.paymentIconBg}>
-                          <MaterialIcons
-                            name={
-                              m.payment_method === "bank"
-                                ? "account-balance"
-                                : "smartphone"
-                            }
-                            size={20}
-                            color="#374151"
-                          />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <View
-                            style={{
-                              flexDirection: "row",
-                              alignItems: "center",
-                              gap: 6,
-                            }}
-                          >
-                            <Text style={styles.paymentMethodName}>
-                              {m.payment_method}
-                            </Text>
-                            {m.is_default && (
-                              <View style={styles.defaultBadge}>
-                                <Text style={styles.defaultBadgeText}>
-                                  Default
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                          {m.bank_name && (
-                            <Text style={styles.paymentDetail}>
-                              {m.bank_name}
-                            </Text>
-                          )}
-                          <Text style={styles.paymentDetail}>
-                            {m.account_name} • {m.account_number}
-                          </Text>
-                        </View>
-                      </View>
-                    ))}
+      {loadingAddresses ? (
+        <ActivityIndicator size="small" color="#F97316" style={{ marginVertical: 20 }} />
+      ) : addresses.length === 0 ? (
+        <View style={styles.emptyState}>
+          <MaterialIcons name="location-on" size={40} color="#D1D5DB" />
+          <Text style={styles.emptyStateText}>
+            No saved addresses yet
+          </Text>
+          <TouchableOpacity
+            style={styles.linkBtn}
+            onPress={() => pushRoute("/customer/create/add-address")}
+          >
+            <Text style={styles.linkBtnText}>Add your first address →</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.addressList}>
+          {addresses.map((address) => (
+            <View key={address.id} style={styles.addressItem}>
+              <View style={styles.addressItemHeader}>
+                <View style={styles.addressTypeBadge}>
+                  <MaterialIcons 
+                    name={
+                      address.address_type === 'home' ? 'home' : 
+                      address.address_type === 'work' ? 'work' : 'place'
+                    } 
+                    size={14} 
+                    color="#F97316" 
+                  />
+                  <Text style={styles.addressTypeText}>
+                    {address.address_type?.charAt(0).toUpperCase() + address.address_type?.slice(1) || 'Home'}
+                  </Text>
+                </View>
+                {address.is_default && (
+                  <View style={styles.defaultAddressBadge}>
+                    <Text style={styles.defaultAddressBadgeText}>Default</Text>
                   </View>
                 )}
               </View>
+              
+              <Text style={styles.addressRecipient}>
+                {address.recipient_name}
+              </Text>
+              <Text style={styles.addressPhone}>
+                {address.recipient_phone}
+              </Text>
+              <Text style={styles.addressFullText}>
+                {address.full_address || [
+                  address.building_name,
+                  address.street,
+                  address.barangay,
+                  address.city,
+                  address.province,
+                  address.zip_code,
+                  address.country
+                ].filter(Boolean).join(', ')}
+              </Text>
+              
+              <View style={styles.addressActions}>
+                <TouchableOpacity 
+                  style={styles.addressActionBtn}
+                  onPress={() => pushRoute(`/customer/create/add-address?mode=edit&address=${JSON.stringify(address)}`)}
+                >
+                  <MaterialIcons name="edit" size={18} color="#6B7280" />
+                  <Text style={styles.addressActionText}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.addressActionBtn}
+                  onPress={() => handleSetDefaultAddress(address.id)}
+                >
+                  <MaterialIcons name="check-circle" size={18} color="#6B7280" />
+                  <Text style={styles.addressActionText}>Set Default</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.addressActionBtn, styles.deleteAction]}
+                  onPress={() => handleDeleteAddress(address.id)}
+                >
+                  <MaterialIcons name="delete-outline" size={18} color="#EF4444" />
+                  <Text style={[styles.addressActionText, { color: "#EF4444" }]}>Delete</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          )}
+          ))}
+        </View>
+      )}
+    </View>
+  </View>
+)}
+          {/* ══════════════════════════════════════════
+              PAYMENTS TAB
+          ══════════════════════════════════════════ */}
+         {/* ══════════════════════════════════════════
+    PAYMENTS TAB
+══════════════════════════════════════════ */}
+{activeTab === "payments" && (
+  <View style={styles.tabContent}>
+    <View style={styles.card}>
+      <View style={styles.cardHeaderRow}>
+        <View>
+          <Text style={styles.cardTitle}>Payment Methods</Text>
+          <Text style={styles.cardSubtitle}>
+            Manage your payout options
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={styles.smallButton}
+          onPress={() => pushRoute("/customer/wallet")}
+        >
+          <MaterialIcons name="add" size={16} color="#374151" />
+          <Text style={styles.smallButtonText}>Add New</Text>
+        </TouchableOpacity>
+      </View>
+
+      {paymentMethods.length === 0 ? (
+        <View style={styles.emptyState}>
+          <MaterialIcons name="credit-card" size={40} color="#D1D5DB" />
+          <Text style={styles.emptyStateText}>
+            No payment methods added yet
+          </Text>
+          <TouchableOpacity
+            style={styles.linkBtn}
+            onPress={() => pushRoute("/customer/wallet")}
+          >
+            <Text style={styles.linkBtnText}>Add your first payment method →</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.paymentMethodList}>
+          {paymentMethods.map((method) => (
+            <View key={method.payment_id} style={styles.paymentMethodItem}>
+              <View style={styles.paymentMethodHeader}>
+                <View style={styles.paymentMethodTypeBadge}>
+                  <MaterialIcons
+                    name={
+                      method.payment_method === "bank"
+                        ? "account-balance"
+                        : "smartphone"
+                    }
+                    size={16}
+                    color="#F97316"
+                  />
+                  <Text style={styles.paymentMethodTypeText}>
+                    {method.payment_method === "bank" ? "Bank Account" : 
+                     method.payment_method === "gcash" ? "GCash" : 
+                     method.payment_method === "paymaya" ? "PayMaya" : 
+                     method.payment_method}
+                  </Text>
+                </View>
+                {method.is_default && (
+                  <View style={styles.defaultPaymentBadge}>
+                    <Text style={styles.defaultPaymentBadgeText}>Default</Text>
+                  </View>
+                )}
+              </View>
+
+              <Text style={styles.paymentAccountName}>
+                {method.account_name}
+              </Text>
+              
+              {method.bank_name && (
+                <Text style={styles.paymentBankName}>
+                  {method.bank_name}
+                </Text>
+              )}
+              
+              <Text style={styles.paymentAccountNumber}>
+                {method.account_number}
+              </Text>
+
+              <View style={styles.paymentActions}>
+                <TouchableOpacity 
+                  style={styles.paymentActionBtn}
+                  onPress={() => {
+                    router.push({
+                      pathname: '/customer/create/add-payment-method',
+                      params: { mode: 'edit', payment: JSON.stringify(method) }
+                    });
+                  }}
+                >
+                  <MaterialIcons name="edit" size={18} color="#6B7280" />
+                  <Text style={styles.paymentActionText}>Edit</Text>
+                </TouchableOpacity>
+                
+                {!method.is_default && (
+                  <TouchableOpacity 
+                    style={styles.paymentActionBtn}
+                    onPress={async () => {
+                      try {
+                        const response = await AxiosInstance.post(
+                          `/user-payment-details/${method.payment_id}/set_default/`,
+                          {},
+                          { headers: { 'X-User-Id': userId } }
+                        );
+                        if (response.data.message) {
+                          showSuccess("Default payment method updated");
+                          fetchProfile(); // Refresh to get updated payment methods
+                        }
+                      } catch (error: any) {
+                        console.error('Set default error:', error);
+                        showError(error.response?.data?.error || 'Failed to set as default');
+                      }
+                    }}
+                  >
+                    <MaterialIcons name="check-circle" size={18} color="#6B7280" />
+                    <Text style={styles.paymentActionText}>Set Default</Text>
+                  </TouchableOpacity>
+                )}
+                
+                <TouchableOpacity 
+                  style={[styles.paymentActionBtn, styles.paymentDeleteAction]}
+                  onPress={() => {
+                    Alert.alert(
+                      'Delete Payment Method',
+                      `Are you sure you want to delete "${method.account_name}"?`,
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Delete',
+                          style: 'destructive',
+                          onPress: async () => {
+                            try {
+                              const response = await AxiosInstance.delete(
+                                `/user-payment-details/${method.payment_id}/delete_payment_method/`,
+                                { headers: { 'X-User-Id': userId } }
+                              );
+                              if (response.data.message) {
+                                showSuccess('Payment method deleted');
+                                fetchProfile(); // Refresh to get updated payment methods
+                              }
+                            } catch (error: any) {
+                              console.error('Delete error:', error);
+                              showError(error.response?.data?.error || 'Failed to delete');
+                            }
+                          }
+                        }
+                      ]
+                    );
+                  }}
+                >
+                  <MaterialIcons name="delete-outline" size={18} color="#EF4444" />
+                  <Text style={[styles.paymentActionText, { color: "#EF4444" }]}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  </View>
+)}
 
           {/* ══════════════════════════════════════════
               FINANCE TAB
           ══════════════════════════════════════════ */}
-          {activeTab === "finance" && (
-            <View style={styles.tabContent}>
-              {/* ── Filter chips ── */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.filterScroll}
-              >
-                {[
-                  { key: "all", label: "All" },
-                  { key: "personal", label: "Personal Listings" },
-                  ...shopFilters.map((s) => ({
-                    key: `shop_${s.id}`,
-                    label: s.name,
-                  })),
-                ].map((f) => (
-                  <TouchableOpacity
-                    key={f.key}
-                    style={[
-                      styles.filterChip,
-                      selectedFilter === f.key && styles.filterChipActive,
-                    ]}
-                    onPress={() => setSelectedFilter(f.key)}
-                  >
-                    <Text
-                      style={[
-                        styles.filterChipText,
-                        selectedFilter === f.key && styles.filterChipTextActive,
-                      ]}
-                    >
-                      {f.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+          {/* ══════════════════════════════════════════
+    FINANCE TAB
+══════════════════════════════════════════ */}
+{activeTab === "finance" && (
+  <View style={styles.tabContent}>
+    {/* ── Filter chips ── */}
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.filterScroll}
+    >
+      {[
+        { key: "all", label: "All" },
+        { key: "personal", label: "Personal Listings" },
+        ...shopFilters.map((s) => ({
+          key: `shop_${s.id}`,
+          label: s.name,
+        })),
+      ].map((f) => (
+        <TouchableOpacity
+          key={f.key}
+          style={[
+            styles.filterChip,
+            selectedFilter === f.key && styles.filterChipActive,
+          ]}
+          onPress={() => setSelectedFilter(f.key)}
+        >
+          <Text
+            style={[
+              styles.filterChipText,
+              selectedFilter === f.key && styles.filterChipTextActive,
+            ]}
+          >
+            {f.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
 
-              {/* ── Balance cards ── */}
-              <View style={styles.balanceGrid}>
-                {/* Available */}
-                <View style={[styles.balanceCard, { flex: 1.2 }]}>
-                  <View style={styles.balanceCardHeader}>
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 6,
-                      }}
-                    >
-                      <MaterialIcons
-                        name="account-balance-wallet"
-                        size={16}
-                        color="#2563EB"
-                      />
-                      <Text style={styles.balanceCardLabel}>Available</Text>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => setShowBalance(!showBalance)}
-                    >
-                      <MaterialIcons
-                        name={showBalance ? "visibility-off" : "visibility"}
-                        size={16}
-                        color="#9CA3AF"
-                      />
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={[styles.balanceAmount, { color: "#059669" }]}>
-                    {showBalance
-                      ? formatCurrency(wallet?.available_balance || 0)
-                      : "••••••"}
-                  </Text>
-                  <Text style={styles.balanceCardSub}>Ready to withdraw</Text>
-                </View>
+    {/* ── Balance cards with shadow and border ── */}
+    <View style={styles.balanceGrid}>
+      {/* Available */}
+      <View style={[styles.balanceCardStyled, { flex: 1.2 }]}>
+        <View style={styles.balanceCardHeader}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <MaterialIcons
+              name="account-balance-wallet"
+              size={16}
+              color="#2563EB"
+            />
+            <Text style={styles.balanceCardLabel}>Available</Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => setShowBalance(!showBalance)}
+          >
+            <MaterialIcons
+              name={showBalance ? "visibility-off" : "visibility"}
+              size={16}
+              color="#9CA3AF"
+            />
+          </TouchableOpacity>
+        </View>
+        <Text style={[styles.balanceAmount, { color: "#059669" }]}>
+          {showBalance
+            ? formatCurrency(wallet?.available_balance || 0)
+            : "••••••"}
+        </Text>
+        <Text style={styles.balanceCardSub}>Ready to withdraw</Text>
+      </View>
 
-                {/* Pending */}
-                <View style={[styles.balanceCard, { flex: 1 }]}>
-                  <View style={styles.balanceCardHeader}>
-                    <MaterialIcons
-                      name="hourglass-empty"
-                      size={16}
-                      color="#D97706"
-                    />
-                    <Text style={styles.balanceCardLabel}>Pending</Text>
-                  </View>
-                  <Text style={[styles.balanceAmount, { color: "#D97706" }]}>
-                    {showBalance
-                      ? formatCurrency(wallet?.pending_balance || 0)
-                      : "••••••"}
-                  </Text>
-                  <Text style={styles.balanceCardSub}>Awaiting release</Text>
-                </View>
-              </View>
+      {/* Pending */}
+      <View style={[styles.balanceCardStyled, { flex: 1 }]}>
+        <View style={styles.balanceCardHeader}>
+          <MaterialIcons
+            name="hourglass-empty"
+            size={16}
+            color="#D97706"
+          />
+          <Text style={styles.balanceCardLabel}>Pending</Text>
+        </View>
+        <Text style={[styles.balanceAmount, { color: "#D97706" }]}>
+          {showBalance
+            ? formatCurrency(wallet?.pending_balance || 0)
+            : "••••••"}
+        </Text>
+        <Text style={styles.balanceCardSub}>Awaiting release</Text>
+      </View>
+    </View>
 
-              <View style={styles.balanceGrid}>
-                {/* Total */}
-                <View style={[styles.balanceCard, { flex: 1 }]}>
-                  <View style={styles.balanceCardHeader}>
-                    <MaterialIcons
-                      name="trending-up"
-                      size={16}
-                      color="#059669"
-                    />
-                    <Text style={styles.balanceCardLabel}>Total</Text>
-                  </View>
-                  <Text style={styles.balanceAmount}>
-                    {showBalance
-                      ? formatCurrency(wallet?.total_balance || 0)
-                      : "••••••"}
-                  </Text>
-                  <Text style={styles.balanceCardSub}>
-                    Lifetime:{" "}
-                    {showBalance
-                      ? formatCurrency(wallet?.lifetime_earnings || 0)
-                      : "••••"}
-                  </Text>
-                </View>
+    <View style={styles.balanceGrid}>
+      {/* Total */}
+      <View style={[styles.balanceCardStyled, { flex: 1 }]}>
+        <View style={styles.balanceCardHeader}>
+          <MaterialIcons
+            name="trending-up"
+            size={16}
+            color="#059669"
+          />
+          <Text style={styles.balanceCardLabel}>Total</Text>
+        </View>
+        <Text style={styles.balanceAmount}>
+          {showBalance
+            ? formatCurrency(wallet?.total_balance || 0)
+            : "••••••"}
+        </Text>
+        <Text style={styles.balanceCardSub}>
+          Lifetime:{" "}
+          {showBalance
+            ? formatCurrency(wallet?.lifetime_earnings || 0)
+            : "••••"}
+        </Text>
+      </View>
 
-                {/* Withdrawals */}
-                <View style={[styles.balanceCard, { flex: 1 }]}>
-                  <View style={styles.balanceCardHeader}>
-                    <MaterialIcons
-                      name="trending-down"
-                      size={16}
-                      color="#DC2626"
-                    />
-                    <Text style={styles.balanceCardLabel}>Withdrawn</Text>
-                  </View>
-                  <Text style={[styles.balanceAmount, { color: "#DC2626" }]}>
-                    {showBalance
-                      ? formatCurrency(wallet?.lifetime_withdrawals || 0)
-                      : "••••••"}
-                  </Text>
-                  <Text style={styles.balanceCardSub}>All time</Text>
-                </View>
-              </View>
+      {/* Withdrawals */}
+      <View style={[styles.balanceCardStyled, { flex: 1 }]}>
+        <View style={styles.balanceCardHeader}>
+          <MaterialIcons
+            name="trending-down"
+            size={16}
+            color="#DC2626"
+          />
+          <Text style={styles.balanceCardLabel}>Withdrawn</Text>
+        </View>
+        <Text style={[styles.balanceAmount, { color: "#DC2626" }]}>
+          {showBalance
+            ? formatCurrency(wallet?.lifetime_withdrawals || 0)
+            : "••••••"}
+        </Text>
+        <Text style={styles.balanceCardSub}>All time</Text>
+      </View>
+    </View>
 
-              {/* ── Withdraw button ── */}
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>Withdraw Funds</Text>
-                <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>
-                  Request a payout to your payment method
+    {/* ── Withdraw button ── */}
+    <View style={styles.financeCard}>
+      <Text style={styles.cardTitle}>Withdraw Funds</Text>
+      <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>
+        Request a payout to your payment method
+      </Text>
+      <TouchableOpacity
+        style={[
+          styles.primaryButton,
+          (!wallet?.available_balance ||
+            wallet.available_balance < 100) &&
+            styles.primaryButtonDisabled,
+        ]}
+        onPress={() => setShowWithdrawModal(true)}
+        disabled={
+          !wallet?.available_balance || wallet.available_balance < 100
+        }
+      >
+        <MaterialIcons name="upload" size={18} color="#fff" />
+        <Text style={styles.primaryButtonText}>
+          Request Withdrawal
+        </Text>
+      </TouchableOpacity>
+      {(!wallet?.available_balance ||
+        wallet.available_balance < 100) && (
+        <Text style={styles.hintText}>
+          Minimum withdrawal is ₱100.00
+        </Text>
+      )}
+    </View>
+
+    {/* ── Withdrawal history ── */}
+    {withdrawalRequests.length > 0 && (
+      <View style={styles.financeCard}>
+        <Text style={styles.cardTitle}>Withdrawal History</Text>
+        <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>
+          Recent requests
+        </Text>
+        <View style={styles.txList}>
+          {withdrawalRequests.slice(0, 5).map((req) => (
+            <View key={req.withdrawal_id} style={styles.txItemStyled}>
+              <View>
+                <Text style={styles.txAmount}>
+                  {formatCurrency(req.amount)}
                 </Text>
-                <TouchableOpacity
-                  style={[
-                    styles.primaryButton,
-                    (!wallet?.available_balance ||
-                      wallet.available_balance < 100) &&
-                      styles.primaryButtonDisabled,
-                  ]}
-                  onPress={() => setShowWithdrawModal(true)}
-                  disabled={
-                    !wallet?.available_balance || wallet.available_balance < 100
-                  }
-                >
-                  <MaterialIcons name="upload" size={18} color="#fff" />
-                  <Text style={styles.primaryButtonText}>
-                    Request Withdrawal
-                  </Text>
-                </TouchableOpacity>
-                {(!wallet?.available_balance ||
-                  wallet.available_balance < 100) && (
-                  <Text style={styles.hintText}>
-                    Minimum withdrawal is ₱100.00
-                  </Text>
-                )}
-              </View>
-
-              {/* ── Withdrawal history ── */}
-              {withdrawalRequests.length > 0 && (
-                <View style={styles.card}>
-                  <Text style={styles.cardTitle}>Withdrawal History</Text>
-                  <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>
-                    Recent requests
-                  </Text>
-                  <View style={styles.txList}>
-                    {withdrawalRequests.slice(0, 5).map((req) => (
-                      <View key={req.withdrawal_id} style={styles.txItem}>
-                        <View>
-                          <Text style={styles.txAmount}>
-                            {formatCurrency(req.amount)}
-                          </Text>
-                          <Text style={styles.txDate}>
-                            {formatDateTime(req.requested_at)}
-                          </Text>
-                        </View>
-                        <StatusBadge status={req.status} />
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              )}
-
-              {/* ── Monthly graph + stats ── */}
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>Money Flow</Text>
-                <Text style={[styles.cardSubtitle, { marginBottom: 8 }]}>
-                  Last 6 months
+                <Text style={styles.txDate}>
+                  {formatDateTime(req.requested_at)}
                 </Text>
-                <BarGraph data={monthlyData} />
-                {monthlyData.length > 0 && (
-                  <View style={styles.graphStats}>
-                    <View style={styles.graphStatItem}>
-                      <Text style={styles.graphStatLabel}>Average</Text>
-                      <Text style={styles.graphStatValue}>
-                        {formatCurrency(
-                          monthlyData.reduce((s, m) => s + m.credits, 0) /
-                            monthlyData.length,
-                        )}
-                      </Text>
-                    </View>
-                    <View style={styles.graphStatItem}>
-                      <Text style={styles.graphStatLabel}>Highest</Text>
-                      <Text
-                        style={[styles.graphStatValue, { color: "#059669" }]}
-                      >
-                        {formatCurrency(
-                          Math.max(...monthlyData.map((m) => m.credits)),
-                        )}
-                      </Text>
-                    </View>
-                    <View style={styles.graphStatItem}>
-                      <Text style={styles.graphStatLabel}>Lowest</Text>
-                      <Text
-                        style={[styles.graphStatValue, { color: "#DC2626" }]}
-                      >
-                        {formatCurrency(
-                          Math.min(...monthlyData.map((m) => m.credits)),
-                        )}
-                      </Text>
-                    </View>
-                  </View>
-                )}
               </View>
-
-              {/* ── Transaction history ── */}
-              <View style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <View>
-                    <Text style={styles.cardTitle}>Transaction History</Text>
-                    <Text style={styles.cardSubtitle}>
-                      {selectedFilter === "all"
-                        ? "All transactions"
-                        : selectedFilter === "personal"
-                          ? "Personal listings"
-                          : shopFilters.find(
-                              (s) => `shop_${s.id}` === selectedFilter,
-                            )?.name || "Shop"}
-                    </Text>
-                  </View>
-                </View>
-
-                {loadingWallet ? (
-                  <ActivityIndicator
-                    size="small"
-                    color="#F97316"
-                    style={{ marginVertical: 20 }}
-                  />
-                ) : filteredTransactions.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <MaterialIcons name="receipt" size={40} color="#D1D5DB" />
-                    <Text style={styles.emptyStateText}>
-                      No transactions found
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.txList}>
-                    {filteredTransactions.map((tx) => (
-                      <View key={tx.id} style={styles.txRow}>
-                        <View
-                          style={[
-                            styles.txIcon,
-                            {
-                              backgroundColor:
-                                tx.type === "credit" ? "#D1FAE5" : "#FEE2E2",
-                            },
-                          ]}
-                        >
-                          <MaterialIcons
-                            name={
-                              tx.type === "credit"
-                                ? "arrow-downward"
-                                : "arrow-upward"
-                            }
-                            size={16}
-                            color={tx.type === "credit" ? "#059669" : "#DC2626"}
-                          />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.txDescription}>
-                            {tx.description}
-                          </Text>
-                          <View
-                            style={{
-                              flexDirection: "row",
-                              alignItems: "center",
-                              gap: 6,
-                              marginTop: 2,
-                            }}
-                          >
-                            <Text style={styles.txDate}>
-                              {formatDateTime(tx.date)}
-                            </Text>
-                            {tx.shop_name && (
-                              <View style={styles.shopTag}>
-                                <Text style={styles.shopTagText}>
-                                  {tx.shop_name}
-                                </Text>
-                              </View>
-                            )}
-                            <StatusBadge status={tx.status} />
-                          </View>
-                          {tx.order_id && (
-                            <Text style={styles.orderIdText}>
-                              Order: {tx.order_id.slice(0, 8)}…
-                            </Text>
-                          )}
-                        </View>
-                        <Text
-                          style={[
-                            styles.txAmountBig,
-                            {
-                              color:
-                                tx.type === "credit" ? "#059669" : "#DC2626",
-                            },
-                          ]}
-                        >
-                          {tx.type === "credit" ? "+" : "-"}
-                          {formatCurrency(tx.amount)}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </View>
+              <StatusBadge status={req.status} />
             </View>
-          )}
+          ))}
+        </View>
+      </View>
+    )}
+
+    {/* ── Monthly graph + stats ── */}
+    <View style={styles.financeCard}>
+      <Text style={styles.cardTitle}>Money Flow</Text>
+      <Text style={[styles.cardSubtitle, { marginBottom: 8 }]}>
+        Last 6 months
+      </Text>
+      <BarGraph data={monthlyData} />
+      {monthlyData.length > 0 && (
+        <View style={styles.graphStats}>
+          <View style={styles.graphStatItem}>
+            <Text style={styles.graphStatLabel}>Average</Text>
+            <Text style={styles.graphStatValue}>
+              {formatCurrency(
+                monthlyData.reduce((s, m) => s + m.credits, 0) /
+                  monthlyData.length,
+              )}
+            </Text>
+          </View>
+          <View style={styles.graphStatItem}>
+            <Text style={styles.graphStatLabel}>Highest</Text>
+            <Text
+              style={[styles.graphStatValue, { color: "#059669" }]}
+            >
+              {formatCurrency(
+                Math.max(...monthlyData.map((m) => m.credits)),
+              )}
+            </Text>
+          </View>
+          <View style={styles.graphStatItem}>
+            <Text style={styles.graphStatLabel}>Lowest</Text>
+            <Text
+              style={[styles.graphStatValue, { color: "#DC2626" }]}
+            >
+              {formatCurrency(
+                Math.min(...monthlyData.map((m) => m.credits)),
+              )}
+            </Text>
+          </View>
+        </View>
+      )}
+    </View>
+
+    {/* ── Transaction history ── */}
+    <View style={styles.financeCard}>
+      <View style={styles.cardHeaderRow}>
+        <View>
+          <Text style={styles.cardTitle}>Transaction History</Text>
+          <Text style={styles.cardSubtitle}>
+            {selectedFilter === "all"
+              ? "All transactions"
+              : selectedFilter === "personal"
+                ? "Personal listings"
+                : shopFilters.find(
+                    (s) => `shop_${s.id}` === selectedFilter,
+                  )?.name || "Shop"}
+          </Text>
+        </View>
+      </View>
+
+      {loadingWallet ? (
+        <ActivityIndicator
+          size="small"
+          color="#F97316"
+          style={{ marginVertical: 20 }}
+        />
+      ) : filteredTransactions.length === 0 ? (
+        <View style={styles.emptyState}>
+          <MaterialIcons name="receipt" size={40} color="#D1D5DB" />
+          <Text style={styles.emptyStateText}>
+            No transactions found
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.txList}>
+          {filteredTransactions.map((tx) => (
+            <View key={tx.id} style={styles.txRowStyled}>
+              <View
+                style={[
+                  styles.txIcon,
+                  {
+                    backgroundColor:
+                      tx.type === "credit" ? "#D1FAE5" : "#FEE2E2",
+                  },
+                ]}
+              >
+                <MaterialIcons
+                  name={
+                    tx.type === "credit"
+                      ? "arrow-downward"
+                      : "arrow-upward"
+                  }
+                  size={16}
+                  color={tx.type === "credit" ? "#059669" : "#DC2626"}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.txDescription}>
+                  {tx.description}
+                </Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
+                    marginTop: 2,
+                  }}
+                >
+                  <Text style={styles.txDate}>
+                    {formatDateTime(tx.date)}
+                  </Text>
+                  {tx.shop_name && (
+                    <View style={styles.shopTag}>
+                      <Text style={styles.shopTagText}>
+                        {tx.shop_name}
+                      </Text>
+                    </View>
+                  )}
+                  <StatusBadge status={tx.status} />
+                </View>
+                {tx.order_id && (
+                  <Text style={styles.orderIdText}>
+                    Order: {tx.order_id.slice(0, 8)}…
+                  </Text>
+                )}
+              </View>
+              <Text
+                style={[
+                  styles.txAmountBig,
+                  {
+                    color:
+                      tx.type === "credit" ? "#059669" : "#DC2626",
+                  },
+                ]}
+              >
+                {tx.type === "credit" ? "+" : "-"}
+                {formatCurrency(tx.amount)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  </View>
+)}
 
           <View style={{ height: 40 }} />
         </ScrollView>
@@ -1717,7 +1995,11 @@ const styles = StyleSheet.create({
   tabLabelActive: { color: "#F97316", fontWeight: "600" },
 
   // Tab content
-  tabContent: { padding: 12, gap: 12 },
+  tabContent: { 
+    paddingTop: 12,
+    paddingBottom: 12,
+    gap: 12 
+  },
 
   // Card
   card: {
@@ -2112,6 +2394,304 @@ const styles = StyleSheet.create({
     borderColor: "#F97316",
     backgroundColor: "#FFF7ED",
   },
+  // Address Card Styles
+addressContainer: {
+  gap: 12,
+},
+addressRow: {
+  flexDirection: "row",
+  alignItems: "flex-start",
+  gap: 10,
+  paddingVertical: 4,
+},
+addressText: {
+  flex: 1,
+  fontSize: 13,
+  color: "#374151",
+  lineHeight: 18,
+},
+editAddressButton: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  paddingVertical: 10,
+  paddingHorizontal: 16,
+  backgroundColor: "#FFF7ED",
+  borderRadius: 10,
+  borderWidth: 1,
+  borderColor: "#FED7AA",
+  marginTop: 4,
+},
+editAddressButtonText: {
+  fontSize: 13,
+  fontWeight: "600",
+  color: "#F97316",
+},
+emptyAddressContainer: {
+  alignItems: "center",
+  paddingVertical: 20,
+  gap: 10,
+},
+emptyAddressText: {
+  fontSize: 13,
+  color: "#9CA3AF",
+  textAlign: "center",
+},
+addAddressButton: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  backgroundColor: "#F97316",
+  paddingVertical: 10,
+  paddingHorizontal: 20,
+  borderRadius: 10,
+  marginTop: 4,
+},
+addAddressButtonText: {
+  fontSize: 13,
+  fontWeight: "600",
+  color: "#FFFFFF",
+},
+// Address List Styles
+addressList: {
+  gap: 12,
+  marginTop: 4,
+},
+addressItem: {
+  borderWidth: 1,
+  borderColor: "#E5E7EB",
+  borderRadius: 12,
+  padding: 14,
+  backgroundColor: "#FFFFFF",
+},
+addressItemHeader: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  marginBottom: 10,
+},
+addressTypeBadge: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 4,
+  backgroundColor: "#FFF7ED",
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+  borderRadius: 6,
+},
+addressTypeText: {
+  fontSize: 11,
+  fontWeight: "600",
+  color: "#F97316",
+},
+defaultAddressBadge: {
+  backgroundColor: "#D1FAE5",
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+  borderRadius: 6,
+},
+defaultAddressBadgeText: {
+  fontSize: 10,
+  fontWeight: "600",
+  color: "#065F46",
+},
+addressRecipient: {
+  fontSize: 14,
+  fontWeight: "600",
+  color: "#374151",
+  marginBottom: 2,
+},
+addressPhone: {
+  fontSize: 12,
+  color: "#6B7280",
+  marginBottom: 8,
+},
+addressFullText: {
+  fontSize: 12,
+  color: "#4B5563",
+  lineHeight: 16,
+  marginBottom: 12,
+},
+addressActions: {
+  flexDirection: "row",
+  gap: 16,
+  paddingTop: 10,
+  borderTopWidth: 1,
+  borderTopColor: "#F3F4F6",
+},
+addressActionBtn: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 4,
+},
+addressActionText: {
+  fontSize: 12,
+  color: "#6B7280",
+},
+deleteAction: {
+  marginLeft: "auto",
+},
+// Payment Method List Styles (edge-to-edge like addresses)
+// Payment Method List Styles (matching address item style)
+paymentMethodList: {
+  gap: 12,
+  marginTop: 4,
+},
+paymentMethodItem: {
+  borderWidth: 1,
+  borderColor: "#E5E7EB",
+  borderRadius: 12,
+  padding: 14,
+  backgroundColor: "#FFFFFF",
+  ...Platform.select({
+    ios: {
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.04,
+      shadowRadius: 4,
+    },
+    android: {
+      elevation: 2,
+    },
+  }),
+},
+paymentMethodHeader: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  marginBottom: 10,
+},
+paymentMethodTypeBadge: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 6,
+  backgroundColor: "#FFF7ED",
+  paddingHorizontal: 10,
+  paddingVertical: 5,
+  borderRadius: 6,
+},
+paymentMethodTypeText: {
+  fontSize: 12,
+  fontWeight: "600",
+  color: "#F97316",
+},
+defaultPaymentBadge: {
+  backgroundColor: "#D1FAE5",
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+  borderRadius: 6,
+},
+defaultPaymentBadgeText: {
+  fontSize: 10,
+  fontWeight: "600",
+  color: "#065F46",
+},
+paymentAccountName: {
+  fontSize: 14,
+  fontWeight: "600",
+  color: "#374151",
+  marginBottom: 2,
+},
+paymentBankName: {
+  fontSize: 12,
+  color: "#6B7280",
+  marginBottom: 2,
+},
+paymentAccountNumber: {
+  fontSize: 12,
+  color: "#4B5563",
+  marginBottom: 12,
+  fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+},
+paymentActions: {
+  flexDirection: "row",
+  gap: 16,
+  paddingTop: 10,
+  borderTopWidth: 1,
+  borderTopColor: "#F3F4F6",
+},
+paymentActionBtn: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 4,
+},
+paymentActionText: {
+  fontSize: 12,
+  color: "#6B7280",
+},
+paymentDeleteAction: {
+  marginLeft: "auto",
+},
+// Add this to styles
+paymentsCard: {
+  backgroundColor: "#FFFFFF",
+  borderRadius: 0,
+  paddingVertical: 0,
+  paddingHorizontal: 0,
+  gap: 0,
+},
+// Finance Card with shadow, border, and padding (matching address/payment style)
+financeCard: {
+  backgroundColor: "#FFFFFF",
+  borderWidth: 1,
+  borderColor: "#E5E7EB",
+  borderRadius: 12,
+  padding: 16,
+  gap: 0,
+  ...Platform.select({
+    ios: {
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.04,
+      shadowRadius: 4,
+    },
+    android: {
+      elevation: 2,
+    },
+  }),
+},
+
+// Styled balance card
+balanceCardStyled: {
+  backgroundColor: "#FFFFFF",
+  borderWidth: 1,
+  borderColor: "#E5E7EB",
+  borderRadius: 12,
+  padding: 14,
+  ...Platform.select({
+    ios: {
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.04,
+      shadowRadius: 4,
+    },
+    android: {
+      elevation: 2,
+    },
+  }),
+},
+
+// Styled transaction item
+txItemStyled: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  paddingVertical: 12,
+  borderBottomWidth: 1,
+  borderBottomColor: "#F3F4F6",
+},
+
+// Styled transaction row
+txRowStyled: {
+  flexDirection: "row",
+  alignItems: "flex-start",
+  gap: 10,
+  paddingVertical: 12,
+  borderBottomWidth: 1,
+  borderBottomColor: "#F3F4F6",
+},
   paymentPickerName: { fontSize: 13, fontWeight: "600", color: "#374151" },
   paymentPickerDetail: { fontSize: 11, color: "#6B7280", marginTop: 2 },
   modalActions: { flexDirection: "row", gap: 10, marginTop: 20 },
