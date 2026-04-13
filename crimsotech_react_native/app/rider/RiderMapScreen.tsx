@@ -112,40 +112,38 @@ export default function RiderMapScreen() {
       });
 
       // Start watching position for real-time updates
-      const subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 3000,
-          distanceInterval: 5,
-        },
-        (newLocation) => {
-          const newCoords = {
-            latitude: newLocation.coords.latitude,
-            longitude: newLocation.coords.longitude,
-          };
-          setCurrentLocation(newCoords);
-          
-          // Check arrival at destination (buyer location)
-          if (destination) {
-            const distance = calculateDistanceBetween(
-              newCoords.latitude, newCoords.longitude,
-              destination.latitude, destination.longitude
-            );
-            setDistanceToDestination(distance);
-            
-            if (distance <= 0.05 && !hasArrived) {
-              setHasArrived(true);
-              Alert.alert(
-                '📍 Arrived at Destination!',
-                'You have reached the customer\'s location.',
-                [{ text: 'OK' }]
-              );
-            } else if (distance > 0.05 && hasArrived) {
-              setHasArrived(false);
-            }
-          }
-        }
+      // Start watching position for real-time updates
+const subscription = await Location.watchPositionAsync(
+  {
+    accuracy: Location.Accuracy.High,
+    timeInterval: 3000,
+    distanceInterval: 5,
+  },
+  (newLocation) => {
+    const newCoords = {
+      latitude: newLocation.coords.latitude,
+      longitude: newLocation.coords.longitude,
+    };
+    setCurrentLocation(newCoords);
+    
+    // Check arrival at destination (buyer location)
+    if (destination) {
+      const distance = calculateDistanceBetween(
+        newCoords.latitude, newCoords.longitude,
+        destination.latitude, destination.longitude
       );
+      setDistanceToDestination(distance);
+      
+      // REMOVED the auto Alert.alert - now only updates distance without popup
+      if (distance <= 0.05 && !hasArrived) {
+        setHasArrived(true);
+        // Alert removed - user will use manual button instead
+      } else if (distance > 0.05 && hasArrived) {
+        setHasArrived(false);
+      }
+    }
+  }
+);
       setLocationSubscription(subscription);
 
       return () => {
