@@ -1276,8 +1276,15 @@ class Delivery(models.Model):
         ('cancelled', 'Cancelled'),
         ('declined', 'Declined'),
         ('rejected', 'Rejected'),                 # used by rider_response endpoint
-        ('expired', 'Expired'),                   # used by check_delivery_responses
+        ('expired', 'Expired'),  
+        ('failed', 'Failed'),  
+                                          # used by check_delivery_responses
     ], default='pending')
+
+    FAILED_REASON_CHOICES =[
+        ('customer_unreachable', 'Customer Unreachable'),
+        ('return_to_seller', 'Return to Seller'),
+    ]
     distance_km = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     estimated_minutes = models.IntegerField(null=True, blank=True)
     actual_minutes = models.IntegerField(null=True, blank=True)
@@ -1292,6 +1299,7 @@ class Delivery(models.Model):
     scheduled_delivery_time = models.DateTimeField(null=True, blank=True)
     is_scheduled = models.BooleanField(default=False)
     metadata = models.JSONField(null=True, blank=True, default=None)
+    failed_reason = models.CharField(max_length=50, choices=FAILED_REASON_CHOICES, blank=True, null=True)
 
     class Meta:
         indexes = [
