@@ -106,6 +106,8 @@ export default function RiderViewOrder() {
   const [loadingProofs, setLoadingProofs] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [failedReasonModalVisible, setFailedReasonModalVisible] = useState(false);
+const [selectedFailedReason, setSelectedFailedReason] = useState<string | null>(null);
 
   const [confirmationModalVisible, setConfirmationModalVisible] = useState(false);
 const [confirmationConfig, setConfirmationConfig] = useState({
@@ -368,20 +370,39 @@ const handleMarkPickedUp = async () => {
 
   // Handle failed delivery
   // Handle failed delivery
+  // Handle failed delivery - Show reason selection modal
   const handleFailedDelivery = async () => {
     if (!orderDetails?.delivery?.id) return;
-    
-    // First modal for selecting reason
-    showConfirmationModal({
-      title: 'Failed Delivery',
-      message: 'Why did the delivery fail?',
-      confirmText: 'Customer Not Available',
-      cancelText: 'Cancel',
-      confirmColor: '#F59E0B',
-      icon: 'alert-circle-outline',
-      iconColor: '#F59E0B',
-      onConfirm: () => showFailedReasonDialog('Customer not available'),
-    });
+    setFailedReasonModalVisible(true);
+  };
+  
+  // Submit failed delivery with selected reason
+  const submitFailedDelivery = async (reason: string) => {
+    setIsActionLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('delivery_id', orderDetails?.delivery?.id || '');
+      formData.append('status', 'failed');
+      formData.append('failed_reason', reason);
+  
+      const response = await AxiosInstance.post('/rider-orders-active/update_delivery_status/', formData, {
+        headers: { 'X-User-Id': user?.user_id }
+      });
+  
+      if (response.data.success) {
+        Alert.alert('Info', 'Delivery marked as failed');
+        router.back();
+      } else {
+        Alert.alert('Error', response.data.error || 'Failed to mark delivery as failed');
+      }
+    } catch (err: any) {
+      console.error('Error marking delivery as failed:', err);
+      Alert.alert('Error', err?.response?.data?.error || 'Failed to mark delivery as failed');
+    } finally {
+      setIsActionLoading(false);
+      setFailedReasonModalVisible(false);
+      setSelectedFailedReason(null);
+    }
   };
   
   const showFailedReasonDialog = (reason: string) => {
@@ -420,7 +441,8 @@ const handleMarkPickedUp = async () => {
     });
   };
 
-  
+  {/* Failed Delivery Reason Modal */}
+
 
   // Handle cancel order (for accepted status)
   // Handle cancel order (for accepted status)
@@ -686,6 +708,7 @@ const handleCancelAcceptedOrder = async () => {
                 </Text>
               </View>
             </View>
+
             
             {/* Status Message */}
             {statusMessage ? (
@@ -1064,6 +1087,174 @@ const handleCancelAcceptedOrder = async () => {
           </Text>
         </TouchableOpacity>
       </View>
+    </View>
+  </View>
+</Modal>
+
+{/* Failed Delivery Reason Modal */}
+<Modal
+  visible={failedReasonModalVisible}
+  transparent={true}
+  animationType="fade"
+  onRequestClose={() => setFailedReasonModalVisible(false)}
+>
+  <View style={{
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  }}>
+    <View style={{
+      backgroundColor: '#FFFFFF',
+      borderRadius: 20,
+      width: width - 48,
+      maxWidth: 340,
+      padding: 24,
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+      elevation: 5,
+    }}>
+      {/* Icon */}
+      <View style={{
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: '#FEE2E2',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 16,
+      }}>
+        <Ionicons name="alert-circle-outline" size={32} color="#DC2626" />
+      </View>
+
+      {/* Title */}
+      <Text style={{
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#1F2937',
+        textAlign: 'center',
+        marginBottom: 8,
+      }}>
+        Why did the delivery fail?
+      </Text>
+
+      {/* Message */}
+      <Text style={{
+        fontSize: 14,
+        color: '#6B7280',
+        textAlign: 'center',
+        marginBottom: 24,
+        lineHeight: 20,
+      }}>
+        Please select the reason for failed delivery
+      </Text>
+
+      {/* Reason Options */}
+      <View style={{ width: '100%', gap: 12, marginBottom: 24 }}>
+        {/* Customer Unreachable Option */}
+        <TouchableOpacity
+          onPress={() => {
+            setSelectedFailedReason('customer_unreachable');
+            submitFailedDelivery('customer_unreachable');
+          }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            padding: 16,
+            backgroundColor: '#FEF2F2',
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: '#FEE2E2',
+          }}
+        >
+          <View style={{
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            backgroundColor: '#FEE2E2',
+            justifyContent: 'center',
+            alignItems: 'center',
+            marginRight: 12,
+          }}>
+            <Ionicons name="call-outline" size={20} color="#DC2626" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: '#1F2937' }}>
+              Customer Unreachable
+            </Text>
+            <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
+              Unable to contact or locate the customer
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        </TouchableOpacity>
+
+        {/* Return to Seller (RTS) Option */}
+        <TouchableOpacity
+          onPress={() => {
+            setSelectedFailedReason('return_to_seller');
+            submitFailedDelivery('return_to_seller');
+          }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            padding: 16,
+            backgroundColor: '#FFFBEB',
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: '#FDE68A',
+          }}
+        >
+          <View style={{
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            backgroundColor: '#FEF3C7',
+            justifyContent: 'center',
+            alignItems: 'center',
+            marginRight: 12,
+          }}>
+            <Ionicons name="return-down-back-outline" size={20} color="#D97706" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: '#1F2937' }}>
+              Return to Seller (RTS)
+            </Text>
+            <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>
+              Items need to be returned to the seller
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Cancel Button */}
+      <TouchableOpacity
+        onPress={() => {
+          setFailedReasonModalVisible(false);
+          setSelectedFailedReason(null);
+        }}
+        style={{
+          width: '100%',
+          backgroundColor: '#F3F4F6',
+          paddingVertical: 12,
+          borderRadius: 10,
+          borderWidth: 1,
+          borderColor: '#E5E7EB',
+        }}
+      >
+        <Text style={{
+          fontSize: 15,
+          fontWeight: '600',
+          color: '#6B7280',
+          textAlign: 'center',
+        }}>
+          Cancel
+        </Text>
+      </TouchableOpacity>
     </View>
   </View>
 </Modal>

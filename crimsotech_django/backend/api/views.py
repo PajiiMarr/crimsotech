@@ -28292,7 +28292,7 @@ class RiderOrdersActive(viewsets.ViewSet):
     def update_delivery_status(self, request):
         """
         Update delivery status for a rider.
-        Expects: delivery_id, status (picked_up|in_progress|delivered|cancelled)
+        Expects: delivery_id, status (picked_up|in_progress|delivered|cancelled|failed)
         """
         rider = self._get_rider(request)
         if not rider:
@@ -28303,6 +28303,7 @@ class RiderOrdersActive(viewsets.ViewSet):
 
         delivery_id = request.data.get('delivery_id')
         status_value = request.data.get('status')
+        failed_reason = request.data.get('failed_reason', '')
 
         if not delivery_id or not status_value:
             return Response(
@@ -28310,7 +28311,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        valid_statuses = ['picked_up', 'in_progress', 'delivered', 'cancelled']
+        valid_statuses = ['picked_up', 'in_progress', 'delivered', 'cancelled', 'failed']
         if status_value not in valid_statuses:
             return Response(
                 {"success": False, "error": "Invalid status"},
@@ -28335,6 +28336,10 @@ class RiderOrdersActive(viewsets.ViewSet):
 
         delivery.status = status_value
         delivery.updated_at = timezone.now()
+        
+        # Store failed reason if status is failed
+        if status_value == 'failed' and failed_reason:
+            delivery.failed_reason = failed_reason
 
         order = delivery.order
 
@@ -28350,7 +28355,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             delivery.delivered_at = delivery.delivered_at or timezone.now()
             order.status = 'delivered'
             order.completed_at = order.completed_at or timezone.now()
-        elif status_value == 'cancelled':
+        elif status_value in ['cancelled', 'failed']:
             order.status = 'cancelled'
 
         order.updated_at = timezone.now()
@@ -28363,6 +28368,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             "delivery": {
                 "id": str(delivery.id),
                 "status": delivery.status,
+                "failed_reason": delivery.failed_reason if hasattr(delivery, 'failed_reason') else None,
                 "picked_at": delivery.picked_at.isoformat() if delivery.picked_at else None,
                 "delivered_at": delivery.delivered_at.isoformat() if delivery.delivered_at else None
             }
