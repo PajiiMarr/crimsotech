@@ -10,7 +10,6 @@ import {
   StyleSheet,
   Alert,
   RefreshControl,
-  TextInput,
   Modal,
   Platform,
 } from "react-native";
@@ -202,25 +201,32 @@ const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
 
 // ------------------ COMPONENTS ------------------
 
-// Coupon Modal Component
-const CouponModal = ({
+// Voucher Modal Component - Shows all available vouchers and highlights qualified ones
+const VoucherModal = ({
   visible,
   onClose,
   onApply,
   isApplying,
+  availableVouchers = [],
+  cartSubtotal = 0,
 }: {
   visible: boolean;
   onClose: () => void;
   onApply: (code: string) => Promise<void>;
   isApplying: boolean;
+  availableVouchers: Voucher[];
+  cartSubtotal: number;
 }) => {
-  const [couponCode, setCouponCode] = useState("");
+  // Check if voucher is qualified based on minimum spend
+  const isVoucherQualified = (voucher: Voucher) => {
+    return cartSubtotal >= voucher.minimum_spend;
+  };
 
-  const handleApply = async () => {
-    if (!couponCode.trim()) return;
-    await onApply(couponCode.trim());
-    setCouponCode("");
-    onClose();
+  const getQualifiedStatusText = (voucher: Voucher) => {
+    if (isVoucherQualified(voucher)) {
+      return "✓ Qualified";
+    }
+    return `Need ₱${(voucher.minimum_spend - cartSubtotal).toFixed(2)} more`;
   };
 
   return (
@@ -233,41 +239,93 @@ const CouponModal = ({
       <View style={styles.modalOverlay}>
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Apply Voucher</Text>
+            <Text style={styles.modalTitle}>Available Vouchers</Text>
             <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
               <MaterialIcons name="close" size={24} color="#374151" />
             </TouchableOpacity>
           </View>
 
           <View style={styles.modalBody}>
-            <View style={styles.couponInputContainer}>
-              <MaterialIcons name="local-offer" size={20} color="#F97316" />
-              <TextInput
-                style={styles.couponInput}
-                placeholder="Enter voucher code"
-                placeholderTextColor="#9CA3AF"
-                value={couponCode}
-                onChangeText={setCouponCode}
-                autoCapitalize="characters"
-                editable={!isApplying}
-              />
-            </View>
-
-            {isApplying ? (
-              <View style={styles.applyButton}>
-                <ActivityIndicator color="#FFFFFF" size="small" />
+            {availableVouchers.length === 0 ? (
+              <View style={styles.noVouchersContainer}>
+                <MaterialIcons name="local-offer" size={48} color="#D1D5DB" />
+                <Text style={styles.noVouchersText}>No vouchers available</Text>
               </View>
             ) : (
-              <TouchableOpacity
-                style={[
-                  styles.applyButton,
-                  !couponCode.trim() && styles.applyButtonDisabled,
-                ]}
-                onPress={handleApply}
-                disabled={!couponCode.trim()}
+              <ScrollView 
+                style={styles.vouchersListModal}
+                showsVerticalScrollIndicator={false}
               >
-                <Text style={styles.applyButtonText}>Apply Voucher</Text>
-              </TouchableOpacity>
+                {availableVouchers.map((voucher) => {
+                  const qualified = isVoucherQualified(voucher);
+                  return (
+                    <TouchableOpacity
+                      key={voucher.id}
+                      style={[
+                        styles.voucherItemModal,
+                        qualified && styles.voucherItemQualified,
+                        !qualified && styles.voucherItemNotQualified,
+                      ]}
+                      onPress={() => qualified && onApply(voucher.code)}
+                      disabled={!qualified || isApplying}
+                    >
+                      <View style={styles.voucherInfoModal}>
+                        <View style={styles.voucherHeader}>
+                          <Text style={[
+                            styles.voucherCodeModal,
+                            !qualified && styles.textDimmed
+                          ]}>
+                            {voucher.code}
+                          </Text>
+                          {qualified && (
+                            <View style={styles.qualifiedBadge}>
+                              <Text style={styles.qualifiedBadgeText}>Qualified</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={[
+                          styles.voucherNameModal,
+                          !qualified && styles.textDimmed
+                        ]}>
+                          {voucher.name}
+                        </Text>
+                        <Text style={[
+                          styles.voucherDiscountModal,
+                          !qualified && styles.textDimmed
+                        ]}>
+                          {voucher.discount_type === 'percentage' 
+                            ? `${voucher.value}% off` 
+                            : `₱${voucher.value} off`}
+                        </Text>
+                        <Text style={[
+                          styles.voucherMinimumModal,
+                          !qualified && styles.textDimmed
+                        ]}>
+                          Min. spend: ₱{voucher.minimum_spend.toFixed(2)}
+                        </Text>
+                        <Text style={[
+                          styles.voucherShopModal,
+                          !qualified && styles.textDimmed
+                        ]}>
+                          {voucher.shop_name}
+                        </Text>
+                      </View>
+                      <View style={[
+                        styles.voucherApplyButtonModal,
+                        !qualified && styles.voucherApplyButtonDisabled
+                      ]}>
+                        {isApplying ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <Text style={styles.voucherApplyTextModal}>
+                            {qualified ? "Apply" : getQualifiedStatusText(voucher)}
+                          </Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             )}
           </View>
         </View>
@@ -341,7 +399,6 @@ const ShopHeader = ({
 };
 
 // Cart Item Component
-// Update the CartItemComponent - add this near the top of the component
 const CartItemComponent = ({
   item,
   onUpdateQuantity,
@@ -581,23 +638,18 @@ const OrderSummary = ({
   discount,
   itemCount,
   appliedVoucher,
-  availableVouchers = [],
-  onApplyVoucher,
   onRemoveVoucher,
   onProceedToCheckout,
-  isApplyingVoucher,
+  onVoucherIconPress,
 }: {
   subtotal: number;
   discount: number;
   itemCount: number;
   appliedVoucher: CartTotals['applied_voucher'];
-  availableVouchers: Voucher[];
-  onApplyVoucher: (code: string) => Promise<void>;
   onRemoveVoucher: () => void;
   onProceedToCheckout: () => void;
-  isApplyingVoucher: boolean;
+  onVoucherIconPress: () => void;
 }) => {
-  const [showVouchers, setShowVouchers] = useState(false);
   const total = subtotal - discount;
 
   return (
@@ -639,64 +691,6 @@ const OrderSummary = ({
         )}
       </View>
 
-      {availableVouchers.length > 0 && !appliedVoucher && (
-        <View style={styles.availableVouchersSection}>
-          <TouchableOpacity
-            style={styles.availableVouchersToggle}
-            onPress={() => setShowVouchers(!showVouchers)}
-          >
-            <View style={styles.availableVouchersHeader}>
-              <MaterialIcons name="local-offer" size={16} color="#F97316" />
-              <Text style={styles.availableVouchersTitle}>
-                {availableVouchers.length} voucher(s) available
-              </Text>
-              <MaterialIcons
-                name={showVouchers ? "keyboard-arrow-up" : "keyboard-arrow-down"}
-                size={20}
-                color="#6B7280"
-              />
-            </View>
-          </TouchableOpacity>
-
-          {showVouchers && (
-            <ScrollView 
-              style={styles.vouchersList}
-              showsVerticalScrollIndicator={false}
-              nestedScrollEnabled={true}
-            >
-              {availableVouchers.map((voucher) => (
-                <TouchableOpacity
-                  key={voucher.id}
-                  style={styles.voucherItem}
-                  onPress={() => onApplyVoucher(voucher.code)}
-                  disabled={isApplyingVoucher}
-                >
-                  <View style={styles.voucherInfo}>
-                    <Text style={styles.voucherCode}>{voucher.code}</Text>
-                    <Text style={styles.voucherName}>{voucher.name}</Text>
-                    <Text style={styles.voucherDiscount}>
-                      {voucher.discount_type === 'percentage' 
-                        ? `${voucher.value}% off` 
-                        : `₱${voucher.value} off`}
-                      {voucher.minimum_spend > 0 && 
-                        ` • Min. spend ₱${voucher.minimum_spend}`}
-                    </Text>
-                    <Text style={styles.voucherShop}>{voucher.shop_name}</Text>
-                  </View>
-                  <View style={styles.voucherApplyButton}>
-                    {isApplyingVoucher ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                    ) : (
-                      <Text style={styles.voucherApplyText}>Apply</Text>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          )}
-        </View>
-      )}
-
       <View style={styles.summaryDivider} />
 
       <View style={styles.bottomActions}>
@@ -715,10 +709,10 @@ const OrderSummary = ({
 
         <View style={styles.actionButtons}>
           <TouchableOpacity
-            style={styles.couponButton}
-            onPress={() => onApplyVoucher('')}
+            style={styles.voucherIconButton}
+            onPress={onVoucherIconPress}
           >
-            <MaterialIcons name="local-offer" size={20} color="#F97316" />
+            <MaterialIcons name="local-offer" size={24} color="#F97316" />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -746,7 +740,7 @@ export default function CartPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
-  const [couponModalVisible, setCouponModalVisible] = useState(false);
+  const [voucherModalVisible, setVoucherModalVisible] = useState(false);
   const [cartTotals, setCartTotals] = useState<CartTotals>({
     subtotal: 0,
     discount: 0,
@@ -806,8 +800,17 @@ export default function CartPage() {
             {},
           );
 
-          const storesArray: CartStore[] = Object.values(groupedItems);
-          setCartStores(storesArray);
+          // In fetchCartData, after setting cart stores, initialize all items as selected
+const storesArray: CartStore[] = Object.values(groupedItems);
+// Mark all items as selected by default
+storesArray.forEach(store => {
+  store.items.forEach(item => {
+    item.selected = true;
+  });
+});
+setCartStores(storesArray);
+// Then update totals with the applied voucher from response
+updateTotalsFromStores(storesArray, response.data.totals.applied_voucher);
         } else {
           setCartStores([]);
           setCartTotals({
@@ -981,7 +984,7 @@ export default function CartPage() {
     });
   };
 
-  const updateTotalsFromStores = (stores: CartStore[]) => {
+  const updateTotalsFromStores = (stores: CartStore[], appliedVoucherData = cartTotals.applied_voucher) => {
     const allItems = stores.flatMap(store => store.items);
     const selected = allItems.filter(item => item.selected);
     
@@ -991,11 +994,11 @@ export default function CartPage() {
     );
     
     let discount = 0;
-    if (cartTotals.applied_voucher) {
-      if (cartTotals.applied_voucher.discount_type === 'percentage') {
-        discount = (subtotal * cartTotals.applied_voucher.value) / 100;
-      } else if (cartTotals.applied_voucher.discount_type === 'fixed') {
-        discount = Math.min(cartTotals.applied_voucher.value, subtotal);
+    if (appliedVoucherData) {
+      if (appliedVoucherData.discount_type === 'percentage') {
+        discount = (subtotal * appliedVoucherData.value) / 100;
+      } else if (appliedVoucherData.discount_type === 'fixed') {
+        discount = Math.min(appliedVoucherData.value, subtotal);
       }
     }
     
@@ -1010,15 +1013,38 @@ export default function CartPage() {
   };
 
   const handleApplyVoucher = async (code: string) => {
-    if (!code) {
-      setCouponModalVisible(true);
-      return;
-    }
-
     setIsApplyingVoucher(true);
     try {
-      await fetchCartData(code);
-      setCouponModalVisible(false);
+      // Find the voucher from availableVouchers
+      const voucher = availableVouchers.find(v => v.code === code);
+      
+      if (voucher && cartTotals.subtotal >= voucher.minimum_spend) {
+        // Apply voucher locally
+        let discountAmount = 0;
+        if (voucher.discount_type === 'percentage') {
+          discountAmount = (cartTotals.subtotal * voucher.value) / 100;
+        } else {
+          discountAmount = Math.min(voucher.value, cartTotals.subtotal);
+        }
+        
+        setCartTotals(prev => ({
+          ...prev,
+          discount: discountAmount,
+          applied_voucher: {
+            id: voucher.id,
+            name: voucher.name,
+            code: voucher.code,
+            discount_type: voucher.discount_type,
+            value: voucher.value,
+            discount_amount: discountAmount
+          }
+        }));
+        
+        setVoucherModalVisible(false);
+        Alert.alert("Success", "Voucher applied successfully!");
+      } else {
+        Alert.alert("Error", "Voucher not qualified or invalid");
+      }
     } catch (error) {
       console.error("Error applying voucher:", error);
     } finally {
@@ -1028,6 +1054,10 @@ export default function CartPage() {
 
   const handleRemoveVoucher = () => {
     fetchCartData();
+  };
+
+  const handleVoucherIconPress = () => {
+    setVoucherModalVisible(true);
   };
 
   const allItems = cartStores.flatMap((store) => store.items);
@@ -1146,19 +1176,19 @@ export default function CartPage() {
           discount={cartTotals.discount}
           itemCount={selectedItems.length}
           appliedVoucher={cartTotals.applied_voucher}
-          availableVouchers={availableVouchers}
-          onApplyVoucher={handleApplyVoucher}
           onRemoveVoucher={handleRemoveVoucher}
           onProceedToCheckout={handleCheckout}
-          isApplyingVoucher={isApplyingVoucher}
+          onVoucherIconPress={handleVoucherIconPress}
         />
       </View>
 
-      <CouponModal
-        visible={couponModalVisible}
-        onClose={() => setCouponModalVisible(false)}
+      <VoucherModal
+        visible={voucherModalVisible}
+        onClose={() => setVoucherModalVisible(false)}
         onApply={handleApplyVoucher}
         isApplying={isApplyingVoucher}
+        availableVouchers={availableVouchers}
+        cartSubtotal={cartTotals.subtotal}
       />
     </CustomerLayout>
   );
@@ -1500,76 +1530,6 @@ const styles = StyleSheet.create({
   removeVoucherButton: {
     padding: 2,
   },
-  availableVouchersSection: {
-    marginVertical: 8,
-  },
-  availableVouchersToggle: {
-    paddingVertical: 6,
-  },
-  availableVouchersHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  availableVouchersTitle: {
-    fontSize: 12,
-    color: "#374151",
-    fontWeight: "500",
-    marginLeft: 6,
-    flex: 1,
-  },
-  vouchersList: {
-    maxHeight: 160,
-    marginTop: 8,
-  },
-  voucherItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#F9FAFB",
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  voucherInfo: {
-    flex: 1,
-    marginRight: 8,
-  },
-  voucherCode: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#F97316",
-    marginBottom: 2,
-  },
-  voucherName: {
-    fontSize: 11,
-    color: "#374151",
-    marginBottom: 2,
-  },
-  voucherDiscount: {
-    fontSize: 10,
-    color: "#059669",
-    fontWeight: "500",
-    marginBottom: 2,
-  },
-  voucherShop: {
-    fontSize: 9,
-    color: "#6B7280",
-  },
-  voucherApplyButton: {
-    backgroundColor: "#F97316",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 4,
-    minWidth: 50,
-    alignItems: "center",
-  },
-  voucherApplyText: {
-    fontSize: 11,
-    color: "#FFFFFF",
-    fontWeight: "600",
-  },
   summaryDivider: {
     height: 1,
     backgroundColor: "#E5E7EB",
@@ -1613,7 +1573,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  couponButton: {
+  voucherIconButton: {
     padding: 10,
     backgroundColor: "#FFF7ED",
     borderRadius: 8,
@@ -1666,35 +1626,97 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 16,
   },
-  couponInputContainer: {
+  noVouchersContainer: {
+    alignItems: "center",
+    paddingVertical: 40,
+  },
+  noVouchersText: {
+    fontSize: 14,
+    color: "#6B7280",
+    marginTop: 12,
+  },
+  vouchersListModal: {
+    maxHeight: 500,
+  },
+  voucherItemModal: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#F9FAFB",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: "#E5E7EB",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    backgroundColor: "#F9FAFB",
   },
-  couponInput: {
+  voucherItemQualified: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#F97316",
+  },
+  voucherItemNotQualified: {
+    opacity: 0.7,
+  },
+  voucherInfoModal: {
     flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    fontSize: 14,
-    color: "#111827",
+    marginRight: 8,
   },
-  applyButton: {
+  voucherHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  voucherCodeModal: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#F97316",
+  },
+  qualifiedBadge: {
+    backgroundColor: "#D1FAE5",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  qualifiedBadgeText: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#059669",
+  },
+  voucherNameModal: {
+    fontSize: 12,
+    color: "#374151",
+    marginBottom: 4,
+  },
+  voucherDiscountModal: {
+    fontSize: 11,
+    color: "#059669",
+    fontWeight: "500",
+    marginBottom: 2,
+  },
+  voucherMinimumModal: {
+    fontSize: 10,
+    color: "#6B7280",
+    marginBottom: 2,
+  },
+  voucherShopModal: {
+    fontSize: 10,
+    color: "#9CA3AF",
+  },
+  voucherApplyButtonModal: {
     backgroundColor: "#F97316",
-    paddingVertical: 16,
-    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    minWidth: 80,
     alignItems: "center",
   },
-  applyButtonDisabled: {
-    opacity: 0.5,
+  voucherApplyButtonDisabled: {
+    backgroundColor: "#D1D5DB",
   },
-  applyButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
+  voucherApplyTextModal: {
+    fontSize: 11,
     color: "#FFFFFF",
+    fontWeight: "600",
   },
   cartItemOutOfStock: {
     opacity: 0.7,
