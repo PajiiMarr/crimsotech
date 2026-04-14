@@ -9,7 +9,7 @@ console.log('Axios configured with baseURL:', API_BASE_URL);
 
 const AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // Increased timeout
+  timeout: 300000, // Increased timeout
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
