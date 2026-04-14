@@ -14,6 +14,7 @@ const FULLSCREEN_ROUTES = [
   'seller-create-product-form',
   'seller-create-gift',
   'seller-create-gift-form',
+  'create-voucher',
   'view-refund-details',
   'view-product',
   'return-address',
