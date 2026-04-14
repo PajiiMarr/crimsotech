@@ -22,7 +22,7 @@ interface MapPickerModalProps {
 }
 
 // Add your Google Cloud API Key here
-const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || 'AIzaSyBJD7F6025lQEecWMRqgIyViOv9Q9SeHKc'; 
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY; 
 
 export default function MapPickerModal({
   visible,

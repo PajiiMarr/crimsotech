@@ -23403,6 +23403,7 @@ class CheckoutOrder(viewsets.ViewSet):
         cart_id = request.GET.get("cart_id")
         product_id = request.GET.get("product_id")
         selected_ids_str = request.GET.get("selected", "")
+        selected_address_id = request.GET.get("selected_address_id", None)
 
         if not user_id:
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -23418,6 +23419,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 ).select_related(
                     "product",
                     "product__shop",
+                    "product__customer__customer",
                     "variant"
                 ).prefetch_related(
                     'product__productmedia_set'
@@ -23470,7 +23472,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     id=temp_id,
                     product=product,
                     variant=variant,
-                    quantity=1,  # Default quantity
+                    quantity=1,
                     is_ordered=False,
                     added_at=timezone.now()
                 )]
@@ -23492,6 +23494,7 @@ class CheckoutOrder(viewsets.ViewSet):
             ).select_related(
                 "product",
                 "product__shop",
+                "product__customer__customer",
                 "variant"
             ).prefetch_related(
                 'product__productmedia_set'
@@ -23567,15 +23570,47 @@ class CheckoutOrder(viewsets.ViewSet):
             checkout_items = []
             shop_ids = set()
             shop_addresses = {}
+            personal_seller_addresses = {}
+
+            # Get selected shipping address for potential future distance calculation
+            selected_shipping_address = None
+            if selected_address_id:
+                try:
+                    selected_shipping_address = ShippingAddress.objects.get(
+                        id=selected_address_id,
+                        user_id=user_id,
+                        is_active=True
+                    )
+                except ShippingAddress.DoesNotExist:
+                    pass
 
             for cart_item in cart_items:
                 product = cart_item.product
                 variant = cart_item.variant
                 shop = product.shop if product else None
 
+                # Get address based on whether product has shop or is personal listing
                 if shop:
+                    # Product has a shop - use shop address
                     shop_ids.add(shop.id)
                     if shop.id not in shop_addresses:
+                        # Calculate distance from selected address to shop (if coordinates available)
+                        distance_km = None
+                        distance_text = None
+                        if selected_shipping_address and selected_shipping_address.latitude and selected_shipping_address.longitude:
+                            # Check if shop has latitude/longitude fields
+                            if hasattr(shop, 'latitude') and shop.latitude and hasattr(shop, 'longitude') and shop.longitude:
+                                try:
+                                    distance_km = self._calculate_distance(
+                                        float(selected_shipping_address.latitude),
+                                        float(selected_shipping_address.longitude),
+                                        float(shop.latitude),
+                                        float(shop.longitude)
+                                    )
+                                    distance_text = self._format_distance(distance_km)
+                                except (ValueError, TypeError):
+                                    pass
+                        
                         shop_addresses[shop.id] = {
                             'shop_id': str(shop.id),
                             'shop_name': shop.name,
@@ -23584,7 +23619,55 @@ class CheckoutOrder(viewsets.ViewSet):
                             'shop_barangay': shop.barangay,
                             'shop_city': shop.city,
                             'shop_province': shop.province,
-                            'shop_contact_number': shop.contact_number
+                            'shop_contact_number': shop.contact_number,
+                            'address_type': 'shop',
+                            'distance_km': distance_km,
+                            'distance_text': distance_text
+                        }
+                elif product and product.customer:
+                    # Personal listing (no shop) - use customer/seller address
+                    seller_user = product.customer.customer
+                    seller_id = str(seller_user.id)
+                    
+                    if seller_id not in personal_seller_addresses:
+                        # Build address from seller's user profile
+                        address_parts = [
+                            seller_user.street,
+                            seller_user.barangay,
+                            seller_user.city,
+                            seller_user.province
+                        ]
+                        full_address = ', '.join(filter(None, address_parts))
+                        
+                        # Calculate distance from selected address to seller (if coordinates available)
+                        distance_km = None
+                        distance_text = None
+                        if selected_shipping_address and selected_shipping_address.latitude and selected_shipping_address.longitude:
+                            # Check if user has latitude/longitude fields
+                            if hasattr(seller_user, 'latitude') and seller_user.latitude and hasattr(seller_user, 'longitude') and seller_user.longitude:
+                                try:
+                                    distance_km = self._calculate_distance(
+                                        float(selected_shipping_address.latitude),
+                                        float(selected_shipping_address.longitude),
+                                        float(seller_user.latitude),
+                                        float(seller_user.longitude)
+                                    )
+                                    distance_text = self._format_distance(distance_km)
+                                except (ValueError, TypeError):
+                                    pass
+                        
+                        personal_seller_addresses[seller_id] = {
+                            'seller_id': seller_id,
+                            'seller_name': f"{seller_user.first_name} {seller_user.last_name}".strip() or seller_user.username,
+                            'seller_address': full_address,
+                            'seller_street': seller_user.street,
+                            'seller_barangay': seller_user.barangay,
+                            'seller_city': seller_user.city,
+                            'seller_province': seller_user.province,
+                            'seller_contact_number': seller_user.contact_number,
+                            'address_type': 'personal',
+                            'distance_km': distance_km,
+                            'distance_text': distance_text
                         }
 
                 resolved_price = 0.0
@@ -23616,11 +23699,13 @@ class CheckoutOrder(viewsets.ViewSet):
                     "name": product.name if product else "Unknown Product",
                     "price": resolved_price,
                     "quantity": cart_item.quantity,
-                    "shop_name": shop.name if shop else "Unknown Shop",
+                    "shop_name": shop.name if shop else (product.customer.customer.username if product and product.customer else "Personal Seller"),
                     "shop_id": str(shop.id) if shop else None,
+                    "seller_id": str(product.customer.customer.id) if product and product.customer else None,
                     "added_at": cart_item.added_at.isoformat() if hasattr(cart_item, 'added_at') and cart_item.added_at else None,
                     "subtotal": resolved_price * cart_item.quantity,
-                    "is_ordered": cart_item.is_ordered if hasattr(cart_item, 'is_ordered') else False
+                    "is_ordered": cart_item.is_ordered if hasattr(cart_item, 'is_ordered') else False,
+                    "is_personal_listing": shop is None and product and product.customer is not None
                 }
 
                 if variant and variant.image and hasattr(variant.image, 'url'):
@@ -23642,7 +23727,9 @@ class CheckoutOrder(viewsets.ViewSet):
                 checkout_items.append(item_data)
 
             subtotal = sum(item["subtotal"] for item in checkout_items)
-            delivery = 50.00
+            
+            # Calculate dynamic delivery fee based on farthest distance (if distances available)
+            delivery = self._calculate_delivery_fee(shop_addresses, personal_seller_addresses)
             total = subtotal + delivery
 
             user_purchase_history = self._get_user_purchase_history(user_id)
@@ -23661,7 +23748,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 ).order_by('-is_default', '-created_at').values(
                     'id', 'recipient_name', 'recipient_phone',
                     'street', 'barangay', 'city', 'province',
-                    'zip_code', 'country', 'is_default'
+                    'zip_code', 'country', 'is_default', 'latitude', 'longitude'
                 )[:10]
             )
 
@@ -23673,7 +23760,9 @@ class CheckoutOrder(viewsets.ViewSet):
                 formatted_addresses.append(addr)
 
             default_address = formatted_addresses[0] if formatted_addresses else None
-            shop_addresses_list = list(shop_addresses.values())
+            
+            # Combine shop addresses and personal seller addresses
+            all_seller_addresses = list(shop_addresses.values()) + list(personal_seller_addresses.values())
 
             response_data = {
                 "success": True,
@@ -23683,13 +23772,14 @@ class CheckoutOrder(viewsets.ViewSet):
                     "delivery": delivery,
                     "total": total,
                     "item_count": len(checkout_items),
-                    "shop_count": len(shop_ids)
+                    "shop_count": len(shop_ids),
+                    "personal_seller_count": len(personal_seller_addresses)
                 },
                 "available_vouchers": available_vouchers,
                 "user_purchase_stats": user_purchase_history,
                 "shipping_addresses": formatted_addresses or None,
                 "default_shipping_address": default_address,
-                "shop_addresses": shop_addresses_list
+                "seller_addresses": all_seller_addresses
             }
 
             return Response(response_data)
@@ -23703,6 +23793,72 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """
+        Calculate distance between two coordinates using Haversine formula
+        Returns distance in kilometers
+        """
+        from math import radians, sin, cos, sqrt, atan2
+        
+        R = 6371  # Earth's radius in kilometers
+        
+        lat1_rad = radians(lat1)
+        lat2_rad = radians(lat2)
+        delta_lat = radians(lat2 - lat1)
+        delta_lon = radians(lon2 - lon1)
+        
+        a = sin(delta_lat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        
+        return R * c
+    
+    def _format_distance(self, distance_km: float) -> str:
+        """Format distance in kilometers or meters for display"""
+        if distance_km is None:
+            return "Unknown"
+        if distance_km < 1:
+            return f"{int(distance_km * 1000)} meters"
+        return f"{distance_km:.1f} km"
+    
+    def _calculate_delivery_fee(self, shop_addresses: dict, personal_seller_addresses: dict) -> float:
+        """
+        Calculate dynamic delivery fee based on the farthest distance
+        Base fee: ₱50 for up to 5km, additional ₱10 per km beyond 5km
+        Capped at ₱300
+        If no distances available, return default ₱50
+        """
+        max_distance = 0
+        has_valid_distance = False
+        
+        # Check distances from shop addresses
+        for shop_id, shop_info in shop_addresses.items():
+            distance = shop_info.get('distance_km')
+            if distance and isinstance(distance, (int, float)) and distance > 0:
+                has_valid_distance = True
+                if distance > max_distance:
+                    max_distance = distance
+        
+        # Check distances from personal seller addresses
+        for seller_id, seller_info in personal_seller_addresses.items():
+            distance = seller_info.get('distance_km')
+            if distance and isinstance(distance, (int, float)) and distance > 0:
+                has_valid_distance = True
+                if distance > max_distance:
+                    max_distance = distance
+        
+        # If no valid distances available, return default fee
+        if not has_valid_distance or max_distance == 0:
+            return 50.00  # Base delivery fee
+        
+        # Base fee: ₱50 for up to 5km
+        if max_distance <= 5:
+            return 50.00
+        
+        # ₱50 base + ₱10 per additional km beyond 5km, capped at ₱300
+        additional_km = max_distance - 5
+        fee = 50.00 + (additional_km * 10.00)
+        return min(fee, 300.00)
+
     def _get_user_purchase_history(self, user_id):
         try:
             completed_orders = Order.objects.filter(
@@ -23823,7 +23979,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     'street', 'barangay', 'city', 'province',
                     'zip_code', 'country', 'building_name',
                     'floor_number', 'unit_number', 'landmark',
-                    'instructions', 'address_type', 'is_default', 'created_at'
+                    'instructions', 'address_type', 'is_default', 'created_at', 'latitude', 'longitude'
                 )[:20]
             )
 
@@ -24228,8 +24384,6 @@ class CheckoutOrder(viewsets.ViewSet):
             total_amount = subtotal + delivery_fee - discount_amount
 
             # Determine initial order status based on payment method
-            # For pickup orders: pending_shipment
-            # For delivery orders: pending_shipment
             initial_status = 'pending'
             
             # Create order
@@ -24304,10 +24458,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     "product_image": variant_image_url or product_image_url,
                     "is_refundable": direct_variant.is_refundable or getattr(direct_product, 'is_refundable', False)
                 })
-
-                # Update stock
-                # direct_variant.quantity -= direct_quantity
-                # direct_variant.save()
                 
             else:
                 # Process cart items
@@ -24347,18 +24497,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         "status": "pending",
                         "is_refundable": cart_item.variant.is_refundable if cart_item.variant else getattr(cart_item.product, 'is_refundable', False)
                     })
-
-                    # Update stock
-                    # if cart_item.variant:
-                    #     cart_item.variant.quantity -= cart_item.quantity
-                    #     cart_item.variant.save()
-                    # elif cart_item.product:
-                    #     cart_item.product.quantity -= cart_item.quantity
-                    #     cart_item.product.save()
-
-                    # Mark as ordered
-                    # cart_item.is_ordered = True
-                    # cart_item.save()
 
             # If payment method is Maya, initiate payment
             if payment_method.lower() == 'maya':
