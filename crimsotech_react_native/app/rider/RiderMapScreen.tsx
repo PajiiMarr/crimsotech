@@ -6,7 +6,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 // Your Google Maps API Key
-const GOOGLE_MAPS_API_KEY = 'AIzaSyBJD7F6025lQEecWMRqgIyViOv9Q9SeHKc';
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY; 
 
 type Coordinates = {
   latitude: number;

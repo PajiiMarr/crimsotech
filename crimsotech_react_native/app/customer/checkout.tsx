@@ -21,10 +21,6 @@ import {
   MaterialIcons,
   FontAwesome5,
   FontAwesome,
-  Ionicons,
-  Feather,
-  MaterialCommunityIcons,
-  Entypo,
 } from "@expo/vector-icons";
 
 // Types
@@ -41,7 +37,6 @@ interface CartItem {
   is_ordered: boolean;
   subtotal: number;
   variant?: {
-    // Add variant property
     id: string;
     title?: string;
     price?: number;
@@ -65,10 +60,12 @@ interface Voucher {
   discount_amount?: number;
   voucher_type?: "shop" | "product";
 }
+
 interface VoucherCategory {
   category: string;
   vouchers: Voucher[];
 }
+
 interface ShippingAddress {
   id: string;
   recipient_name: string;
@@ -88,7 +85,10 @@ interface ShippingAddress {
   is_default: boolean;
   full_address: string;
   created_at: string;
+  latitude?: number;
+  longitude?: number;
 }
+
 interface ShopAddress {
   shop_id: string;
   shop_name: string;
@@ -98,13 +98,18 @@ interface ShopAddress {
   shop_city: string;
   shop_province: string;
   shop_contact_number?: string;
+  distance_km?: number;
+  distance_text?: string;
+  address_type?: string;
 }
+
 interface UserPurchaseStats {
   total_spent: number;
   recent_orders_count: number;
   average_order_value: number;
   customer_tier: string;
 }
+
 interface CheckoutSummary {
   subtotal: number;
   delivery: number;
@@ -112,6 +117,7 @@ interface CheckoutSummary {
   item_count: number;
   shop_count: number;
 }
+
 interface CheckoutData {
   success: boolean;
   checkout_items: CartItem[];
@@ -120,7 +126,7 @@ interface CheckoutData {
   user_purchase_stats: UserPurchaseStats;
   shipping_addresses: ShippingAddress[];
   default_shipping_address: ShippingAddress | null;
-  shop_addresses: ShopAddress[];
+  seller_addresses: ShopAddress[];
 }
 
 // Payment methods
@@ -169,7 +175,7 @@ const shippingMethods = [
     icon: "local-shipping",
     iconSet: "MaterialIcons" as const,
     delivery: "2-4 business days",
-    cost: 50.0,
+    cost: 0, // Will be updated dynamically from API
   },
 ];
 
@@ -215,8 +221,7 @@ export default function CheckoutPage() {
 
   const selectedIds = getSelectedIds();
 
-  // Determine if we have a valid entry point:
-  // Either selectedIds from cart, OR a direct cartId, OR a direct productId
+  // Determine if we have a valid entry point
   const hasValidEntry =
     selectedIds.length > 0 || cartId !== null || productId !== null;
 
@@ -255,21 +260,22 @@ export default function CheckoutPage() {
     const base: Record<string, any> = { user_id: userId };
 
     if (cartId) {
-      // Direct cart checkout
       base.cart_id = cartId;
     } else if (productId) {
-      // Direct product checkout (Buy Now)
       base.product_id = productId;
     } else {
-      // Cart items selected checkout
       base.selected = selectedIds.join(",");
+    }
+
+    // Add selected address ID for distance calculation
+    if (formData.selectedAddressId) {
+      base.selected_address_id = formData.selectedAddressId;
     }
 
     return base;
   };
 
-  // Build order request body depending on entry point
-  // Build order request body depending on entry point
+  // Build order request body
   const buildOrderRequestBody = (checkoutItems: CartItem[]) => {
     const base: Record<string, any> = {
       user_id: userId,
@@ -281,18 +287,14 @@ export default function CheckoutPage() {
     };
 
     if (cartId) {
-      // Direct cart checkout - send cart_id
       base.cart_id = cartId;
     } else if (productId) {
-      // Direct product checkout (Buy Now) - send product_id and variant_id
       base.product_id = productId;
-      // Also need to send the selected variant ID and quantity
       if (checkoutItems && checkoutItems.length > 0) {
         base.variant_id = checkoutItems[0].variant?.id;
         base.quantity = checkoutItems[0].quantity;
       }
     } else {
-      // Cart items selected checkout - send selected_ids array
       base.selected_ids = checkoutItems.map((p) => p.cartItemId || p.id);
     }
 
@@ -304,7 +306,7 @@ export default function CheckoutPage() {
     if (!userId || !hasValidEntry) {
       setLoading(false);
       setError(
-        userId ? "No items selected for checkout" : "Please login to checkout",
+        userId ? "No items selected for checkout" : "Please login to checkout"
       );
       return;
     }
@@ -316,19 +318,20 @@ export default function CheckoutPage() {
         cartId,
         productId,
         userId,
+        selectedAddressId: formData.selectedAddressId,
       });
       const response = await AxiosInstance.get(
         "/checkout-order/get_checkout_items/",
-        { params: buildCheckoutApiParams() },
+        { params: buildCheckoutApiParams() }
       );
       console.log("Checkout response:", response.data);
       if (response.data.success) {
         const hasOrderedItems = response.data.checkout_items?.some(
-          (item: any) => item.is_ordered === true,
+          (item: any) => item.is_ordered === true
         );
         if (hasOrderedItems) {
           setError(
-            "Some items in your cart have already been ordered. Please refresh your cart.",
+            "Some items in your cart have already been ordered. Please refresh your cart."
           );
           setCheckoutData(null);
           return;
@@ -337,8 +340,8 @@ export default function CheckoutPage() {
           (item: any) => ({
             ...item,
             cartItemId: item.id || item.cartItemId,
-            variant: item.variant, // Preserve variant data
-          }),
+            variant: item.variant,
+          })
         );
         setCheckoutData({
           ...response.data,
@@ -385,7 +388,14 @@ export default function CheckoutPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [userId, selectedIds, cartId, productId]);
+  }, [userId, selectedIds, cartId, productId, formData.selectedAddressId]);
+
+  // Refetch when selected address changes (for distance calculation)
+  useEffect(() => {
+    if (userId && hasValidEntry && formData.selectedAddressId) {
+      fetchCheckoutData();
+    }
+  }, [formData.selectedAddressId]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -428,7 +438,7 @@ export default function CheckoutPage() {
             user_id: userId,
             amount: amount,
           },
-        },
+        }
       );
       if (response.data.success) {
         setCheckoutData((prev) => {
@@ -443,7 +453,7 @@ export default function CheckoutPage() {
     } catch (err: any) {
       console.error(
         "Error fetching vouchers by amount:",
-        err.response?.data || err,
+        err.response?.data || err
       );
     } finally {
       setLoadingVouchers(false);
@@ -467,7 +477,8 @@ export default function CheckoutPage() {
           setFormData((prev) => ({ ...prev, paymentMethod: methodName }));
         }
       }
-      const deliveryCost = value === "Pickup from Store" ? 0 : 50.0;
+      // Use delivery fee from checkout data if available
+      const deliveryCost = value === "Pickup from Store" ? 0 : (checkoutData?.summary?.delivery || 50);
       const newTotal = summary.subtotal + deliveryCost - summary.discount;
       setSummary((prev) => ({
         ...prev,
@@ -506,7 +517,7 @@ export default function CheckoutPage() {
     if (!voucher.is_general && voucher.shop_name !== "All Shops") {
       return (
         checkoutData?.checkout_items.some(
-          (item) => item.shop_name === voucher.shop_name,
+          (item) => item.shop_name === voucher.shop_name
         ) || false
       );
     }
@@ -520,7 +531,7 @@ export default function CheckoutPage() {
     }
     if (!voucher.is_general && voucher.shop_name !== "All Shops") {
       const hasShop = checkoutData?.checkout_items.some(
-        (item) => item.shop_name === voucher.shop_name,
+        (item) => item.shop_name === voucher.shop_name
       );
       if (!hasShop) {
         return `Only applicable to ${voucher.shop_name}`;
@@ -540,7 +551,7 @@ export default function CheckoutPage() {
       Alert.alert(
         "Voucher Not Applicable",
         reason || "This voucher cannot be applied to your current order",
-        [{ text: "OK" }],
+        [{ text: "OK" }]
       );
       return;
     }
@@ -550,7 +561,7 @@ export default function CheckoutPage() {
       let shopId = null;
       if (!voucher.is_general && voucher.shop_name !== "All Shops") {
         const shopItem = checkoutData.checkout_items.find(
-          (item) => item.shop_name === voucher.shop_name,
+          (item) => item.shop_name === voucher.shop_name
         );
         shopId = shopItem?.shop_id || null;
       }
@@ -561,7 +572,7 @@ export default function CheckoutPage() {
           user_id: userId,
           subtotal: summary.subtotal,
           shop_id: shopId,
-        },
+        }
       );
       if (response.data.valid) {
         const validatedVoucher = response.data.voucher;
@@ -580,7 +591,7 @@ export default function CheckoutPage() {
         setVoucherError(null);
         setIsVoucherModalVisible(false);
         const deliveryCost =
-          formData.shippingMethod === "Pickup from Store" ? 0 : 50.0;
+          formData.shippingMethod === "Pickup from Store" ? 0 : summary.delivery;
         const newTotal = summary.subtotal + deliveryCost - discountAmount;
         setSummary((prev) => ({
           ...prev,
@@ -614,7 +625,7 @@ export default function CheckoutPage() {
     setAppliedVoucher(null);
     setVoucherError(null);
     const deliveryCost =
-      formData.shippingMethod === "Pickup from Store" ? 0 : 50.0;
+      formData.shippingMethod === "Pickup from Store" ? 0 : summary.delivery;
     const newTotal = summary.subtotal + deliveryCost;
     setSummary((prev) => ({
       ...prev,
@@ -635,7 +646,7 @@ export default function CheckoutPage() {
         "Voucher No Longer Applicable",
         reason ||
           "This voucher is no longer applicable to your order. Please remove it or update your cart.",
-        [{ text: "OK" }],
+        [{ text: "OK" }]
       );
       return;
     }
@@ -649,7 +660,7 @@ export default function CheckoutPage() {
     if (!formData.agreeTerms) {
       Alert.alert(
         "Required",
-        "Please agree to the Terms of Service and Privacy Policy",
+        "Please agree to the Terms of Service and Privacy Policy"
       );
       return;
     }
@@ -660,7 +671,7 @@ export default function CheckoutPage() {
       console.log("Placing order with data:", requestBody);
       const response = await AxiosInstance.post(
         "/checkout-order/create_order/",
-        requestBody,
+        requestBody
       );
       if (response.data.success) {
         const orderId = response.data.order_id;
@@ -669,7 +680,7 @@ export default function CheckoutPage() {
           "Order created, redirecting. orderId=",
           orderId,
           "isEWallet=",
-          isEWalletPayment,
+          isEWalletPayment
         );
         if (isEWalletPayment) {
           router.push({
@@ -682,7 +693,7 @@ export default function CheckoutPage() {
             Alert.alert(
               "Order Placed Successfully",
               "Your order has been placed and is pending seller confirmation.",
-              [{ text: "OK" }],
+              [{ text: "OK" }]
             );
           }, 100);
         }
@@ -719,7 +730,7 @@ export default function CheckoutPage() {
     if (!checkoutData) return null;
     if (formData.selectedAddressId) {
       const selected = checkoutData.shipping_addresses?.find(
-        (addr) => addr.id === formData.selectedAddressId,
+        (addr) => addr.id === formData.selectedAddressId
       );
       if (selected) return selected;
     }
@@ -735,17 +746,12 @@ export default function CheckoutPage() {
   const getShopAddressesForProducts = () => {
     if (
       !checkoutData ||
-      !checkoutData.shop_addresses ||
-      checkoutData.shop_addresses.length === 0
+      !checkoutData.seller_addresses ||
+      checkoutData.seller_addresses.length === 0
     ) {
       return [];
     }
-    const productShopIds = [
-      ...new Set(checkoutData.checkout_items.map((p) => p.shop_id)),
-    ];
-    return checkoutData.shop_addresses.filter(
-      (shop) => shop.shop_id && productShopIds.includes(shop.shop_id),
-    );
+    return checkoutData.seller_addresses;
   };
 
   // Get main shop address
@@ -754,7 +760,7 @@ export default function CheckoutPage() {
     return shopAddresses.length > 0 ? shopAddresses[0] : null;
   };
 
-  // Render address display
+  // Render address display with distance info
   const renderAddressDisplay = () => {
     if (formData.shippingMethod === "Pickup from Store") {
       const shopAddress = getMainShopAddress();
@@ -823,7 +829,7 @@ export default function CheckoutPage() {
   const getAllVouchers = () => {
     if (!checkoutData) return [];
     return checkoutData.available_vouchers.flatMap(
-      (category) => category?.vouchers ?? [],
+      (category) => category?.vouchers ?? []
     );
   };
 
@@ -834,7 +840,7 @@ export default function CheckoutPage() {
       return getAllVouchers();
     }
     const category = checkoutData.available_vouchers.find((cat: any) =>
-      cat.category.includes(activeVoucherCategory.replace("_", " ")),
+      cat.category.includes(activeVoucherCategory.replace("_", " "))
     );
     return category ? category.vouchers : [];
   };
@@ -925,9 +931,17 @@ export default function CheckoutPage() {
 
   const selectedAddress = getSelectedAddress();
   const shopAddresses = getShopAddressesForProducts();
-  const currentPaymentMethod = getCurrentPaymentMethod();
   const allVouchers = getAllVouchers();
   const filteredVouchers = getFilteredVouchers();
+  
+  // Get delivery fee display
+  const getDeliveryFeeDisplay = () => {
+    if (formData.shippingMethod === "Pickup from Store") return "FREE";
+    if (checkoutData?.summary?.delivery) {
+      return `₱${checkoutData.summary.delivery.toFixed(2)}`;
+    }
+    return "₱50.00";
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1036,6 +1050,11 @@ export default function CheckoutPage() {
             {shippingMethods.map((method) => {
               const IconComponent = MaterialIcons;
               const isSelected = formData.shippingMethod === method.name;
+              const costDisplay = method.name === "Pickup from Store" 
+                ? "FREE" 
+                : checkoutData?.summary?.delivery 
+                  ? `₱${checkoutData.summary.delivery.toFixed(2)}` 
+                  : "₱50.00";
               return (
                 <TouchableOpacity
                   key={method.id}
@@ -1072,11 +1091,7 @@ export default function CheckoutPage() {
                       </View>
                     </View>
                     <View style={styles.shippingMethodRight}>
-                      <Text style={styles.shippingMethodCost}>
-                        {method.cost === 0
-                          ? "FREE"
-                          : `₱${method.cost.toFixed(2)}`}
-                      </Text>
+                      <Text style={styles.shippingMethodCost}>{costDisplay}</Text>
                       <View
                         style={[
                           styles.radioButton,
@@ -1230,6 +1245,11 @@ export default function CheckoutPage() {
                   {shop.shop_contact_number && (
                     <Text style={styles.pickupContact}>
                       Contact: {shop.shop_contact_number}
+                    </Text>
+                  )}
+                  {shop.distance_text && (
+                    <Text style={styles.distanceText}>
+                      📍 {shop.distance_text} from your location
                     </Text>
                   )}
                 </View>
@@ -1518,11 +1538,7 @@ export default function CheckoutPage() {
             )}
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Shipping</Text>
-              <Text style={styles.summaryValue}>
-                {summary.delivery === 0
-                  ? "FREE"
-                  : `₱${summary.delivery.toFixed(2)}`}
-              </Text>
+              <Text style={styles.summaryValue}>{getDeliveryFeeDisplay()}</Text>
             </View>
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Total</Text>
@@ -1546,7 +1562,7 @@ export default function CheckoutPage() {
                           return (summary.subtotal * v.value) / 100;
                         }
                         return Math.min(v.value, summary.subtotal);
-                      }),
+                      })
                     ).toFixed(2)}
                   </Text>
                 )}
@@ -1959,6 +1975,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#DC2626",
     flex: 1,
+  },
+  distanceText: {
+    fontSize: 11,
+    color: "#059669",
+    marginTop: 4,
   },
   previewNotApplicable: {
     flexDirection: "row",
