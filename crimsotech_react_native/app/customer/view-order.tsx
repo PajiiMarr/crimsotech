@@ -688,12 +688,12 @@ const renderRiderInfo = () => {
                     <Text style={styles.shippingLabel}>Logistics Carrier:</Text>
                     <Text style={styles.shippingValue}>{shipping_info.logistics_carrier || 'N/A'}</Text>
                   </View>
-                  {shipping_info.tracking_number && (
+                  {/* {shipping_info.tracking_number && (
                     <View style={styles.shippingRow}>
                       <Text style={styles.shippingLabel}>Tracking Number:</Text>
                       <Text style={styles.shippingValue}>{shipping_info.tracking_number}</Text>
                     </View>
-                  )}
+                  )} */}
                   {shipping_info.estimated_delivery && (
                     <View style={styles.shippingRow}>
                       <Text style={styles.shippingLabel}>Estimated Delivery:</Text>

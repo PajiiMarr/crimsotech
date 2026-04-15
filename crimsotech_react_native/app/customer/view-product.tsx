@@ -6,6 +6,7 @@ import React, {
   useState,
   useRef,
 } from "react";
+
 import {
   ActivityIndicator,
   Alert,
@@ -19,8 +20,10 @@ import {
   FlatList,
   Dimensions,
   Animated,
+  findNodeHandle,
+  UIManager,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import AxiosInstance from "../../contexts/axios";
@@ -263,7 +266,7 @@ const ToastNotification = ({
   if (!visible) return null;
 
   const bgColor =
-    type === "success" ? "#16A34A" : type === "error" ? "#DC2626" : "#2563EB";
+  type === "success" ? "#16A34A" : type === "error" ? "#DC2626" : "#2563EB";
   const iconName =
     type === "success"
       ? "checkmark-circle"
@@ -316,6 +319,87 @@ const ToastNotification = ({
         </TouchableOpacity>
       </View>
     </Animated.View>
+  );
+};
+
+// ─── Added to Cart Overlay ─────────────────────────────────────────────────────
+const AddedToCartOverlay = ({
+  visible,
+  onHide,
+}: {
+  visible: boolean;
+  onHide: () => void;
+}) => {
+  const scale = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(scale, {
+          toValue: 1,
+          useNativeDriver: true,
+          tension: 100,
+          friction: 8,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      const timer = setTimeout(() => {
+        Animated.parallel([
+          Animated.spring(scale, {
+            toValue: 0.8,
+            useNativeDriver: true,
+            tension: 100,
+            friction: 8,
+          }),
+          Animated.timing(opacity, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ]).start(() => onHide());
+      }, 1500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        justifyContent: "center",
+        alignItems: "center",
+        zIndex: 9999,
+      }}
+    >
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          alignItems: "center",
+          gap: 8,
+          transform: [{ scale }],
+          opacity,
+        }}
+      >
+        <Ionicons name="checkmark-circle" size={60} color="#EA580C" />
+        <Text style={{ fontSize: 16, fontWeight: "600", color: "#111827" }}>
+          Added to Cart
+        </Text>
+      </Animated.View>
+    </View>
   );
 };
 
@@ -455,11 +539,13 @@ const OwnershipInfoCard = ({
     <View
       style={{
         backgroundColor: "#FFF7ED",
-        borderRadius: 12,
-        marginBottom: 12,
-        borderWidth: 1,
+        borderRadius: 0,
+        marginBottom: 0,
+        borderWidth: 0,
         borderColor: "#FED7AA",
         overflow: "hidden",
+        borderBottomWidth: 1,
+        borderBottomColor: "#FFEDD5",
       }}
     >
       <TouchableOpacity
@@ -691,13 +777,15 @@ const SellerInfoCard = ({
       onPress={onPress}
       style={{
         backgroundColor: "#FFFFFF",
-        borderRadius: 12,
-        borderWidth: 1,
+        borderRadius: 0,
+        borderWidth: 0,
         borderColor: "#E5E7EB",
-        padding: 14,
-        marginBottom: 12,
+        padding: 16,
+        marginBottom: 0,
         flexDirection: "row",
         alignItems: "center",
+        borderBottomWidth: 1,
+        borderBottomColor: "#F3F4F6",
       }}
     >
       <View
@@ -781,12 +869,14 @@ const ReviewsSection = ({
       <View
         style={{
           backgroundColor: "#FFFFFF",
-          borderRadius: 12,
-          borderWidth: 1,
+          borderRadius: 0,
+          borderWidth: 0,
           borderColor: "#E5E7EB",
           padding: 20,
-          marginBottom: 12,
+          marginBottom: 0,
           alignItems: "center",
+          borderBottomWidth: 1,
+          borderBottomColor: "#F3F4F6",
         }}
       >
         <Ionicons name="chatbubble-outline" size={32} color="#9CA3AF" />
@@ -801,11 +891,13 @@ const ReviewsSection = ({
     <View
       style={{
         backgroundColor: "#FFFFFF",
-        borderRadius: 12,
-        borderWidth: 1,
+        borderRadius: 0,
+        borderWidth: 0,
         borderColor: "#E5E7EB",
-        padding: 14,
-        marginBottom: 12,
+        padding: 16,
+        marginBottom: 0,
+        borderBottomWidth: 1,
+        borderBottomColor: "#F3F4F6",
       }}
     >
       <View
@@ -880,6 +972,7 @@ const ReviewsSection = ({
 // ─── Main Screen ───────────────────────────────────────────────────────────────
 export default function CustomerViewProductScreen() {
   const { userId } = useAuth();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     id?: string | string[];
     productId?: string | string[];
@@ -901,6 +994,19 @@ export default function CustomerViewProductScreen() {
   const [addingToCart, setAddingToCart] = useState(false);
   const [proofGalleryVisible, setProofGalleryVisible] = useState(false);
   const [proofGalleryImages, setProofGalleryImages] = useState<string[]>([]);
+  // Cart badge animation
+const [cartItemCount, setCartItemCount] = useState(0);
+const cartBadgeScale = useRef(new Animated.Value(1)).current;
+const cartIconRef = useRef<View>(null);
+const productImageRef = useRef<View>(null);
+
+  // Fly-to-cart animation
+  const flyToCartX = useRef(new Animated.Value(0)).current;
+  const flyToCartY = useRef(new Animated.Value(0)).current;
+  const flyToCartScale = useRef(new Animated.Value(1)).current;
+  const flyToCartOpacity = useRef(new Animated.Value(0)).current;
+  const [flyToCartVisible, setFlyToCartVisible] = useState(false);
+  const [flyToCartImageUri, setFlyToCartImageUri] = useState<string>("");
 
   // Toast state
   const [toastVisible, setToastVisible] = useState(false);
@@ -908,6 +1014,7 @@ export default function CustomerViewProductScreen() {
   const [toastType, setToastType] = useState<"success" | "error" | "info">(
     "success",
   );
+  const [showAddedToCartOverlay, setShowAddedToCartOverlay] = useState(false);
 
   const showToast = (
     message: string,
@@ -916,6 +1023,104 @@ export default function CustomerViewProductScreen() {
     setToastMessage(message);
     setToastType(type);
     setToastVisible(true);
+  };
+  const fetchCartCount = async () => {
+    if (!userId) return;
+    try {
+      const response = await AxiosInstance.get(`/view-cart/?user_id=${userId}`);
+      if (response.data.success && response.data.cart_items) {
+        const totalItems = response.data.cart_items.reduce(
+          (sum: number, item: any) => sum + item.quantity, 
+          0
+        );
+        setCartItemCount(totalItems);
+      }
+    } catch (error) {
+      console.error("Error fetching cart count:", error);
+    }
+  };
+  
+  const animateCartBadge = () => {
+    Animated.sequence([
+      Animated.spring(cartBadgeScale, {
+        toValue: 1.6,
+        useNativeDriver: true,
+        damping: 8,
+        stiffness: 150,
+        mass: 0.5,
+      }),
+      Animated.spring(cartBadgeScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        damping: 8,
+        stiffness: 150,
+        mass: 0.5,
+      }),
+    ]).start();
+  };
+
+  // Measure positions and animate fly-to-cart
+  const animateFlyToCart = async (imageUri: string) => {
+    if (!cartIconRef.current) return;
+
+    try {
+      // Reset animation values
+      flyToCartX.setValue(0);
+      flyToCartY.setValue(0);
+      flyToCartScale.setValue(1);
+      flyToCartOpacity.setValue(1);
+
+      setFlyToCartImageUri(imageUri);
+      setFlyToCartVisible(true);
+
+      // Get positions
+      const cartHandle = findNodeHandle(cartIconRef.current);
+      if (!cartHandle) return;
+
+      const cartPos = await new Promise<any>((resolve) => {
+        UIManager.measure(cartHandle, (x, y, w, h, px, py) => {
+          resolve({ x: px, y: py, width: w, height: h });
+        });
+      });
+
+      // Animation starts from the middle of the screen
+      const startX = SCREEN_WIDTH / 2 - 40; // 40 is half of original width (80)
+      const startY = Dimensions.get("window").height / 2 - 40;
+
+      // Calculate deltas to cart icon
+      const deltaX = cartPos.x - startX + (cartPos.width - 80) / 2;
+      const deltaY = cartPos.y - startY + (cartPos.height - 80) / 2;
+
+      // Animate fly-to-cart
+      Animated.parallel([
+        Animated.timing(flyToCartX, {
+          toValue: deltaX,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(flyToCartY, {
+          toValue: deltaY,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(flyToCartScale, {
+          toValue: 0.1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(flyToCartOpacity, {
+          toValue: 0,
+          duration: 600,
+          delay: 200,
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        setFlyToCartVisible(false);
+      });
+    } catch (error) {
+      console.log("Fly-to-cart animation error:", error);
+      setFlyToCartVisible(false);
+    }
   };
 
   const fetchProduct = useCallback(async () => {
@@ -956,6 +1161,12 @@ export default function CustomerViewProductScreen() {
   useEffect(() => {
     fetchProduct();
   }, [fetchProduct]);
+
+  useEffect(() => {
+    if (userId) {
+      fetchCartCount();
+    }
+  }, [userId]);
 
   const productImages = useMemo(() => {
     const mediaItems = product?.media_files ?? product?.media ?? [];
@@ -1037,7 +1248,7 @@ export default function CustomerViewProductScreen() {
     }
   };
 
-  // ── Add to Cart with Toast ───────────────────────────────────────────────
+  // ── Add to Cart ───────────────────────────────────────────────────────────────
   const addToCart = async () => {
     if (!userId) {
       Alert.alert("Sign In Required", "Please sign in to add items to cart");
@@ -1051,26 +1262,48 @@ export default function CustomerViewProductScreen() {
       Alert.alert("Out of Stock", "This variant is currently out of stock");
       return;
     }
+    
     setAddingToCart(true);
+    
+    // Trigger fly-to-cart animation with product image
+    const imageUri = resolveVariantImageUrl(selectedVariant) || productImages[selectedImageIndex];
+    if (imageUri) {
+      animateFlyToCart(imageUri);
+    }
+
     try {
       const response = await AxiosInstance.post("/view-cart/", {
         user_id: userId,
         variant_id: selectedVariant.id,
         quantity,
       });
-      const isCreated = response.data?.created === true;
-      showToast(
-        isCreated
-          ? `${product?.name} added to cart!`
-          : `Cart updated — ${response.data?.cart_item?.quantity ?? quantity} item(s) in cart.`,
-        "success",
-      );
+      
+      // Show center overlay
+      setShowAddedToCartOverlay(true);
+      
+      // Update cart count and animate badge
+      await fetchCartCount();
+      animateCartBadge();
+      
     } catch (err: any) {
-      const msg =
-        err.response?.data?.error ??
-        err.response?.data?.detail ??
-        "Failed to add to cart.";
-      showToast(msg, "error");
+      // Handle the error without showing "Request failed"
+      const errorData = err.response?.data;
+      
+      // Check for max quantity error
+      if (errorData?.error && errorData.error.includes("Only") && errorData.error.includes("available")) {
+        showToast(errorData.error, "info");
+      } 
+      // Check for other known errors
+      else if (errorData?.error) {
+        showToast(errorData.error, "info");
+      }
+      else if (errorData?.detail) {
+        showToast(errorData.detail, "info");
+      }
+      // Don't show anything for generic errors - just log
+      else {
+        console.log("Add to cart error:", err);
+      }
     } finally {
       setAddingToCart(false);
     }
@@ -1157,7 +1390,7 @@ export default function CustomerViewProductScreen() {
   const isInStock = selectedVariant?.in_stock ?? product.has_stock;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F9FAFB" }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#F9FAFB" }} edges={['bottom', 'left', 'right']}>
       {/* Toast */}
       <ToastNotification
         visible={toastVisible}
@@ -1165,16 +1398,21 @@ export default function CustomerViewProductScreen() {
         type={toastType}
         onHide={() => setToastVisible(false)}
       />
+      
+      {/* Added to Cart Overlay */}
+      <AddedToCartOverlay
+        visible={showAddedToCartOverlay}
+        onHide={() => setShowAddedToCartOverlay(false)}
+      />
 
       {/* Header */}
       <View
         style={{
           paddingHorizontal: 16,
-          paddingVertical: 10,
+          paddingTop: insets.top + 10,
+          paddingBottom: 10,
           flexDirection: "row",
           alignItems: "center",
-          borderBottomWidth: 1,
-          borderBottomColor: "#E5E7EB",
           backgroundColor: "#FFFFFF",
         }}
       >
@@ -1190,16 +1428,39 @@ export default function CustomerViewProductScreen() {
         >
           Product Details
         </Text>
-        <TouchableOpacity
-          onPress={() => router.push("/customer/cart")}
-          style={{ padding: 8 }}
-        >
-          <Ionicons name="cart-outline" size={24} color="#111827" />
-        </TouchableOpacity>
+        <View ref={cartIconRef}>
+  <TouchableOpacity
+    onPress={() => router.push("/customer/cart")}
+    style={{ padding: 8, position: 'relative' }}
+  >
+    <Ionicons name="cart-outline" size={24} color="#111827" />
+    {cartItemCount > 0 && (
+      <Animated.View
+        style={{
+          position: 'absolute',
+          top: 2,
+          right: 2,
+          backgroundColor: '#F97316',
+          borderRadius: 10,
+          minWidth: 18,
+          height: 18,
+          justifyContent: 'center',
+          alignItems: 'center',
+          paddingHorizontal: 4,
+          transform: [{ scale: cartBadgeScale }],
+        }}
+      >
+        <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#FFFFFF' }}>
+          {cartItemCount > 99 ? '99+' : cartItemCount}
+        </Text>
+      </Animated.View>
+    )}
+  </TouchableOpacity>
+</View>
       </View>
 
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+        contentContainerStyle={{ paddingHorizontal: 0, paddingBottom: 120 }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -1212,14 +1473,13 @@ export default function CustomerViewProductScreen() {
       >
         {/* Hero Image Carousel */}
         <View
+          ref={productImageRef}
           style={{
             backgroundColor: "#FFFFFF",
-            borderBottomWidth: 1,
-            borderColor: "#E5E7EB",
             overflow: "hidden",
-            marginBottom: 12,
-            marginTop: -16,
-            marginHorizontal: -16,
+            marginBottom: 0,
+            marginTop: 20,
+            marginHorizontal: 0,
           }}
         >
           {productImages.length > 0 ? (
@@ -1289,7 +1549,7 @@ export default function CustomerViewProductScreen() {
             </View>
           )}
 
-          <View style={{ padding: 16 }}>
+          <View style={{ padding: 16, marginTop: 12 }}>
             <View
               style={{
                 flexDirection: "row",
@@ -1449,11 +1709,13 @@ export default function CustomerViewProductScreen() {
           <View
             style={{
               backgroundColor: "#FFFFFF",
-              borderRadius: 12,
-              borderWidth: 1,
+              borderRadius: 0,
+              borderWidth: 0,
               borderColor: "#E5E7EB",
-              padding: 14,
-              marginBottom: 12,
+              padding: 16,
+              marginBottom: 0,
+              marginHorizontal: 0,
+              paddingTop: 12,
             }}
           >
             <Text
@@ -1609,16 +1871,17 @@ export default function CustomerViewProductScreen() {
           />
         )}
 
-        {/* Quantity Selector - OLD UI STYLE */}
+        {/* Quantity Selector - single-line layout */}
         {selectedVariant && selectedVariant.in_stock && (
           <View
             style={{
               backgroundColor: "#FFFFFF",
-              borderRadius: 12,
-              borderWidth: 1,
+              borderRadius: 0,
+              borderWidth: 0,
               borderColor: "#E5E7EB",
-              padding: 14,
-              marginBottom: 12,
+              paddingHorizontal: 16,
+              paddingVertical: 12,
+              marginBottom: 0,
             }}
           >
             <Text
@@ -1626,63 +1889,57 @@ export default function CustomerViewProductScreen() {
                 fontSize: 14,
                 fontWeight: "700",
                 color: "#111827",
-                marginBottom: 12,
+                marginBottom: 8,
               }}
             >
               Quantity
             </Text>
-            <View
-              style={{ flexDirection: "row", alignItems: "center", gap: 16 }}
-            >
-              <TouchableOpacity
-                onPress={() => setQuantity(Math.max(1, quantity - 1))}
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 8,
-                  backgroundColor: "#F3F4F6",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons name="remove" size={20} color="#374151" />
-              </TouchableOpacity>
-              <Text
-                style={{
-                  fontSize: 18,
-                  fontWeight: "600",
-                  color: "#111827",
-                  minWidth: 32,
-                  textAlign: "center",
-                }}
-              >
-                {quantity}
-              </Text>
-              <TouchableOpacity
-                onPress={() =>
-                  setQuantity(
-                    Math.min(
-                      selectedVariant.available_quantity ?? 99,
-                      quantity + 1,
-                    ),
-                  )
-                }
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 8,
-                  backgroundColor: "#F3F4F6",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons name="add" size={20} color="#374151" />
-              </TouchableOpacity>
-              <Text
-                style={{ fontSize: 13, color: "#6B7280", marginLeft: "auto" }}
-              >
+
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={{ fontSize: 13, color: "#6B7280" }}>
                 {selectedVariant.available_quantity ?? 0} available
               </Text>
+
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <TouchableOpacity
+                  onPress={() => setQuantity(Math.max(1, quantity - 1))}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    backgroundColor: "#F3F4F6",
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                >
+                  <Ionicons name="remove" size={18} color="#374151" />
+                </TouchableOpacity>
+
+                <Text style={{ fontSize: 16, fontWeight: "600", color: "#111827", minWidth: 28, textAlign: "center" }}>
+                  {quantity}
+                </Text>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    const maxQty = selectedVariant.available_quantity ?? 99;
+                    if (quantity + 1 > maxQty) {
+                      showToast(`Maximum ${maxQty} items available`, "info");
+                    } else {
+                      setQuantity(quantity + 1);
+                    }
+                  }}
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    backgroundColor: "#F3F4F6",
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                >
+                  <Ionicons name="add" size={18} color="#374151" />
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         )}
@@ -1693,6 +1950,8 @@ export default function CustomerViewProductScreen() {
           averageRating={product.average_rating}
           totalReviews={product.total_reviews}
         />
+        {/* Divider below reviews */}
+        <View style={{ height: 1, backgroundColor: '#E5E7EB', marginTop: 12, marginBottom: 8 }} />
       </ScrollView>
 
       {/* ── Footer Action Bar ─────────────────────────────────────────────── */}
@@ -1705,10 +1964,10 @@ export default function CustomerViewProductScreen() {
             right: 0,
             backgroundColor: "#FFFFFF",
             borderTopWidth: 1,
-            borderTopColor: "#E5E7EB",
+            borderTopColor: "#F3F4F6",
             paddingHorizontal: 16,
-            paddingVertical: 12,
-            paddingBottom: 20,
+            paddingVertical: 10,
+            paddingBottom: 16,
             flexDirection: "row",
             gap: 10,
           }}
@@ -1719,29 +1978,22 @@ export default function CustomerViewProductScreen() {
             disabled={addingToCart}
             style={{
               flex: 1,
-              borderWidth: 2,
-              borderColor: "#F97316",
-              borderRadius: 10,
-              paddingVertical: 14,
+              borderWidth: 1,
+              borderColor: "#EA580C",
+              borderRadius: 8,
+              paddingVertical: 12,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
-              gap: 8,
+              gap: 6,
               backgroundColor: "#FFFFFF",
+              opacity: addingToCart ? 0.6 : 1,
             }}
           >
-            {addingToCart ? (
-              <ActivityIndicator size="small" color="#F97316" />
-            ) : (
-              <>
-                <Ionicons name="cart-outline" size={20} color="#F97316" />
-                <Text
-                  style={{ fontSize: 14, fontWeight: "700", color: "#F97316" }}
-                >
-                  Add to Cart
-                </Text>
-              </>
-            )}
+            <Ionicons name="cart-outline" size={18} color="#EA580C" />
+            <Text style={{ fontSize: 13, fontWeight: "600", color: "#EA580C" }}>
+              Add to Cart
+            </Text>
           </TouchableOpacity>
 
           {/* Buy Now */}
@@ -1750,18 +2002,18 @@ export default function CustomerViewProductScreen() {
             disabled={addingToCart}
             style={{
               flex: 1,
-              backgroundColor: addingToCart ? "#F97316" : "#EA580C",
-              borderRadius: 10,
-              paddingVertical: 14,
+              backgroundColor: "#EA580C",
+              borderRadius: 8,
+              paddingVertical: 12,
               flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
-              gap: 8,
-              opacity: addingToCart ? 0.7 : 1,
+              gap: 6,
+              opacity: addingToCart ? 0.6 : 1,
             }}
           >
-            <Ionicons name="flash-outline" size={20} color="#FFFFFF" />
-            <Text style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}>
+            <Ionicons name="flash-outline" size={18} color="#FFFFFF" />
+            <Text style={{ fontSize: 13, fontWeight: "600", color: "#FFFFFF" }}>
               Buy Now
             </Text>
           </TouchableOpacity>
@@ -1773,22 +2025,24 @@ export default function CustomerViewProductScreen() {
             bottom: 0,
             left: 0,
             right: 0,
-            backgroundColor: "#F9FAFB",
+            backgroundColor: "#FFFFFF",
             borderTopWidth: 1,
-            borderTopColor: "#E5E7EB",
-            padding: 16,
-            paddingBottom: 20,
+            borderTopColor: "#F3F4F6",
+            paddingHorizontal: 16,
+            paddingVertical: 12,
+            paddingBottom: 16,
           }}
         >
           <View
             style={{
               backgroundColor: "#FEE2E2",
-              borderRadius: 10,
-              padding: 14,
+              borderRadius: 8,
+              paddingVertical: 10,
+              paddingHorizontal: 12,
               alignItems: "center",
             }}
           >
-            <Text style={{ fontSize: 14, color: "#DC2626", fontWeight: "700" }}>
+            <Text style={{ fontSize: 13, color: "#DC2626", fontWeight: "600" }}>
               Currently Out of Stock
             </Text>
           </View>
@@ -1810,6 +2064,36 @@ export default function CustomerViewProductScreen() {
         initialIndex={0}
         onClose={() => setProofGalleryVisible(false)}
       />
+
+      {/* Fly-to-cart animation */}
+      {flyToCartVisible && flyToCartImageUri && (
+        <Animated.View
+          style={{
+            position: "absolute",
+            top: Dimensions.get("window").height / 2 - 40,
+            left: Dimensions.get("window").width / 2 - 40,
+            zIndex: 9999,
+            width: 80,
+            height: 80,
+            transform: [
+              { translateX: flyToCartX },
+              { translateY: flyToCartY },
+              { scale: flyToCartScale },
+            ],
+            opacity: flyToCartOpacity,
+          }}
+        >
+          <Image
+            source={{ uri: flyToCartImageUri }}
+            style={{
+              width: "100%",
+              height: "100%",
+              borderRadius: 8,
+            }}
+            resizeMode="cover"
+          />
+        </Animated.View>
+      )}
     </SafeAreaView>
   );
 }

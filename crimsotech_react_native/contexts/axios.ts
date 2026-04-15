@@ -21,7 +21,7 @@ AxiosInstance.interceptors.request.use(
   (config) => {
     console.log('📤 Request:', {
       method: config.method?.toUpperCase(),
-      url: config.baseURL + config.url,
+      url: (config.baseURL || '') + config.url,
       data: config.data,
     });
     return config;
@@ -32,7 +32,7 @@ AxiosInstance.interceptors.request.use(
   }
 );
 
-// Add response interceptor for debugging
+// Add response interceptor for debugging - FILTER OUT CART MAX QUANTITY ERRORS
 AxiosInstance.interceptors.response.use(
   (response) => {
     console.log('📥 Response:', {
@@ -43,12 +43,26 @@ AxiosInstance.interceptors.response.use(
     return response;
   },
   (error) => {
-    console.error('📥 Response Error:', {
-      message: error.message,
-      status: error.response?.status,
-      data: error.response?.data,
-      url: error.config?.baseURL + error.config?.url,
-    });
+    // Check if this is a "max quantity reached" error from cart endpoint
+    const isCartMaxQuantityError = 
+      error.config?.url?.includes('/view-cart/') &&
+      error.response?.status === 400 &&
+      error.response?.data?.error &&
+      (error.response?.data?.error.includes('Only') || 
+       error.response?.data?.error.includes('available'));
+
+    // Don't log these expected errors - just show as warning instead
+    if (isCartMaxQuantityError) {
+      console.warn('📢 Max quantity reached:', error.response?.data?.error);
+    } else {
+      console.error('📥 Response Error:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+        url: error.config?.baseURL + error.config?.url,
+      });
+    }
+    
     return Promise.reject(error);
   }
 );
