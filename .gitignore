@@ -106,3 +106,4 @@ crimsotech_react_native/android/
 crimsotech_react_native/.env
 
 crimsotech_django/backend/backend/settings.py
+crimsotech_django/backend/debug.log

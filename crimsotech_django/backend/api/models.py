@@ -259,6 +259,8 @@ class Shop(models.Model):
     is_suspended = models.BooleanField(default=False)
     suspension_reason = models.TextField(blank=True, null=True)
     suspended_until = models.DateTimeField(blank=True, null=True)
+    latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
 
     # ── Legal Requirements ───────────────────────────────────────────────────
 

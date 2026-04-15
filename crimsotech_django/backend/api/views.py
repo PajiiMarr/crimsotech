@@ -1,3 +1,4 @@
+import requests
 from asyncio.log import logger
 from django.db import transaction
 from decimal import Decimal, ROUND_HALF_UP
@@ -23394,9 +23395,138 @@ class SellerOrderList(viewsets.ViewSet):
             import traceback
             print(traceback.format_exc())
             return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)
-        
+
 class CheckoutOrder(viewsets.ViewSet):
     
+    def _calculate_haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """
+        Calculate straight-line distance using Haversine formula (fallback)
+        Returns distance in kilometers
+        """
+        from math import radians, sin, cos, sqrt, atan2
+        
+        R = 6371  # Earth's radius in kilometers
+        
+        lat1_rad = radians(lat1)
+        lat2_rad = radians(lat2)
+        delta_lat = radians(lat2 - lat1)
+        delta_lon = radians(lon2 - lon1)
+        
+        a = sin(delta_lat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        
+        return R * c
+    
+    def _get_google_maps_distance(self, origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float) -> float:
+        """
+        Calculate actual driving distance using Google Maps Distance Matrix API
+        Returns distance in kilometers
+        """
+        GOOGLE_MAPS_API_KEY = getattr(settings, 'GOOGLE_MAPS_API_KEY', None)
+        
+        if not GOOGLE_MAPS_API_KEY:
+            logger.warning("Google Maps API key not configured, using Haversine fallback")
+            return None
+        
+        try:
+            url = "https://maps.googleapis.com/maps/api/distancematrix/json"
+            params = {
+                'origins': f"{origin_lat},{origin_lng}",
+                'destinations': f"{dest_lat},{dest_lng}",
+                'key': GOOGLE_MAPS_API_KEY,
+                'units': 'metric'
+            }
+            
+            print(f"[DISTANCE] Google Maps Request URL: {url}")
+            print(f"[DISTANCE] Origins: {origin_lat},{origin_lng}")
+            print(f"[DISTANCE] Destinations: {dest_lat},{dest_lng}")
+            
+            response = requests.get(url, params=params, timeout=5)
+            data = response.json()
+            
+            print(f"[DISTANCE] Google Maps Response Status: {data.get('status')}")
+            
+            if data.get('status') == 'OK':
+                rows = data.get('rows', [])
+                if rows:
+                    elements = rows[0].get('elements', [])
+                    if elements and elements[0].get('status') == 'OK':
+                        distance_meters = elements[0].get('distance', {}).get('value', 0)
+                        if distance_meters > 0:
+                            distance_km = distance_meters / 1000
+                            logger.info(f"📍 Google Maps driving distance: {distance_km} km")
+                            print(f"[DISTANCE] ✅ Google Maps distance: {distance_km} km")
+                            return distance_km
+                        else:
+                            print(f"[DISTANCE] ⚠️ Distance value is 0")
+                    else:
+                        print(f"[DISTANCE] ⚠️ Element status: {elements[0].get('status') if elements else 'No elements'}")
+                else:
+                    print(f"[DISTANCE] ⚠️ No rows in response")
+            
+            logger.warning(f"Google Maps API returned status: {data.get('status')}")
+            print(f"[DISTANCE] ❌ Google Maps API returned status: {data.get('status')}")
+            return None
+            
+        except requests.exceptions.Timeout:
+            logger.error("Google Maps API timeout")
+            print(f"[DISTANCE] ❌ Google Maps API timeout")
+            return None
+        except Exception as e:
+            logger.error(f"Google Maps API error: {str(e)}")
+            print(f"[DISTANCE] ❌ Google Maps API error: {str(e)}")
+            return None
+    
+    def _calculate_distance(self, origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float) -> float:
+        """
+        Calculate distance using Google Maps API first, fallback to Haversine
+        Returns distance in kilometers
+        """
+        print(f"[DISTANCE] Calculating distance between ({origin_lat}, {origin_lng}) and ({dest_lat}, {dest_lng})")
+        
+        # Try Google Maps API first
+        google_distance = self._get_google_maps_distance(origin_lat, origin_lng, dest_lat, dest_lng)
+        
+        if google_distance is not None and google_distance > 0:
+            print(f"[DISTANCE] Using Google Maps result: {google_distance} km")
+            return google_distance
+        
+        # Fallback to Haversine (add 30% buffer to approximate road distance)
+        haversine_distance = self._calculate_haversine_distance(origin_lat, origin_lng, dest_lat, dest_lng)
+        road_estimate = haversine_distance * 1.3  # 30% buffer for roads
+        logger.info(f"📍 Using Haversine fallback: {haversine_distance:.2f} km (straight line), {road_estimate:.2f} km (estimated road)")
+        print(f"[DISTANCE] Using Haversine fallback: {haversine_distance:.2f} km (straight), {road_estimate:.2f} km (estimated road)")
+        return road_estimate
+    
+    def _format_distance(self, distance_km: float) -> str:
+        """Format distance in kilometers or meters for display"""
+        if distance_km is None:
+            return "Unknown"
+        if distance_km < 1:
+            return f"{int(distance_km * 1000)} meters"
+        return f"{distance_km:.1f} km"
+    
+    def _calculate_delivery_fee(self, distance_km: float) -> float:
+        """
+        Calculate dynamic delivery fee based on distance
+        Base fee: ₱40 for up to 1km, additional ₱10 per km beyond 1km
+        Capped at ₱300
+        """
+        if distance_km <= 0:
+            print(f"[FEE] Distance is 0 or less, returning base fee ₱40.00")
+            return 40.00
+        
+        if distance_km <= 1:
+            fee = 40.00
+        else:
+            additional_km = distance_km - 1
+            fee = 40.00 + (additional_km * 10.00)
+            fee = min(fee, 300.00)
+        
+        logger.info(f"💰 Delivery fee calculated: ₱{fee:.2f} for {distance_km:.2f} km")
+        print(f"[FEE] Delivery fee: ₱{fee:.2f} for {distance_km:.2f} km")
+        return fee
+
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')
     def get_checkout_items(self, request):
         user_id = request.GET.get("user_id")
@@ -23405,12 +23535,19 @@ class CheckoutOrder(viewsets.ViewSet):
         selected_ids_str = request.GET.get("selected", "")
         selected_address_id = request.GET.get("selected_address_id", None)
 
+        print("=" * 80)
+        print("[CHECKOUT] ===== STARTING CHECKOUT =====")
+        print(f"[CHECKOUT] User ID: {user_id}")
+        print(f"[CHECKOUT] Selected Address ID: {selected_address_id}")
+        print(f"[CHECKOUT] Product ID: {product_id}")
+        print(f"[CHECKOUT] Cart ID: {cart_id}")
+        print("=" * 80)
+
         if not user_id:
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Determine which entry point was used
         if cart_id:
-            # Direct cart checkout - get all items in the cart
             try:
                 cart_items = CartItem.objects.filter(
                     user_id=user_id,
@@ -23421,9 +23558,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     "product__shop",
                     "product__customer__customer",
                     "variant"
-                ).prefetch_related(
-                    'product__productmedia_set'
-                )
+                ).prefetch_related('product__productmedia_set')
                 
                 if not cart_items.exists():
                     return Response(
@@ -23437,11 +23572,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 )
                 
         elif product_id:
-            # Direct product checkout (Buy Now)
             try:
-                from django.db.models import Q
-                
-                # Get the product and its default variant or first available variant
                 product = Product.objects.filter(id=product_id).first()
                 if not product:
                     return Response(
@@ -23449,7 +23580,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_404_NOT_FOUND
                     )
                 
-                # Get the default variant or first active variant
                 variant = Variants.objects.filter(
                     product_id=product_id,
                     is_active=True
@@ -23461,7 +23591,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 
-                # Create a temporary cart item-like structure
                 from collections import namedtuple
                 TempCartItem = namedtuple('TempCartItem', [
                     'id', 'product', 'variant', 'quantity', 'is_ordered', 'added_at'
@@ -23484,7 +23613,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 )
                 
         elif selected_ids_str:
-            # Selected cart items checkout
             selected_ids = selected_ids_str.split(',')
             
             cart_items = CartItem.objects.filter(
@@ -23496,9 +23624,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 "product__shop",
                 "product__customer__customer",
                 "variant"
-            ).prefetch_related(
-                'product__productmedia_set'
-            )
+            ).prefetch_related('product__productmedia_set')
 
             if not cart_items.exists():
                 return Response(
@@ -23526,11 +23652,9 @@ class CheckoutOrder(viewsets.ViewSet):
             )
 
         try:
-            # If cart_items is not a list (for product_id case), convert to list for iteration
             if product_id and not isinstance(cart_items, list):
                 cart_items = list(cart_items)
                 
-            # Validate variant selection for product checkout
             if product_id and cart_items:
                 cart_item = cart_items[0]
                 if cart_item.product and not cart_item.variant:
@@ -23548,7 +23672,6 @@ class CheckoutOrder(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
             
-            # Validate variants for cart items (if not product checkout)
             if not product_id:
                 for cart_item in cart_items:
                     if cart_item.product and not cart_item.variant:
@@ -23572,7 +23695,7 @@ class CheckoutOrder(viewsets.ViewSet):
             shop_addresses = {}
             personal_seller_addresses = {}
 
-            # Get selected shipping address for potential future distance calculation
+            # Get selected shipping address for distance calculation
             selected_shipping_address = None
             if selected_address_id:
                 try:
@@ -23581,26 +23704,72 @@ class CheckoutOrder(viewsets.ViewSet):
                         user_id=user_id,
                         is_active=True
                     )
+                    
+                    print("=" * 80)
+                    print("📍 [CUSTOMER ADDRESS DETAILS]")
+                    print(f"  ID: {selected_shipping_address.id}")
+                    print(f"  Recipient Name: {selected_shipping_address.recipient_name}")
+                    print(f"  Phone: {selected_shipping_address.recipient_phone}")
+                    print(f"  Street: {selected_shipping_address.street}")
+                    print(f"  Barangay: {selected_shipping_address.barangay}")
+                    print(f"  City: {selected_shipping_address.city}")
+                    print(f"  Province: {selected_shipping_address.province}")
+                    print(f"  ZIP Code: {selected_shipping_address.zip_code}")
+                    print(f"  Country: {selected_shipping_address.country}")
+                    print(f"  Building: {selected_shipping_address.building_name}")
+                    print(f"  Floor: {selected_shipping_address.floor_number}")
+                    print(f"  Unit: {selected_shipping_address.unit_number}")
+                    print(f"  Landmark: {selected_shipping_address.landmark}")
+                    print(f"  Instructions: {selected_shipping_address.instructions}")
+                    print(f"  Address Type: {selected_shipping_address.address_type}")
+                    print(f"  Is Default: {selected_shipping_address.is_default}")
+                    print(f"  Full Address: {selected_shipping_address.get_full_address()}")
+                    print(f"  Latitude: {selected_shipping_address.latitude}")
+                    print(f"  Longitude: {selected_shipping_address.longitude}")
+                    print("=" * 80)
+                    
+                    logger.info(f"🏠 Customer selected address: {selected_shipping_address.get_full_address()}")
+                    logger.info(f"📍 Customer coordinates: ({selected_shipping_address.latitude}, {selected_shipping_address.longitude})")
                 except ShippingAddress.DoesNotExist:
+                    print(f"[ADDRESS] ❌ Shipping address {selected_address_id} not found")
                     pass
+            else:
+                print(f"[ADDRESS] ❌ No selected_address_id provided in request")
 
             for cart_item in cart_items:
                 product = cart_item.product
                 variant = cart_item.variant
                 shop = product.shop if product else None
 
-                # Get address based on whether product has shop or is personal listing
                 if shop:
-                    # Product has a shop - use shop address
                     shop_ids.add(shop.id)
                     if shop.id not in shop_addresses:
-                        # Calculate distance from selected address to shop (if coordinates available)
+                        print("=" * 80)
+                        print("🏪 [SELLER SHOP ADDRESS DETAILS]")
+                        print(f"  Shop ID: {shop.id}")
+                        print(f"  Shop Name: {shop.name}")
+                        print(f"  Description: {shop.description}")
+                        print(f"  Street: {shop.street}")
+                        print(f"  Barangay: {shop.barangay}")
+                        print(f"  City: {shop.city}")
+                        print(f"  Province: {shop.province}")
+                        print(f"  Contact Number: {shop.contact_number}")
+                        print(f"  Verified: {shop.verified}")
+                        print(f"  Status: {shop.status}")
+                        print(f"  Full Address: {shop.street}, {shop.barangay}, {shop.city}, {shop.province}")
+                        print(f"  Latitude: {shop.latitude}")
+                        print(f"  Longitude: {shop.longitude}")
+                        print("=" * 80)
+                        
+                        logger.info(f"🏪 Seller Shop: {shop.name}")
+                        logger.info(f"📍 Shop address: {shop.street}, {shop.barangay}, {shop.city}, {shop.province}")
+                        
                         distance_km = None
                         distance_text = None
                         if selected_shipping_address and selected_shipping_address.latitude and selected_shipping_address.longitude:
-                            # Check if shop has latitude/longitude fields
-                            if hasattr(shop, 'latitude') and shop.latitude and hasattr(shop, 'longitude') and shop.longitude:
+                            if shop.latitude and shop.longitude:
                                 try:
+                                    print(f"[DISTANCE] 🔄 Calculating distance from customer to shop...")
                                     distance_km = self._calculate_distance(
                                         float(selected_shipping_address.latitude),
                                         float(selected_shipping_address.longitude),
@@ -23608,8 +23777,15 @@ class CheckoutOrder(viewsets.ViewSet):
                                         float(shop.longitude)
                                     )
                                     distance_text = self._format_distance(distance_km)
-                                except (ValueError, TypeError):
+                                    print(f"[DISTANCE] ✅ Calculated distance: {distance_km} km ({distance_text})")
+                                    logger.info(f"📏 Calculated distance: {distance_text}")
+                                except (ValueError, TypeError) as e:
+                                    print(f"[DISTANCE] ❌ Error calculating distance: {e}")
                                     pass
+                            else:
+                                print(f"[DISTANCE] ❌ Shop missing coordinates! Lat: {shop.latitude}, Lng: {shop.longitude}")
+                        else:
+                            print(f"[DISTANCE] ❌ Cannot calculate distance - missing customer coordinates")
                         
                         shop_addresses[shop.id] = {
                             'shop_id': str(shop.id),
@@ -23625,12 +23801,10 @@ class CheckoutOrder(viewsets.ViewSet):
                             'distance_text': distance_text
                         }
                 elif product and product.customer:
-                    # Personal listing (no shop) - use customer/seller address
                     seller_user = product.customer.customer
                     seller_id = str(seller_user.id)
                     
                     if seller_id not in personal_seller_addresses:
-                        # Build address from seller's user profile
                         address_parts = [
                             seller_user.street,
                             seller_user.barangay,
@@ -23639,13 +23813,31 @@ class CheckoutOrder(viewsets.ViewSet):
                         ]
                         full_address = ', '.join(filter(None, address_parts))
                         
-                        # Calculate distance from selected address to seller (if coordinates available)
+                        print("=" * 80)
+                        print("👤 [PERSONAL SELLER ADDRESS DETAILS]")
+                        print(f"  Seller ID: {seller_id}")
+                        print(f"  Seller Name: {seller_user.first_name} {seller_user.last_name}")
+                        print(f"  Username: {seller_user.username}")
+                        print(f"  Email: {seller_user.email}")
+                        print(f"  Phone: {seller_user.contact_number}")
+                        print(f"  Street: {seller_user.street}")
+                        print(f"  Barangay: {seller_user.barangay}")
+                        print(f"  City: {seller_user.city}")
+                        print(f"  Province: {seller_user.province}")
+                        print(f"  Full Address: {full_address}")
+                        print(f"  Latitude: {seller_user.latitude if hasattr(seller_user, 'latitude') else 'N/A'}")
+                        print(f"  Longitude: {seller_user.longitude if hasattr(seller_user, 'longitude') else 'N/A'}")
+                        print("=" * 80)
+                        
+                        logger.info(f"👤 Personal Seller: {seller_user.first_name} {seller_user.last_name}")
+                        logger.info(f"📍 Seller address: {full_address}")
+                        
                         distance_km = None
                         distance_text = None
                         if selected_shipping_address and selected_shipping_address.latitude and selected_shipping_address.longitude:
-                            # Check if user has latitude/longitude fields
                             if hasattr(seller_user, 'latitude') and seller_user.latitude and hasattr(seller_user, 'longitude') and seller_user.longitude:
                                 try:
+                                    logger.info(f"🔄 Calculating distance from customer to seller...")
                                     distance_km = self._calculate_distance(
                                         float(selected_shipping_address.latitude),
                                         float(selected_shipping_address.longitude),
@@ -23653,7 +23845,9 @@ class CheckoutOrder(viewsets.ViewSet):
                                         float(seller_user.longitude)
                                     )
                                     distance_text = self._format_distance(distance_km)
-                                except (ValueError, TypeError):
+                                    logger.info(f"📏 Calculated distance: {distance_text}")
+                                except (ValueError, TypeError) as e:
+                                    logger.error(f"Error calculating distance: {e}")
                                     pass
                         
                         personal_seller_addresses[seller_id] = {
@@ -23728,9 +23922,34 @@ class CheckoutOrder(viewsets.ViewSet):
 
             subtotal = sum(item["subtotal"] for item in checkout_items)
             
-            # Calculate dynamic delivery fee based on farthest distance (if distances available)
-            delivery = self._calculate_delivery_fee(shop_addresses, personal_seller_addresses)
+            max_distance = 0
+            for shop_id, shop_info in shop_addresses.items():
+                distance = shop_info.get('distance_km', 0)
+                if distance and distance > max_distance:
+                    max_distance = distance
+                    print(f"[DISTANCE] Farthest shop: {shop_info.get('shop_name')} - Distance: {distance} km")
+            
+            for seller_id, seller_info in personal_seller_addresses.items():
+                distance = seller_info.get('distance_km', 0)
+                if distance and distance > max_distance:
+                    max_distance = distance
+                    print(f"[DISTANCE] Farthest personal seller: {seller_info.get('seller_name')} - Distance: {distance} km")
+            
+            print(f"[DISTANCE] Max distance found: {max_distance} km")
+            
+            delivery = self._calculate_delivery_fee(max_distance)
             total = subtotal + delivery
+            
+            print("=" * 80)
+            print("[TOTALS]")
+            print(f"  Subtotal: ₱{subtotal:.2f}")
+            print(f"  Delivery Fee: ₱{delivery:.2f}")
+            print(f"  Total: ₱{total:.2f}")
+            print("=" * 80)
+            
+            logger.info(f"💰 Subtotal: ₱{subtotal:.2f}")
+            logger.info(f"💰 Delivery Fee: ₱{delivery:.2f} (based on {max_distance:.2f} km distance)")
+            logger.info(f"💰 Total: ₱{total:.2f}")
 
             user_purchase_history = self._get_user_purchase_history(user_id)
 
@@ -23761,7 +23980,6 @@ class CheckoutOrder(viewsets.ViewSet):
 
             default_address = formatted_addresses[0] if formatted_addresses else None
             
-            # Combine shop addresses and personal seller addresses
             all_seller_addresses = list(shop_addresses.values()) + list(personal_seller_addresses.values())
 
             response_data = {
@@ -23773,7 +23991,9 @@ class CheckoutOrder(viewsets.ViewSet):
                     "total": total,
                     "item_count": len(checkout_items),
                     "shop_count": len(shop_ids),
-                    "personal_seller_count": len(personal_seller_addresses)
+                    "personal_seller_count": len(personal_seller_addresses),
+                    "distance_km": max_distance,
+                    "distance_text": self._format_distance(max_distance)
                 },
                 "available_vouchers": available_vouchers,
                 "user_purchase_stats": user_purchase_history,
@@ -23788,77 +24008,12 @@ class CheckoutOrder(viewsets.ViewSet):
             logger.error(f"Error in get_checkout_items: {str(e)}")
             import traceback
             traceback.print_exc()
+            print(f"[ERROR] {str(e)}")
             return Response(
                 {"error": "Internal server error", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """
-        Calculate distance between two coordinates using Haversine formula
-        Returns distance in kilometers
-        """
-        from math import radians, sin, cos, sqrt, atan2
-        
-        R = 6371  # Earth's radius in kilometers
-        
-        lat1_rad = radians(lat1)
-        lat2_rad = radians(lat2)
-        delta_lat = radians(lat2 - lat1)
-        delta_lon = radians(lon2 - lon1)
-        
-        a = sin(delta_lat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
-        c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        
-        return R * c
-    
-    def _format_distance(self, distance_km: float) -> str:
-        """Format distance in kilometers or meters for display"""
-        if distance_km is None:
-            return "Unknown"
-        if distance_km < 1:
-            return f"{int(distance_km * 1000)} meters"
-        return f"{distance_km:.1f} km"
-    
-    def _calculate_delivery_fee(self, shop_addresses: dict, personal_seller_addresses: dict) -> float:
-        """
-        Calculate dynamic delivery fee based on the farthest distance
-        Base fee: ₱50 for up to 5km, additional ₱10 per km beyond 5km
-        Capped at ₱300
-        If no distances available, return default ₱50
-        """
-        max_distance = 0
-        has_valid_distance = False
-        
-        # Check distances from shop addresses
-        for shop_id, shop_info in shop_addresses.items():
-            distance = shop_info.get('distance_km')
-            if distance and isinstance(distance, (int, float)) and distance > 0:
-                has_valid_distance = True
-                if distance > max_distance:
-                    max_distance = distance
-        
-        # Check distances from personal seller addresses
-        for seller_id, seller_info in personal_seller_addresses.items():
-            distance = seller_info.get('distance_km')
-            if distance and isinstance(distance, (int, float)) and distance > 0:
-                has_valid_distance = True
-                if distance > max_distance:
-                    max_distance = distance
-        
-        # If no valid distances available, return default fee
-        if not has_valid_distance or max_distance == 0:
-            return 50.00  # Base delivery fee
-        
-        # Base fee: ₱50 for up to 5km
-        if max_distance <= 5:
-            return 50.00
-        
-        # ₱50 base + ₱10 per additional km beyond 5km, capped at ₱300
-        additional_km = max_distance - 5
-        fee = 50.00 + (additional_km * 10.00)
-        return min(fee, 300.00)
-
     def _get_user_purchase_history(self, user_id):
         try:
             completed_orders = Order.objects.filter(
@@ -23988,8 +24143,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 addr['id'] = str(addr['id'])
                 parts = [
                     addr.get('building_name'),
-                    addr.get('floor_number') and f"Floor {addr['floor_number']}",
-                    addr.get('unit_number') and f"Unit {addr['unit_number']}",
+                    f"Floor {addr['floor_number']}" if addr.get('floor_number') else None,
+                    f"Unit {addr['unit_number']}" if addr.get('unit_number') else None,
                     addr.get('street'),
                     addr.get('barangay'),
                     addr.get('city'),
@@ -24222,15 +24377,12 @@ class CheckoutOrder(viewsets.ViewSet):
                 )
                 delivery_address_text = shipping_address.get_full_address()
 
-            # Variables for direct checkout
             direct_product = None
             direct_variant = None
             direct_quantity = 1
             is_direct_checkout = False
 
-            # Determine which entry point was used and fetch cart items
             if cart_id:
-                # Direct cart checkout by cart_id
                 cart_items = CartItem.objects.filter(
                     cart_id=cart_id,
                     user=user,
@@ -24249,15 +24401,12 @@ class CheckoutOrder(viewsets.ViewSet):
                     )
                     
             elif product_id and variant_id:
-                # Direct product checkout (Buy Now)
                 is_direct_checkout = True
                 try:
                     direct_product = get_object_or_404(Product, id=product_id)
                     direct_variant = get_object_or_404(Variants, id=variant_id, is_active=True)
                     direct_quantity = int(quantity)
-                    
                     cart_items = []
-                    
                 except Product.DoesNotExist:
                     return Response(
                         {"error": "Product not found"},
@@ -24275,7 +24424,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     )
                     
             elif selected_ids:
-                # Selected cart items checkout
                 cart_items = CartItem.objects.filter(
                     id__in=selected_ids,
                     user=user,
@@ -24302,22 +24450,17 @@ class CheckoutOrder(viewsets.ViewSet):
             subtotal = Decimal('0')
             stock_validation_errors = []
 
-            # Handle direct checkout (Buy Now)
             if is_direct_checkout:
-                # Validate stock
                 if direct_quantity > direct_variant.quantity:
                     return Response({
                         "error": f"Insufficient stock for {direct_variant.title}. Available: {direct_variant.quantity}"
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Calculate subtotal
                 price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
                 subtotal = price * direct_quantity
                 
             else:
-                # Process cart items
                 for cart_item in cart_items:
-                    # Check if product has variants
                     has_variants = Variants.objects.filter(
                         product=cart_item.product,
                         is_active=True
@@ -24330,7 +24473,6 @@ class CheckoutOrder(viewsets.ViewSet):
                             "product_id": str(cart_item.product.id)
                         }, status=status.HTTP_400_BAD_REQUEST)
 
-                    # Get price
                     price = Decimal('0')
                     if cart_item.variant and cart_item.variant.price is not None:
                         price = Decimal(str(cart_item.variant.price))
@@ -24340,7 +24482,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     line_total = price * cart_item.quantity
                     subtotal += line_total
 
-                    # Check stock
                     if cart_item.variant:
                         if cart_item.quantity > cart_item.variant.quantity:
                             stock_validation_errors.append(
@@ -24358,7 +24499,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         "details": stock_validation_errors
                     }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Apply voucher
             discount_amount = Decimal('0')
             voucher = None
             current_date = timezone.now().date()
@@ -24379,14 +24519,11 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            # Calculate delivery fee and total
-            delivery_fee = Decimal('0') if shipping_method.lower() == "pickup" else Decimal('50.00')
+            delivery_fee = Decimal('0') if shipping_method.lower() == "pickup" else Decimal('40.00')
             total_amount = subtotal + delivery_fee - discount_amount
 
-            # Determine initial order status based on payment method
             initial_status = 'pending'
             
-            # Create order
             order = Order.objects.create(
                 user=user,
                 shipping_address=shipping_address,
@@ -24397,7 +24534,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 delivery_address_text=delivery_address_text
             )
             
-            # Store pickup date in metadata for cash on pickup orders
             if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() and pickup_date:
                 order.metadata = order.metadata or {}
                 order.metadata['pickup_date'] = pickup_date
@@ -24406,20 +24542,16 @@ class CheckoutOrder(viewsets.ViewSet):
             cart_item_ids = []
             checkout_items = []
 
-            # Process items based on checkout type
             if is_direct_checkout:
-                # Direct product checkout - create checkout record with product info snapshot
                 unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
                 checkout_total = unit_price * direct_quantity
                 
-                # Get product image URL
                 product_image_url = None
                 if direct_product.productmedia_set.exists():
                     first_media = direct_product.productmedia_set.first()
                     if first_media and first_media.file_data:
                         product_image_url = convert_s3_to_public_url(first_media.file_data.url)
                 
-                # Get variant image URL
                 variant_image_url = None
                 if direct_variant.image:
                     variant_image_url = convert_s3_to_public_url(direct_variant.image.url)
@@ -24460,9 +24592,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 })
                 
             else:
-                # Process cart items
                 for cart_item in cart_items:
-                    # Get unit price
                     if cart_item.variant and cart_item.variant.price is not None:
                         unit_price = Decimal(str(cart_item.variant.price))
                     else:
@@ -24470,7 +24600,6 @@ class CheckoutOrder(viewsets.ViewSet):
 
                     checkout_total = unit_price * cart_item.quantity
 
-                    # Create checkout record
                     checkout_item = Checkout.objects.create(
                         order=order,
                         cart_item=cart_item,
@@ -24498,12 +24627,9 @@ class CheckoutOrder(viewsets.ViewSet):
                         "is_refundable": cart_item.variant.is_refundable if cart_item.variant else getattr(cart_item.product, 'is_refundable', False)
                     })
 
-            # If payment method is Maya, initiate payment
             if payment_method.lower() == 'maya':
-                # Maya payment will be initiated separately
                 payment_status = 'pending'
             else:
-                # For COD/Cash on Pickup, create payment record as pending
                 Payment.objects.create(
                     order=order,
                     amount=total_amount,
@@ -24541,11 +24667,7 @@ class CheckoutOrder(viewsets.ViewSet):
     def get_order_details(self, request, order_id=None):
         try:
             order = get_object_or_404(Order, order=order_id)
-            
-            # Get latest delivery status for proper shipping status
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
-            
-            # Determine shipping status based on order status and delivery status
             shipping_status = self._get_shipping_status(order.status, latest_delivery.status if latest_delivery else None)
 
             order_data = {
@@ -24605,7 +24727,6 @@ class CheckoutOrder(viewsets.ViewSet):
             'picked_up': 'picked_up',
         }
 
-        # Both 'pending' (API) and 'pending_offer' (management command) mean waiting for rider
         if delivery_status in ('pending', 'pending_offer'):
             return 'waiting_for_rider'
 
@@ -24691,11 +24812,8 @@ class CheckoutOrder(viewsets.ViewSet):
 
         order_id = request.data.get('order_id')
         user_id = request.data.get('user_id')
-        
         platform = request.data.get('platform', 'web')
         is_mobile = platform == 'mobile'
-        
-        logger.info(f"Initiate Maya payment - platform: {platform}, is_mobile: {is_mobile}")
 
         if not order_id or not user_id:
             return Response({
@@ -24718,9 +24836,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     'error': 'This order is not set for Maya payment'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            checkout_items = Checkout.objects.filter(
-                order=order
-            ).select_related('cart_item__product', 'cart_item__variant')
+            checkout_items = Checkout.objects.filter(order=order).select_related('cart_item__product', 'cart_item__variant')
 
             if not checkout_items.exists():
                 return Response({
@@ -24757,27 +24873,12 @@ class CheckoutOrder(viewsets.ViewSet):
                     })
 
             reference = str(uuid.uuid4())
-
             base_url = request.build_absolute_uri('/')
-            
             platform_param = platform
 
-            success_url = (
-                f"{base_url}api/checkout-order/maya-success/"
-                f"?order_id={order_id}&platform={platform_param}"
-            )
-            failure_url = (
-                f"{base_url}api/checkout-order/maya-failure/"
-                f"?order_id={order_id}&platform={platform_param}"
-            )
-            cancel_url = (
-                f"{base_url}api/checkout-order/maya-cancel/"
-                f"?order_id={order_id}&platform={platform_param}"
-            )
-            
-            logger.info(f"Success URL: {success_url}")
-            logger.info(f"Failure URL: {failure_url}")
-            logger.info(f"Cancel URL: {cancel_url}")
+            success_url = f"{base_url}api/checkout-order/maya-success/?order_id={order_id}&platform={platform_param}"
+            failure_url = f"{base_url}api/checkout-order/maya-failure/?order_id={order_id}&platform={platform_param}"
+            cancel_url = f"{base_url}api/checkout-order/maya-cancel/?order_id={order_id}&platform={platform_param}"
 
             payment_data = {
                 "totalAmount": {
@@ -24862,28 +24963,22 @@ class CheckoutOrder(viewsets.ViewSet):
         order_id = request.GET.get('order_id')
         platform = request.GET.get('platform', 'web')
         is_mobile = platform == 'mobile'
-        
-        logger.info(f"Maya success callback - order_id: {order_id}, platform: {platform}, is_mobile: {is_mobile}")
-        
+
         if not order_id:
             return Response({
                 'success': False,
                 'error': 'Order ID not provided'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             order = get_object_or_404(Order, order=order_id)
-            
             stored_platform = order.metadata.get('platform', 'web') if order.metadata else 'web'
-            
             final_platform = platform if platform != 'web' else stored_platform
             final_is_mobile = final_platform == 'mobile'
-            
-            logger.info(f"Maya success - param platform: {platform}, stored platform: {stored_platform}, final: {final_platform}, is_mobile: {final_is_mobile}")
-            
+
             order.status = 'processing'
             order.save(update_fields=['status'])
-            
+
             payment, created = Payment.objects.get_or_create(
                 order=order,
                 defaults={
@@ -24892,16 +24987,15 @@ class CheckoutOrder(viewsets.ViewSet):
                     'status': 'success'
                 }
             )
-            
+
             if not created:
                 payment.status = 'success'
                 payment.save(update_fields=['status'])
-            
+
             self._process_seller_payments(order)
-            
+
             if final_is_mobile:
                 mobile_redirect_url = f"crimsotechreactnative://order-successful/{order_id}"
-                
                 html_content = f"""
                 <!DOCTYPE html>
                 <html>
@@ -24962,16 +25056,13 @@ class CheckoutOrder(viewsets.ViewSet):
                         <div class="message">Payment successful! Redirecting back to app...</div>
                         <button class="button" onclick="redirectToApp()">Return to App</button>
                     </div>
-                    
                     <script>
                         function redirectToApp() {{
                             window.location.href = '{mobile_redirect_url}';
                         }}
-                        
                         setTimeout(function() {{
                             redirectToApp();
                         }}, 1000);
-                        
                         if (window.ReactNativeWebView) {{
                             window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
                         }}
@@ -24979,17 +25070,13 @@ class CheckoutOrder(viewsets.ViewSet):
                 </body>
                 </html>
                 """
-                
-                logger.info(f"Returning HTML page with redirect to: {mobile_redirect_url}")
                 return HttpResponse(html_content, content_type='text/html')
-            
+
             frontend_url = getattr(settings, 'FRONTEND_URL')
-            logger.info(f"Redirecting to web URL: {frontend_url}/order-successful/{order_id}")
             return redirect(f"{frontend_url}/order-successful/{order_id}")
-            
+
         except Exception as e:
             logger.error(f"Error in Maya success callback: {str(e)}")
-            
             try:
                 order = Order.objects.get(order=order_id)
                 stored_platform = order.metadata.get('platform', 'web') if order.metadata else 'web'
@@ -24997,7 +25084,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 error_final_is_mobile = error_final_platform == 'mobile'
             except:
                 error_final_is_mobile = platform == 'mobile'
-            
+
             if error_final_is_mobile:
                 mobile_redirect_url = f"crimsotechreactnative://order-successful/{order_id}?error=payment_failed"
                 html_content = f"""
@@ -25046,16 +25133,13 @@ class CheckoutOrder(viewsets.ViewSet):
                         <div class="message">Payment processing error. Please return to app.</div>
                         <button class="button" onclick="redirectToApp()">Return to App</button>
                     </div>
-                    
                     <script>
                         function redirectToApp() {{
                             window.location.href = '{mobile_redirect_url}';
                         }}
-                        
                         setTimeout(function() {{
                             redirectToApp();
                         }}, 2000);
-                        
                         if (window.ReactNativeWebView) {{
                             window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
                         }}
@@ -25064,7 +25148,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 </html>
                 """
                 return HttpResponse(html_content, content_type='text/html')
-            
+
             frontend_url = getattr(settings, 'FRONTEND_URL')
             return redirect(f"{frontend_url}/order-successful/{order_id}?error=payment_failed")
 
@@ -25073,7 +25157,7 @@ class CheckoutOrder(viewsets.ViewSet):
         order_id = request.GET.get('order_id')
         platform = request.GET.get('platform', 'web')
         is_mobile = platform == 'mobile'
-        
+
         if order_id:
             try:
                 order = Order.objects.get(order=order_id)
@@ -25081,10 +25165,9 @@ class CheckoutOrder(viewsets.ViewSet):
                 order.save(update_fields=['status'])
             except Order.DoesNotExist:
                 pass
-        
+
         if is_mobile:
             mobile_redirect_url = f"crimsotechreactnative://pay-order?order_id={order_id}&status=failed"
-            
             html_content = f"""
             <!DOCTYPE html>
             <html>
@@ -25131,16 +25214,13 @@ class CheckoutOrder(viewsets.ViewSet):
                     <div class="message">Payment failed. Please try again.</div>
                     <button class="button" onclick="redirectToApp()">Return to App</button>
                 </div>
-                
                 <script>
                     function redirectToApp() {{
                         window.location.href = '{mobile_redirect_url}';
                     }}
-                    
                     setTimeout(function() {{
                         redirectToApp();
                     }}, 2000);
-                    
                     if (window.ReactNativeWebView) {{
                         window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
                     }}
@@ -25149,7 +25229,7 @@ class CheckoutOrder(viewsets.ViewSet):
             </html>
             """
             return HttpResponse(html_content, content_type='text/html')
-        
+
         frontend_url = getattr(settings, 'FRONTEND_URL')
         return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=failed")
 
@@ -25158,10 +25238,9 @@ class CheckoutOrder(viewsets.ViewSet):
         order_id = request.GET.get('order_id')
         platform = request.GET.get('platform', 'web')
         is_mobile = platform == 'mobile'
-        
+
         if is_mobile:
             mobile_redirect_url = f"crimsotechreactnative://pay-order?order_id={order_id}&status=cancelled"
-            
             html_content = f"""
             <!DOCTYPE html>
             <html>
@@ -25208,16 +25287,13 @@ class CheckoutOrder(viewsets.ViewSet):
                     <div class="message">Payment was cancelled.</div>
                     <button class="button" onclick="redirectToApp()">Return to App</button>
                 </div>
-                
                 <script>
                     function redirectToApp() {{
                         window.location.href = '{mobile_redirect_url}';
                     }}
-                    
                     setTimeout(function() {{
                         redirectToApp();
                     }}, 2000);
-                    
                     if (window.ReactNativeWebView) {{
                         window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
                     }}
@@ -25226,7 +25302,7 @@ class CheckoutOrder(viewsets.ViewSet):
             </html>
             """
             return HttpResponse(html_content, content_type='text/html')
-        
+
         frontend_url = getattr(settings, 'FRONTEND_URL')
         return redirect(f"{frontend_url}/pay-order?order_id={order_id}&status=cancelled")
 
@@ -25234,11 +25310,11 @@ class CheckoutOrder(viewsets.ViewSet):
     def verify_payment_status(self, request, order_id=None):
         try:
             order = get_object_or_404(Order, order=order_id)
-            
+
             payment_status = 'pending'
             if hasattr(order, 'payment'):
                 payment_status = order.payment.status if order.payment else 'pending'
-            
+
             return Response({
                 'success': True,
                 'payment_status': payment_status,
@@ -25247,7 +25323,7 @@ class CheckoutOrder(viewsets.ViewSet):
             })
         except Order.DoesNotExist:
             return Response({
-                'success': False, 
+                'success': False,
                 'error': 'Order not found'
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
@@ -25256,7 +25332,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
     def _process_seller_payments(self, order):
         try:
             checkout_items = Checkout.objects.filter(order=order).select_related(
@@ -25303,9 +25379,8 @@ class CheckoutOrder(viewsets.ViewSet):
         """Decrease stock for all items in an order"""
         checkout_items = Checkout.objects.filter(order=order)
         stock_errors = []
-        
+
         for checkout_item in checkout_items:
-            # Check for direct checkout (Buy Now)
             if checkout_item.direct_variant_id:
                 try:
                     variant = Variants.objects.get(id=checkout_item.direct_variant_id)
@@ -25316,8 +25391,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     variant.save()
                 except Variants.DoesNotExist:
                     stock_errors.append(f"Variant not found")
-                    
-            # Check for cart checkout
+
             elif checkout_item.cart_item:
                 cart_item = checkout_item.cart_item
                 if cart_item.variant:
@@ -25334,8 +25408,9 @@ class CheckoutOrder(viewsets.ViewSet):
                         continue
                     product.quantity -= checkout_item.quantity
                     product.save()
-        
+
         return stock_errors
+
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
