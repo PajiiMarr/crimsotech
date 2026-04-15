@@ -22320,7 +22320,7 @@ class SellerOrderList(viewsets.ViewSet):
         ).prefetch_related('cart_item__product__productmedia_set')
         
         order_items = []
-        total_amount = 0
+        total_amount = float(order.total_amount) 
         
         for checkout in shop_checkouts:
             # Handle direct product checkout (no cart_item)
@@ -22357,7 +22357,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "shipping_method": None,
                     "estimated_delivery": None
                 })
-                total_amount += float(checkout.total_amount)
+                # total_amount += float(checkout.total_amount)
                 continue
             
             # Handle normal cart_item checkout
@@ -23028,12 +23028,11 @@ class SellerOrderList(viewsets.ViewSet):
                         'tracking_number': f"TRK-{str(delivery.id)[:10]}" if delivery.status != 'pending' else None
                     }
                     
-                    # Fetch proof images for delivered orders - USE THE SAME HELPER AS RIDER SIDE
+                    # Fetch proof images for delivered orders
                     if delivery.status == 'delivered':
                         proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
                         for proof in proofs:
                             if proof.file_data:
-                                # Use the same convert_s3_to_public_url helper
                                 file_url = convert_s3_to_public_url(proof.file_data.url)
                                 proof_images.append({
                                     'id': str(proof.id),
@@ -23045,13 +23044,15 @@ class SellerOrderList(viewsets.ViewSet):
                 pass
                 
             items = []
-            total_amount = 0
+            # ✅ USE ORDER'S TOTAL_AMOUNT DIRECTLY
+            total_amount = float(order.total_amount)
+            
             for checkout in checkouts:
                 # Handle direct product checkout
                 if checkout.direct_product_id and not checkout.cart_item:
                     price = float(checkout.direct_product_price or 0)
                     item_total = price * checkout.quantity
-                    total_amount += item_total
+                    # ✅ DON'T add to total_amount here
                     items.append({
                         'id': str(checkout.id),
                         'cart_item': {
@@ -23090,7 +23091,7 @@ class SellerOrderList(viewsets.ViewSet):
                     except Exception as e:
                         print(f"Error getting variant image: {e}")
                 item_total = price * checkout.quantity
-                total_amount += item_total
+                # ✅ DON'T add to total_amount here
                 product_data = {
                     "id": str(product.id),
                     "name": product.name,
@@ -23114,11 +23115,13 @@ class SellerOrderList(viewsets.ViewSet):
                     'total_amount': item_total,
                     'status': checkout.status if hasattr(checkout, 'status') else 'pending',
                 })
+            
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
             shipping_status = self._get_shipping_status(
                 order.status,
                 latest_delivery.status if latest_delivery else None
             )
+            
             return Response({
                 'success': True,
                 'data': {
@@ -23132,7 +23135,7 @@ class SellerOrderList(viewsets.ViewSet):
                         'contact_number': order.user.contact_number,
                     },
                     'status': shipping_status,
-                    'total_amount': total_amount,
+                    'total_amount': total_amount,  # ✅ Now using order.total_amount
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
