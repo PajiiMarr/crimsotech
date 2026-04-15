@@ -272,35 +272,47 @@ SMS_PH_API_KEY = env.str('SMS_PH_API_KEY', default='')
 
 # Logging
 LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "simple",
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
         },
     },
-    "formatters": {
-        "simple": {
-            "format": "{levelname} {message}",
-            "style": "{",
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': 'debug.log',
+            'formatter': 'verbose',
         },
     },
-    "loggers": {
-        "api.views": {
-            "handlers": ["console"],
-            "level": "DEBUG",
-            "propagate": False,
+    'root': {
+        'handlers': ['console', 'file'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
         },
-        "channels": {
-            "handlers": ["console"],
-            "level": "INFO",
-            "propagate": False,
+        'api': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': False,
         },
-        "channels_redis": {
-            "handlers": ["console"],
-            "level": "WARNING",
-            "propagate": False,
+        '__main__': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
         },
     },
 }
@@ -358,3 +370,5 @@ def get_maya_auth_header(use_secret=False):
     return f"Basic {encoded}"
 
 FRONTEND_URL = env.str('FRONTEND_URL', default='http://localhost:5173')
+
+GOOGLE_MAPS_API_KEY = env.str("GOOGLE_MAPS_API_KEY")
