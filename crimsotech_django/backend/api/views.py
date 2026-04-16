@@ -27228,7 +27228,7 @@ class ViewShopAPIView(APIView):
         try:
             if shop.customer and shop.customer.customer:
                 owner_username = shop.customer.customer.username
-                owner_id = str(shop.customer.customer.id)  # Get the actual User ID
+                owner_id = str(shop.customer.customer.id)
             else:
                 print(f"Shop {shop.id} has no customer or customer has no user")
         except Exception as e:
@@ -27239,7 +27239,7 @@ class ViewShopAPIView(APIView):
             'id': str(shop.id),
             'name': shop.name,
             'username': owner_username,
-            'owner_id': owner_id,  # Add this line
+            'owner_id': owner_id,
             'shop_picture': request.build_absolute_uri(shop.shop_picture.url) if shop.shop_picture else None,
             'description': shop.description or 'No description provided',
             'province': shop.province,
@@ -27258,9 +27258,27 @@ class ViewShopAPIView(APIView):
             'suspension_reason': getattr(shop, 'suspension_reason', None),
         }
 
-        # Shop products (still include products; frontend can choose how to display)
-        products = Product.objects.filter(shop=shop, is_removed=False)
-        shop_data['products'] = ProductSerializer(products, many=True, context={'request': request}).data
+        # Shop products - get with variants and calculate stock
+        products = Product.objects.filter(shop=shop, is_removed=False).prefetch_related(
+            'variants', 'productmedia_set'
+        )
+        
+        # Serialize products and add stock information
+        product_serializer = ProductSerializer(products, many=True, context={'request': request})
+        products_data = product_serializer.data
+        
+        # Add total_stock and variant quantities to each product
+        for product, product_data in zip(products, products_data):
+            # Calculate total stock from variants
+            total_stock = sum(v.quantity for v in product.variants.filter(is_active=True) if v.quantity) if product.variants.exists() else 0
+            product_data['total_stock'] = total_stock
+            
+            # Also add stock info to each variant in the response
+            if 'variants' in product_data and product_data['variants']:
+                for variant_data, variant_obj in zip(product_data['variants'], product.variants.filter(is_active=True)):
+                    variant_data['quantity'] = variant_obj.quantity
+        
+        shop_data['products'] = products_data
 
         # Shop categories (unique categories from products)
         category_qs = products.values_list('category__id', 'category__name').distinct()
@@ -27324,7 +27342,41 @@ class ViewShopAPIView(APIView):
                 'product_sold': 0,
             })
 
+        # Get reviews for this shop
+        shop_reviews = Review.objects.filter(
+            shop=shop,
+            average_rating__isnull=False
+        ).select_related('customer__customer').order_by('-created_at')[:20]  # Limit to 20 most recent reviews
+        
+        reviews_data = []
+        for review in shop_reviews:
+            # Get customer name
+            customer_name = None
+            if review.customer and review.customer.customer:
+                first = review.customer.customer.first_name or ''
+                last = review.customer.customer.last_name or ''
+                customer_name = f"{first} {last}".strip() or review.customer.customer.username
+            
+            reviews_data.append({
+                'id': str(review.id),
+                'average_rating': review.average_rating,
+                'condition_rating': review.condition_rating,
+                'accuracy_rating': review.accuracy_rating,
+                'value_rating': review.value_rating,
+                'delivery_rating': review.delivery_rating,
+                'comment': review.comment,
+                'created_at': review.created_at.isoformat(),
+                'customer': {
+                    'id': str(review.customer.customer.id) if review.customer and review.customer.customer else None,
+                    'name': customer_name,
+                },
+            })
+        
+        shop_data['reviews'] = reviews_data
+
         return Response(shop_data, status=status.HTTP_200_OK)
+
+        
 
     def post(self, request, shop_id):
         """Follow this shop for the current (customer) user"""
