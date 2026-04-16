@@ -25,7 +25,7 @@ import AxiosInstance from '../../contexts/axios';
 interface OrderItem {
   checkout_id: string;
   cart_item_id: string | null;
-  product_id: string | null;  // Can be null
+  product_id: string | null;
   product_name: string;
   product_description?: string;
   product_condition?: number;
@@ -108,7 +108,7 @@ interface PurchaseItem {
   };
 }
 
-// Status tabs configuration - All 8 tabs from web
+// Status tabs configuration
 const STATUS_TABS = [
   { id: 'all', label: 'All' },
   { id: 'pending', label: 'Pending' },
@@ -228,7 +228,7 @@ const isCashOnPickup = (order: PurchaseOrder): boolean => {
   return method.includes('cash') && (method.includes('pickup') || delivery.includes('pickup'));
 };
 
-// Format a datetime string nicely
+// Format a datetime string nicely with proper Philippine format
 const formatPickupDateTime = (dt: string): string => {
   try {
     const date = new Date(dt);
@@ -248,10 +248,10 @@ const formatPickupDateTime = (dt: string): string => {
 const formatDate = (dateString: string) => {
   try {
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
+    return date.toLocaleDateString('en-PH', {
+      year: 'numeric',
       month: 'short',
-      day: 'numeric',
-      year: 'numeric'
+      day: 'numeric'
     });
   } catch (error) {
     return dateString;
@@ -259,7 +259,12 @@ const formatDate = (dateString: string) => {
 };
 
 const formatCurrency = (amount: number) => {
-  return `₱${amount.toFixed(2)}`;
+  return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
+// Format large numbers with commas
+const formatNumber = (num: number): string => {
+  return num.toLocaleString('en-PH');
 };
 
 export default function PurchasesPage() {
@@ -292,15 +297,11 @@ export default function PurchasesPage() {
       const items: PurchaseItem[] = [];
 
       purchasesData.purchases.forEach((order: PurchaseOrder) => {
-        // Check if order has items
         if (order.items && order.items.length > 0) {
           order.items.forEach((item: OrderItem, index: number) => {
-            // Skip items with no product_id (unavailable items)
-            // But we still want to show them? Let's show them as "Item no longer available"
             const statusToUse = item.status || order.status || 'pending';
             const mappedStatus = mapStatus(statusToUse);
             
-            // Get image URL - check primary_image first, then product_images
             let imageUrl = 'https://via.placeholder.com/100?text=No+Image';
             
             if (item.primary_image?.url) {
@@ -340,8 +341,6 @@ export default function PurchasesPage() {
             items.push(purchaseItem);
           });
         }
-        // If order has no items, we can optionally show a placeholder
-        // For now, we'll just skip orders with no items
       });
 
       setPurchaseItems(items);
@@ -394,7 +393,6 @@ export default function PurchasesPage() {
         counts.completed++;
       }
 
-      // Rate tab shows completed orders that can be reviewed
       if ((status === 'picked_up' || status === 'completed') && item.can_review) {
         counts.rate++;
       }
@@ -421,7 +419,6 @@ export default function PurchasesPage() {
   const getFilteredItems = () => {
     let filtered = purchaseItems;
 
-    // Apply tab filter - All 8 tabs
     if (activeTab !== 'all') {
       switch (activeTab) {
         case 'pending':
@@ -508,7 +505,7 @@ export default function PurchasesPage() {
                 headers: { 'X-User-Id': userId }
               });
               Alert.alert('Success', 'Order cancelled successfully');
-              fetchPurchases(); // Refresh list
+              fetchPurchases();
             } catch (error) {
               Alert.alert('Error', 'Failed to cancel order');
             }
@@ -595,7 +592,7 @@ export default function PurchasesPage() {
 
             {/* Quantity and Price */}
             <View style={styles.priceRow}>
-              <Text style={styles.quantity}>x{item.quantity}</Text>
+              <Text style={styles.quantity}>x{formatNumber(item.quantity)}</Text>
               <Text style={styles.price}>{formatCurrency(item.total_amount)}</Text>
             </View>
           </View>
@@ -614,78 +611,12 @@ export default function PurchasesPage() {
         {/* Total and Action */}
         <View style={styles.footer}>
           <View style={styles.totalContainer}>
-          <Text style={styles.totalLabel}>Total to Pay:</Text>
-          <Text style={styles.totalAmount}>{formatCurrency(parseFloat(item.order.total_amount))}</Text>
-        </View>
+            <Text style={styles.totalLabel}>Total to Pay:</Text>
+            <Text style={styles.totalAmount}>{formatCurrency(parseFloat(item.order.total_amount))}</Text>
+          </View>
 
-          {/* Action Buttons - Matches web version exactly */}
+          {/* Action Buttons */}
           <View style={styles.actionButtons}>
-            {/* {(item.status === 'pending' || item.status === 'in_progress') && (
-              <TouchableOpacity 
-                style={[styles.actionButton, styles.cancelButton]}
-                onPress={() => handleCancelOrder(item)}
-              >
-                <MaterialIcons name="cancel" size={14} color="#EF4444" />
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-            )} */}
-
-            {/* Track button for to_ship/to_receive items (but not delivered) */}
-            {/* {(item.status === 'to_ship' || item.status === 'to_receive') && (
-              <TouchableOpacity 
-                style={[styles.actionButton, styles.trackButton]}
-                onPress={() => router.push(`/customer/track-order?orderId=${item.order_id}&status=${item.status}`)}
-              >
-                <MaterialIcons name="location-on" size={14} color="#3B82F6" />
-                <Text style={styles.trackButtonText}>Track</Text>
-              </TouchableOpacity>
-            )} */}
-
-            {/* For delivered items - Shows Rate button (like web version) */}
-            {/* {item.status === 'delivered' && (
-              <>
-                <TouchableOpacity 
-                  style={[styles.actionButton, styles.rateButton]}
-                  onPress={() => router.push(`/customer/rate?productId=${item.product_id}&orderId=${item.order_id}&productName=${encodeURIComponent(item.product_name)}`)}
-                >
-                  <MaterialIcons name="star" size={14} color="#F97316" />
-                  <Text style={styles.rateButtonText}>Rate</Text>
-                </TouchableOpacity>
-                
-                {item.is_refundable && item.product_id && (
-                  <TouchableOpacity 
-                    style={[styles.actionButton, styles.refundButton]}
-                    onPress={() => router.push(`/customer/request-refund?orderId=${item.order_id}&productId=${item.product_id}`)}
-                  >
-                    <MaterialIcons name="refresh" size={14} color="#F97316" />
-                    <Text style={styles.refundButtonText}>Refund</Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            )} */}
-
-            {/* For picked_up/completed items - Rate button only if can_review */}
-            {/* {(item.status === 'picked_up' || item.status === 'completed') && item.can_review && item.product_id && (
-              <TouchableOpacity 
-                style={[styles.actionButton, styles.rateButton]}
-                onPress={() => router.push(`/customer/order-review?productId=${item.product_id}&orderId=${item.order_id}&productName=${encodeURIComponent(item.product_name)}`)}
-              >
-                <MaterialIcons name="star" size={14} color="#F97316" />
-                <Text style={styles.rateButtonText}>Rate</Text>
-              </TouchableOpacity>
-            )} */}
-
-            {/* For picked_up/completed items without review - View button */}
-            {/* {(item.status === 'picked_up' || item.status === 'completed') && !item.can_review && (
-              <TouchableOpacity 
-                style={[styles.actionButton, styles.viewButton]}
-                onPress={() => router.push(`/customer/view-order?orderId=${item.order_id}`)}
-              >
-                <MaterialIcons name="visibility" size={14} color="#6B7280" />
-                <Text style={styles.viewButtonText}>View</Text>
-              </TouchableOpacity>
-            )} */}
-
             {/* View Details button for returns */}
             {(item.status === 'cancelled' || item.status === 'return_refund') && (
               <TouchableOpacity 
@@ -725,7 +656,7 @@ export default function PurchasesPage() {
   return (
     <CustomerLayout disableScroll>
       <View style={styles.container}>
-        {/* Status Tabs - All 8 tabs */}
+        {/* Status Tabs */}
         <ScrollView 
           horizontal 
           showsHorizontalScrollIndicator={false}
@@ -749,7 +680,7 @@ export default function PurchasesPage() {
                 {count > 0 && (
                   <View style={[styles.tabBadge, isActive && styles.activeTabBadge]}>
                     <Text style={[styles.tabBadgeText, isActive && styles.activeTabBadgeText]}>
-                      {count}
+                      {formatNumber(count)}
                     </Text>
                   </View>
                 )}

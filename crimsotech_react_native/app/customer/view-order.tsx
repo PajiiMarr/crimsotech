@@ -139,6 +139,43 @@ interface OrderData {
   }>;
 }
 
+// Format number with commas
+const formatNumber = (num: number): string => {
+  return num.toLocaleString('en-PH');
+};
+
+// Format date with Philippine locale
+const formatDate = (dateString: string | null) => {
+  if (!dateString) return 'N/A';
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-PH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+};
+
+// Format date and time with Philippine locale
+const formatDateTime = (dateString: string | null) => {
+  if (!dateString) return 'N/A';
+  const date = new Date(dateString);
+  return date.toLocaleString('en-PH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+};
+
+// Format currency with proper formatting (₱1,234.56)
+const formatCurrency = (amount: string) => {
+  const numAmount = parseFloat(amount);
+  if (isNaN(numAmount)) return '₱0.00';
+  return `₱${numAmount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
 export default function ViewTrackOrderPage() {
   const { user, userRole } = useAuth();
   const { orderId } = useLocalSearchParams();
@@ -259,32 +296,6 @@ export default function ViewTrackOrderPage() {
   const handleRefresh = () => {
     setRefreshing(true);
     fetchOrderData();
-  };
-
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      month: '2-digit',
-      day: '2-digit',
-      year: 'numeric',
-    });
-  };
-
-  const formatDateTime = (dateString: string | null) => {
-    if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      month: '2-digit',
-      day: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const formatCurrency = (amount: string) => {
-    return `₱${parseFloat(amount).toFixed(2)}`;
   };
 
   const getStatusText = (orderObj: any) => {
@@ -927,7 +938,7 @@ export default function ViewTrackOrderPage() {
                     <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
                   </View>
                   <Text style={styles.followerText}>
-                    {item.shop_info.items_count} Items | {item.shop_info.followers_count?.toLocaleString() || 0} followers
+                    {formatNumber(item.shop_info.items_count)} Items | {formatNumber(item.shop_info.followers_count || 0)} followers
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -964,7 +975,7 @@ export default function ViewTrackOrderPage() {
                   {item.product_name}
                 </Text>
                 <Text style={styles.productVariant}>{item.product_variant}</Text>
-                <Text style={styles.productQuantity}>Quantity: {item.quantity}</Text>
+                <Text style={styles.productQuantity}>Quantity: {formatNumber(item.quantity)}</Text>
               </View>
               <View style={styles.priceContainer}>
                 <View style={styles.priceRow}>
@@ -986,7 +997,7 @@ export default function ViewTrackOrderPage() {
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>Order Summary</Text>
           <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Subtotal ({orderData.summary_counts.total_items} items):</Text>
+            <Text style={styles.summaryLabel}>Subtotal ({formatNumber(orderData.summary_counts.total_items)} items):</Text>
             <Text style={styles.summaryValue}>{formatCurrency(order_summary.subtotal)}</Text>
           </View>
           <View style={styles.summaryRow}>
