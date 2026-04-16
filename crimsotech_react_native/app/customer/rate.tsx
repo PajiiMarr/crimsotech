@@ -38,6 +38,7 @@ interface OrderItem {
   product_id: string;
   product_name: string;
   product_description?: string;
+  variant_id?: string | null; 
   variant_title?: string;
   quantity: number;
   price: string;
@@ -208,6 +209,7 @@ function MediaPicker({ onMediaSelected, existingMedia = [], readonly = false }: 
 }) {
   const [mediaItems, setMediaItems] = useState<SelectedMedia[]>([]);
   const [showMediaOptions, setShowMediaOptions] = useState(false);
+  
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -444,6 +446,7 @@ export default function RatePage() {
   const orderId = params.orderId as string;
   const productId = params.productId as string;
   const productName = params.productName as string;
+  const [variantId, setVariantId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -500,6 +503,7 @@ export default function RatePage() {
         );
         if (product) {
           setCurrentItem(product);
+          setVariantId(product.variant_id || null);  
         }
         
         // Check if this is a pickup order
@@ -611,6 +615,10 @@ export default function RatePage() {
         formData.append('delivery_rating', deliveryRating.toString());
       }
 
+      if (variantId) {
+        formData.append('variant_id', variantId);
+      }
+
       // Append media files
       for (let i = 0; i < selectedMedia.length; i++) {
         const media = selectedMedia[i];
@@ -634,6 +642,7 @@ export default function RatePage() {
       console.log("rider_id:", riderInfo?.rider_id);
       console.log("selectedMedia count:", selectedMedia.length);
       console.log("FormData entries:");
+      console.log("variant_id:", variantId);  
       for (let pair of (formData as any)._parts) {
         console.log(pair[0], pair[1]);
       }
@@ -778,6 +787,21 @@ export default function RatePage() {
                 </View>
               </View>
 
+              {/* Comment */}
+              <View style={styles.commentSection}>
+                <Text style={styles.commentLabel}>Your Comments</Text>
+                <TextInput
+                  style={styles.commentInput}
+                  value={comment}
+                  onChangeText={setComment}
+                  placeholder="Share your thoughts about the product and delivery experience..."
+                  placeholderTextColor="#9CA3AF"
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+              </View>
+
               {/* Product Ratings Section */}
               <View style={styles.ratingsSection}>
                 <Text style={styles.sectionTitle}>Rate the Product</Text>
@@ -832,20 +856,7 @@ export default function RatePage() {
                 readonly={false}
               />
 
-              {/* Comment */}
-              <View style={styles.commentSection}>
-                <Text style={styles.commentLabel}>Your Comments</Text>
-                <TextInput
-                  style={styles.commentInput}
-                  value={comment}
-                  onChangeText={setComment}
-                  placeholder="Share your thoughts about the product and delivery experience..."
-                  placeholderTextColor="#9CA3AF"
-                  multiline
-                  numberOfLines={4}
-                  textAlignVertical="top"
-                />
-              </View>
+
             </View>
 
             {/* Action Buttons */}

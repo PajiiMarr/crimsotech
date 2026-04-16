@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Dimensions,
+  FlatList,
   Image,
   Modal,
   Platform,
@@ -113,7 +114,19 @@ interface ShopReview {
   customer?: {
     id?: string;
     name?: string;
+    profile_picture?: string | null;
   };
+  product?: {  // ADD THIS
+    id?: string;
+    name?: string;
+  };
+  variant_title?: string;  // ADD THIS
+  media?: Array<{  // ADD THIS
+    id: string;
+    file_url?: string;
+    file_data?: string;
+    file_type?: string;
+  }>;
 }
 
 const ensureAbsoluteUrl = (url?: string | null) => {
@@ -391,6 +404,11 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
 };
 
 const ReviewCard = ({ review }: { review: ShopReview }) => {
+  const [expandedReview, setExpandedReview] = useState<string | null>(null);
+  const [mediaModalVisible, setMediaModalVisible] = useState(false);
+  const [selectedMedia, setSelectedMedia] = useState<string[]>([]);
+  const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
+
   const getCustomerName = () => {
     if (review.customer?.name) {
       return review.customer.name;
@@ -398,89 +416,232 @@ const ReviewCard = ({ review }: { review: ShopReview }) => {
     return "Anonymous";
   };
 
+  const getInitials = (name: string) => {
+    if (!name || name === "Anonymous") return "?";
+    return name
+      .split(" ")
+      .map((part) => part.charAt(0))
+      .join("")
+      .substring(0, 2)
+      .toUpperCase();
+  };
+
   const averageRating = review.average_rating || 0;
+  const productName = review.product?.name || 'Product';
+  const variantTitle = review.variant_title;
+
+  const openMediaGallery = (mediaUrls: string[], startIndex: number = 0) => {
+    setSelectedMedia(mediaUrls);
+    setSelectedMediaIndex(startIndex);
+    setMediaModalVisible(true);
+  };
 
   return (
-    <View style={styles.reviewItem}>
-      <View style={styles.reviewHeader}>
-        <View style={styles.reviewerInfo}>
-          <Text style={styles.reviewerName}>{getCustomerName()}</Text>
-          <Text style={styles.reviewDate}>{formatDate(review.created_at)}</Text>
+    <>
+      <View style={styles.reviewItem}>
+        {/* User info and rating */}
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 8,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            {/* Profile Picture or Initials */}
+            {review.customer?.profile_picture ? (
+  <Image
+    source={{ uri: review.customer.profile_picture }}
+    style={{ width: 36, height: 36, borderRadius: 18 }}
+  />
+            ) : (
+              <View style={styles.defaultAvatar}>
+                <Text style={styles.defaultAvatarText}>
+                  {getInitials(getCustomerName())}
+                </Text>
+              </View>
+            )}
+            <View>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#111827" }}>
+                {getCustomerName()}
+              </Text>
+              <Text style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>
+                {formatDate(review.created_at)}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.ratingContainer}>
+            <Text style={styles.ratingText}>{averageRating.toFixed(1)}</Text>
+            <Ionicons name="star" size={14} color="#F59E0B" />
+          </View>
         </View>
-        <View style={styles.ratingContainer}>
-          <Text style={styles.ratingText}>{averageRating.toFixed(1)}</Text>
-          <Ionicons name="star" size={14} color="#F59E0B" />
+
+        {/* Product and Variant */}
+        <View style={{ marginBottom: 12, marginTop: 4 }}>
+          <Text style={{ fontSize: 12, color: "#6B7280", marginBottom: 2 }}>Product:</Text>
+          <Text style={{ fontSize: 14, fontWeight: "600", color: "#111827" }}>
+            {productName}
+            {variantTitle ? ` / ${variantTitle}` : ''}
+          </Text>
         </View>
+
+        {/* Individual ratings - 2x2 grid */}
+        <View style={{ marginBottom: 10 }}>
+          {/* Row 1: Condition and Accuracy */}
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+            {review.condition_rating && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Condition:</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <Ionicons
+                      key={star}
+                      name="star"
+                      size={10}
+                      color={star <= review.condition_rating! ? "#F59E0B" : "#D1D5DB"}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+            {review.accuracy_rating && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, marginLeft: 8 }}>
+                <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Accuracy:</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <Ionicons
+                      key={star}
+                      name="star"
+                      size={10}
+                      color={star <= review.accuracy_rating! ? "#F59E0B" : "#D1D5DB"}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+          </View>
+          
+          {/* Row 2: Value and Delivery */}
+          <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+            {review.value_rating && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Value:</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <Ionicons
+                      key={star}
+                      name="star"
+                      size={10}
+                      color={star <= review.value_rating! ? "#F59E0B" : "#D1D5DB"}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+            {review.delivery_rating && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, marginLeft: 8 }}>
+                <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Delivery:</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <Ionicons
+                      key={star}
+                      name="star"
+                      size={10}
+                      color={star <= review.delivery_rating! ? "#F59E0B" : "#D1D5DB"}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* Comment */}
+        {review.comment && (
+          <Text
+            style={{
+              fontSize: 13,
+              color: "#374151",
+              lineHeight: 18,
+              marginBottom: 10,
+            }}
+            numberOfLines={expandedReview === review.id ? undefined : 3}
+          >
+            {review.comment}
+          </Text>
+        )}
+
+        {/* Read more button for long comments */}
+        {review.comment && review.comment.length > 150 && expandedReview !== review.id && (
+          <TouchableOpacity onPress={() => setExpandedReview(review.id)}>
+            <Text style={{ fontSize: 12, color: "#EA580C", fontWeight: "500" }}>
+              Read more
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Media images */}
+        {review.media && review.media.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ marginTop: 8 }}
+            contentContainerStyle={{ gap: 8 }}
+          >
+            {review.media.map((media: any, idx: number) => {
+              const mediaUrls = review.media!.map((m: any) => m.file_url || m.file_data).filter(Boolean);
+              return (
+                <TouchableOpacity
+                  key={media.id}
+                  onPress={() => openMediaGallery(mediaUrls, idx)}
+                >
+                  <Image
+                    source={{ uri: media.file_url || media.file_data }}
+                    style={{ width: 70, height: 70, borderRadius: 8, backgroundColor: "#F3F4F6" }}
+                  />
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
       </View>
 
-      {/* Individual ratings - 2x2 grid */}
-      <View style={styles.detailedRatings}>
-        {review.condition_rating && (
-          <View style={styles.ratingTag}>
-            <Text style={styles.ratingTagLabel}>Condition:</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-              {[1, 2, 3, 4, 5].map((star) => (
-                <Ionicons
-                  key={star}
-                  name="star"
-                  size={10}
-                  color={star <= review.condition_rating! ? "#F59E0B" : "#D1D5DB"}
-                />
-              ))}
-            </View>
-          </View>
-        )}
-        {review.accuracy_rating && (
-          <View style={styles.ratingTag}>
-            <Text style={styles.ratingTagLabel}>Accuracy:</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-              {[1, 2, 3, 4, 5].map((star) => (
-                <Ionicons
-                  key={star}
-                  name="star"
-                  size={10}
-                  color={star <= review.accuracy_rating! ? "#F59E0B" : "#D1D5DB"}
-                />
-              ))}
-            </View>
-          </View>
-        )}
-        {review.value_rating && (
-          <View style={styles.ratingTag}>
-            <Text style={styles.ratingTagLabel}>Value:</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-              {[1, 2, 3, 4, 5].map((star) => (
-                <Ionicons
-                  key={star}
-                  name="star"
-                  size={10}
-                  color={star <= review.value_rating! ? "#F59E0B" : "#D1D5DB"}
-                />
-              ))}
-            </View>
-          </View>
-        )}
-        {review.delivery_rating && (
-          <View style={styles.ratingTag}>
-            <Text style={styles.ratingTagLabel}>Delivery:</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-              {[1, 2, 3, 4, 5].map((star) => (
-                <Ionicons
-                  key={star}
-                  name="star"
-                  size={10}
-                  color={star <= review.delivery_rating! ? "#F59E0B" : "#D1D5DB"}
-                />
-              ))}
-            </View>
-          </View>
-        )}
-      </View>
-
-      {review.comment && (
-        <Text style={styles.reviewComment}>{review.comment}</Text>
-      )}
-    </View>
+      {/* Media Gallery Modal */}
+      <Modal
+        visible={mediaModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMediaModalVisible(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.95)" }}>
+          <TouchableOpacity
+            style={{ position: "absolute", top: 50, right: 20, zIndex: 10, padding: 8 }}
+            onPress={() => setMediaModalVisible(false)}
+          >
+            <Ionicons name="close" size={30} color="#FFFFFF" />
+          </TouchableOpacity>
+          <FlatList
+            data={selectedMedia}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            initialScrollIndex={selectedMediaIndex}
+            getItemLayout={(_, index) => ({
+              length: width,
+              offset: width * index,
+              index,
+            })}
+            renderItem={({ item }) => (
+              <View style={{ width: width, justifyContent: "center", alignItems: "center" }}>
+                <Image source={{ uri: item }} style={{ width: width, height: width * 1.1 }} resizeMode="contain" />
+              </View>
+            )}
+            keyExtractor={(_, index) => index.toString()}
+          />
+        </View>
+      </Modal>
+    </>
   );
 };
 
@@ -1828,10 +1989,13 @@ const styles = StyleSheet.create({
   },
   cardSection: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 12,
-    marginHorizontal: 12,
+    // borderRadius: 12,
+    // marginHorizontal: 12,
     padding: 16,
     gap: 12,
+    borderBottomWidth: 1,
+    borderTopWidth: 1,
+    borderColor: "#E5E7EB",
     shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 3,
@@ -1922,15 +2086,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
-  // ratingContainer: {
-  //   flexDirection: "row",
-  //   alignItems: "center",
-  //   backgroundColor: "#FEF3C7",
-  //   paddingHorizontal: 8,
-  //   paddingVertical: 4,
-  //   borderRadius: 12,
-  //   gap: 4,
-  // },
   ratingText: {
     color: "#92400E",
     fontSize: 12,
@@ -2115,12 +2270,6 @@ giftText: {
   fontWeight: "700",
   marginLeft: 2,
 },
-ratingContainer: {
-  flexDirection: "row",
-  alignItems: "center",
-  marginBottom: 4,
-  gap: 6,
-},
 starsContainer: {
   flexDirection: "row",
   alignItems: "center",
@@ -2134,6 +2283,28 @@ freePrice: {
   fontSize: 12,
   fontWeight: "700",
   color: "#059669",
+},
+ratingContainer: {
+  flexDirection: "row",
+  alignItems: "center",
+  backgroundColor: "#FEF3C7",
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+  borderRadius: 12,
+  gap: 4,
+},
+defaultAvatar: {
+  width: 36,
+  height: 36,
+  borderRadius: 18,
+  backgroundColor: "#EA580C",
+  justifyContent: "center",
+  alignItems: "center",
+},
+defaultAvatarText: {
+  fontSize: 14,
+  fontWeight: "600",
+  color: "#FFFFFF",
 },
   
 });
