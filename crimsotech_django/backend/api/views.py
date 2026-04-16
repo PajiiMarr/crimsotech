@@ -19978,12 +19978,15 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         reviews = Review.objects.filter(product=product).select_related('customer__customer').prefetch_related('medias').order_by('-created_at')
         reviews_data = []
         for review in reviews:
-            # Get customer name
+            # Get customer name and profile picture
             customer_name = None
+            profile_picture = None
             if review.customer and review.customer.customer:
                 first = review.customer.customer.first_name or ''
                 last = review.customer.customer.last_name or ''
                 customer_name = f"{first} {last}".strip() or review.customer.customer.username
+                # Use get_media_url helper for profile picture
+                profile_picture = get_media_url(review.customer.customer.profile_picture)
             
             # Get media
             media_data = []
@@ -20008,8 +20011,10 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                     'id': str(review.customer.customer.id) if review.customer and review.customer.customer else None,
                     'username': review.customer.customer.username if review.customer and review.customer.customer else None,
                     'name': customer_name,
+                    'profile_picture': profile_picture,
                 },
                 'media': media_data,
+                'variant_title': review.variant.title if review.variant else None,
             })
         
         data['reviews'] = reviews_data
@@ -20022,6 +20027,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             data['listing_type'] = 'shop'
             data['seller_id'] = str(data['shop']['id'])
             data['seller_name'] = data['shop']['name']
+            data['shop_picture_url'] = get_media_url(product.shop.shop_picture) if product.shop else None
         elif data.get('customer'):
             data['listing_type'] = 'personal'
             # Get customer user info
@@ -26463,7 +26469,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 product_images = []
                 for media in product.productmedia_set.all():
                     if media.file_data:
-                        url = get_media_url(media.file_data, request)
+                        url = get_media_url(media.file_data)
                         if url:
                             product_images.append({
                                 'id': str(media.id),
@@ -26488,7 +26494,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 # Get shop picture using get_media_url
                 shop_picture_url = None
                 if product.shop and product.shop.shop_picture:
-                    shop_picture_url = get_media_url(product.shop.shop_picture, request)
+                    shop_picture_url = get_media_url(product.shop.shop_picture)
                 
                 item_data = {
                     'checkout_id': str(checkout.id),
@@ -26702,9 +26708,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                         shop_picture_url = None
                         if product.shop.shop_picture:
                             try:
-                                shop_picture_url = product.shop.shop_picture.url
-                                if request:
-                                    shop_picture_url = request.build_absolute_uri(shop_picture_url)
+                                # Use get_media_url helper function (no request parameter needed)
+                                shop_picture_url = get_media_url(product.shop.shop_picture)
                             except Exception:
                                 shop_picture_url = None
                         
@@ -27240,7 +27245,7 @@ class ViewShopAPIView(APIView):
             'name': shop.name,
             'username': owner_username,
             'owner_id': owner_id,
-            'shop_picture': request.build_absolute_uri(shop.shop_picture.url) if shop.shop_picture else None,
+            'shop_picture': get_media_url(shop.shop_picture),
             'description': shop.description or 'No description provided',
             'province': shop.province,
             'city': shop.city,
@@ -27346,16 +27351,33 @@ class ViewShopAPIView(APIView):
         shop_reviews = Review.objects.filter(
             shop=shop,
             average_rating__isnull=False
-        ).select_related('customer__customer').order_by('-created_at')[:20]  # Limit to 20 most recent reviews
-        
+        ).select_related('customer__customer', 'product', 'variant').prefetch_related('medias').order_by('-created_at')[:20]
+
         reviews_data = []
         for review in shop_reviews:
-            # Get customer name
+            # Get customer name and profile picture
             customer_name = None
+            profile_picture = None
             if review.customer and review.customer.customer:
                 first = review.customer.customer.first_name or ''
                 last = review.customer.customer.last_name or ''
                 customer_name = f"{first} {last}".strip() or review.customer.customer.username
+                profile_picture = get_media_url(review.customer.customer.profile_picture)
+                
+                # Debug print to verify
+                print(f"Customer: {customer_name}, Profile Picture exists: {bool(review.customer.customer.profile_picture)}")
+                print(f"Profile Picture URL: {profile_picture}")
+
+            
+            # Get media
+            media_data = []
+            for media in review.medias.all():
+                media_data.append({
+                    'id': str(media.id),
+                    'file_url': get_media_url(media.file_data),
+                    'file_data': get_media_url(media.file_data),
+                    'file_type': media.file_type,
+                })
             
             reviews_data.append({
                 'id': str(review.id),
@@ -27369,9 +27391,16 @@ class ViewShopAPIView(APIView):
                 'customer': {
                     'id': str(review.customer.customer.id) if review.customer and review.customer.customer else None,
                     'name': customer_name,
+                    'profile_picture': profile_picture,
                 },
+                'product': {
+                    'id': str(review.product.id) if review.product else None,
+                    'name': review.product.name if review.product else None,
+                },
+                'variant_title': review.variant.title if review.variant else None,
+                'media': media_data,
             })
-        
+
         shop_data['reviews'] = reviews_data
 
         return Response(shop_data, status=status.HTTP_200_OK)
@@ -38889,6 +38918,7 @@ class ReviewView(APIView):
             
             # Get product_id and rider_id from request data
             product_id = request.data.get('product_id')
+            variant_id = request.data.get('variant_id')
             rider_id = request.data.get('rider_id')
             
             # Check if at least one is provided
@@ -38927,6 +38957,14 @@ class ReviewView(APIView):
                             'existing_review_id': str(existing_review.id)
                         }
                     }, status=status.HTTP_400_BAD_REQUEST)
+
+                if variant_id:
+                    try:
+                        variant = Variants.objects.get(id=variant_id)
+                        data['variant'] = variant.id
+                    except Variants.DoesNotExist:
+                        pass
+
                 
                 # Get product
                 try:

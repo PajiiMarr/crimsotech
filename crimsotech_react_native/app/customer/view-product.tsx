@@ -86,6 +86,7 @@ type MediaItem = {
 type ProductDetail = {
   id: string;
   name: string;
+  shop_picture_url?: string | null;
   description?: string;
   condition?: number;
   upload_status?: string;
@@ -756,18 +757,37 @@ const OwnershipInfoCard = ({
   );
 };
 
-// ─── Seller Info Card ──────────────────────────────────────────────────────────
+// ─── Seller Info Card (Updated with absolute URL for shop picture) ────────────
 const SellerInfoCard = ({
   product,
   onPress,
+  shopInfo,
 }: {
   product: ProductDetail;
   onPress: () => void;
+  shopInfo?: {
+    followers?: number;
+    rating?: number;
+    address?: string;
+  };
 }) => {
   const displayName = product.shop?.name || product.seller_name;
   if (!displayName) return null;
 
-  const displayAvatar = product.shop?.shop_picture || product.seller_avatar;
+  // Helper function to ensure absolute URL
+  const ensureAbsoluteUrl = (url?: string | null) => {
+    if (!url) return null;
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    
+    const base = AxiosInstance.defaults?.baseURL?.replace(/\/$/, '') || '';
+    if (!base) return url;
+    
+    if (url.startsWith('/')) return `${base}${url}`;
+    return `${base}/${url}`;
+  };
+
+  // Convert shop picture to absolute URL
+  const displayAvatar = product.shop_picture_url || product.shop?.shop_picture || product.seller_avatar;
 
   const getInitials = (name: string) => {
     if (!name) return "";
@@ -789,93 +809,121 @@ const SellerInfoCard = ({
         borderColor: "#E5E7EB",
         padding: 16,
         marginBottom: 0,
-        flexDirection: "row",
-        alignItems: "center",
         borderBottomWidth: 1,
         borderBottomColor: "#F3F4F6",
       }}
     >
-      <View
-        style={{
-          width: 48,
-          height: 48,
-          borderRadius: 24,
-          backgroundColor: "#EA580C",
-          justifyContent: "center",
-          alignItems: "center",
-          marginRight: 12,
-          overflow: "hidden",
-        }}
-      >
-        {displayAvatar ? (
-          <Image
-            source={{ uri: displayAvatar }}
-            style={{ width: 48, height: 48, borderRadius: 24 }}
-          />
-        ) : (
-          <Text style={{ fontSize: 18, fontWeight: "700", color: "#FFFFFF" }}>
-            {getInitials(displayName)}
-          </Text>
-        )}
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 14, fontWeight: "700", color: "#111827" }}>
-          {displayName}
-        </Text>
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        {/* Shop Avatar */}
         <View
           style={{
-            flexDirection: "row",
+            width: 60,
+            height: 60,
+            borderRadius: 30,
+            backgroundColor: "#EA580C",
+            justifyContent: "center",
             alignItems: "center",
-            gap: 8,
-            marginTop: 4,
+            marginRight: 12,
+            overflow: "hidden",
           }}
         >
-          <View
-            style={{
-              backgroundColor: "#FFF7ED",
-              paddingHorizontal: 8,
-              paddingVertical: 2,
-              borderRadius: 4,
-            }}
-          >
-            <Text style={{ fontSize: 10, fontWeight: "600", color: "#EA580C" }}>
-              {product.shop
-                ? "Shop"
-                : product.listing_type === "shop"
-                  ? "Shop"
-                  : "Personal Seller"}
+          {displayAvatar ? (
+            <Image
+              source={{ uri: displayAvatar }}
+              style={{ width: 60, height: 60, borderRadius: 30 }}
+              onError={(e) => console.log('Shop image error:', e.nativeEvent.error)}
+            />
+          ) : (
+            <Text style={{ fontSize: 20, fontWeight: "700", color: "#FFFFFF" }}>
+              {getInitials(displayName)}
             </Text>
-          </View>
-          {product.shop?.verified && (
-            <View
-              style={{ flexDirection: "row", alignItems: "center", gap: 2 }}
-            >
-              <Ionicons name="checkmark-circle" size={12} color="#16A34A" />
-              <Text style={{ fontSize: 10, color: "#16A34A" }}>Verified</Text>
-            </View>
           )}
         </View>
+
+        {/* Shop Info */}
+        <View style={{ flex: 1 }}>
+          {/* Shop Name */}
+          <Text style={{ fontSize: 16, fontWeight: "700", color: "#111827", marginBottom: 4 }}>
+            {displayName}
+          </Text>
+
+          {/* Shop Address */}
+          {(product.shop?.street || product.shop?.barangay || product.shop?.city || shopInfo?.address) && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 4 }}>
+              <Ionicons name="location-outline" size={12} color="#6B7280" />
+              <Text style={{ fontSize: 12, color: "#6B7280" }} numberOfLines={1}>
+                {shopInfo?.address || 
+                  [product.shop?.street, product.shop?.barangay, product.shop?.city]
+                    .filter(Boolean)
+                    .join(", ")}
+              </Text>
+            </View>
+          )}
+
+          {/* Followers and Rating */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            {shopInfo?.followers !== undefined && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <Ionicons name="people-outline" size={12} color="#6B7280" />
+                <Text style={{ fontSize: 12, color: "#4B5563" }}>
+                  {shopInfo.followers} {shopInfo.followers === 1 ? "follower" : "followers"}
+                </Text>
+              </View>
+            )}
+            
+            {shopInfo?.rating ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <Ionicons name="star" size={12} color="#F59E0B" />
+                <Text style={{ fontSize: 12, color: "#4B5563" }}>
+                  {shopInfo.rating.toFixed(1)}
+                </Text>
+              </View>
+            ) : product.shop?.verified ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <Ionicons name="checkmark-circle" size={12} color="#16A34A" />
+                <Text style={{ fontSize: 11, color: "#16A34A" }}>Verified</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+
+        <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
       </View>
-      <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
     </TouchableOpacity>
   );
 };
 
 // ─── Reviews Section ───────────────────────────────────────────────────────────
 // ─── Enhanced Reviews Section ─────────────────────────────────────────────────
+// ─── Enhanced Reviews Section ─────────────────────────────────────────────────
+// ─── Reviews Section (Updated with actual profile pictures) ───────────────────
 const ReviewsSection = ({
   reviews,
   averageRating,
   totalReviews,
+  productName,
 }: {
   reviews?: any[];
   averageRating?: number;
   totalReviews?: number;
+  productName?: string;
 }) => {
   const [expandedReview, setExpandedReview] = useState<string | null>(null);
   const [mediaModalVisible, setMediaModalVisible] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<string[]>([]);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
+
+  // Helper function to ensure absolute URL
+  const ensureAbsoluteUrl = (url?: string | null) => {
+    if (!url) return null;
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    
+    const base = AxiosInstance.defaults?.baseURL?.replace(/\/$/, '') || '';
+    if (!base) return url;
+    
+    if (url.startsWith('/')) return `${base}${url}`;
+    return `${base}/${url}`;
+  };
 
   if (!reviews || reviews.length === 0) {
     return (
@@ -942,159 +990,158 @@ const ReviewsSection = ({
           ) : null}
         </View>
 
-        {reviews.map((review) => (
-          <View
-            key={review.id}
-            style={{
-              borderBottomWidth: 1,
-              borderBottomColor: "#F3F4F6",
-              paddingVertical: 14,
-            }}
-          >
-            {/* User info and rating */}
+        {reviews.map((review) => {
+          const profilePicUrl = ensureAbsoluteUrl(review.customer?.profile_picture);
+          
+          return (
             <View
+              key={review.id}
               style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 8,
+                borderBottomWidth: 1,
+                borderBottomColor: "#F3F4F6",
+                paddingVertical: 14,
               }}
             >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <View
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 18,
-                    backgroundColor: "#F3F4F6",
-                    justifyContent: "center",
-                    alignItems: "center",
-                  }}
-                >
-                  <Text style={{ fontSize: 12, fontWeight: "600", color: "#6B7280" }}>
-                    {getInitials(review.customer?.name || review.customer?.username || "User")}
-                  </Text>
-                </View>
-                <View>
-                  <Text style={{ fontSize: 14, fontWeight: "600", color: "#111827" }}>
-                    {review.customer?.name || review.customer?.username || "Anonymous"}
-                  </Text>
-                  <Text style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>
-                    {formatDate(review.created_at)}
-                  </Text>
-                </View>
-              </View>
-              <StarRow count={Math.round(review.average_rating || review.rating || 0)} />
-            </View>
-
-            {/* Variant selected (if available) */}
-            {review.variant_title && (
+              {/* User info and rating */}
               <View
                 style={{
                   flexDirection: "row",
+                  justifyContent: "space-between",
                   alignItems: "center",
-                  gap: 4,
                   marginBottom: 8,
-                  paddingHorizontal: 8,
-                  paddingVertical: 4,
-                  backgroundColor: "#F3F4F6",
-                  borderRadius: 4,
-                  alignSelf: "flex-start",
                 }}
               >
-                <Ionicons name="cube-outline" size={12} color="#6B7280" />
-                <Text style={{ fontSize: 11, color: "#6B7280" }}>
-                  Variant: {review.variant_title}
-                </Text>
-              </View>
-            )}
-
-            {/* Detailed ratings */}
-            {/* Detailed ratings - 2x2 Grid layout */}
-            <View style={{ marginBottom: 10 }}>
-              {/* Row 1: Condition and Accuracy */}
-              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
-                {review.condition_rating && (
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
-                    <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Condition:</Text>
-                    <StarRow count={review.condition_rating} />
-                  </View>
-                )}
-                {review.accuracy_rating && (
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, marginLeft: 8 }}>
-                    <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Accuracy:</Text>
-                    <StarRow count={review.accuracy_rating} />
-                  </View>
-                )}
-              </View>
-              
-              {/* Row 2: Value and Delivery */}
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                {review.value_rating && (
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
-                    <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Value:</Text>
-                    <StarRow count={review.value_rating} />
-                  </View>
-                )}
-                {review.delivery_rating && (
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, marginLeft: 8 }}>
-                    <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Delivery:</Text>
-                    <StarRow count={review.delivery_rating} />
-                  </View>
-                )}
-              </View>
-            </View>
-
-            {/* Comment */}
-            {review.comment && (
-              <Text
-                style={{
-                  fontSize: 13,
-                  color: "#374151",
-                  lineHeight: 18,
-                  marginBottom: 10,
-                }}
-                numberOfLines={expandedReview === review.id ? undefined : 3}
-              >
-                {review.comment}
-              </Text>
-            )}
-
-            {/* Read more button for long comments */}
-            {review.comment && review.comment.length > 150 && expandedReview !== review.id && (
-              <TouchableOpacity onPress={() => setExpandedReview(review.id)}>
-                <Text style={{ fontSize: 12, color: "#EA580C", fontWeight: "500" }}>
-                  Read more
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Media images */}
-            {review.media && review.media.length > 0 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ marginTop: 8 }}
-                contentContainerStyle={{ gap: 8 }}
-              >
-                {review.media.map((media: any, idx: number) => {
-                  const mediaUrls = review.media.map((m: any) => m.file_url || m.file_data).filter(Boolean);
-                  return (
-                    <TouchableOpacity
-                      key={media.id}
-                      onPress={() => openMediaGallery(mediaUrls, idx)}
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  {/* Profile Picture or Initials */}
+                  {profilePicUrl ? (
+                    <Image
+                      source={{ uri: profilePicUrl }}
+                      style={{ width: 36, height: 36, borderRadius: 18 }}
+                      onError={(e) => console.log('Profile image error:', e.nativeEvent.error)}
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 18,
+                        backgroundColor: "#EA580C",
+                        justifyContent: "center",
+                        alignItems: "center",
+                      }}
                     >
-                      <Image
-                        source={{ uri: media.file_url || media.file_data }}
-                        style={{ width: 70, height: 70, borderRadius: 8, backgroundColor: "#F3F4F6" }}
-                      />
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            )}
-          </View>
-        ))}
+                      <Text style={{ fontSize: 12, fontWeight: "600", color: "#FFFFFF" }}>
+                        {getInitials(review.customer?.name || review.customer?.username || "User")}
+                      </Text>
+                    </View>
+                  )}
+                  <View>
+                    <Text style={{ fontSize: 14, fontWeight: "600", color: "#111827" }}>
+                      {review.customer?.name || review.customer?.username || "Anonymous"}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>
+                      {formatDate(review.created_at)}
+                    </Text>
+                  </View>
+                </View>
+                <StarRow count={Math.round(review.average_rating || review.rating || 0)} />
+              </View>
+
+              {/* Product and Variant */}
+              <View style={{ marginBottom: 12, marginTop: 4 }}>
+                <Text style={{ fontSize: 12, color: "#6B7280", marginBottom: 2 }}>Product:</Text>
+                <Text style={{ fontSize: 14, fontWeight: "600", color: "#111827" }}>
+                  {productName}
+                  {review.variant_title ? ` / ${review.variant_title}` : ''}
+                </Text>
+              </View>
+
+              {/* Detailed ratings */}
+              <View style={{ marginBottom: 10 }}>
+                {/* Row 1: Condition and Accuracy */}
+                <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+                  {review.condition_rating && (
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                      <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Condition:</Text>
+                      <StarRow count={review.condition_rating} />
+                    </View>
+                  )}
+                  {review.accuracy_rating && (
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, marginLeft: 8 }}>
+                      <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Accuracy:</Text>
+                      <StarRow count={review.accuracy_rating} />
+                    </View>
+                  )}
+                </View>
+                
+                {/* Row 2: Value and Delivery */}
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  {review.value_rating && (
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                      <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Value:</Text>
+                      <StarRow count={review.value_rating} />
+                    </View>
+                  )}
+                  {review.delivery_rating && (
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, marginLeft: 8 }}>
+                      <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Delivery:</Text>
+                      <StarRow count={review.delivery_rating} />
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {/* Comment */}
+              {review.comment && (
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: "#374151",
+                    lineHeight: 18,
+                    marginBottom: 10,
+                  }}
+                  numberOfLines={expandedReview === review.id ? undefined : 3}
+                >
+                  {review.comment}
+                </Text>
+              )}
+
+              {/* Read more button for long comments */}
+              {review.comment && review.comment.length > 150 && expandedReview !== review.id && (
+                <TouchableOpacity onPress={() => setExpandedReview(review.id)}>
+                  <Text style={{ fontSize: 12, color: "#EA580C", fontWeight: "500" }}>
+                    Read more
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Media images */}
+              {review.media && review.media.length > 0 && (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ marginTop: 8 }}
+                  contentContainerStyle={{ gap: 8 }}
+                >
+                  {review.media.map((media: any, idx: number) => {
+                    const mediaUrls = review.media.map((m: any) => m.file_url || m.file_data).filter(Boolean);
+                    return (
+                      <TouchableOpacity
+                        key={media.id}
+                        onPress={() => openMediaGallery(mediaUrls, idx)}
+                      >
+                        <Image
+                          source={{ uri: media.file_url || media.file_data }}
+                          style={{ width: 70, height: 70, borderRadius: 8, backgroundColor: "#F3F4F6" }}
+                        />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              )}
+            </View>
+          );
+        })}
       </View>
 
       {/* Media Gallery Modal */}
@@ -1160,6 +1207,12 @@ export default function CustomerViewProductScreen() {
   const [addingToCart, setAddingToCart] = useState(false);
   const [proofGalleryVisible, setProofGalleryVisible] = useState(false);
   const [proofGalleryImages, setProofGalleryImages] = useState<string[]>([]);
+  // Add this state with your other useState declarations
+const [shopInfo, setShopInfo] = useState<{
+  followers?: number;
+  rating?: number;
+  address?: string;
+} | null>(null);
   // Cart badge animation
 const [cartItemCount, setCartItemCount] = useState(0);
 const cartBadgeScale = useRef(new Animated.Value(1)).current;
@@ -1224,6 +1277,26 @@ const productImageRef = useRef<View>(null);
       }),
     ]).start();
   };
+
+  const fetchShopInfo = useCallback(async (shopId: string) => {
+    if (!shopId) return;
+    
+    try {
+      const headers: any = {};
+      if (userId) headers['X-User-Id'] = userId;
+      
+      const response = await AxiosInstance.get(`/shops/${shopId}/`, { headers });
+      const data = response.data;
+      
+      setShopInfo({
+        followers: data.total_followers || 0,
+        rating: data.rating,
+        address: data.address,
+      });
+    } catch (error) {
+      console.error("Error fetching shop info:", error);
+    }
+  }, [userId]);
 
   // Measure positions and animate fly-to-cart
   const animateFlyToCart = async (imageUri: string) => {
@@ -1290,39 +1363,45 @@ const productImageRef = useRef<View>(null);
   };
 
   const fetchProduct = useCallback(async () => {
-    if (!productId) {
-      setLoading(false);
-      return;
-    }
-    try {
-      const headers: any = {};
-      if (userId) headers["X-User-Id"] = userId;
-      const response = await AxiosInstance.get(
-        `/public-products/${productId}/`,
-        { headers },
-      );
-      if (response.data) {
-        setProduct(response.data);
-        // Set default variant (in stock preferred)
-        if (response.data.default_variant) {
-          setSelectedVariant(response.data.default_variant);
-        } else if (response.data.variants?.length > 0) {
-          const inStock = response.data.variants.find(
-            (v: Variant) => v.in_stock,
-          );
-          setSelectedVariant(inStock || response.data.variants[0]);
-        }
+  if (!productId) {
+    setLoading(false);
+    return;
+  }
+  try {
+    const headers: any = {};
+    if (userId) headers["X-User-Id"] = userId;
+    const response = await AxiosInstance.get(
+      `/public-products/${productId}/`,
+      { headers },
+    );
+    if (response.data) {
+      setProduct(response.data);
+      
+      // Fetch shop info if product has a shop
+      if (response.data.shop?.id) {
+        await fetchShopInfo(response.data.shop.id);
       }
-    } catch (error: any) {
-      if (error.response?.status === 404)
-        Alert.alert("Error", "Product not found.");
-      else Alert.alert("Error", "Unable to load product details.");
-      setProduct(null);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      
+      // Set default variant (in stock preferred)
+      if (response.data.default_variant) {
+        setSelectedVariant(response.data.default_variant);
+      } else if (response.data.variants?.length > 0) {
+        const inStock = response.data.variants.find(
+          (v: Variant) => v.in_stock,
+        );
+        setSelectedVariant(inStock || response.data.variants[0]);
+      }
     }
-  }, [productId, userId]);
+  } catch (error: any) {
+    if (error.response?.status === 404)
+      Alert.alert("Error", "Product not found.");
+    else Alert.alert("Error", "Unable to load product details.");
+    setProduct(null);
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+}, [productId, userId, fetchShopInfo]);
 
   useEffect(() => {
     fetchProduct();
@@ -1868,20 +1947,22 @@ const productImageRef = useRef<View>(null);
         </View>
 
         {/* Seller Info */}
-        <SellerInfoCard
-          product={product}
-          onPress={() => {
-            const shopId = product.shop?.id ?? product.seller_id;
-            if (shopId) {
-              router.push({
-                pathname: "/customer/view-shop",
-                params: { shopId },
-              });
-            } else {
-              Alert.alert("Error", "Shop not found");
-            }
-          }}
-        />
+        {/* Seller Info */}
+<SellerInfoCard
+  product={product}
+  shopInfo={shopInfo || undefined}
+  onPress={() => {
+    const shopId = product.shop?.id ?? product.seller_id;
+    if (shopId) {
+      router.push({
+        pathname: "/customer/view-shop",
+        params: { shopId },
+      });
+    } else {
+      Alert.alert("Error", "Shop not found");
+    }
+  }}
+/>
 
         {/* Variant Selection - OLD UI STYLE */}
         {product.variants && product.variants.length > 0 && (
@@ -2128,6 +2209,7 @@ const productImageRef = useRef<View>(null);
           reviews={product.reviews}
           averageRating={product.average_rating}
           totalReviews={product.total_reviews}
+          productName={product.name} 
         />
         {/* Divider below reviews */}
         <View style={{ height: 1, backgroundColor: '#E5E7EB', marginTop: 12, marginBottom: 8 }} />
