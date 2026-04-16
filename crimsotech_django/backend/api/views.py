@@ -22441,7 +22441,7 @@ class SellerOrderList(viewsets.ViewSet):
             "updated_at": order.updated_at.isoformat() if order.updated_at else None,
             "items": order_items,
             "is_pickup": is_pickup,
-            "pickup_date": order.metadata.get('pickup_date') if order.metadata else None,
+            "pickup_date": order.pickup_date.isoformat() if order.pickup_date else None,
         }
         if delivery_info:
             order_data["delivery_info"] = delivery_info
@@ -22638,7 +22638,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "has_pending_offer": has_pending_offer,
                     "available_actions": available_actions,
                     "can_confirm": can_confirm,
-                    "pickup_date": order.metadata.get('pickup_date') if order.metadata else None,
+                    "pickup_date": order.pickup_date.isoformat() if order.pickup_date else None,
                 }
             }, status=status.HTTP_200_OK)
         except Exception as e:
@@ -22795,6 +22795,8 @@ class SellerOrderList(viewsets.ViewSet):
                     return Response({"success": False, "message": "This action is only for pickup orders"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'picked_up'
                 order.completed_at = timezone.now()
+                order.pickup_date = timezone.now()  # Store directly in pickup_date field
+                
                 message = "Order picked up"
                 
             elif action_type == 'cancel':
@@ -23153,7 +23155,7 @@ class SellerOrderList(viewsets.ViewSet):
                     'items': items,
                     'delivery_info': delivery_info,
                     'proof_images': proof_images,
-                    'pickup_date': order.metadata.get('pickup_date') if order.metadata else None,
+                    'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
                 }
             }, status=status.HTTP_200_OK)
         except Shop.DoesNotExist:
@@ -26477,6 +26479,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             'payment_status': payment.status if payment else None,
             'delivery_status': delivery.status if delivery else None,
             'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+            'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
             'items': items_data
         }
         
@@ -26703,6 +26706,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                                         or getattr(delivery, 'updated_at', None))
                         else None
                     ),
+                    'pickup_expire_date': order.pickup_expire_date.isoformat() if order.pickup_expire_date else None,
+                    'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
                 },
                 'shipping_info': shipping_info,
                 'delivery_address': delivery_address_info,

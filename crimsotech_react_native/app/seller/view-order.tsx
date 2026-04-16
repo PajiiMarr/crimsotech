@@ -233,30 +233,34 @@ const [selectedImage, setSelectedImage] = useState<string | null>(null);
   }, [orderId, shopId]);
 
   const fetchOrderDetails = async () => {
-  if (!orderId || !shopId) return;
-  try {
-    const response = await AxiosInstance.get('/seller-order-list/seller_view_order/', {
-      params: { order_id: orderId, shop_id: shopId },
-    });
-    
-    if (response.data.success) {
-      setOrder(response.data.data);
+    if (!orderId || !shopId) return;
+    try {
+      const response = await AxiosInstance.get('/seller-order-list/seller_view_order/', {
+        params: { order_id: orderId, shop_id: shopId },
+      });
       
-      // If order is delivered and has proof_images from backend, use them directly
-      if (response.data.data.status === 'delivered' && response.data.data.proof_images) {
-        setProofImages(response.data.data.proof_images);
+      if (response.data.success) {
+        // DEBUG: Log the pickup_date
+        console.log('=== PICKUP DATE FROM API ===');
+        console.log('pickup_date:', response.data.data.pickup_date);
+        console.log('Full response data:', response.data.data);
+        
+        setOrder(response.data.data);
+        
+        if (response.data.data.status === 'delivered' && response.data.data.proof_images) {
+          setProofImages(response.data.data.proof_images);
+        }
+      } else {
+        Alert.alert('Error', response.data.message || 'Failed to load order details');
       }
-    } else {
-      Alert.alert('Error', response.data.message || 'Failed to load order details');
+    } catch (error: any) {
+      console.error('Error fetching order details:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to load order details');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-  } catch (error: any) {
-    console.error('Error fetching order details:', error);
-    Alert.alert('Error', error.response?.data?.message || 'Failed to load order details');
-  } finally {
-    setLoading(false);
-    setRefreshing(false);
-  }
-};
+  };
 
   const fetchProofImages = async (deliveryId: string) => {
   if (!deliveryId) return;

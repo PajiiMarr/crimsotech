@@ -108,6 +108,8 @@ interface OrderData {
     delivery_rider: string | null;
     delivery_notes: string | null;
     delivery_date: string | null;
+    pickup_expire_date?: string | null;  
+    pickup_date?: string | null;   
     shop_name?: string; 
     shop_id?: string;
   };
@@ -237,6 +239,11 @@ export default function ViewTrackOrderPage() {
             data.order.shop_id = data.items[0].shop_info.id;
           }
 
+          // Ensure pickup_expire_date and pickup_date are set
+          if (!data.order.pickup_expire_date && data.order.pickup_date) {
+            data.order.pickup_expire_date = data.order.pickup_date;
+          }
+
         setOrderData(data);
 // Set proofs from order data if available (like seller side)
 if (data.proof_images && data.proof_images.length > 0) {
@@ -291,8 +298,25 @@ if (data.proof_images && data.proof_images.length > 0) {
   };
 
   // Map internal status values to user-facing labels
+  // Map internal status values to user-facing labels
+  // Map internal status values to user-facing labels
   const getStatusText = (orderObj: any) => {
     const s = String(orderObj?.status || '').toLowerCase();
+    
+    // Special case: rider_assigned with pending delivery
+    if (s === 'rider_assigned' && orderData?.order?.delivery_status?.toLowerCase() === 'pending') {
+      return 'Waiting for rider confirmation';
+    }
+    
+    // Special case: rider_assigned with accepted delivery
+    if (s === 'rider_assigned' && orderData?.order?.delivery_status?.toLowerCase() === 'accepted') {
+      return 'Rider assigned - Waiting for seller to ship the item';
+    }
+    // waiting_for_rider with accepted delivery
+    if (s === 'waiting_for_rider' && orderData?.order?.delivery_status?.toLowerCase() === 'accepted') {
+      return 'Waiting for rider to pickup';
+    }
+    
     switch (s) {
       case 'pending':
         return 'Pending';
@@ -310,10 +334,14 @@ if (data.proof_images && data.proof_images.length > 0) {
         return 'Refunded';
       case 'picked_up':
         return 'Picked up';
+      case 'rider_assigned':
+        return 'Rider Assigned';
+      case 'waiting_for_rider':
+      return 'Waiting for Rider';
       default:
         return orderObj?.status_display || orderObj?.status || '';
     }
-  }; 
+  };
 
   const handleCancelOrder = () => {
     if (!orderId || !user?.id) return;
@@ -535,9 +563,91 @@ const renderRiderInfo = () => {
         {/* Order Status Banner */}
         {(() => {
           const deliveryDateDisplay = order.delivery_date ? formatDate(order.delivery_date) : null;
-          const baseStyle = [styles.statusBanner, { backgroundColor: `${order.status_color}20` }];
+          const statusColor = order?.status_color || '#F97316';
+          const baseStyle = [styles.statusBanner, { backgroundColor: `${statusColor}20` }];
           const statusLower = String(order?.status || '').toLowerCase();
+          const deliveryStatusLower = String(order?.delivery_status || '').toLowerCase();
 
+          //Rider Assigned - Waiting for rider confirmation
+          if (statusLower === 'rider_assigned' && deliveryStatusLower === 'pending') {
+            const riderColor = '#F59E0B'; // Amber/Orange color for waiting state
+            
+            return (
+              <View style={[styles.statusBanner, { backgroundColor: `${riderColor}20` }]}>
+                <View>
+                  <View style={styles.statusRow}>
+                    <MaterialCommunityIcons name="motorbike" size={20} color={riderColor} />
+                    <Text style={[styles.statusText, { color: riderColor, marginLeft: 8 }]}>
+                      Waiting for rider confirmation
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    A rider has been assigned to your order. Waiting for the rider to confirm the pickup.
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+
+          if (statusLower === 'rider_assigned' && deliveryStatusLower === 'accepted') {
+            const riderAcceptedColor = '#3B82F6'; // Blue color for accepted state
+            
+            return (
+              <View style={[styles.statusBanner, { backgroundColor: `${riderAcceptedColor}20` }]}>
+                <View>
+                  <View style={styles.statusRow}>
+                    <MaterialCommunityIcons name="motorbike" size={20} color={riderAcceptedColor} />
+                    <Text style={[styles.statusText, { color: riderAcceptedColor, marginLeft: 8 }]}>
+                      Rider assigned - Waiting for seller to ship
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    The rider has accepted the delivery request. The seller will now prepare and ship your item.
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+
+          if (statusLower === 'waiting_for_rider' && deliveryStatusLower === 'accepted') {
+            const waitingForRiderColor = '#8B5CF6'; // Purple color for waiting to pickup
+            
+            return (
+              <View style={[styles.statusBanner, { backgroundColor: `${waitingForRiderColor}20` }]}>
+                <View>
+                  <View style={styles.statusRow}>
+                    <MaterialCommunityIcons name="motorbike" size={20} color={waitingForRiderColor} />
+                    <Text style={[styles.statusText, { color: waitingForRiderColor, marginLeft: 8 }]}>
+                      Waiting for rider to pickup
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    Your order is ready. Waiting for the rider to pick up the item for delivery.
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+
+          if (statusLower === 'shipped') {
+            const shippedColor = '#2d49d7'; // Green color for shipped state
+            
+            return (
+              <View style={[styles.statusBanner, { backgroundColor: `${shippedColor}20` }]}>
+                <View>
+                  <View style={styles.statusRow}>
+                    <MaterialCommunityIcons name="package-variant-closed" size={20} color={shippedColor} />
+                    <Text style={[styles.statusText, { color: shippedColor, marginLeft: 8 }]}>
+                      Item has been shipped
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    Your item has been shipped. The rider is on the way to deliver your item.
+                  </Text>
+                </View>
+              </View>
+            );
+          }
           // Pending status UI
           if (String(order?.status || '').toLowerCase() === 'pending') {
             return (
@@ -559,8 +669,43 @@ const renderRiderInfo = () => {
           }
 
           // Processing status UI (includes ready_for_pickup variant)
+          // Processing status UI (includes ready_for_pickup variant)
           if (statusLower === 'processing' || statusLower === 'ready_for_pickup') {
             const isReadyForPickup = statusLower === 'ready_for_pickup';
+            const deliveryMethodRaw = String(shipping_info?.delivery_method || '').toLowerCase();
+            const isPickup = deliveryMethodRaw.includes('pickup');
+            
+            // For ready_for_pickup with pickup delivery method, show custom UI with expire date
+            // For ready_for_pickup with pickup delivery method, show simplified UI with expire date
+            if (isReadyForPickup && isPickup) {
+              const pickupColor = '#F59E0B'; // Amber/Orange color for pickup ready state
+              
+              // Get pickup expire date from order data
+              const pickupExpireDate = order?.pickup_expire_date || order?.pickup_date;
+              const formattedExpireDate = pickupExpireDate ? formatDate(pickupExpireDate) : null;
+              
+              return (
+                <View style={[styles.statusBanner, { backgroundColor: `${pickupColor}20` }]}>
+                  <View>
+                    <View style={styles.statusRow}>
+                      <MaterialCommunityIcons name="store-outline" size={20} color={pickupColor} />
+                      <Text style={[styles.statusText, { color: pickupColor, marginLeft: 8 }]}>
+                        Ready for Pickup
+                      </Text>
+                    </View>
+                    <Text style={styles.subStatusText}>
+                      Your order is ready to pickup. Please collect it from the store{formattedExpireDate ? ` before ` : '.'}
+                      {formattedExpireDate && (
+                        <Text style={styles.boldDateText}>{formattedExpireDate}</Text>
+                      )}
+                      {formattedExpireDate && '.'}
+                    </Text>
+                  </View>
+                </View>
+              );
+            }
+            
+            // Regular processing or ready_for_pickup with shipping
             return (
               <View style={baseStyle}>
                 <View>
@@ -584,24 +729,32 @@ const renderRiderInfo = () => {
             );
           }
 
+
           // Picked up UI
           if (statusLower === 'picked_up') {
             const deliveryMethodRawForPicked = String(shipping_info?.delivery_method || '').toLowerCase();
             const isPickupForPicked = deliveryMethodRawForPicked.includes('pickup');
-            const pickupDateDisplay = order?.updated_at ? formatDateTime(order.updated_at) : null;
+            // Use the actual pickup date from the order if available
+            const pickupDateDisplay = order?.pickup_date ? formatDateTime(order.pickup_date) : null;
+            const pickedUpColor = '#10B981'; // Green color for picked up state
+            
             return (
-              <View style={baseStyle}>
+              <View style={[styles.statusBanner, { backgroundColor: `${pickedUpColor}20` }]}>
                 <View>
                   <View style={styles.statusRow}>
-                    <MaterialCommunityIcons name="store-check-outline" size={20} color={order.status_color} />
-                    <Text style={[styles.statusText, { color: order.status_color, marginLeft: 8 }]}> 
+                    <MaterialCommunityIcons name="store-check-outline" size={20} color={pickedUpColor} />
+                    <Text style={[styles.statusText, { color: pickedUpColor, marginLeft: 8 }]}>
                       {getStatusText(order)}
                     </Text>
                   </View>
                   <Text style={styles.subStatusText}>
                     {isPickupForPicked
-                      ? `Your order has been picked up from the store${pickupDateDisplay ? ' on ' + pickupDateDisplay : ''}.`
-                      : `Your order has been picked up${pickupDateDisplay ? ' on ' + pickupDateDisplay : ''}.`}
+                      ? `Your order has been picked up from the store${pickupDateDisplay ? ' on ' : '.'}`
+                      : `Your order has been picked up${pickupDateDisplay ? ' on ' : '.'}`}
+                    {pickupDateDisplay && (
+                      <Text style={styles.boldDateText}>{pickupDateDisplay}</Text>
+                    )}
+                    {pickupDateDisplay && '.'}
                   </Text>
                 </View>
               </View>
@@ -656,12 +809,13 @@ const renderRiderInfo = () => {
                     {delivery_address.address || `${delivery_address.address_details?.street || ''}${delivery_address.address_details?.barangay ? ', ' + delivery_address.address_details.barangay : ''}${delivery_address.address_details?.city ? ', ' + delivery_address.address_details.city : ''}${delivery_address.address_details?.province ? ', ' + delivery_address.address_details.province : ''}`.replace(/^,\s*/, '') || 'Pickup address not provided'}
                   </Text>
 
-                  {order?.updated_at ? (
-                    <View style={{ marginTop: 8, paddingLeft: 4 }}>
-                      <Text style={styles.pickupLabel}>Picked up</Text>
-                      <Text style={styles.pickupValue}>{formatDateTime(order.updated_at)}</Text>
-                    </View>
-                  ) : null}
+                  {/* Only show picked up info when order status is actually picked_up */}
+                {orderStatusLower === 'picked_up' && order?.pickup_date && (
+                  <View style={{ marginTop: 8, paddingLeft: 4 }}>
+                    <Text style={styles.pickupLabel}>Picked up</Text>
+                    <Text style={styles.pickupValue}>{formatDateTime(order.pickup_date)}</Text>
+                  </View>
+                  )}
                 </View>
               </View>
             );
@@ -946,8 +1100,13 @@ const renderRiderInfo = () => {
 
         {/* Action Buttons */}
         {/* Action Buttons */}
+{/* Action Buttons */}
 <View style={styles.actionButtonsContainer}>
-  {actions.can_cancel && (
+  {/* Cancel Order Button - Show for: 
+       1. When actions.can_cancel is true, OR
+       2. When status is rider_assigned with delivery_status = pending 
+  */}
+  {(actions.can_cancel || (orderStatusLower === 'rider_assigned' && order?.delivery_status?.toLowerCase() === 'pending')) && (
     <TouchableOpacity
       style={styles.cancelOrderButton}
       onPress={handleCancelOrder}
@@ -977,26 +1136,24 @@ const renderRiderInfo = () => {
   )}
 
   {/* Rate Button - for completed orders */}
-  {/* Rate Button - for completed orders */}
-{orderStatusLower === 'completed' && items.length > 0 && (
-  <TouchableOpacity
-    style={styles.rateButton}
-    onPress={() => {
-      // Navigate to rate page with first product
-      const firstItem = items[0];
-      router.push({
-        pathname: '/customer/rate',
-        params: {
-          orderId: order.id,
-          productId: firstItem.product_id,
-          productName: firstItem.product_name
-        }
-      });
-    }}
-  >
-    <Text style={styles.rateButtonText}>Rate</Text>
-  </TouchableOpacity>
-)}
+  {orderStatusLower === 'completed' && items.length > 0 && (
+    <TouchableOpacity
+      style={styles.rateButton}
+      onPress={() => {
+        const firstItem = items[0];
+        router.push({
+          pathname: '/customer/rate',
+          params: {
+            orderId: order.id,
+            productId: firstItem.product_id,
+            productName: firstItem.product_name
+          }
+        });
+      }}
+    >
+      <Text style={styles.rateButtonText}>Rate</Text>
+    </TouchableOpacity>
+  )}
 
   {/* Need Help button removed */}
 </View>
@@ -1623,4 +1780,24 @@ completedMessage: {
   flex: 1,
   lineHeight: 18,
 },
+pickupExpireContainer: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#FEE2E2', // Light red background
+  paddingHorizontal: 10,
+  paddingVertical: 6,
+  borderRadius: 6,
+  marginTop: 8,
+  gap: 6,
+},
+pickupExpireText: {
+  fontSize: 12,
+  color: '#DC2626', // Red color for warning
+  fontWeight: '500',
+  flex: 1,
+},
+boldDateText: {
+  fontWeight: 'bold',
+  color: '#b75020', // Red color to highlight the date
+}
 });

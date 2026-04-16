@@ -94,6 +94,7 @@ interface Order {
 }
 
 // Status configuration based on order flow
+// Status configuration based on order flow
 const STATUS_CONFIG: Record<
   string,
   {
@@ -125,11 +126,39 @@ const STATUS_CONFIG: Record<
     icon: "cube-outline",
     order: 3,
   },
+  rider_assigned: {
+    label: "Rider Assigned",
+    color: "#8B5CF6",
+    bgColor: "#F5F3FF",
+    icon: "person-outline",
+    order: 3,
+  },
+  rider_accepted: {
+    label: "Rider Accepted",
+    color: "#10B981",
+    bgColor: "#ECFDF5",
+    icon: "checkmark-circle-outline",
+    order: 4,
+  },
+  pending_rider: {
+    label: "Pending Rider",
+    color: "#f97316",
+    bgColor: "#fff7ed",
+    icon: "time-outline",
+    order: 3,
+  },
   waiting_for_rider: {
-    label: "Waiting Rider",
+    label: "Waiting for Rider",
     color: "#f97316",
     bgColor: "#fff7ed",
     icon: "person-outline",
+    order: 4,
+  },
+  waiting_for_pickup: {
+    label: "Waiting Pickup",
+    color: "#f97316",
+    bgColor: "#fff7ed",
+    icon: "cube-outline",
     order: 4,
   },
   shipped: {
@@ -196,7 +225,7 @@ const STATUS_CONFIG: Record<
     order: 0,
   },
 };
-
+// Tabs configuration - Only show relevant statuses
 // Tabs configuration - Only show relevant statuses
 const STATUS_TABS = [
   { id: "all", label: "All", icon: "list-outline" },
@@ -205,6 +234,8 @@ const STATUS_TABS = [
   { id: "processing", label: "Processing", icon: "refresh-outline" },
   // Delivery only
   { id: "ready_to_ship", label: "Ready to Ship", icon: "cube-outline" },
+  { id: "rider_assigned", label: "Rider Assigned", icon: "person-outline" },
+  { id: "rider_accepted", label: "Rider Accepted", icon: "checkmark-circle-outline" },
   { id: "waiting_for_rider", label: "Waiting Rider", icon: "person-outline" },
   { id: "shipped", label: "Shipped", icon: "car-outline" },
   { id: "to_deliver", label: "Out for Delivery", icon: "car-outline" },
@@ -418,41 +449,21 @@ const filterOrders = () => {
   };
 
   const counts = {
-  all: orders.length,
-  pending_shipment: orders.filter(
-    (o) => o.status?.toLowerCase() === "pending_shipment"
-  ).length,
-  processing: orders.filter(
-    (o) => o.status?.toLowerCase() === "processing"
-  ).length,
-  ready_to_ship: orders.filter(
-    (o) => o.status?.toLowerCase() === "ready_to_ship"
-  ).length,
-  waiting_for_rider: orders.filter(
-    (o) => o.status?.toLowerCase() === "waiting_for_rider"
-  ).length,
-  shipped: orders.filter(
-    (o) => o.status?.toLowerCase() === "shipped"
-  ).length,
-  to_deliver: orders.filter(
-    (o) => o.status?.toLowerCase() === "to_deliver"
-  ).length,
-  ready_for_pickup: orders.filter(
-    (o) => o.status?.toLowerCase() === "ready_for_pickup"
-  ).length,
-  picked_up: orders.filter(
-    (o) => o.status?.toLowerCase() === "picked_up"
-  ).length,
-  delivered: orders.filter(
-    (o) => o.status?.toLowerCase() === "delivered"
-  ).length,
-  completed: orders.filter(
-    (o) => o.status?.toLowerCase() === "completed"
-  ).length,
-  cancelled: orders.filter(
-    (o) => o.status?.toLowerCase() === "cancelled"
-  ).length,
-};
+    all: orders.length,
+    pending_shipment: orders.filter((o) => o.status?.toLowerCase() === "pending_shipment").length,
+    processing: orders.filter((o) => o.status?.toLowerCase() === "processing").length,
+    ready_to_ship: orders.filter((o) => o.status?.toLowerCase() === "ready_to_ship").length,
+    rider_assigned: orders.filter((o) => o.status?.toLowerCase() === "rider_assigned").length,
+    rider_accepted: orders.filter((o) => o.status?.toLowerCase() === "rider_accepted").length,
+    waiting_for_rider: orders.filter((o) => o.status?.toLowerCase() === "waiting_for_rider").length,
+    shipped: orders.filter((o) => o.status?.toLowerCase() === "shipped").length,
+    to_deliver: orders.filter((o) => o.status?.toLowerCase() === "to_deliver").length,
+    ready_for_pickup: orders.filter((o) => o.status?.toLowerCase() === "ready_for_pickup").length,
+    picked_up: orders.filter((o) => o.status?.toLowerCase() === "picked_up").length,
+    delivered: orders.filter((o) => o.status?.toLowerCase() === "delivered").length,
+    completed: orders.filter((o) => o.status?.toLowerCase() === "completed").length,
+    cancelled: orders.filter((o) => o.status?.toLowerCase() === "cancelled").length,
+  };
 
   if (!shopId) {
     return (
