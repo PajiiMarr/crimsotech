@@ -1230,6 +1230,13 @@ class Review(models.Model):
     comment = models.CharField(max_length=200, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    variant = models.ForeignKey(
+        Variants,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviews'
+    )
 
     class Meta:
         indexes = [
