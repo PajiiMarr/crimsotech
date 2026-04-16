@@ -1,4 +1,3 @@
-// view-order.tsx
 import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
@@ -108,6 +107,8 @@ interface OrderData {
     delivery_rider: string | null;
     delivery_notes: string | null;
     delivery_date: string | null;
+    pickup_expire_date?: string | null;  
+    pickup_date?: string | null;   
     shop_name?: string; 
     shop_id?: string;
   };
@@ -172,10 +173,8 @@ export default function ViewTrackOrderPage() {
       );
       
       if (response.data) {
-        // Normalize response to avoid runtime crashes when fields are missing
         const data = response.data as any;
 
-        // Ensure items is an array and each item has required sub-objects
         data.items = Array.isArray(data.items) ? data.items.map((item: any) => ({
           checkout_id: item.checkout_id || '',
           product_id: item.product_id || '',
@@ -192,7 +191,7 @@ export default function ViewTrackOrderPage() {
           primary_image: item.primary_image || { url: null, file_type: null },
           shop_info: item.shop_info || {
             id: '',
-            name: item.shop_name || 'Unknown Shop', // Fallback to shop_name if available
+            name: item.shop_name || 'Unknown Shop',
             picture: null,
             description: '',
             items_count: 0,
@@ -207,7 +206,6 @@ export default function ViewTrackOrderPage() {
 
         data.timeline = Array.isArray(data.timeline) ? data.timeline : [];
 
-        // Normalize order summary and compute total if missing
         const rawSummary = data.order_summary || {};
         const computedSubtotal = data.items.reduce((sum: number, it: any) => sum + (parseFloat(it.subtotal || '0') || 0), 0).toFixed(2);
         const subtotalStr = rawSummary.subtotal ?? computedSubtotal;
@@ -230,20 +228,21 @@ export default function ViewTrackOrderPage() {
         data.shipping_info = data.shipping_info || { logistics_carrier: '', tracking_number: null, delivery_method: '', estimated_delivery: null };
         data.delivery_address = data.delivery_address || { recipient_name: '', phone_number: '', address: '', address_details: { street: '', barangay: '', city: '', province: '', postal_code: '' } };
 
-        // Ensure order object has shop_name if available from first item
-        // Ensure order object has shop_name and shop_id if available from first item
-          if (!data.order.shop_name && data.items.length > 0 && data.items[0].shop_info?.name) {
-            data.order.shop_name = data.items[0].shop_info.name;
-            data.order.shop_id = data.items[0].shop_info.id;
-          }
+        if (!data.order.shop_name && data.items.length > 0 && data.items[0].shop_info?.name) {
+          data.order.shop_name = data.items[0].shop_info.name;
+          data.order.shop_id = data.items[0].shop_info.id;
+        }
+
+        if (!data.order.pickup_expire_date && data.order.pickup_date) {
+          data.order.pickup_expire_date = data.order.pickup_date;
+        }
 
         setOrderData(data);
-// Set proofs from order data if available (like seller side)
-if (data.proof_images && data.proof_images.length > 0) {
-  setProofs(data.proof_images);
-} else {
-  setProofs([]);
-}
+        if (data.proof_images && data.proof_images.length > 0) {
+          setProofs(data.proof_images);
+        } else {
+          setProofs([]);
+        }
       }
     } catch (error: any) {
       console.error('Error fetching order details:', error);
@@ -272,8 +271,6 @@ if (data.proof_images && data.proof_images.length > 0) {
     });
   };
 
-
-
   const formatDateTime = (dateString: string | null) => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
@@ -290,9 +287,20 @@ if (data.proof_images && data.proof_images.length > 0) {
     return `₱${parseFloat(amount).toFixed(2)}`;
   };
 
-  // Map internal status values to user-facing labels
   const getStatusText = (orderObj: any) => {
     const s = String(orderObj?.status || '').toLowerCase();
+    
+    if (s === 'rider_assigned' && orderData?.order?.delivery_status?.toLowerCase() === 'pending') {
+      return 'Waiting for rider confirmation';
+    }
+    
+    if (s === 'rider_assigned' && orderData?.order?.delivery_status?.toLowerCase() === 'accepted') {
+      return 'Rider assigned - Waiting for seller to ship the item';
+    }
+    if (s === 'waiting_for_rider' && orderData?.order?.delivery_status?.toLowerCase() === 'accepted') {
+      return 'Waiting for rider to pickup';
+    }
+    
     switch (s) {
       case 'pending':
         return 'Pending';
@@ -310,10 +318,14 @@ if (data.proof_images && data.proof_images.length > 0) {
         return 'Refunded';
       case 'picked_up':
         return 'Picked up';
+      case 'rider_assigned':
+        return 'Rider Assigned';
+      case 'waiting_for_rider':
+        return 'Waiting for Rider';
       default:
         return orderObj?.status_display || orderObj?.status || '';
     }
-  }; 
+  };
 
   const handleCancelOrder = () => {
     if (!orderId || !user?.id) return;
@@ -339,7 +351,7 @@ if (data.proof_images && data.proof_images.length > 0) {
               
               if (response.data.success) {
                 Alert.alert('Success', 'Order cancelled successfully');
-                fetchOrderData(); // Refresh data
+                fetchOrderData();
               }
             } catch (error: any) {
               Alert.alert('Error', error.response?.data?.error || 'Failed to cancel order');
@@ -349,6 +361,7 @@ if (data.proof_images && data.proof_images.length > 0) {
       ]
     );
   };
+
   const handleOrderReceived = async () => {
     if (!orderId || !user?.id) return;
     
@@ -373,7 +386,7 @@ if (data.proof_images && data.proof_images.length > 0) {
               
               if (response.data.success) {
                 Alert.alert('Success', 'Order marked as completed successfully');
-                fetchOrderData(); // Refresh data
+                fetchOrderData();
               } else {
                 Alert.alert('Error', response.data.message || 'Failed to complete order');
               }
@@ -386,57 +399,57 @@ if (data.proof_images && data.proof_images.length > 0) {
       ]
     );
   };
-const renderProofOfDelivery = () => {
-  if (orderData?.order?.status !== 'delivered') return null;
-  
-  const proofs = orderData?.proof_images || [];
-  if (proofs.length === 0) return null;
 
-  return (
-    <View style={styles.infoCard}>
-      <View style={styles.cardHeader}>
-        <MaterialIcons name="photo-camera" size={20} color="#111827" />
-        <Text style={styles.cardTitle}>Proof of Delivery</Text>
-      </View>
-      <View style={styles.cardContent}>
-        <View style={styles.proofGrid}>
-          {proofs.map((proof) => (
-            <TouchableOpacity
-              key={proof.id}
-              onPress={() => {
-                setSelectedImage(proof.file_url);
-                setPreviewVisible(true);
-              }}
-            >
-              <Image source={{ uri: proof.file_url }} style={styles.proofImage} />
-            </TouchableOpacity>
-          ))}
+  const renderProofOfDelivery = () => {
+    if (orderData?.order?.status !== 'delivered') return null;
+    
+    const proofs = orderData?.proof_images || [];
+    if (proofs.length === 0) return null;
+
+    return (
+      <View style={styles.infoCard}>
+        <View style={styles.cardHeader}>
+          <MaterialIcons name="photo-camera" size={20} color="#111827" />
+          <Text style={styles.cardTitle}>Proof of Delivery</Text>
+        </View>
+        <View style={styles.cardContent}>
+          <View style={styles.proofGrid}>
+            {proofs.map((proof) => (
+              <TouchableOpacity
+                key={proof.id}
+                onPress={() => {
+                  setSelectedImage(proof.file_url);
+                  setPreviewVisible(true);
+                }}
+              >
+                <Image source={{ uri: proof.file_url }} style={styles.proofImage} />
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
       </View>
-    </View>
-  );
-};
+    );
+  };
 
-const renderRiderInfo = () => {
-  // Only show for delivered orders that have a rider assigned
-  if (orderData?.order?.status !== 'delivered') return null;
-  if (!orderData?.order?.delivery_rider) return null;
-  
-  return (
-    <View style={styles.infoCard}>
-      <View style={styles.cardHeader}>
-        <MaterialCommunityIcons name="motorbike" size={20} color="#111827" />
-        <Text style={styles.cardTitle}>Rider Information</Text>
-      </View>
-      <View style={styles.cardContent}>
-        <View style={styles.riderInfoRow}>
-          <Ionicons name="person-outline" size={16} color="#6B7280" />
-          <Text style={styles.riderName}>{orderData.order.delivery_rider}</Text>
+  const renderRiderInfo = () => {
+    if (orderData?.order?.status !== 'delivered') return null;
+    if (!orderData?.order?.delivery_rider) return null;
+    
+    return (
+      <View style={styles.infoCard}>
+        <View style={styles.cardHeader}>
+          <MaterialCommunityIcons name="motorbike" size={20} color="#111827" />
+          <Text style={styles.cardTitle}>Rider Information</Text>
+        </View>
+        <View style={styles.cardContent}>
+          <View style={styles.riderInfoRow}>
+            <Ionicons name="person-outline" size={16} color="#6B7280" />
+            <Text style={styles.riderName}>{orderData.order.delivery_rider}</Text>
+          </View>
         </View>
       </View>
-    </View>
-  );
-};
+    );
+  };
 
   const handleReviewProduct = (productId: string) => {
     router.push(`/customer/order-review?productId=${productId}&orderId=${orderId}`);
@@ -449,10 +462,8 @@ const renderRiderInfo = () => {
   const handleContactSeller = (shopId: string) => {
     router.push(`/customer/messages?shopId=${shopId}`);
   };
-  
 
   const handleTrackOrder = () => {
-    // Navigate to shipping timeline route with orderId
     if (!orderId) {
       Alert.alert('Error', 'Order ID not available');
       return;
@@ -503,6 +514,14 @@ const renderRiderInfo = () => {
   const { order, shipping_info, delivery_address, items, order_summary, timeline, actions } = orderData;
   const orderStatusLower = String(order?.status || '').toLowerCase();
 
+  const hasActions = () => {
+    return (
+      (actions.can_cancel || (orderStatusLower === 'rider_assigned' && order?.delivery_status?.toLowerCase() === 'pending')) ||
+      (orderStatusLower === 'delivered' || orderStatusLower === 'picked_up') ||
+      orderStatusLower === 'completed'
+    );
+  };
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -531,14 +550,92 @@ const renderRiderInfo = () => {
             tintColor="#F97316"
           />
         }
+        contentContainerStyle={{ paddingBottom: 80 }}
       >
         {/* Order Status Banner */}
         {(() => {
           const deliveryDateDisplay = order.delivery_date ? formatDate(order.delivery_date) : null;
-          const baseStyle = [styles.statusBanner, { backgroundColor: `${order.status_color}20` }];
+          const statusColor = order?.status_color || '#F97316';
+          const baseStyle = [styles.statusBanner, { backgroundColor: `${statusColor}20` }];
           const statusLower = String(order?.status || '').toLowerCase();
+          const deliveryStatusLower = String(order?.delivery_status || '').toLowerCase();
 
-          // Pending status UI
+          if (statusLower === 'rider_assigned' && deliveryStatusLower === 'pending') {
+            const riderColor = '#F59E0B';
+            return (
+              <View style={[styles.statusBanner, { backgroundColor: `${riderColor}20` }]}>
+                <View>
+                  <View style={styles.statusRow}>
+                    <MaterialCommunityIcons name="motorbike" size={20} color={riderColor} />
+                    <Text style={[styles.statusText, { color: riderColor, marginLeft: 8 }]}>
+                      Waiting for rider confirmation
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    A rider has been assigned to your order. Waiting for the rider to confirm the pickup.
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+
+          if (statusLower === 'rider_assigned' && deliveryStatusLower === 'accepted') {
+            const riderAcceptedColor = '#3B82F6';
+            return (
+              <View style={[styles.statusBanner, { backgroundColor: `${riderAcceptedColor}20` }]}>
+                <View>
+                  <View style={styles.statusRow}>
+                    <MaterialCommunityIcons name="motorbike" size={20} color={riderAcceptedColor} />
+                    <Text style={[styles.statusText, { color: riderAcceptedColor, marginLeft: 8 }]}>
+                      Rider assigned - Waiting for seller to ship
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    The rider has accepted the delivery request. The seller will now prepare and ship your item.
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+
+          if (statusLower === 'waiting_for_rider' && deliveryStatusLower === 'accepted') {
+            const waitingForRiderColor = '#8B5CF6';
+            return (
+              <View style={[styles.statusBanner, { backgroundColor: `${waitingForRiderColor}20` }]}>
+                <View>
+                  <View style={styles.statusRow}>
+                    <MaterialCommunityIcons name="motorbike" size={20} color={waitingForRiderColor} />
+                    <Text style={[styles.statusText, { color: waitingForRiderColor, marginLeft: 8 }]}>
+                      Waiting for rider to pickup
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    Your order is ready. Waiting for the rider to pick up the item for delivery.
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+
+          if (statusLower === 'shipped') {
+            const shippedColor = '#2d49d7';
+            return (
+              <View style={[styles.statusBanner, { backgroundColor: `${shippedColor}20` }]}>
+                <View>
+                  <View style={styles.statusRow}>
+                    <MaterialCommunityIcons name="package-variant-closed" size={20} color={shippedColor} />
+                    <Text style={[styles.statusText, { color: shippedColor, marginLeft: 8 }]}>
+                      Item has been shipped
+                    </Text>
+                  </View>
+                  <Text style={styles.subStatusText}>
+                    Your item has been shipped. The rider is on the way to deliver your item.
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+
           if (String(order?.status || '').toLowerCase() === 'pending') {
             return (
               <View style={baseStyle}>
@@ -555,12 +652,39 @@ const renderRiderInfo = () => {
                 </View>
               </View>
             );
-            
           }
 
-          // Processing status UI (includes ready_for_pickup variant)
           if (statusLower === 'processing' || statusLower === 'ready_for_pickup') {
             const isReadyForPickup = statusLower === 'ready_for_pickup';
+            const deliveryMethodRaw = String(shipping_info?.delivery_method || '').toLowerCase();
+            const isPickup = deliveryMethodRaw.includes('pickup');
+            
+            if (isReadyForPickup && isPickup) {
+              const pickupColor = '#F59E0B';
+              const pickupExpireDate = order?.pickup_expire_date || order?.pickup_date;
+              const formattedExpireDate = pickupExpireDate ? formatDate(pickupExpireDate) : null;
+              
+              return (
+                <View style={[styles.statusBanner, { backgroundColor: `${pickupColor}20` }]}>
+                  <View>
+                    <View style={styles.statusRow}>
+                      <MaterialCommunityIcons name="store-outline" size={20} color={pickupColor} />
+                      <Text style={[styles.statusText, { color: pickupColor, marginLeft: 8 }]}>
+                        Ready for Pickup
+                      </Text>
+                    </View>
+                    <Text style={styles.subStatusText}>
+                      Your order is ready to pickup. Please collect it from the store{formattedExpireDate ? ` before ` : '.'}
+                      {formattedExpireDate && (
+                        <Text style={styles.boldDateText}>{formattedExpireDate}</Text>
+                      )}
+                      {formattedExpireDate && '.'}
+                    </Text>
+                  </View>
+                </View>
+              );
+            }
+            
             return (
               <View style={baseStyle}>
                 <View>
@@ -584,31 +708,35 @@ const renderRiderInfo = () => {
             );
           }
 
-          // Picked up UI
           if (statusLower === 'picked_up') {
             const deliveryMethodRawForPicked = String(shipping_info?.delivery_method || '').toLowerCase();
             const isPickupForPicked = deliveryMethodRawForPicked.includes('pickup');
-            const pickupDateDisplay = order?.updated_at ? formatDateTime(order.updated_at) : null;
+            const pickupDateDisplay = order?.pickup_date ? formatDateTime(order.pickup_date) : null;
+            const pickedUpColor = '#10B981';
+            
             return (
-              <View style={baseStyle}>
+              <View style={[styles.statusBanner, { backgroundColor: `${pickedUpColor}20` }]}>
                 <View>
                   <View style={styles.statusRow}>
-                    <MaterialCommunityIcons name="store-check-outline" size={20} color={order.status_color} />
-                    <Text style={[styles.statusText, { color: order.status_color, marginLeft: 8 }]}> 
+                    <MaterialCommunityIcons name="store-check-outline" size={20} color={pickedUpColor} />
+                    <Text style={[styles.statusText, { color: pickedUpColor, marginLeft: 8 }]}>
                       {getStatusText(order)}
                     </Text>
                   </View>
                   <Text style={styles.subStatusText}>
                     {isPickupForPicked
-                      ? `Your order has been picked up from the store${pickupDateDisplay ? ' on ' + pickupDateDisplay : ''}.`
-                      : `Your order has been picked up${pickupDateDisplay ? ' on ' + pickupDateDisplay : ''}.`}
+                      ? `Your order has been picked up from the store${pickupDateDisplay ? ' on ' : '.'}`
+                      : `Your order has been picked up${pickupDateDisplay ? ' on ' : '.'}`}
+                    {pickupDateDisplay && (
+                      <Text style={styles.boldDateText}>{pickupDateDisplay}</Text>
+                    )}
+                    {pickupDateDisplay && '.'}
                   </Text>
                 </View>
               </View>
             );
           }
 
-          // Default behavior for other statuses (delivered, shipped, etc.)
           return (
             <View style={baseStyle}>
               <View>
@@ -631,6 +759,7 @@ const renderRiderInfo = () => {
             </View>
           );
         })()}
+        
         {renderRiderInfo()}
         {renderProofOfDelivery()}
 
@@ -640,7 +769,6 @@ const renderRiderInfo = () => {
           const isPickup = deliveryMethodRaw.includes('pickup');
 
           if (isPickup) {
-            // Show pickup location set by seller and hide shipping & delivery address
             return (
               <View style={styles.infoCard}>
                 <View style={styles.cardHeader}>
@@ -656,18 +784,17 @@ const renderRiderInfo = () => {
                     {delivery_address.address || `${delivery_address.address_details?.street || ''}${delivery_address.address_details?.barangay ? ', ' + delivery_address.address_details.barangay : ''}${delivery_address.address_details?.city ? ', ' + delivery_address.address_details.city : ''}${delivery_address.address_details?.province ? ', ' + delivery_address.address_details.province : ''}`.replace(/^,\s*/, '') || 'Pickup address not provided'}
                   </Text>
 
-                  {order?.updated_at ? (
+                  {orderStatusLower === 'picked_up' && order?.pickup_date && (
                     <View style={{ marginTop: 8, paddingLeft: 4 }}>
                       <Text style={styles.pickupLabel}>Picked up</Text>
-                      <Text style={styles.pickupValue}>{formatDateTime(order.updated_at)}</Text>
+                      <Text style={styles.pickupValue}>{formatDateTime(order.pickup_date)}</Text>
                     </View>
-                  ) : null}
+                  )}
                 </View>
               </View>
             );
           }
 
-          // Default: Show shipping info and delivery address
           return (
             <>
               <TouchableOpacity 
@@ -688,12 +815,6 @@ const renderRiderInfo = () => {
                     <Text style={styles.shippingLabel}>Logistics Carrier:</Text>
                     <Text style={styles.shippingValue}>{shipping_info.logistics_carrier || 'N/A'}</Text>
                   </View>
-                  {/* {shipping_info.tracking_number && (
-                    <View style={styles.shippingRow}>
-                      <Text style={styles.shippingLabel}>Tracking Number:</Text>
-                      <Text style={styles.shippingValue}>{shipping_info.tracking_number}</Text>
-                    </View>
-                  )} */}
                   {shipping_info.estimated_delivery && (
                     <View style={styles.shippingRow}>
                       <Text style={styles.shippingLabel}>Estimated Delivery:</Text>
@@ -703,7 +824,6 @@ const renderRiderInfo = () => {
                 </View>
               </TouchableOpacity>
 
-              {/* Delivery Information Card */}
               <View style={styles.infoCard}>
                 <View style={styles.cardHeader}>
                   <MaterialCommunityIcons name="map-marker-outline" size={20} color="#111827" />
@@ -722,30 +842,31 @@ const renderRiderInfo = () => {
             </>
           );
         })()}
-        {/* Completed Information - for completed orders */}
-{orderStatusLower === 'completed' && (
-  <View style={styles.infoCard}>
-    <View style={styles.cardHeader}>
-      <MaterialIcons name="check-circle" size={20} color="#10B981" />
-      <Text style={styles.cardTitle}>Order Completed</Text>
-    </View>
-    <View style={styles.cardContent}>
-      <View style={styles.completedRow}>
-        <Ionicons name="calendar-outline" size={16} color="#6B7280" />
-        <Text style={styles.completedLabel}>Completed on:</Text>
-        <Text style={styles.completedValue}>
-          {order.completed_at ? formatDateTime(order.completed_at) : formatDateTime(order.updated_at)}
-        </Text>
-      </View>
-      <View style={styles.completedMessageContainer}>
-        <Ionicons name="happy-outline" size={20} color="#10B981" />
-        <Text style={styles.completedMessage}>
-          Your order has been successfully completed! Thank you for shopping with us.
-        </Text>
-      </View>
-    </View>
-  </View>
-)}
+
+        {/* Completed Information */}
+        {orderStatusLower === 'completed' && (
+          <View style={styles.infoCard}>
+            <View style={styles.cardHeader}>
+              <MaterialIcons name="check-circle" size={20} color="#10B981" />
+              <Text style={styles.cardTitle}>Order Completed</Text>
+            </View>
+            <View style={styles.cardContent}>
+              <View style={styles.completedRow}>
+                <Ionicons name="calendar-outline" size={16} color="#6B7280" />
+                <Text style={styles.completedLabel}>Completed on:</Text>
+                <Text style={styles.completedValue}>
+                  {order.completed_at ? formatDateTime(order.completed_at) : formatDateTime(order.updated_at)}
+                </Text>
+              </View>
+              <View style={styles.completedMessageContainer}>
+                <Ionicons name="happy-outline" size={20} color="#10B981" />
+                <Text style={styles.completedMessage}>
+                  Your order has been successfully completed! Thank you for shopping with us.
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Order Timeline */}
         {timeline.length > 0 && (
@@ -774,67 +895,63 @@ const renderRiderInfo = () => {
         {/* Product Cards */}
         {items.map((item, index) => (
           <View key={item.checkout_id} style={styles.productCard}>
-            {/* Shop Header */}
-            {/* Shop Header */}
-{/* Shop Header */}
-{item.shop_info && item.shop_info.name ? (
-  <TouchableOpacity 
-    style={styles.storeHeader}
-    activeOpacity={0.7}
-    onPress={() => router.push({
-      pathname: "/customer/view-shop",
-      params: { shopId: item.shop_info.id }
-    })}
-  >
-    {item.shop_info.picture ? (
-      <Image 
-        source={{ uri: item.shop_info.picture }} 
-        style={styles.storeLogo} 
-      />
-    ) : (
-      <View style={styles.storeLogo}>
-        <Text style={styles.logoText}>
-          {item.shop_info.name.substring(0, 2).toUpperCase()}
-        </Text>
-      </View>
-    )}
-    <View style={styles.storeInfo}>
-      <View style={styles.storeTitleRow}>
-        <Text style={styles.storeName}>{item.shop_info.name}</Text>
-        {item.shop_info.is_choices && (
-          <View style={styles.choicesBadge}>
-            <Text style={styles.badgeText}>Choices</Text>
-          </View>
-        )}
-        <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
-      </View>
-      <Text style={styles.followerText}>
-        {item.shop_info.items_count} Items | {item.shop_info.followers_count?.toLocaleString() || 0} followers
-      </Text>
-    </View>
-  </TouchableOpacity>
-) : (
-  // Fallback shop header if shop_info is missing
-  <TouchableOpacity 
-    style={styles.storeHeader}
-    activeOpacity={0.7}
-    onPress={order?.shop_id ? () => router.push({
-      pathname: "/customer/view-shop",
-      params: { shopId: order.shop_id }
-    }) : undefined}
-  >
-    <View style={styles.storeLogo}>
-      <Text style={styles.logoText}>SH</Text>
-    </View>
-    <View style={styles.storeInfo}>
-      <View style={styles.storeTitleRow}>
-        <Text style={styles.storeName}>{order?.shop_name || 'Shop'}</Text>
-        <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
-      </View>
-    </View>
-  </TouchableOpacity>
-)}
-            {/* Product Body */}
+            {item.shop_info && item.shop_info.name ? (
+              <TouchableOpacity 
+                style={styles.storeHeader}
+                activeOpacity={0.7}
+                onPress={() => router.push({
+                  pathname: "/customer/view-shop",
+                  params: { shopId: item.shop_info.id }
+                })}
+              >
+                {item.shop_info.picture ? (
+                  <Image 
+                    source={{ uri: item.shop_info.picture }} 
+                    style={styles.storeLogo} 
+                  />
+                ) : (
+                  <View style={styles.storeLogo}>
+                    <Text style={styles.logoText}>
+                      {item.shop_info.name.substring(0, 2).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.storeInfo}>
+                  <View style={styles.storeTitleRow}>
+                    <Text style={styles.storeName}>{item.shop_info.name}</Text>
+                    {item.shop_info.is_choices && (
+                      <View style={styles.choicesBadge}>
+                        <Text style={styles.badgeText}>Choices</Text>
+                      </View>
+                    )}
+                    <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
+                  </View>
+                  <Text style={styles.followerText}>
+                    {item.shop_info.items_count} Items | {item.shop_info.followers_count?.toLocaleString() || 0} followers
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity 
+                style={styles.storeHeader}
+                activeOpacity={0.7}
+                onPress={order?.shop_id ? () => router.push({
+                  pathname: "/customer/view-shop",
+                  params: { shopId: order.shop_id }
+                }) : undefined}
+              >
+                <View style={styles.storeLogo}>
+                  <Text style={styles.logoText}>SH</Text>
+                </View>
+                <View style={styles.storeInfo}>
+                  <View style={styles.storeTitleRow}>
+                    <Text style={styles.storeName}>{order?.shop_name || 'Shop'}</Text>
+                    <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
+                  </View>
+                </View>
+              </TouchableOpacity>
+            )}
+            
             <View style={styles.productBody}>
               <Image 
                 source={{ 
@@ -859,30 +976,8 @@ const renderRiderInfo = () => {
               </View>
             </View>
 
-            {/* Action Buttons - Rate & Review and Return buttons removed */}
             <View style={styles.productActions}>
-              {/* Rate & Review button removed */}
-              {/* Return button removed */}
-              
-              {/* Contact Seller button (optional - uncomment if needed) */}
-              {/* {actions.can_contact_seller && (
-                <TouchableOpacity
-                  style={styles.chatButton}
-                  onPress={() => handleContactSeller(item.shop_info.id)}
-                >
-                  <Ionicons name="chatbubble-outline" size={16} color="#3B82F6" />
-                  <Text style={styles.chatButtonText}>Contact Seller</Text>
-                </TouchableOpacity>
-              )} */}
-              
-              {/* Buy Again button (optional - uncomment if needed) */}
-              {/* <TouchableOpacity
-                style={styles.buyAgainButton}
-                onPress={() => handleBuyAgain(item.product_id)}
-              >
-                <Ionicons name="cart-outline" size={16} color="#000000" />
-                <Text style={styles.buyAgainButtonText}>Buy Again</Text>
-              </TouchableOpacity> */}
+              {/* Action buttons removed */}
             </View>
           </View>
         ))}
@@ -898,10 +993,6 @@ const renderRiderInfo = () => {
             <Text style={styles.summaryLabel}>Shipping Fee:</Text>
             <Text style={styles.summaryValue}>{formatCurrency(order_summary.shipping_fee)}</Text>
           </View>
-          {/* <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Tax:</Text>
-            <Text style={styles.summaryValue}>{formatCurrency(order_summary.tax)}</Text>
-          </View> */}
           {parseFloat(order_summary.discount) > 0 && (
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Discount:</Text>
@@ -923,7 +1014,6 @@ const renderRiderInfo = () => {
             <View style={styles.infoValueContainer}>
               <Text style={styles.infoValue}>{order.id}</Text>
               <TouchableOpacity onPress={() => {
-                // Copy to clipboard
                 Alert.alert('Copied', 'Order number copied to clipboard');
               }}>
                 <Ionicons name="copy-outline" size={16} color="#4B5563" style={{ marginLeft: 5 }} />
@@ -943,88 +1033,84 @@ const renderRiderInfo = () => {
             <Text style={styles.infoValue}>{shipping_info.delivery_method || 'N/A'}</Text>
           </View>
         </View>
-
-        {/* Action Buttons */}
-        {/* Action Buttons */}
-<View style={styles.actionButtonsContainer}>
-  {actions.can_cancel && (
-    <TouchableOpacity
-      style={styles.cancelOrderButton}
-      onPress={handleCancelOrder}
-    >
-      <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
-    </TouchableOpacity>
-  )}
-
-  {/* Order Received Button - for delivered or picked_up orders */}
-  {(orderStatusLower === 'delivered' || orderStatusLower === 'picked_up') && (
-    <TouchableOpacity
-      style={styles.orderReceivedButton}
-      onPress={handleOrderReceived}
-    >
-      <Text style={styles.orderReceivedButtonText}>Order Received</Text>
-    </TouchableOpacity>
-  )}
-
-  {/* Request Refund Button - for completed orders */}
-  {orderStatusLower === 'completed' && (
-    <TouchableOpacity
-      style={styles.requestRefundButton}
-      onPress={() => router.push(`/customer/request-refund?orderId=${order.id}`)}
-    >
-      <Text style={styles.requestRefundButtonText}>Request Refund</Text>
-    </TouchableOpacity>
-  )}
-
-  {/* Rate Button - for completed orders */}
-  {/* Rate Button - for completed orders */}
-{orderStatusLower === 'completed' && items.length > 0 && (
-  <TouchableOpacity
-    style={styles.rateButton}
-    onPress={() => {
-      // Navigate to rate page with first product
-      const firstItem = items[0];
-      router.push({
-        pathname: '/customer/rate',
-        params: {
-          orderId: order.id,
-          productId: firstItem.product_id,
-          productName: firstItem.product_name
-        }
-      });
-    }}
-  >
-    <Text style={styles.rateButtonText}>Rate</Text>
-  </TouchableOpacity>
-)}
-
-  {/* Need Help button removed */}
-</View>
       </ScrollView>
 
+      {/* Sticky Action Buttons */}
+      {hasActions() && (
+        <View style={styles.stickyFooter}>
+          <View style={styles.actionButtonsContainer}>
+            {(actions.can_cancel || (orderStatusLower === 'rider_assigned' && order?.delivery_status?.toLowerCase() === 'pending')) && (
+              <TouchableOpacity
+                style={styles.cancelOrderButton}
+                onPress={handleCancelOrder}
+              >
+                <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
+              </TouchableOpacity>
+            )}
+
+            {(orderStatusLower === 'delivered' || orderStatusLower === 'picked_up') && (
+              <TouchableOpacity
+                style={styles.orderReceivedButton}
+                onPress={handleOrderReceived}
+              >
+                <Text style={styles.orderReceivedButtonText}>Order Received</Text>
+              </TouchableOpacity>
+            )}
+
+            {orderStatusLower === 'completed' && (
+              <TouchableOpacity
+                style={styles.requestRefundButton}
+                onPress={() => router.push(`/customer/request-refund?orderId=${order.id}`)}
+              >
+                <Text style={styles.requestRefundButtonText}>Request Refund</Text>
+              </TouchableOpacity>
+            )}
+
+            {orderStatusLower === 'completed' && items.length > 0 && (
+              <TouchableOpacity
+                style={styles.rateButton}
+                onPress={() => {
+                  const firstItem = items[0];
+                  router.push({
+                    pathname: '/customer/rate',
+                    params: {
+                      orderId: order.id,
+                      productId: firstItem.product_id,
+                      productName: firstItem.product_name
+                    }
+                  });
+                }}
+              >
+                <Text style={styles.rateButtonText}>Rate</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
+
       {/* Image Preview Modal */}
-<Modal
-  visible={previewVisible}
-  transparent={true}
-  animationType="fade"
-  onRequestClose={() => setPreviewVisible(false)}
->
-  <View style={styles.modalOverlay}>
-    <TouchableOpacity
-      style={styles.closeButton}
-      onPress={() => setPreviewVisible(false)}
-    >
-      <Ionicons name="close" size={30} color="#FFFFFF" />
-    </TouchableOpacity>
-    {selectedImage && (
-      <Image 
-        source={{ uri: selectedImage }} 
-        style={styles.fullScreenImage}
-        resizeMode="contain"
-      />
-    )}
-  </View>
-</Modal>
+      <Modal
+        visible={previewVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setPreviewVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={() => setPreviewVisible(false)}
+          >
+            <Ionicons name="close" size={30} color="#FFFFFF" />
+          </TouchableOpacity>
+          {selectedImage && (
+            <Image 
+              source={{ uri: selectedImage }} 
+              style={styles.fullScreenImage}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1043,7 +1129,6 @@ const styles = StyleSheet.create({
   headerIcons: { flexDirection: 'row' },
   content: { flex: 1 },
   
-  // Loading States
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -1088,7 +1173,6 @@ const styles = StyleSheet.create({
     color: '#6B7280' 
   },
 
-  /* STATUS BANNER */
   statusBanner: {
     flexDirection: 'row', 
     justifyContent: 'space-between', 
@@ -1124,7 +1208,6 @@ const styles = StyleSheet.create({
     fontWeight: '500' 
   },
 
-  /* INFO CARDS */
   infoCard: { 
     backgroundColor: '#FFF', 
     marginTop: 10, 
@@ -1186,7 +1269,6 @@ const styles = StyleSheet.create({
     flex: 1 
   },
 
-  /* TIMELINE */
   timelineContainer: {
     paddingLeft: 28,
   },
@@ -1220,7 +1302,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  /* PRODUCT CARD */
   productCard: { 
     backgroundColor: '#FFF', 
     padding: 16, 
@@ -1341,7 +1422,6 @@ const styles = StyleSheet.create({
     marginTop: 8 
   },
   
-  // Product Actions - Rate & Review and Return button styles removed
   productActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1409,7 +1489,6 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
 
-  /* ORDER SUMMARY */
   summaryCard: {
     backgroundColor: '#FFF',
     padding: 16,
@@ -1457,7 +1536,6 @@ const styles = StyleSheet.create({
     color: '#111827',
   },
 
-  /* ORDER INFORMATION */
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1478,7 +1556,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  /* ACTION BUTTONS */
   actionButtonsContainer: {
     flexDirection: 'row',
     padding: 16,
@@ -1525,102 +1602,137 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
  
-proofGrid: {
-  flexDirection: 'row',
-  flexWrap: 'wrap',
-  gap: 8,
-},
-proofImage: {
-  width: 80,
-  height: 80,
-  borderRadius: 8,
-  borderWidth: 1,
-  borderColor: '#E5E7EB',
-},
-riderInfoRow: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  gap: 8,
-  marginBottom: 8,
-},
-riderName: {
-  fontSize: 14,
-  fontWeight: '500',
-  color: '#111827',
-},
-modalOverlay: {
-  flex: 1,
-  backgroundColor: 'rgba(0, 0, 0, 0.95)',
-  justifyContent: 'center',
-  alignItems: 'center',
-},
-closeButton: {
-  position: 'absolute',
-  top: Platform.OS === 'ios' ? 60 : 40,
-  right: 20,
-  zIndex: 10,
-  padding: 8,
-  backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  borderRadius: 20,
-},
-fullScreenImage: {
-  width: '100%',
-  height: '80%',
-},
-orderReceivedButton: {
-  flex: 1,
-  backgroundColor: '#10B981',
-  paddingVertical: 12,
-  borderRadius: 8,
-  alignItems: 'center',
-},
-orderReceivedButtonText: {
-  color: '#FFFFFF',
-  fontSize: 14,
-  fontWeight: '600',
-},
-rateButton: {
-  flex: 1,
-  backgroundColor: '#3B82F6',
-  paddingVertical: 12,
-  borderRadius: 8,
-  alignItems: 'center',
-},
-rateButtonText: {
-  color: '#FFFFFF',
-  fontSize: 14,
-  fontWeight: '600',
-},
-completedRow: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  marginBottom: 12,
-  flexWrap: 'wrap',
-},
-completedLabel: {
-  fontSize: 14,
-  color: '#6B7280',
-  marginLeft: 8,
-  marginRight: 4,
-},
-completedValue: {
-  fontSize: 14,
-  color: '#111827',
-  fontWeight: '600',
-},
-completedMessageContainer: {
-  flexDirection: 'row',
-  alignItems: 'flex-start',
-  backgroundColor: '#ECFDF5',
-  padding: 12,
-  borderRadius: 8,
-  marginTop: 8,
-  gap: 8,
-},
-completedMessage: {
-  fontSize: 13,
-  color: '#065F46',
-  flex: 1,
-  lineHeight: 18,
-},
+  proofGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  proofImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  riderInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  riderName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111827',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 40,
+    right: 20,
+    zIndex: 10,
+    padding: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 20,
+  },
+  fullScreenImage: {
+    width: '100%',
+    height: '80%',
+  },
+  orderReceivedButton: {
+    flex: 1,
+    backgroundColor: '#10B981',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  orderReceivedButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  rateButton: {
+    flex: 1,
+    backgroundColor: '#3B82F6',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  rateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  completedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    flexWrap: 'wrap',
+  },
+  completedLabel: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginLeft: 8,
+    marginRight: 4,
+  },
+  completedValue: {
+    fontSize: 14,
+    color: '#111827',
+    fontWeight: '600',
+  },
+  completedMessageContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#ECFDF5',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+    gap: 8,
+  },
+  completedMessage: {
+    fontSize: 13,
+    color: '#065F46',
+    flex: 1,
+    lineHeight: 18,
+  },
+  pickupExpireContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    marginTop: 8,
+    gap: 6,
+  },
+  pickupExpireText: {
+    fontSize: 12,
+    color: '#DC2626',
+    fontWeight: '500',
+    flex: 1,
+  },
+  boldDateText: {
+    fontWeight: 'bold',
+    color: '#b75020',
+  },
+  stickyFooter: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
+    paddingBottom: Platform.OS === 'ios' ? 12 : 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 5,
+  },
 });

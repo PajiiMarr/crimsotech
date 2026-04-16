@@ -18,7 +18,7 @@ import {
 import { useLocalSearchParams, router } from "expo-router";
 
 const { width } = Dimensions.get("window");
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons, MaterialIcons } from "@expo/vector-icons";
 
 import AxiosInstance from "../../contexts/axios";
 import CustomerLayout from "./CustomerLayout";
@@ -96,23 +96,13 @@ interface ShopInfo {
   shop_picture?: string | null;
   products?: ProductItem[];
   categories?: any[];
-  owner_id?: string;  // Add this line
+  owner_id?: string;  
   owner?: { id: string };  
+  reviews?: ShopReview[]; 
 }
 
 interface ShopReview {
   id: string;
-  customer_id?: {
-    id?: string;
-    user?: {
-      first_name?: string;
-      last_name?: string;
-      email?: string;
-    };
-  };
-  customer_name?: string;
-  customer?: string;
-  rating?: number;
   average_rating?: number;
   condition_rating?: number;
   accuracy_rating?: number;
@@ -120,6 +110,10 @@ interface ShopReview {
   delivery_rating?: number;
   comment?: string;
   created_at?: string;
+  customer?: {
+    id?: string;
+    name?: string;
+  };
 }
 
 const ensureAbsoluteUrl = (url?: string | null) => {
@@ -166,52 +160,111 @@ const getCategoryValue = (cat: any): { id: string; name: string } | null => {
 };
 
 const ProductCard = ({ product }: { product: ProductItem }) => {
-  // Get price from variants if available, otherwise use product.price
-  const getProductPrice = () => {
-    if (product.variants && product.variants.length > 0) {
-      const activeVariants = product.variants.filter(
-        (v) => v.is_active !== false,
-      );
-      if (activeVariants.length > 0) {
-        const prices = activeVariants
-          .map((v) => Number(v.price || 0))
-          .filter((p) => p > 0);
-        if (prices.length > 0) {
-          const minPrice = Math.min(...prices);
-          const maxPrice = Math.max(...prices);
-          return { min: minPrice, max: maxPrice };
+  const [productInfo, setProductInfo] = useState({
+    displayPrice: "₱0.00",
+    originalPrice: null as string | null,
+    hasDiscount: false,
+    isGift: false,
+    hasStock: true,
+    averageRating: null as number | null,
+    reviewCount: 0,
+  });
+
+  useEffect(() => {
+    console.log('Product stock debug:', {
+      name: product.name,
+      total_stock: product.total_stock,
+      variants: product.variants?.map(v => ({ title: v.title, quantity: v.quantity }))
+    });
+    // Calculate product price info and stock status
+    const getProductPrice = () => {
+      // Check if it's a gift by name
+      const nameLower = product.name?.toLowerCase() || '';
+      if (nameLower.includes('gift') || nameLower.includes('free')) {
+        return {
+          displayPrice: "FREE GIFT",
+          originalPrice: null,
+          hasDiscount: false,
+          isGift: true,
+          hasStock: true, // Gifts are always available
+        };
+      }
+
+      // Calculate stock from variants
+      let totalStock = 0;
+      if (product.variants && product.variants.length > 0) {
+        const activeVariants = product.variants.filter(v => v.is_active !== false);
+        totalStock = activeVariants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0);
+      }
+      
+      // Use product.total_stock if available, otherwise use calculated stock
+      const availableStock = product.total_stock !== undefined ? product.total_stock : totalStock;
+
+      if (product.variants && product.variants.length > 0) {
+        const activeVariants = product.variants.filter(v => v.is_active !== false);
+        if (activeVariants.length > 0) {
+          const prices = activeVariants.map(v => Number(v.price || 0)).filter(p => p > 0);
+          if (prices.length > 0) {
+            const minPrice = Math.min(...prices);
+            const maxPrice = Math.max(...prices);
+            
+            // Check for original/compare price
+            let lowestOriginalPrice = null;
+            let hasDiscount = false;
+            
+            const variantsWithOriginal = activeVariants.filter(v => 
+              (v.original_price && Number(v.original_price) > 0) || 
+              (v.compare_price && Number(v.compare_price) > 0)
+            );
+            
+            if (variantsWithOriginal.length > 0) {
+              const lowestPriceVariant = variantsWithOriginal.reduce((lowest, current) => {
+                const currentPrice = Number(current.price || 0);
+                const lowestPrice = Number(lowest.price || 0);
+                return currentPrice < lowestPrice ? current : lowest;
+              }, variantsWithOriginal[0]);
+              
+              const originalPriceValue = lowestPriceVariant.original_price || lowestPriceVariant.compare_price;
+              if (originalPriceValue && Number(originalPriceValue) > minPrice) {
+                lowestOriginalPrice = Number(originalPriceValue);
+                hasDiscount = true;
+              }
+            }
+            
+            return {
+              displayPrice: minPrice === maxPrice ? `₱${minPrice.toFixed(2)}` : `₱${minPrice.toFixed(2)} - ₱${maxPrice.toFixed(2)}`,
+              originalPrice: hasDiscount ? `₱${lowestOriginalPrice?.toFixed(2)}` : null,
+              hasDiscount,
+              isGift: false,
+              hasStock: availableStock > 0,
+            };
+          }
         }
       }
-    }
-    const price = Number(product.min_price || product.price || 0);
-    const maxPrice = Number(product.max_price || price);
-    return { min: price, max: maxPrice };
-  };
+      
+      const price = Number(product.min_price || product.price || 0);
+      const maxPrice = Number(product.max_price || price);
+      return {
+        displayPrice: price === maxPrice ? `₱${price.toFixed(2)}` : `₱${price.toFixed(2)} - ₱${maxPrice.toFixed(2)}`,
+        originalPrice: null,
+        hasDiscount: false,
+        isGift: false,
+        hasStock: availableStock > 0,
+      };
+    };
 
-  // Get compare price from variants if available
-  const getComparePrice = () => {
-    if (product.variants && product.variants.length > 0) {
-      const activeVariants = product.variants.filter(
-        (v) => v.is_active !== false,
-      );
-      if (activeVariants.length > 0) {
-        const comparePrices = activeVariants
-          .map((v) => Number(v.compare_price || 0))
-          .filter((p) => p > 0);
-        if (comparePrices.length > 0) {
-          return Math.min(...comparePrices);
-        }
-      }
-    }
-    return Number(product.compare_price || 0);
-  };
+    setProductInfo({
+      ...getProductPrice(),
+      averageRating: (product as any).average_rating || null,
+      reviewCount: (product as any).review_count || 0,
+    });
+  }, [product]);
 
-  // Get product image from variants if primary image not available
+
   const getProductImageUrl = () => {
     if (product?.primary_image?.url) {
       return ensureAbsoluteUrl(product.primary_image.url);
     }
-
     if (Array.isArray(product?.media_files) && product.media_files.length > 0) {
       return ensureAbsoluteUrl(
         product.media_files[0].file_data ||
@@ -219,31 +272,19 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
           null,
       );
     }
-
-    // Try to get image from first variant
     if (product.variants && product.variants.length > 0) {
       const variantWithImage = product.variants.find((v) => v.image);
       if (variantWithImage?.image) {
         return ensureAbsoluteUrl(variantWithImage.image);
       }
-      const variantWithProofImage = product.variants.find((v) => v.proof_image);
-      if (variantWithProofImage?.proof_image) {
-        return ensureAbsoluteUrl(variantWithProofImage.proof_image);
-      }
     }
-
     if (product?.image) return ensureAbsoluteUrl(product.image);
     if (product?.shop?.shop_picture)
       return ensureAbsoluteUrl(product.shop.shop_picture);
-
     return "https://via.placeholder.com/200";
   };
 
-  const prices = getProductPrice();
-  const price = prices.min;
-  const maxPrice = prices.max;
-  const comparePrice = getComparePrice();
-  const hasMultiplePrices = prices.max > prices.min;
+  const categoryName = product.category_admin?.name || product.category?.name || '';
 
   return (
     <TouchableOpacity
@@ -256,20 +297,32 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
         })
       }
     >
-      {product.open_for_swap || product.variants?.some((v) => v.allow_swap) ? (
-        <View style={styles.swapBadge}>
-          <MaterialCommunityIcons
-            name="swap-horizontal"
-            size={12}
-            color="#4338CA"
-          />
-          <Text style={styles.swapBadgeText}>Swap</Text>
+      {/* Discount Badge */}
+      {productInfo.hasDiscount && (
+        <View style={styles.discountBadge}>
+          <Text style={styles.discountText}>SALE</Text>
         </View>
-      ) : null}
+      )}
+
+      {/* Gift Badge */}
+      {productInfo.isGift && (
+        <View style={styles.giftBadge}>
+          <MaterialIcons name="card-giftcard" size={10} color="#059669" />
+          <Text style={styles.giftText}>FREE GIFT</Text>
+        </View>
+      )}
+
+      {/* Out of stock badge */}
+      {/* Out of stock badge */}
+    {!productInfo.hasStock && (
+      <View style={styles.outOfStockBadge}>
+        <Text style={styles.outOfStockText}>OUT OF STOCK</Text>
+      </View>
+    )}
 
       <Image
         source={{ uri: getProductImageUrl() }}
-        style={styles.productImage}
+        style={[styles.productImage, !productInfo.hasStock && styles.outOfStockImage]}
         resizeMode="cover"
       />
 
@@ -278,33 +331,56 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
           {product.name || "Unnamed Product"}
         </Text>
 
-        {!!product.shop?.name && (
-          <Text style={styles.productShop} numberOfLines={1}>
-            {product.shop.name}
-          </Text>
+        {/* Rating Section */}
+        {productInfo.averageRating && (
+          <View style={styles.ratingContainer}>
+            <View style={styles.starsContainer}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <MaterialIcons
+                  key={star}
+                  name="star"
+                  size={12}
+                  color={star <= Math.round(productInfo.averageRating || 0) ? "#F59E0B" : "#D1D5DB"}
+                />
+              ))}
+            </View>
+            <Text style={styles.ratingText}>
+              {productInfo.averageRating.toFixed(1)} ({productInfo.reviewCount})
+            </Text>
+          </View>
         )}
 
-        {/* Variant count indicator if multiple variants */}
-        {product.total_variants && product.total_variants > 1 && (
-          <Text style={styles.variantCount}>
-            {product.total_variants} variants
-          </Text>
-        )}
+        {/* Category */}
+        {categoryName ? (
+          <Text style={styles.categoryText}>{categoryName}</Text>
+        ) : null}
 
-        <View style={styles.priceRow}>
-          {comparePrice > price && comparePrice > 0 ? (
-            <Text style={styles.oldPrice}>₱{comparePrice.toFixed(2)}</Text>
-          ) : null}
-          <Text style={styles.price}>
-            ₱{price.toFixed(2)}
-            {hasMultiplePrices && ` - ₱${maxPrice.toFixed(2)}`}
+        {/* Seller info */}
+        <View style={styles.sellerRow}>
+          <MaterialIcons name="store" size={10} color="#6B7280" />
+          <Text style={styles.sellerText} numberOfLines={1}>
+            {product.shop?.name || "Shop"}
           </Text>
         </View>
 
-        {/* Stock indicator if low */}
+        {/* Price */}
+        <View style={styles.priceContainer}>
+          <View style={styles.priceWrapper}>
+            {productInfo.originalPrice && (
+              <Text style={styles.originalPrice}>
+                {productInfo.originalPrice}
+              </Text>
+            )}
+            <Text style={productInfo.isGift ? styles.freePrice : styles.price}>
+              {productInfo.displayPrice}
+            </Text>
+          </View>
+        </View>
+
+        {/* Low stock indicator */}
         {product.total_stock !== undefined &&
-          product.total_stock < 10 &&
-          product.total_stock > 0 && (
+          product.total_stock > 0 &&
+          product.total_stock < 10 && (
             <Text style={styles.lowStockText}>
               Only {product.total_stock} left
             </Text>
@@ -316,15 +392,13 @@ const ProductCard = ({ product }: { product: ProductItem }) => {
 
 const ReviewCard = ({ review }: { review: ShopReview }) => {
   const getCustomerName = () => {
-    if (review.customer_id?.user) {
-      const { first_name, last_name } = review.customer_id.user;
-      if (first_name && last_name) return `${first_name} ${last_name}`;
-      if (first_name) return first_name;
+    if (review.customer?.name) {
+      return review.customer.name;
     }
-    return review.customer_name || review.customer || "Anonymous";
+    return "Anonymous";
   };
 
-  const averageRating = review.average_rating || review.rating || 0;
+  const averageRating = review.average_rating || 0;
 
   return (
     <View style={styles.reviewItem}>
@@ -339,30 +413,66 @@ const ReviewCard = ({ review }: { review: ShopReview }) => {
         </View>
       </View>
 
-      {/* Individual ratings */}
+      {/* Individual ratings - 2x2 grid */}
       <View style={styles.detailedRatings}>
         {review.condition_rating && (
           <View style={styles.ratingTag}>
-            <Text style={styles.ratingTagLabel}>Condition</Text>
-            <Text style={styles.ratingTagValue}>{review.condition_rating}</Text>
+            <Text style={styles.ratingTagLabel}>Condition:</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Ionicons
+                  key={star}
+                  name="star"
+                  size={10}
+                  color={star <= review.condition_rating! ? "#F59E0B" : "#D1D5DB"}
+                />
+              ))}
+            </View>
           </View>
         )}
         {review.accuracy_rating && (
           <View style={styles.ratingTag}>
-            <Text style={styles.ratingTagLabel}>Accuracy</Text>
-            <Text style={styles.ratingTagValue}>{review.accuracy_rating}</Text>
+            <Text style={styles.ratingTagLabel}>Accuracy:</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Ionicons
+                  key={star}
+                  name="star"
+                  size={10}
+                  color={star <= review.accuracy_rating! ? "#F59E0B" : "#D1D5DB"}
+                />
+              ))}
+            </View>
           </View>
         )}
         {review.value_rating && (
           <View style={styles.ratingTag}>
-            <Text style={styles.ratingTagLabel}>Value</Text>
-            <Text style={styles.ratingTagValue}>{review.value_rating}</Text>
+            <Text style={styles.ratingTagLabel}>Value:</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Ionicons
+                  key={star}
+                  name="star"
+                  size={10}
+                  color={star <= review.value_rating! ? "#F59E0B" : "#D1D5DB"}
+                />
+              ))}
+            </View>
           </View>
         )}
         {review.delivery_rating && (
           <View style={styles.ratingTag}>
-            <Text style={styles.ratingTagLabel}>Delivery</Text>
-            <Text style={styles.ratingTagValue}>{review.delivery_rating}</Text>
+            <Text style={styles.ratingTagLabel}>Delivery:</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Ionicons
+                  key={star}
+                  name="star"
+                  size={10}
+                  color={star <= review.delivery_rating! ? "#F59E0B" : "#D1D5DB"}
+                />
+              ))}
+            </View>
           </View>
         )}
       </View>
@@ -392,11 +502,11 @@ export default function ViewShopPage() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<ActiveTab>("products");
-  const [reviews, setReviews] = useState<ShopReview[]>([]);
-  const [reviewsLoading, setReviewsLoading] = useState(false);
-  const [reviewsError, setReviewsError] = useState<string | null>(null);
-  const [reviewsPage, setReviewsPage] = useState(1);
-  const [hasMoreReviews, setHasMoreReviews] = useState(true);
+  // const [reviews, setReviews] = useState<ShopReview[]>([]);
+  // const [reviewsLoading, setReviewsLoading] = useState(false);
+  // const [reviewsError, setReviewsError] = useState<string | null>(null);
+  // const [reviewsPage, setReviewsPage] = useState(1);
+  // const [hasMoreReviews, setHasMoreReviews] = useState(true);
 
   const [categories, setCategories] = useState<ShopCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -516,64 +626,64 @@ export default function ViewShopPage() {
     fetchShopData();
   }, [shopId, userId]);
 
-  useEffect(() => {
-    const fetchReviews = async () => {
-      if (!shopId || activeTab !== "reviews") return;
+  // useEffect(() => {
+  //   const fetchReviews = async () => {
+  //     if (!shopId || activeTab !== "reviews") return;
 
-      setReviewsLoading(true);
-      setReviewsError(null);
+  //     setReviewsLoading(true);
+  //     setReviewsError(null);
 
-      try {
-        const res = await AxiosInstance.get(`/shops/${shopId}/reviews/`, {
-          params: {
-            page: reviewsPage,
-            page_size: 10,
-          },
-        });
+  //     try {
+  //       const res = await AxiosInstance.get(`/shops/${shopId}/reviews/`, {
+  //         params: {
+  //           page: reviewsPage,
+  //           page_size: 10,
+  //         },
+  //       });
 
-        // Handle different response formats
-        let newReviews = [];
-        let total = 0;
+  //       // Handle different response formats
+  //       let newReviews = [];
+  //       let total = 0;
 
-        if (res.data.results) {
-          newReviews = res.data.results;
-          total = res.data.count || 0;
-        } else if (Array.isArray(res.data)) {
-          newReviews = res.data;
-          total = res.data.length;
-        } else if (res.data.reviews) {
-          newReviews = res.data.reviews;
-          total = res.data.total || newReviews.length;
-        }
+  //       if (res.data.results) {
+  //         newReviews = res.data.results;
+  //         total = res.data.count || 0;
+  //       } else if (Array.isArray(res.data)) {
+  //         newReviews = res.data;
+  //         total = res.data.length;
+  //       } else if (res.data.reviews) {
+  //         newReviews = res.data.reviews;
+  //         total = res.data.total || newReviews.length;
+  //       }
 
-        if (reviewsPage === 1) {
-          setReviews(newReviews);
-        } else {
-          setReviews((prev) => [...prev, ...newReviews]);
-        }
+  //       if (reviewsPage === 1) {
+  //         setReviews(newReviews);
+  //       } else {
+  //         setReviews((prev) => [...prev, ...newReviews]);
+  //       }
 
-        setHasMoreReviews(reviews.length + newReviews.length < total);
-      } catch (e: any) {
-        if (e.response?.status === 404) {
-          setReviews([]);
-          setHasMoreReviews(false);
-        } else {
-          setReviewsError("Failed to load reviews");
-          console.error("Error fetching reviews:", e);
-        }
-      } finally {
-        setReviewsLoading(false);
-      }
-    };
+  //       setHasMoreReviews(reviews.length + newReviews.length < total);
+  //     } catch (e: any) {
+  //       if (e.response?.status === 404) {
+  //         setReviews([]);
+  //         setHasMoreReviews(false);
+  //       } else {
+  //         setReviewsError("Failed to load reviews");
+  //         console.error("Error fetching reviews:", e);
+  //       }
+  //     } finally {
+  //       setReviewsLoading(false);
+  //     }
+  //   };
 
-    fetchReviews();
-  }, [activeTab, shopId, reviewsPage]);
+  //   fetchReviews();
+  // }, [activeTab, shopId, reviewsPage]);
 
-  const handleLoadMoreReviews = () => {
-    if (!reviewsLoading && hasMoreReviews) {
-      setReviewsPage((prev) => prev + 1);
-    }
-  };
+  // const handleLoadMoreReviews = () => {
+  //   if (!reviewsLoading && hasMoreReviews) {
+  //     setReviewsPage((prev) => prev + 1);
+  //   }
+  // };
 
   const filteredProducts = useMemo(() => {
     return products.filter((product) => {
@@ -792,7 +902,7 @@ const handleFollowToggle = async () => {
             )}
           </View>
 
-          // In view-shop.tsx, update the message button:
+  
 <TouchableOpacity
   style={styles.messageBtn}
   onPress={() => {
@@ -890,14 +1000,10 @@ const handleFollowToggle = async () => {
               const active = activeTab === tab;
               return (
                 <TouchableOpacity
-                  key={tab}
-                  onPress={() => {
-                    setActiveTab(tab);
-                    if (tab === "reviews") {
-                      setReviewsPage(1);
-                      setReviews([]);
-                    }
-                  }}
+                    key={tab}
+                    onPress={() => {
+                      setActiveTab(tab);
+                    }}
                   style={[styles.tabBtn, active && styles.tabBtnActive]}
                 >
                   <Text
@@ -1227,51 +1333,27 @@ const handleFollowToggle = async () => {
             </View>
           ) : null}
 
-          {activeTab === "reviews" ? (
-            <View style={styles.cardSection}>
-              <View style={styles.reviewsHeader}>
-                <Text style={styles.sectionTitle}>Customer Reviews</Text>
-                <Text style={styles.sectionSubTitle}>
-                  {shopInfo?.rating
-                    ? `${shopInfo.rating} average • ${shopInfo.rating_count || 0} reviews`
-                    : "No ratings yet"}
-                </Text>
-              </View>
+{activeTab === "reviews" ? (
+  <View style={styles.cardSection}>
+    <View style={styles.reviewsHeader}>
+      <Text style={styles.sectionTitle}>Customer Reviews</Text>
+      <Text style={styles.sectionSubTitle}>
+        {shopInfo?.rating
+          ? `${shopInfo.rating} average • ${shopInfo.rating_count || 0} reviews`
+          : "No ratings yet"}
+      </Text>
+    </View>
 
-              {reviewsLoading && reviewsPage === 1 ? (
-                <ActivityIndicator
-                  color="#EA580C"
-                  style={styles.reviewsLoader}
-                />
-              ) : reviewsError ? (
-                <Text style={styles.errorText}>{reviewsError}</Text>
-              ) : reviews.length === 0 ? (
-                <Text style={styles.sectionText}>No reviews available.</Text>
-              ) : (
-                <>
-                  {reviews.map((review) => (
-                    <ReviewCard key={review.id} review={review} />
-                  ))}
-
-                  {hasMoreReviews && (
-                    <TouchableOpacity
-                      style={styles.loadMoreButton}
-                      onPress={handleLoadMoreReviews}
-                      disabled={reviewsLoading}
-                    >
-                      {reviewsLoading ? (
-                        <ActivityIndicator size="small" color="#EA580C" />
-                      ) : (
-                        <Text style={styles.loadMoreText}>
-                          Load More Reviews
-                        </Text>
-                      )}
-                    </TouchableOpacity>
-                  )}
-                </>
-              )}
-            </View>
-          ) : null}
+    {/* Use reviews from shopInfo directly */}
+    {shopInfo?.reviews && shopInfo.reviews.length > 0 ? (
+      shopInfo.reviews.map((review) => (
+        <ReviewCard key={review.id} review={review} />
+      ))
+    ) : (
+      <Text style={styles.sectionText}>No reviews available.</Text>
+    )}
+  </View>
+) : null}
         </ScrollView>
       </CustomerLayout>
     </SafeAreaView>
@@ -1663,24 +1745,24 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     position: "relative",
   },
-  swapBadge: {
-    position: "absolute",
-    zIndex: 2,
-    top: 8,
-    left: 8,
-    backgroundColor: "#FFF7ED",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  swapBadgeText: {
-    color: "#EA580C",
-    fontSize: 10,
-    fontWeight: "700",
-  },
+  // swapBadge: {
+  //   position: "absolute",
+  //   zIndex: 2,
+  //   top: 8,
+  //   left: 8,
+  //   backgroundColor: "#FFF7ED",
+  //   paddingHorizontal: 8,
+  //   paddingVertical: 4,
+  //   borderRadius: 4,
+  //   flexDirection: "row",
+  //   alignItems: "center",
+  //   gap: 4,
+  // },
+  // swapBadgeText: {
+  //   color: "#EA580C",
+  //   fontSize: 10,
+  //   fontWeight: "700",
+  // },
   productImage: {
     width: "100%",
     height: 130,
@@ -1717,17 +1799,17 @@ const styles = StyleSheet.create({
     textDecorationLine: "line-through",
     fontSize: 11,
   },
-  price: {
-    color: "#111827",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  lowStockText: {
-    fontSize: 10,
-    color: "#DC2626",
-    marginTop: 4,
-    fontWeight: "500",
-  },
+  // price: {
+  //   color: "#111827",
+  //   fontSize: 14,
+  //   fontWeight: "700",
+  // },
+  // lowStockText: {
+  //   fontSize: 10,
+  //   color: "#DC2626",
+  //   marginTop: 4,
+  //   fontWeight: "500",
+  // },
   emptyBlock: {
     width: "100%",
     alignItems: "center",
@@ -1840,15 +1922,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
-  ratingContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FEF3C7",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 4,
-  },
+  // ratingContainer: {
+  //   flexDirection: "row",
+  //   alignItems: "center",
+  //   backgroundColor: "#FEF3C7",
+  //   paddingHorizontal: 8,
+  //   paddingVertical: 4,
+  //   borderRadius: 12,
+  //   gap: 4,
+  // },
   ratingText: {
     color: "#92400E",
     fontSize: 12,
@@ -1918,4 +2000,140 @@ const styles = StyleSheet.create({
     color: "#6B7280",
     marginTop: 2,
   },
+
+  discountBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    backgroundColor: "#EF4444",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    zIndex: 2,
+  },
+  discountText: {
+    fontSize: 10,
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
+  outOfStockBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    backgroundColor: "#EF4444",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    zIndex: 2,
+  },
+  outOfStockText: {
+    fontSize: 9,
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
+  outOfStockImage: {
+    opacity: 0.5,
+  },
+  categoryText: {
+    fontSize: 11,
+    color: "#3B82F6",
+    fontWeight: "500",
+    marginBottom: 2,
+  },
+  sellerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 4,
+    gap: 2,
+  },
+  sellerText: {
+    fontSize: 10,
+    color: "#6B7280",
+    flex: 1,
+  },
+  priceContainer: {
+    marginTop: "auto",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  priceWrapper: {
+    flexDirection: "column",
+    alignItems: "flex-start",
+  },
+  originalPrice: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    textDecorationLine: "line-through",
+    marginBottom: 2,
+  },
+  price: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#EF4444",
+  },
+  lowStockText: {
+    fontSize: 10,
+    color: "#DC2626",
+    marginTop: 4,
+    fontWeight: "500",
+  },
+  swapBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "#D1FAE5",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    zIndex: 2,
+  },
+  swapBadgeText: {
+    color: "#059669",
+    fontSize: 9,
+    fontWeight: "700",
+  },
+  // Add these after the existing styles
+giftBadge: {
+  position: "absolute",
+  top: 8,
+  left: 8,
+  flexDirection: "row",
+  alignItems: "center",
+  backgroundColor: "#D1FAE5",
+  paddingHorizontal: 6,
+  paddingVertical: 2,
+  borderRadius: 4,
+  zIndex: 2,
+},
+giftText: {
+  fontSize: 9,
+  color: "#059669",
+  fontWeight: "700",
+  marginLeft: 2,
+},
+ratingContainer: {
+  flexDirection: "row",
+  alignItems: "center",
+  marginBottom: 4,
+  gap: 6,
+},
+starsContainer: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 2,
+},
+// ratingText: {
+//   fontSize: 10,
+//   color: "#6B7280",
+// },
+freePrice: {
+  fontSize: 12,
+  fontWeight: "700",
+  color: "#059669",
+},
+  
 });

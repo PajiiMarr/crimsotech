@@ -19647,14 +19647,33 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
 
     def get_queryset(self):
+        from django.db.models import Avg, Count, Q, Min, Max, Sum, OuterRef, Subquery, FloatField, IntegerField
+
+        
         user_id = self.request.headers.get('X-User-Id')
+        
+        # Subquery for average rating
+        avg_rating_subquery = Review.objects.filter(
+            product=OuterRef('pk'),
+            average_rating__isnull=False
+        ).values('product').annotate(
+            avg=Avg('average_rating')
+        ).values('avg')
+        
+        # Subquery for review count
+        review_count_subquery = Review.objects.filter(
+            product=OuterRef('pk'),
+            average_rating__isnull=False
+        ).values('product').annotate(
+            count=Count('id')
+        ).values('count')
         
         # Start with base queryset - show only published, non-removed products
         queryset = Product.objects.filter(
             upload_status='published',
             is_removed=False
         ).annotate(
-            # Get min and max prices from active variants (including those with 0 stock)
+            # Get min and max prices from active variants
             min_variant_price=Min('variants__price', filter=Q(variants__is_active=True)),
             max_variant_price=Max('variants__price', filter=Q(variants__is_active=True)),
             # Calculate total stock from active variants
@@ -19662,12 +19681,15 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             # Count active variants
             active_variant_count=Count('variants', filter=Q(variants__is_active=True)),
             # Count variants with stock > 0
-            in_stock_variant_count=Count('variants', filter=Q(variants__is_active=True, variants__quantity__gt=0))
+            in_stock_variant_count=Count('variants', filter=Q(variants__is_active=True, variants__quantity__gt=0)),
+            # ADD THESE TWO LINES FOR RATINGS
+            average_rating=Subquery(avg_rating_subquery, output_field=FloatField()),
+            review_count=Subquery(review_count_subquery, output_field=IntegerField()),
         ).select_related(
             'shop',
             'shop__customer__customer',
             'customer',
-            'customer__customer',  # To get User from Customer
+            'customer__customer',
             'category',
             'category_admin'
         ).prefetch_related(
@@ -19681,7 +19703,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             )
         ).distinct()
 
-        # Exclude user's own products (both shop and personal listings)
+        # Exclude user's own products
         if user_id:
             queryset = queryset.exclude(
                 Q(customer__customer__id=user_id) | 
@@ -19690,11 +19712,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
         # Filter to products that have at least one active variant
         queryset = queryset.filter(active_variant_count__gt=0)
-        
-        # Show all products regardless of stock status
-        # We'll handle stock status in the serialized data
-        
-        print(f"PublicProducts: Returning {queryset.count()} products for user {user_id}")
         
         return queryset.order_by('-created_at')
 
@@ -19823,6 +19840,18 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             
             # Check if product is in user's favorites
             item['is_favorite'] = self._check_if_favorite(product_id, user_id)
+
+                # ADD THESE LINES FOR RATINGS
+            # Get rating values from the annotated queryset
+            product_obj = queryset.get(id=product_id) if hasattr(queryset, 'get') else None
+            if product_obj:
+                item['average_rating'] = getattr(product_obj, 'average_rating', None)
+                item['review_count'] = getattr(product_obj, 'review_count', 0)
+                if item['average_rating']:
+                    item['average_rating'] = round(item['average_rating'], 1)
+            else:
+                item['average_rating'] = None
+                item['review_count'] = 0
             
             # Use price_display from serializer (already correctly formatted)
             item['display_price'] = item.get('price_display', 'Price unavailable')
@@ -19930,6 +19959,60 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         # Get the serializer data with full context
         serializer = ProductSerializer(product, context={'request': request})
         data = serializer.data
+
+
+        # Calculate average rating and review count from the Review model
+        
+        reviews_aggregate = Review.objects.filter(
+            product=product,
+            average_rating__isnull=False
+        ).aggregate(
+            avg_rating=Avg('average_rating'),
+            review_count=Count('id')
+        )
+        
+        data['average_rating'] = round(reviews_aggregate['avg_rating'], 1) if reviews_aggregate['avg_rating'] else None
+        data['total_reviews'] = reviews_aggregate['review_count'] or 0
+        
+        # Also include the reviews list with media
+        reviews = Review.objects.filter(product=product).select_related('customer__customer').prefetch_related('medias').order_by('-created_at')
+        reviews_data = []
+        for review in reviews:
+            # Get customer name
+            customer_name = None
+            if review.customer and review.customer.customer:
+                first = review.customer.customer.first_name or ''
+                last = review.customer.customer.last_name or ''
+                customer_name = f"{first} {last}".strip() or review.customer.customer.username
+            
+            # Get media
+            media_data = []
+            for media in review.medias.all():
+                media_data.append({
+                    'id': str(media.id),
+                    'file_url': get_media_url(media.file_data),
+                    'file_data': get_media_url(media.file_data),
+                    'file_type': media.file_type,
+                })
+            
+            reviews_data.append({
+                'id': str(review.id),
+                'average_rating': review.average_rating,
+                'condition_rating': review.condition_rating,
+                'accuracy_rating': review.accuracy_rating,
+                'value_rating': review.value_rating,
+                'delivery_rating': review.delivery_rating,
+                'comment': review.comment,
+                'created_at': review.created_at.isoformat(),
+                'customer': {
+                    'id': str(review.customer.customer.id) if review.customer and review.customer.customer else None,
+                    'username': review.customer.customer.username if review.customer and review.customer.customer else None,
+                    'name': customer_name,
+                },
+                'media': media_data,
+            })
+        
+        data['reviews'] = reviews_data
         
         # Check if product is in user's favorites
         data['is_favorite'] = self._check_if_favorite(pk, user_id)
@@ -22321,7 +22404,7 @@ class SellerOrderList(viewsets.ViewSet):
         ).prefetch_related('cart_item__product__productmedia_set')
         
         order_items = []
-        total_amount = 0
+        total_amount = float(order.total_amount) 
         
         for checkout in shop_checkouts:
             # Handle direct product checkout (no cart_item)
@@ -22358,7 +22441,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "shipping_method": None,
                     "estimated_delivery": None
                 })
-                total_amount += float(checkout.total_amount)
+                # total_amount += float(checkout.total_amount)
                 continue
             
             # Handle normal cart_item checkout
@@ -22441,7 +22524,7 @@ class SellerOrderList(viewsets.ViewSet):
             "updated_at": order.updated_at.isoformat() if order.updated_at else None,
             "items": order_items,
             "is_pickup": is_pickup,
-            "pickup_date": order.metadata.get('pickup_date') if order.metadata else None,
+            "pickup_date": order.pickup_date.isoformat() if order.pickup_date else None,
         }
         if delivery_info:
             order_data["delivery_info"] = delivery_info
@@ -22638,7 +22721,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "has_pending_offer": has_pending_offer,
                     "available_actions": available_actions,
                     "can_confirm": can_confirm,
-                    "pickup_date": order.metadata.get('pickup_date') if order.metadata else None,
+                    "pickup_date": order.pickup_date.isoformat() if order.pickup_date else None,
                 }
             }, status=status.HTTP_200_OK)
         except Exception as e:
@@ -22795,6 +22878,8 @@ class SellerOrderList(viewsets.ViewSet):
                     return Response({"success": False, "message": "This action is only for pickup orders"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'picked_up'
                 order.completed_at = timezone.now()
+                order.pickup_date = timezone.now()  # Store directly in pickup_date field
+                
                 message = "Order picked up"
                 
             elif action_type == 'cancel':
@@ -23029,12 +23114,11 @@ class SellerOrderList(viewsets.ViewSet):
                         'tracking_number': f"TRK-{str(delivery.id)[:10]}" if delivery.status != 'pending' else None
                     }
                     
-                    # Fetch proof images for delivered orders - USE THE SAME HELPER AS RIDER SIDE
+                    # Fetch proof images for delivered orders
                     if delivery.status == 'delivered':
                         proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
                         for proof in proofs:
                             if proof.file_data:
-                                # Use the same convert_s3_to_public_url helper
                                 file_url = convert_s3_to_public_url(proof.file_data.url)
                                 proof_images.append({
                                     'id': str(proof.id),
@@ -23046,13 +23130,15 @@ class SellerOrderList(viewsets.ViewSet):
                 pass
                 
             items = []
-            total_amount = 0
+            # ✅ USE ORDER'S TOTAL_AMOUNT DIRECTLY
+            total_amount = float(order.total_amount)
+            
             for checkout in checkouts:
                 # Handle direct product checkout
                 if checkout.direct_product_id and not checkout.cart_item:
                     price = float(checkout.direct_product_price or 0)
                     item_total = price * checkout.quantity
-                    total_amount += item_total
+                    # ✅ DON'T add to total_amount here
                     items.append({
                         'id': str(checkout.id),
                         'cart_item': {
@@ -23091,7 +23177,7 @@ class SellerOrderList(viewsets.ViewSet):
                     except Exception as e:
                         print(f"Error getting variant image: {e}")
                 item_total = price * checkout.quantity
-                total_amount += item_total
+                # ✅ DON'T add to total_amount here
                 product_data = {
                     "id": str(product.id),
                     "name": product.name,
@@ -23115,11 +23201,13 @@ class SellerOrderList(viewsets.ViewSet):
                     'total_amount': item_total,
                     'status': checkout.status if hasattr(checkout, 'status') else 'pending',
                 })
+            
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
             shipping_status = self._get_shipping_status(
                 order.status,
                 latest_delivery.status if latest_delivery else None
             )
+            
             return Response({
                 'success': True,
                 'data': {
@@ -23133,7 +23221,7 @@ class SellerOrderList(viewsets.ViewSet):
                         'contact_number': order.user.contact_number,
                     },
                     'status': shipping_status,
-                    'total_amount': total_amount,
+                    'total_amount': total_amount,  # ✅ Now using order.total_amount
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
@@ -23150,7 +23238,7 @@ class SellerOrderList(viewsets.ViewSet):
                     'items': items,
                     'delivery_info': delivery_info,
                     'proof_images': proof_images,
-                    'pickup_date': order.metadata.get('pickup_date') if order.metadata else None,
+                    'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
                 }
             }, status=status.HTTP_200_OK)
         except Shop.DoesNotExist:
@@ -26474,6 +26562,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             'payment_status': payment.status if payment else None,
             'delivery_status': delivery.status if delivery else None,
             'delivery_rider': delivery.rider.rider.username if delivery and delivery.rider and delivery.rider.rider else None,
+            'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
             'items': items_data
         }
         
@@ -26700,6 +26789,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                                         or getattr(delivery, 'updated_at', None))
                         else None
                     ),
+                    'pickup_expire_date': order.pickup_expire_date.isoformat() if order.pickup_expire_date else None,
+                    'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
                 },
                 'shipping_info': shipping_info,
                 'delivery_address': delivery_address_info,
@@ -27137,7 +27228,7 @@ class ViewShopAPIView(APIView):
         try:
             if shop.customer and shop.customer.customer:
                 owner_username = shop.customer.customer.username
-                owner_id = str(shop.customer.customer.id)  # Get the actual User ID
+                owner_id = str(shop.customer.customer.id)
             else:
                 print(f"Shop {shop.id} has no customer or customer has no user")
         except Exception as e:
@@ -27148,7 +27239,7 @@ class ViewShopAPIView(APIView):
             'id': str(shop.id),
             'name': shop.name,
             'username': owner_username,
-            'owner_id': owner_id,  # Add this line
+            'owner_id': owner_id,
             'shop_picture': request.build_absolute_uri(shop.shop_picture.url) if shop.shop_picture else None,
             'description': shop.description or 'No description provided',
             'province': shop.province,
@@ -27167,9 +27258,27 @@ class ViewShopAPIView(APIView):
             'suspension_reason': getattr(shop, 'suspension_reason', None),
         }
 
-        # Shop products (still include products; frontend can choose how to display)
-        products = Product.objects.filter(shop=shop, is_removed=False)
-        shop_data['products'] = ProductSerializer(products, many=True, context={'request': request}).data
+        # Shop products - get with variants and calculate stock
+        products = Product.objects.filter(shop=shop, is_removed=False).prefetch_related(
+            'variants', 'productmedia_set'
+        )
+        
+        # Serialize products and add stock information
+        product_serializer = ProductSerializer(products, many=True, context={'request': request})
+        products_data = product_serializer.data
+        
+        # Add total_stock and variant quantities to each product
+        for product, product_data in zip(products, products_data):
+            # Calculate total stock from variants
+            total_stock = sum(v.quantity for v in product.variants.filter(is_active=True) if v.quantity) if product.variants.exists() else 0
+            product_data['total_stock'] = total_stock
+            
+            # Also add stock info to each variant in the response
+            if 'variants' in product_data and product_data['variants']:
+                for variant_data, variant_obj in zip(product_data['variants'], product.variants.filter(is_active=True)):
+                    variant_data['quantity'] = variant_obj.quantity
+        
+        shop_data['products'] = products_data
 
         # Shop categories (unique categories from products)
         category_qs = products.values_list('category__id', 'category__name').distinct()
@@ -27233,7 +27342,41 @@ class ViewShopAPIView(APIView):
                 'product_sold': 0,
             })
 
+        # Get reviews for this shop
+        shop_reviews = Review.objects.filter(
+            shop=shop,
+            average_rating__isnull=False
+        ).select_related('customer__customer').order_by('-created_at')[:20]  # Limit to 20 most recent reviews
+        
+        reviews_data = []
+        for review in shop_reviews:
+            # Get customer name
+            customer_name = None
+            if review.customer and review.customer.customer:
+                first = review.customer.customer.first_name or ''
+                last = review.customer.customer.last_name or ''
+                customer_name = f"{first} {last}".strip() or review.customer.customer.username
+            
+            reviews_data.append({
+                'id': str(review.id),
+                'average_rating': review.average_rating,
+                'condition_rating': review.condition_rating,
+                'accuracy_rating': review.accuracy_rating,
+                'value_rating': review.value_rating,
+                'delivery_rating': review.delivery_rating,
+                'comment': review.comment,
+                'created_at': review.created_at.isoformat(),
+                'customer': {
+                    'id': str(review.customer.customer.id) if review.customer and review.customer.customer else None,
+                    'name': customer_name,
+                },
+            })
+        
+        shop_data['reviews'] = reviews_data
+
         return Response(shop_data, status=status.HTTP_200_OK)
+
+        
 
     def post(self, request, shop_id):
         """Follow this shop for the current (customer) user"""

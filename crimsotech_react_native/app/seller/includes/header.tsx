@@ -232,15 +232,15 @@ export default function Header({ shopId }: HeaderProps) {
             style={styles.iconButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Ionicons name="notifications-outline" size={24} color="#374151" />
+            {/* <Ionicons name="notifications-outline" size={24} color="#374151" /> */}
           </TouchableOpacity>
 
           <TouchableOpacity 
             onPress={handleMessages} 
-            style={styles.iconButton}
+            style={styles.iconButton} 
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Ionicons name="chatbubble-outline" size={24} color="#374151" />
+            {/* <Ionicons name="chatbubble-outline" size={24} color="#374151" /> */}
           </TouchableOpacity>
           
           <TouchableOpacity 
