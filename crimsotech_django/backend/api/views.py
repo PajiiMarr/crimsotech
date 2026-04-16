@@ -19647,14 +19647,33 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
 
     def get_queryset(self):
+        from django.db.models import Avg, Count, Q, Min, Max, Sum, OuterRef, Subquery, FloatField, IntegerField
+
+        
         user_id = self.request.headers.get('X-User-Id')
+        
+        # Subquery for average rating
+        avg_rating_subquery = Review.objects.filter(
+            product=OuterRef('pk'),
+            average_rating__isnull=False
+        ).values('product').annotate(
+            avg=Avg('average_rating')
+        ).values('avg')
+        
+        # Subquery for review count
+        review_count_subquery = Review.objects.filter(
+            product=OuterRef('pk'),
+            average_rating__isnull=False
+        ).values('product').annotate(
+            count=Count('id')
+        ).values('count')
         
         # Start with base queryset - show only published, non-removed products
         queryset = Product.objects.filter(
             upload_status='published',
             is_removed=False
         ).annotate(
-            # Get min and max prices from active variants (including those with 0 stock)
+            # Get min and max prices from active variants
             min_variant_price=Min('variants__price', filter=Q(variants__is_active=True)),
             max_variant_price=Max('variants__price', filter=Q(variants__is_active=True)),
             # Calculate total stock from active variants
@@ -19662,12 +19681,15 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             # Count active variants
             active_variant_count=Count('variants', filter=Q(variants__is_active=True)),
             # Count variants with stock > 0
-            in_stock_variant_count=Count('variants', filter=Q(variants__is_active=True, variants__quantity__gt=0))
+            in_stock_variant_count=Count('variants', filter=Q(variants__is_active=True, variants__quantity__gt=0)),
+            # ADD THESE TWO LINES FOR RATINGS
+            average_rating=Subquery(avg_rating_subquery, output_field=FloatField()),
+            review_count=Subquery(review_count_subquery, output_field=IntegerField()),
         ).select_related(
             'shop',
             'shop__customer__customer',
             'customer',
-            'customer__customer',  # To get User from Customer
+            'customer__customer',
             'category',
             'category_admin'
         ).prefetch_related(
@@ -19681,7 +19703,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             )
         ).distinct()
 
-        # Exclude user's own products (both shop and personal listings)
+        # Exclude user's own products
         if user_id:
             queryset = queryset.exclude(
                 Q(customer__customer__id=user_id) | 
@@ -19690,11 +19712,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
         # Filter to products that have at least one active variant
         queryset = queryset.filter(active_variant_count__gt=0)
-        
-        # Show all products regardless of stock status
-        # We'll handle stock status in the serialized data
-        
-        print(f"PublicProducts: Returning {queryset.count()} products for user {user_id}")
         
         return queryset.order_by('-created_at')
 
@@ -19823,6 +19840,18 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             
             # Check if product is in user's favorites
             item['is_favorite'] = self._check_if_favorite(product_id, user_id)
+
+                # ADD THESE LINES FOR RATINGS
+            # Get rating values from the annotated queryset
+            product_obj = queryset.get(id=product_id) if hasattr(queryset, 'get') else None
+            if product_obj:
+                item['average_rating'] = getattr(product_obj, 'average_rating', None)
+                item['review_count'] = getattr(product_obj, 'review_count', 0)
+                if item['average_rating']:
+                    item['average_rating'] = round(item['average_rating'], 1)
+            else:
+                item['average_rating'] = None
+                item['review_count'] = 0
             
             # Use price_display from serializer (already correctly formatted)
             item['display_price'] = item.get('price_display', 'Price unavailable')
@@ -19930,6 +19959,60 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         # Get the serializer data with full context
         serializer = ProductSerializer(product, context={'request': request})
         data = serializer.data
+
+
+        # Calculate average rating and review count from the Review model
+        
+        reviews_aggregate = Review.objects.filter(
+            product=product,
+            average_rating__isnull=False
+        ).aggregate(
+            avg_rating=Avg('average_rating'),
+            review_count=Count('id')
+        )
+        
+        data['average_rating'] = round(reviews_aggregate['avg_rating'], 1) if reviews_aggregate['avg_rating'] else None
+        data['total_reviews'] = reviews_aggregate['review_count'] or 0
+        
+        # Also include the reviews list with media
+        reviews = Review.objects.filter(product=product).select_related('customer__customer').prefetch_related('medias').order_by('-created_at')
+        reviews_data = []
+        for review in reviews:
+            # Get customer name
+            customer_name = None
+            if review.customer and review.customer.customer:
+                first = review.customer.customer.first_name or ''
+                last = review.customer.customer.last_name or ''
+                customer_name = f"{first} {last}".strip() or review.customer.customer.username
+            
+            # Get media
+            media_data = []
+            for media in review.medias.all():
+                media_data.append({
+                    'id': str(media.id),
+                    'file_url': get_media_url(media.file_data),
+                    'file_data': get_media_url(media.file_data),
+                    'file_type': media.file_type,
+                })
+            
+            reviews_data.append({
+                'id': str(review.id),
+                'average_rating': review.average_rating,
+                'condition_rating': review.condition_rating,
+                'accuracy_rating': review.accuracy_rating,
+                'value_rating': review.value_rating,
+                'delivery_rating': review.delivery_rating,
+                'comment': review.comment,
+                'created_at': review.created_at.isoformat(),
+                'customer': {
+                    'id': str(review.customer.customer.id) if review.customer and review.customer.customer else None,
+                    'username': review.customer.customer.username if review.customer and review.customer.customer else None,
+                    'name': customer_name,
+                },
+                'media': media_data,
+            })
+        
+        data['reviews'] = reviews_data
         
         # Check if product is in user's favorites
         data['is_favorite'] = self._check_if_favorite(pk, user_id)

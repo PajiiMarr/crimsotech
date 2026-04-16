@@ -124,9 +124,16 @@ type ProductDetail = {
   reviews?: Array<{
     id: string;
     rating?: number;
+    average_rating?: number;
+    condition_rating?: number;
+    accuracy_rating?: number;
+    value_rating?: number;
+    delivery_rating?: number;
     comment?: string;
-    customer?: { id: string; username?: string };
+    customer?: { id: string; username?: string; name?: string };
     created_at?: string;
+    variant_title?: string;
+    media?: Array<{ id: string; file_url?: string; file_data?: string; file_type?: string }>;
   }>;
   average_rating?: number;
   total_reviews?: number;
@@ -855,6 +862,7 @@ const SellerInfoCard = ({
 };
 
 // ─── Reviews Section ───────────────────────────────────────────────────────────
+// ─── Enhanced Reviews Section ─────────────────────────────────────────────────
 const ReviewsSection = ({
   reviews,
   averageRating,
@@ -864,108 +872,266 @@ const ReviewsSection = ({
   averageRating?: number;
   totalReviews?: number;
 }) => {
+  const [expandedReview, setExpandedReview] = useState<string | null>(null);
+  const [mediaModalVisible, setMediaModalVisible] = useState(false);
+  const [selectedMedia, setSelectedMedia] = useState<string[]>([]);
+  const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
+
   if (!reviews || reviews.length === 0) {
     return (
       <View
         style={{
           backgroundColor: "#FFFFFF",
-          borderRadius: 0,
-          borderWidth: 0,
-          borderColor: "#E5E7EB",
           padding: 20,
-          marginBottom: 0,
           alignItems: "center",
-          borderBottomWidth: 1,
-          borderBottomColor: "#F3F4F6",
         }}
       >
         <Ionicons name="chatbubble-outline" size={32} color="#9CA3AF" />
         <Text style={{ fontSize: 14, color: "#6B7280", marginTop: 8 }}>
           No reviews yet
         </Text>
+        <Text style={{ fontSize: 12, color: "#9CA3AF", marginTop: 4 }}>
+          Be the first to review this product
+        </Text>
       </View>
     );
   }
 
+  const openMediaGallery = (mediaUrls: string[], startIndex: number = 0) => {
+    setSelectedMedia(mediaUrls);
+    setSelectedMediaIndex(startIndex);
+    setMediaModalVisible(true);
+  };
+
+  const getInitials = (name: string) => {
+    if (!name) return "?";
+    return name
+      .split(" ")
+      .map((part) => part.charAt(0))
+      .join("")
+      .substring(0, 2)
+      .toUpperCase();
+  };
+
   return (
-    <View
-      style={{
-        backgroundColor: "#FFFFFF",
-        borderRadius: 0,
-        borderWidth: 0,
-        borderColor: "#E5E7EB",
-        padding: 16,
-        marginBottom: 0,
-        borderBottomWidth: 1,
-        borderBottomColor: "#F3F4F6",
-      }}
-    >
+    <>
       <View
         style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 12,
+          backgroundColor: "#FFFFFF",
+          padding: 16,
         }}
       >
-        <Text style={{ fontSize: 15, fontWeight: "700", color: "#111827" }}>
-          Reviews ({totalReviews || 0})
-        </Text>
-        {averageRating ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-            <StarRow count={Math.round(averageRating)} />
-            <Text style={{ fontSize: 13, color: "#6B7280", marginLeft: 4 }}>
-              {averageRating.toFixed(1)}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-      {reviews.slice(0, 3).map((review) => (
         <View
-          key={review.id}
           style={{
-            paddingVertical: 10,
-            borderBottomWidth: 1,
-            borderBottomColor: "#F3F4F6",
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 16,
           }}
         >
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ fontSize: 13, fontWeight: "600", color: "#374151" }}>
-              {review.customer?.username || "Anonymous"}
-            </Text>
-            {review.rating && <StarRow count={review.rating} />}
-          </View>
-          <Text
-            style={{
-              fontSize: 13,
-              color: "#6B7280",
-              marginTop: 4,
-              lineHeight: 18,
-            }}
-          >
-            {review.comment || "No comment"}
+          <Text style={{ fontSize: 16, fontWeight: "700", color: "#111827" }}>
+            Customer Reviews ({totalReviews || 0})
           </Text>
-          {review.created_at && (
-            <Text style={{ fontSize: 11, color: "#9CA3AF", marginTop: 4 }}>
-              {formatDate(review.created_at)}
-            </Text>
-          )}
+          {averageRating ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <StarRow count={Math.round(averageRating)} />
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#EA580C" }}>
+                {averageRating.toFixed(1)}
+              </Text>
+            </View>
+          ) : null}
         </View>
-      ))}
-      {reviews.length > 3 && (
-        <TouchableOpacity style={{ marginTop: 10, alignItems: "center" }}>
-          <Text style={{ fontSize: 13, color: "#EA580C", fontWeight: "500" }}>
-            See all {reviews.length} reviews
-          </Text>
-        </TouchableOpacity>
-      )}
-    </View>
+
+        {reviews.map((review) => (
+          <View
+            key={review.id}
+            style={{
+              borderBottomWidth: 1,
+              borderBottomColor: "#F3F4F6",
+              paddingVertical: 14,
+            }}
+          >
+            {/* User info and rating */}
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 8,
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: "#F3F4F6",
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: "600", color: "#6B7280" }}>
+                    {getInitials(review.customer?.name || review.customer?.username || "User")}
+                  </Text>
+                </View>
+                <View>
+                  <Text style={{ fontSize: 14, fontWeight: "600", color: "#111827" }}>
+                    {review.customer?.name || review.customer?.username || "Anonymous"}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>
+                    {formatDate(review.created_at)}
+                  </Text>
+                </View>
+              </View>
+              <StarRow count={Math.round(review.average_rating || review.rating || 0)} />
+            </View>
+
+            {/* Variant selected (if available) */}
+            {review.variant_title && (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 4,
+                  marginBottom: 8,
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  backgroundColor: "#F3F4F6",
+                  borderRadius: 4,
+                  alignSelf: "flex-start",
+                }}
+              >
+                <Ionicons name="cube-outline" size={12} color="#6B7280" />
+                <Text style={{ fontSize: 11, color: "#6B7280" }}>
+                  Variant: {review.variant_title}
+                </Text>
+              </View>
+            )}
+
+            {/* Detailed ratings */}
+            {/* Detailed ratings - 2x2 Grid layout */}
+            <View style={{ marginBottom: 10 }}>
+              {/* Row 1: Condition and Accuracy */}
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+                {review.condition_rating && (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                    <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Condition:</Text>
+                    <StarRow count={review.condition_rating} />
+                  </View>
+                )}
+                {review.accuracy_rating && (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, marginLeft: 8 }}>
+                    <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Accuracy:</Text>
+                    <StarRow count={review.accuracy_rating} />
+                  </View>
+                )}
+              </View>
+              
+              {/* Row 2: Value and Delivery */}
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                {review.value_rating && (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                    <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Value:</Text>
+                    <StarRow count={review.value_rating} />
+                  </View>
+                )}
+                {review.delivery_rating && (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, marginLeft: 8 }}>
+                    <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Delivery:</Text>
+                    <StarRow count={review.delivery_rating} />
+                  </View>
+                )}
+              </View>
+            </View>
+
+            {/* Comment */}
+            {review.comment && (
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: "#374151",
+                  lineHeight: 18,
+                  marginBottom: 10,
+                }}
+                numberOfLines={expandedReview === review.id ? undefined : 3}
+              >
+                {review.comment}
+              </Text>
+            )}
+
+            {/* Read more button for long comments */}
+            {review.comment && review.comment.length > 150 && expandedReview !== review.id && (
+              <TouchableOpacity onPress={() => setExpandedReview(review.id)}>
+                <Text style={{ fontSize: 12, color: "#EA580C", fontWeight: "500" }}>
+                  Read more
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Media images */}
+            {review.media && review.media.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginTop: 8 }}
+                contentContainerStyle={{ gap: 8 }}
+              >
+                {review.media.map((media: any, idx: number) => {
+                  const mediaUrls = review.media.map((m: any) => m.file_url || m.file_data).filter(Boolean);
+                  return (
+                    <TouchableOpacity
+                      key={media.id}
+                      onPress={() => openMediaGallery(mediaUrls, idx)}
+                    >
+                      <Image
+                        source={{ uri: media.file_url || media.file_data }}
+                        style={{ width: 70, height: 70, borderRadius: 8, backgroundColor: "#F3F4F6" }}
+                      />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+        ))}
+      </View>
+
+      {/* Media Gallery Modal */}
+      <Modal
+        visible={mediaModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMediaModalVisible(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.95)" }}>
+          <TouchableOpacity
+            style={{ position: "absolute", top: 50, right: 20, zIndex: 10, padding: 8 }}
+            onPress={() => setMediaModalVisible(false)}
+          >
+            <Ionicons name="close" size={30} color="#FFFFFF" />
+          </TouchableOpacity>
+          <FlatList
+            data={selectedMedia}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            initialScrollIndex={selectedMediaIndex}
+            getItemLayout={(_, index) => ({
+              length: SCREEN_WIDTH,
+              offset: SCREEN_WIDTH * index,
+              index,
+            })}
+            renderItem={({ item }) => (
+              <View style={{ width: SCREEN_WIDTH, justifyContent: "center", alignItems: "center" }}>
+                <Image source={{ uri: item }} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH * 1.1 }} resizeMode="contain" />
+              </View>
+            )}
+            keyExtractor={(_, index) => index.toString()}
+          />
+        </View>
+      </Modal>
+    </>
   );
 };
 
@@ -1550,38 +1716,51 @@ const productImageRef = useRef<View>(null);
           )}
 
           <View style={{ padding: 16, marginTop: 12 }}>
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "flex-start",
-                gap: 8,
-                marginBottom: 6,
-                minWidth: 0,
-              }}
-            >
-              <Text
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  fontSize: 20,
-                  fontWeight: "700",
-                  color: "#111827",
-                  lineHeight: 28,
-                }}
-              >
-                {product.name}
-              </Text>
-              <TouchableOpacity
-                onPress={toggleFavorite}
-                style={{ padding: 8, marginRight: 4, flexShrink: 0 }}
-              >
-                <Ionicons
-                  name={product.is_favorite ? "heart" : "heart-outline"}
-                  size={22}
-                  color={product.is_favorite ? "#EF4444" : "#6B7280"}
-                />
-              </TouchableOpacity>
-            </View>
+          {/* Product Name Row */}
+<View
+  style={{
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 8,
+    minWidth: 0,
+  }}
+>
+  <Text
+    style={{
+      flex: 1,
+      minWidth: 0,
+      fontSize: 20,
+      fontWeight: "700",
+      color: "#111827",
+      lineHeight: 28,
+    }}
+  >
+    {product.name}
+  </Text>
+  <TouchableOpacity
+    onPress={toggleFavorite}
+    style={{ padding: 8, marginRight: 4, flexShrink: 0 }}
+  >
+    <Ionicons
+      name={product.is_favorite ? "heart" : "heart-outline"}
+      size={22}
+      color={product.is_favorite ? "#EF4444" : "#6B7280"}
+    />
+  </TouchableOpacity>
+</View>
+
+{/* Rating below product name */}
+{product.average_rating && (
+  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+    <StarRow count={Math.round(product.average_rating)} />
+    <Text style={{ fontSize: 13, color: "#6B7280" }}>
+      {product.average_rating.toFixed(1)} ({product.total_reviews || 0} reviews)
+    </Text>
+  </View>
+)}
+
+            
             {product.condition && (
               <View
                 style={{

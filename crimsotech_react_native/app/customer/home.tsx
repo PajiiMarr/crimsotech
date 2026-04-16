@@ -27,7 +27,7 @@ interface Product {
     id: string;
     price: number;
     original_price: number | null;
-    compare_price: number | null;
+    compare_price: number | null;  
   }>;
   id: string;
   name: string;
@@ -41,6 +41,9 @@ interface Product {
     shop_picture?: string;
   } | null;
   customer?: any;
+
+  average_rating?: number | null;
+  review_count?: number;  
   
   // Fields from the public products endpoint list() method
   min_variant_price?: number;
@@ -311,8 +314,29 @@ const CompactProductCard = ({
       </View>
 
       {/* Product info */}
+      {/* Product info */}
       <View style={styles.productInfo}>
         <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
+        
+        {/* Rating Section - MOVED HERE (below product name) */}
+        {(product.average_rating !== null && product.average_rating !== undefined) && (
+          <View style={styles.ratingContainer}>
+            <View style={styles.starsContainer}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <MaterialIcons
+                  key={star}
+                  name="star"
+                  size={12}
+                  color={star <= Math.round(product.average_rating || 0) ? "#F59E0B" : "#D1D5DB"}
+                />
+              ))}
+            </View>
+            <Text style={styles.ratingText}>
+              {product.average_rating?.toFixed(1)} ({product.review_count || 0})
+            </Text>
+          </View>
+        )}
+        
         {categoryName ? <Text style={styles.categoryText}>{categoryName}</Text> : null}
         
         {/* Seller info */}
@@ -722,6 +746,21 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     textDecorationLine: 'line-through',
     marginBottom: 2,
+  },
+  ratingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+    gap: 6,
+  },
+  starsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  ratingText: {
+    fontSize: 10,
+    color: '#6B7280',
   },
   
   conditionText: { fontSize: 12, color: '#9CA3AF', marginTop: 4, textAlign: 'center' },
