@@ -620,8 +620,7 @@ export default function PurchasesPage() {
 
           {/* Action Buttons - Matches web version exactly */}
           <View style={styles.actionButtons}>
-            {/* Cancel button for pending/in_progress items */}
-            {(item.status === 'pending' || item.status === 'in_progress') && (
+            {/* {(item.status === 'pending' || item.status === 'in_progress') && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.cancelButton]}
                 onPress={() => handleCancelOrder(item)}
@@ -629,7 +628,7 @@ export default function PurchasesPage() {
                 <MaterialIcons name="cancel" size={14} color="#EF4444" />
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
-            )}
+            )} */}
 
             {/* Track button for to_ship/to_receive items (but not delivered) */}
             {/* {(item.status === 'to_ship' || item.status === 'to_receive') && (
@@ -643,7 +642,7 @@ export default function PurchasesPage() {
             )} */}
 
             {/* For delivered items - Shows Rate button (like web version) */}
-            {item.status === 'delivered' && (
+            {/* {item.status === 'delivered' && (
               <>
                 <TouchableOpacity 
                   style={[styles.actionButton, styles.rateButton]}
@@ -663,10 +662,10 @@ export default function PurchasesPage() {
                   </TouchableOpacity>
                 )}
               </>
-            )}
+            )} */}
 
             {/* For picked_up/completed items - Rate button only if can_review */}
-            {(item.status === 'picked_up' || item.status === 'completed') && item.can_review && item.product_id && (
+            {/* {(item.status === 'picked_up' || item.status === 'completed') && item.can_review && item.product_id && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.rateButton]}
                 onPress={() => router.push(`/customer/order-review?productId=${item.product_id}&orderId=${item.order_id}&productName=${encodeURIComponent(item.product_name)}`)}
@@ -674,10 +673,10 @@ export default function PurchasesPage() {
                 <MaterialIcons name="star" size={14} color="#F97316" />
                 <Text style={styles.rateButtonText}>Rate</Text>
               </TouchableOpacity>
-            )}
+            )} */}
 
             {/* For picked_up/completed items without review - View button */}
-            {(item.status === 'picked_up' || item.status === 'completed') && !item.can_review && (
+            {/* {(item.status === 'picked_up' || item.status === 'completed') && !item.can_review && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.viewButton]}
                 onPress={() => router.push(`/customer/view-order?orderId=${item.order_id}`)}
@@ -685,7 +684,7 @@ export default function PurchasesPage() {
                 <MaterialIcons name="visibility" size={14} color="#6B7280" />
                 <Text style={styles.viewButtonText}>View</Text>
               </TouchableOpacity>
-            )}
+            )} */}
 
             {/* View Details button for returns */}
             {(item.status === 'cancelled' || item.status === 'return_refund') && (

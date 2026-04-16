@@ -834,7 +834,7 @@ export default function RatePage() {
 
               {/* Comment */}
               <View style={styles.commentSection}>
-                <Text style={styles.commentLabel}>Additional Comments (optional)</Text>
+                <Text style={styles.commentLabel}>Your Comments</Text>
                 <TextInput
                   style={styles.commentInput}
                   value={comment}
