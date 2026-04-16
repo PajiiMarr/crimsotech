@@ -27,7 +27,7 @@ interface Product {
     id: string;
     price: number;
     original_price: number | null;
-    compare_price: number | null;  
+    compare_price: number | null;
   }>;
   id: string;
   name: string;
@@ -41,18 +41,13 @@ interface Product {
     shop_picture?: string;
   } | null;
   customer?: any;
-
   average_rating?: number | null;
-  review_count?: number;  
-  
-  // Fields from the public products endpoint list() method
+  review_count?: number | string;
   min_variant_price?: number;
   max_variant_price?: number;
   total_variant_stock?: number;
   active_variant_count?: number;
   in_stock_variant_count?: number;
-  
-  // Computed fields from the list method
   display_price?: string;
   total_stock?: number;
   available_stock?: number;
@@ -66,8 +61,6 @@ interface Product {
   seller_avatar?: string | null;
   primary_image_url?: string | null;
   is_favorite?: boolean;
-  
-  // Original serializer fields
   primary_image?: { url: string } | null;
   media_files?: Array<{ file_data?: string; file_url?: string }>;
   price_display?: string;
@@ -83,196 +76,152 @@ interface Category {
   name: string;
 }
 
-// ----------------------------
-// Get product price (always show lowest price)
-// ----------------------------
-// Update the getProductPrice function to handle original price comparison
-const getProductPrice = (product: Product): { 
-  displayPrice: string; 
+const insertCommas = (intPart: string): string => {
+  return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+};
+
+// Parse any value to a finite number, returns 0 if invalid
+const toNumber = (val: any): number => {
+  if (val === null || val === undefined) return 0;
+  const n = typeof val === 'string' ? parseFloat(val) : Number(val);
+  return isFinite(n) ? n : 0;
+};
+
+// Format number with commas — always operates on a real number
+const formatNumber = (val: number | string | null | undefined): string => {
+  const n = toNumber(val);
+  return n.toLocaleString('en-PH');
+};
+
+// Format currency — always operates on a real number
+const formatCurrency = (val: number | string | null | undefined): string => {
+  const n = toNumber(val);
+  const fixed = n.toFixed(2);                        // e.g. "50000.00"
+  const [intPart, decPart] = fixed.split('.');        // ["50000", "00"]
+  return `₱${insertCommas(intPart)}.${decPart}`;     // "₱50,000.00"
+};
+
+
+// Format rating with one decimal place — always operates on a real number
+const formatRating = (val: number | string | null | undefined): string => {
+  return toNumber(val).toFixed(1);
+};
+
+// Get product price info (always show lowest price)
+const getProductPrice = (product: Product): {
+  displayPrice: string;
   originalPrice: string | null;
   hasDiscount: boolean;
   isGift: boolean;
   hasStock: boolean;
 } => {
-  // Check if it's a gift by name
   const nameLower = product.name?.toLowerCase() || '';
   if (nameLower.includes('gift') || nameLower.includes('free')) {
-    return {
-      displayPrice: "FREE GIFT",
-      originalPrice: null,
-      hasDiscount: false,
-      isGift: true,
-      hasStock: product.has_stock || false,
-    };
+    return { displayPrice: 'FREE GIFT', originalPrice: null, hasDiscount: false, isGift: true, hasStock: product.has_stock || false };
   }
-  
-  // Use min_variant_price to show the lowest price
+
   if (product.min_variant_price !== undefined && product.min_variant_price !== null) {
-    const minPrice = product.min_variant_price;
-    
-    // Check if it's a gift (all variants have zero price)
-    if (minPrice === 0 && product.max_variant_price === 0) {
-      return {
-        displayPrice: "FREE GIFT",
-        originalPrice: null,
-        hasDiscount: false,
-        isGift: true,
-        hasStock: product.has_stock || false,
-      };
+    const minPrice = toNumber(product.min_variant_price);
+    const maxPrice = toNumber(product.max_variant_price);
+
+    if (minPrice === 0 && maxPrice === 0) {
+      return { displayPrice: 'FREE GIFT', originalPrice: null, hasDiscount: false, isGift: true, hasStock: product.has_stock || false };
     }
-    
-    // Get the lowest original price from variants (if available)
-    let lowestOriginalPrice = null;
+
+    let lowestOriginalPrice: number | null = null;
     let hasDiscount = false;
-    
-    // Check if product has variants with original_price or compare_price data
+
     if (product.variants && product.variants.length > 0) {
-      // Check for original_price first, then compare_price
-      const variantsWithOriginal = product.variants.filter(v => 
-        (v.original_price && v.original_price > 0) || 
-        (v.compare_price && v.compare_price > 0)
+      const variantsWithOriginal = product.variants.filter(v =>
+        toNumber(v.original_price) > 0 || toNumber(v.compare_price) > 0
       );
-      
-      console.log(`Product ${product.name} - Variants with original/compare price:`, variantsWithOriginal.length);
-      
+
       if (variantsWithOriginal.length > 0) {
-        // Find the variant with the lowest current price that has original/compare price
-        const lowestPriceVariant = variantsWithOriginal.reduce((lowest, current) => {
-          const currentPrice = current.price || 0;
-          const lowestPrice = lowest.price || 0;
-          return currentPrice < lowestPrice ? current : lowest;
-        }, variantsWithOriginal[0]);
-        
-        // Use original_price if available, otherwise use compare_price
-        const originalPriceValue = lowestPriceVariant.original_price || lowestPriceVariant.compare_price;
-        lowestOriginalPrice = originalPriceValue;
-        const currentPrice = lowestPriceVariant.price || minPrice;
-        
-        console.log(`Product ${product.name} - Original: ${lowestOriginalPrice}, Current: ${currentPrice}`);
-        
-        // Check if there's a discount (original price > current price)
-        if (lowestOriginalPrice && lowestOriginalPrice > currentPrice) {
+        const lowestPriceVariant = variantsWithOriginal.reduce((lowest, current) =>
+          toNumber(current.price) < toNumber(lowest.price) ? current : lowest
+        , variantsWithOriginal[0]);
+
+        const origVal = toNumber(lowestPriceVariant.original_price) || toNumber(lowestPriceVariant.compare_price);
+        const curPrice = toNumber(lowestPriceVariant.price) || minPrice;
+
+        if (origVal > 0 && origVal > curPrice) {
+          lowestOriginalPrice = origVal;
           hasDiscount = true;
         }
       }
     }
-    
-    // Show only the lowest price
+
     return {
-      displayPrice: `₱${minPrice.toFixed(2)}`,
-      originalPrice: hasDiscount ? `₱${lowestOriginalPrice?.toFixed(2)}` : null,
-      hasDiscount: hasDiscount,
+      displayPrice: formatCurrency(minPrice),
+      originalPrice: hasDiscount && lowestOriginalPrice !== null ? formatCurrency(lowestOriginalPrice) : null,
+      hasDiscount,
       isGift: false,
       hasStock: product.has_stock || false,
     };
   }
-  
-  // Fallback to price_display from serializer
-  if (product.price_display && product.price_display !== "Price unavailable") {
-    // Check if price_display indicates a range, extract the lowest price
+
+  if (product.price_display && product.price_display !== 'Price unavailable') {
     if (product.price_display.includes(' - ')) {
-      const lowestPrice = product.price_display.split(' - ')[0];
       return {
-        displayPrice: lowestPrice,
+        displayPrice: product.price_display.split(' - ')[0],
         originalPrice: null,
         hasDiscount: false,
         isGift: false,
         hasStock: product.has_stock || false,
       };
     }
-    
-    const isGift = product.price_display === "FREE GIFT" || 
-                   product.price_display.includes("FREE") ||
-                   product.price_display === "₱0" || 
-                   product.price_display === "₱0.00";
-    
-    return {
-      displayPrice: product.price_display,
-      originalPrice: null,
-      hasDiscount: false,
-      isGift,
-      hasStock: product.has_stock || false,
-    };
+
+    const isGift =
+      product.price_display === 'FREE GIFT' ||
+      product.price_display.includes('FREE') ||
+      product.price_display === '₱0' ||
+      product.price_display === '₱0.00';
+
+    return { displayPrice: product.price_display, originalPrice: null, hasDiscount: false, isGift, hasStock: product.has_stock || false };
   }
-  
-  // Default fallback
-  return {
-    displayPrice: "Price unavailable",
-    originalPrice: null,
-    hasDiscount: false,
-    isGift: false,
-    hasStock: false,
-  };
+
+  return { displayPrice: 'Price unavailable', originalPrice: null, hasDiscount: false, isGift: false, hasStock: false };
 };
+
 // ----------------------------
 // Product Card Component
 // ----------------------------
-const CompactProductCard = ({
-  product,
-  onPress,
-}: {
-  product: Product;
-  onPress: () => void;
-}) => {
+const CompactProductCard = ({ product, onPress }: { product: Product; onPress: () => void }) => {
   const [productInfo, setProductInfo] = useState(getProductPrice(product));
 
   useEffect(() => {
-    const info = getProductPrice(product);
-    console.log(`Product: ${product.name}`, {
-      hasDiscount: info.hasDiscount,
-      originalPrice: info.originalPrice,
-      displayPrice: info.displayPrice,
-      variantsCount: product.variants?.length,
-      minPrice: product.min_variant_price
-    });
-    setProductInfo(info);
+    setProductInfo(getProductPrice(product));
   }, [product]);
 
-  const categoryName = typeof product.category === 'string'
-    ? product.category
-    : product.category?.name || product.category_admin?.name || '';
+  const categoryName =
+    typeof product.category === 'string'
+      ? product.category
+      : product.category?.name || product.category_admin?.name || '';
 
-  const getImageUrl = () => {
-    // Use primary_image_url from the API first
-    if (product.primary_image_url) {
-      return product.primary_image_url;
-    }
-    
-    // Try primary_image object
-    if (product.primary_image?.url) {
-      const url = product.primary_image.url;
+  const getImageUrl = (): string => {
+    if (product.primary_image_url) return product.primary_image_url;
+
+    const base = (AxiosInstance?.defaults?.baseURL || '').replace(/\/$/, '');
+    const resolve = (url: string) => {
       if (url.startsWith('http://') || url.startsWith('https://')) return url;
-      const base = AxiosInstance?.defaults?.baseURL || '';
-      const normalizedBase = base.replace(/\/$/, '');
-      const normalizedRaw = url.startsWith('/') ? url : `/${url}`;
-      return normalizedBase ? `${normalizedBase}${normalizedRaw}` : normalizedRaw;
-    }
-    
-    // Try media_files
+      return base ? `${base}${url.startsWith('/') ? url : `/${url}`}` : url;
+    };
+
+    if (product.primary_image?.url) return resolve(product.primary_image.url);
+
     if (product.media_files && product.media_files.length > 0) {
-      const media = product.media_files[0];
-      const url = media.file_data || media.file_url;
-      if (url) {
-        if (url.startsWith('http://') || url.startsWith('https://')) return url;
-        const base = AxiosInstance?.defaults?.baseURL || '';
-        const normalizedBase = base.replace(/\/$/, '');
-        const normalizedRaw = url.startsWith('/') ? url : `/${url}`;
-        return normalizedBase ? `${normalizedBase}${normalizedRaw}` : normalizedRaw;
-      }
+      const url = product.media_files[0].file_data || product.media_files[0].file_url;
+      if (url) return resolve(url);
     }
-    
-    // Fallback to shop picture
-    if (product.shop?.shop_picture) {
-      const pic = product.shop.shop_picture;
-      if (pic.startsWith('http://') || pic.startsWith('https://')) return pic;
-      const base = AxiosInstance?.defaults?.baseURL || '';
-      const normalizedBase = base.replace(/\/$/, '');
-      const normalizedRaw = pic.startsWith('/') ? pic : `/${pic}`;
-      return normalizedBase ? `${normalizedBase}${normalizedRaw}` : normalizedRaw;
-    }
-    
+
+    if (product.shop?.shop_picture) return resolve(product.shop.shop_picture);
+
     return 'https://via.placeholder.com/150';
   };
+
+  // Always parse review_count to a number before formatting
+  const formattedReviewCount = formatNumber(toNumber(product.review_count));
+  const formattedRating = formatRating(product.average_rating);
 
   return (
     <TouchableOpacity style={styles.productCard} onPress={onPress} activeOpacity={0.7}>
@@ -304,22 +253,18 @@ const CompactProductCard = ({
       <View style={styles.productImageContainer}>
         <Image
           source={{ uri: getImageUrl() }}
-          style={[
-            styles.productImage,
-            !productInfo.hasStock && styles.outOfStockImage
-          ]}
+          style={[styles.productImage, !productInfo.hasStock && styles.outOfStockImage]}
           defaultSource={require('../../assets/images/icon.png')}
-          onError={(e: any) => console.warn('Failed to load image for product', product.id)}
+          onError={() => console.warn('Failed to load image for product', product.id)}
         />
       </View>
 
       {/* Product info */}
-      {/* Product info */}
       <View style={styles.productInfo}>
         <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
-        
-        {/* Rating Section - MOVED HERE (below product name) */}
-        {(product.average_rating !== null && product.average_rating !== undefined) && (
+
+        {/* Rating */}
+        {product.average_rating !== null && product.average_rating !== undefined && (
           <View style={styles.ratingContainer}>
             <View style={styles.starsContainer}>
               {[1, 2, 3, 4, 5].map((star) => (
@@ -327,37 +272,35 @@ const CompactProductCard = ({
                   key={star}
                   name="star"
                   size={12}
-                  color={star <= Math.round(product.average_rating || 0) ? "#F59E0B" : "#D1D5DB"}
+                  color={star <= Math.round(toNumber(product.average_rating)) ? '#F59E0B' : '#D1D5DB'}
                 />
               ))}
             </View>
             <Text style={styles.ratingText}>
-              {product.average_rating?.toFixed(1)} ({product.review_count || 0})
+              {formattedRating} ({formattedReviewCount})
             </Text>
           </View>
         )}
-        
+
         {categoryName ? <Text style={styles.categoryText}>{categoryName}</Text> : null}
-        
-        {/* Seller info */}
+
+        {/* Seller */}
         <View style={styles.sellerRow}>
-          <MaterialIcons 
-            name={product.listing_type === 'shop' ? 'store' : 'person'} 
-            size={10} 
-            color="#6B7280" 
+          <MaterialIcons
+            name={product.listing_type === 'shop' ? 'store' : 'person'}
+            size={10}
+            color="#6B7280"
           />
           <Text style={styles.sellerText} numberOfLines={1}>
             {product.seller_name || product.shop?.name || 'Unknown Seller'}
           </Text>
         </View>
 
-        {/* Price with original price strikethrough */}
+        {/* Price */}
         <View style={styles.priceContainer}>
           <View style={styles.priceWrapper}>
             {productInfo.originalPrice && (
-              <Text style={styles.originalPrice}>
-                {productInfo.originalPrice}
-              </Text>
+              <Text style={styles.originalPrice}>{productInfo.originalPrice}</Text>
             )}
             <Text style={productInfo.isGift ? styles.freePrice : styles.price}>
               {productInfo.displayPrice}
@@ -369,6 +312,9 @@ const CompactProductCard = ({
   );
 };
 
+// ----------------------------
+// Main Screen
+// ----------------------------
 export default function CustomerHome() {
   const { user, registrationStage, loading: authLoading } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
@@ -376,6 +322,45 @@ export default function CustomerHome() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
+
+  const fetchProducts = async () => {
+    try {
+      const response = await AxiosInstance.get('/public-products/', {
+        headers: { 'X-User-Id': String(user?.id || '') },
+      });
+
+      const raw = response.data;
+      const list: Product[] = Array.isArray(raw) ? raw : raw?.results ?? [];
+
+      // Ensure all numeric fields are real numbers
+      const normalized = list.map((p) => ({
+        ...p,
+        average_rating: p.average_rating !== undefined && p.average_rating !== null ? toNumber(p.average_rating) : null,
+        review_count: toNumber(p.review_count),
+        min_variant_price: toNumber(p.min_variant_price),
+        max_variant_price: toNumber(p.max_variant_price),
+        total_variant_stock: toNumber(p.total_variant_stock),
+        total_stock: toNumber(p.total_stock),
+        available_stock: toNumber(p.available_stock),
+        ordered_quantity: toNumber(p.ordered_quantity),
+      }));
+
+      setProducts(normalized);
+
+      const categoryMap = new Map<string, Category>();
+      normalized.forEach((product) => {
+        const cat = product.category || product.category_admin;
+        if (cat && cat.id && !categoryMap.has(cat.id)) {
+          categoryMap.set(cat.id, { id: cat.id, name: cat.name });
+        }
+      });
+      setCategories(Array.from(categoryMap.values()));
+    } catch (error) {
+      console.error('Error fetching products:', error);
+      setProducts([]);
+      setCategories([]);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -388,95 +373,34 @@ export default function CustomerHome() {
       setRefreshing(false);
     }
   };
-  const fetchProducts = async () => {
-    try {
-      const response = await AxiosInstance.get('/public-products/', {
-        headers: { 'X-User-Id': String(user?.id || '') },
-      });
-  
-      let productsData = response.data;
-      let productsList = [];
-      
-      if (Array.isArray(productsData)) {
-        productsList = productsData;
-      } else if (productsData.results) {
-        productsList = productsData.results;
-      } else {
-        productsList = [];
-      }
-  
-      console.log(`Fetched ${productsList.length} products from public endpoint`);
-      
-      // Debug: Check the first product's variants
-      if (productsList.length > 0) {
-        const firstProduct = productsList[0];
-        console.log('First product details:', {
-          id: firstProduct.id,
-          name: firstProduct.name,
-          min_variant_price: firstProduct.min_variant_price,
-          hasVariants: !!firstProduct.variants,
-          variantsCount: firstProduct.variants?.length || 0,
-          variants: firstProduct.variants,
-          allKeys: Object.keys(firstProduct)
-        });
-        
-        // Check if any variant has original_price
-        if (firstProduct.variants && firstProduct.variants.length > 0) {
-          console.log('First variant:', firstProduct.variants[0]);
-        }
-      }
-      
-      setProducts(productsList);
-      
-      // Extract unique categories from products
-      const categoryMap = new Map();
-      productsList.forEach((product: Product) => {
-        const cat = product.category || product.category_admin;
-        if (cat && cat.id && !categoryMap.has(cat.id)) {
-          categoryMap.set(cat.id, { id: cat.id, name: cat.name });
-        }
-      });
-      setCategories(Array.from(categoryMap.values()));
-      
-    } catch (error) {
-      console.error('Error fetching products:', error);
-      setProducts([]);
-      setCategories([]);
-    }
-  };
-  useEffect(() => { 
-    fetchData(); 
-  }, []);
 
-  // Prevent access to home unless registration stage is 4
+  useEffect(() => { fetchData(); }, []);
+
   useEffect(() => {
     if (!authLoading && registrationStage !== 4) {
-      console.log('Access denied: registrationStage !== 4', { registrationStage });
       router.replace('/(auth)/login');
     }
   }, [authLoading, registrationStage]);
 
-  const onRefresh = () => { 
-    setRefreshing(true); 
-    fetchData(); 
-  };
+  const onRefresh = () => { setRefreshing(true); fetchData(); };
 
   const filteredProducts = selectedCategory === ''
     ? products
-    : products.filter((product: Product) => {
-        let prodCatId;
-        if (typeof product.category === 'string') prodCatId = product.category;
-        else if (product.category && typeof product.category === 'object') prodCatId = (product.category as any).id;
-        else prodCatId = product.category_admin?.id;
-        return prodCatId && prodCatId === selectedCategory;
+    : products.filter((product) => {
+        const catId =
+          typeof product.category === 'string'
+            ? product.category
+            : (product.category as any)?.id ?? product.category_admin?.id;
+        return catId === selectedCategory;
       });
+
+  // Item count is always a number
+  const itemCount = filteredProducts.length;
 
   if (loading) {
     return (
       <RoleGuard allowedRoles={['customer']}>
-        <CustomerLayout refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }>
+        <CustomerLayout refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#EE4D2D" />
             <Text style={styles.loadingText}>Loading products...</Text>
@@ -488,9 +412,8 @@ export default function CustomerHome() {
 
   return (
     <RoleGuard allowedRoles={['customer']}>
-      <CustomerLayout refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }>
+      <CustomerLayout refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+
         {/* Categories */}
         {categories.length > 0 && (
           <View style={styles.categoriesSection}>
@@ -505,14 +428,17 @@ export default function CustomerHome() {
                 </View>
                 <Text style={[styles.categoryName, selectedCategory === '' && styles.categoryNameActive]}>All</Text>
               </TouchableOpacity>
-              {categories.map(cat => (
+
+              {categories.map((cat) => (
                 <TouchableOpacity
                   key={cat.id}
                   style={[styles.categoryItem, selectedCategory === cat.id && styles.categoryItemActive]}
                   onPress={() => setSelectedCategory(selectedCategory === cat.id ? '' : cat.id)}
                 >
                   <View style={[styles.categoryIcon, selectedCategory === cat.id && styles.categoryIconActive]}>
-                    <Text style={[styles.categoryInitial, selectedCategory === cat.id && styles.categoryInitialActive]}>{cat.name.charAt(0)}</Text>
+                    <Text style={[styles.categoryInitial, selectedCategory === cat.id && styles.categoryInitialActive]}>
+                      {cat.name.charAt(0)}
+                    </Text>
                   </View>
                   <Text style={[styles.categoryName, selectedCategory === cat.id && styles.categoryNameActive]}>{cat.name}</Text>
                 </TouchableOpacity>
@@ -525,21 +451,20 @@ export default function CustomerHome() {
         <View style={styles.productsSection}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>For You</Text>
-            <Text style={styles.productCount}>{filteredProducts.length} items</Text>
+            {/* itemCount is a real JS number, formatNumber converts it properly */}
+            <Text style={styles.productCount}>{formatNumber(itemCount)} items</Text>
           </View>
+
           {filteredProducts.length > 0 ? (
             <FlatList
               data={filteredProducts}
               renderItem={({ item }) => (
                 <CompactProductCard
                   product={item}
-                  onPress={() => router.push({ 
-                    pathname: '/customer/view-product', 
-                    params: { id: item.id } 
-                  })}
+                  onPress={() => router.push({ pathname: '/customer/view-product', params: { id: item.id } })}
                 />
               )}
-              keyExtractor={item => item.id}
+              keyExtractor={(item) => item.id}
               numColumns={2}
               columnWrapperStyle={styles.productGrid}
               scrollEnabled={false}
@@ -558,211 +483,106 @@ export default function CustomerHome() {
   );
 }
 
+// ----------------------------
 // Styles
+// ----------------------------
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
-  loadingContainer: { 
-    flex: 1, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    backgroundColor: '#F8F9FA', 
-    paddingBottom: Platform.OS === 'ios' ? 74 : 64 
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    paddingBottom: Platform.OS === 'ios' ? 74 : 64,
   },
   loadingText: { marginTop: 12, fontSize: 14, color: '#666' },
-  categoriesSection: { 
-    backgroundColor: '#FFFFFF', 
-    marginTop: 8, 
-    marginHorizontal: 4, 
-    paddingVertical: 14, 
-    borderRadius: 12, 
-    ...Platform.select({ 
-      ios: { 
-        shadowColor: '#000', 
-        shadowOpacity: 0.05, 
-        shadowRadius: 3, 
-        shadowOffset: { width: 0, height: 1 } 
-      }, 
-      android: { elevation: 1 } 
-    }) 
+  categoriesSection: {
+    backgroundColor: '#FFFFFF',
+    marginTop: 8,
+    marginHorizontal: 4,
+    paddingVertical: 14,
+    borderRadius: 12,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
+      android: { elevation: 1 },
+    }),
   },
   sectionTitle: { fontSize: 16, fontWeight: '600', color: '#111827', marginBottom: 12, marginLeft: 12 },
   productCount: { fontSize: 12, color: '#6B7280', marginRight: 12 },
   categoriesContent: { paddingHorizontal: 12 },
   categoryItem: { alignItems: 'center', marginRight: 12, width: 68 },
   categoryItemActive: {},
-  categoryIcon: { 
-    width: 52, 
-    height: 52, 
-    borderRadius: 26, 
-    backgroundColor: '#F1F3F5', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    marginBottom: 8 
+  categoryIcon: {
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: '#F1F3F5',
+    justifyContent: 'center', alignItems: 'center', marginBottom: 8,
   },
   categoryIconActive: { backgroundColor: '#EEF2FF' },
   categoryInitial: { fontSize: 16, fontWeight: '600', color: '#666' },
   categoryInitialActive: { color: '#4F46E5' },
   categoryName: { fontSize: 13, color: '#666', textAlign: 'center' },
   categoryNameActive: { color: '#4F46E5', fontWeight: '600' },
-  productsSection: { 
-    backgroundColor: '#FFFFFF', 
-    marginTop: 16, 
-    marginHorizontal: 3, 
-    marginBottom: 16, 
-    paddingVertical: 14, 
-    borderRadius: 12, 
-    ...Platform.select({ 
-      ios: { 
-        shadowColor: '#000', 
-        shadowOpacity: 0.05, 
-        shadowRadius: 3, 
-        shadowOffset: { width: 0, height: 1 } 
-      }, 
-      android: { elevation: 1 } 
-    }) 
+  productsSection: {
+    backgroundColor: '#FFFFFF',
+    marginTop: 16, marginHorizontal: 3, marginBottom: 16,
+    paddingVertical: 14, borderRadius: 12,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
+      android: { elevation: 1 },
+    }),
   },
-  sectionHeader: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    marginBottom: 12, 
-    paddingHorizontal: 12 
+  sectionHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: 12, paddingHorizontal: 12,
   },
   productGrid: { justifyContent: 'space-between', paddingHorizontal: 12 },
   productGridContent: { paddingBottom: 8 },
-  productCard: { 
-    width: CARD_WIDTH, 
-    backgroundColor: '#FFFFFF', 
-    borderRadius: 8, 
-    borderWidth: 1, 
-    borderColor: '#F3F4F6', 
-    marginBottom: 12, 
-    overflow: 'hidden', 
-    position: 'relative',
-    ...Platform.select({ 
-      ios: { 
-        shadowColor: '#000', 
-        shadowOpacity: 0.05, 
-        shadowRadius: 3, 
-        shadowOffset: { width: 0, height: 1 } 
-      }, 
-      android: { elevation: 1 } 
-    }) 
+  productCard: {
+    width: CARD_WIDTH, backgroundColor: '#FFFFFF',
+    borderRadius: 8, borderWidth: 1, borderColor: '#F3F4F6',
+    marginBottom: 12, overflow: 'hidden', position: 'relative',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
+      android: { elevation: 1 },
+    }),
   },
-  giftBadge: { 
-    position: 'absolute', 
-    top: 8, 
-    left: 8, 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: '#D1FAE5', 
-    paddingHorizontal: 6, 
-    paddingVertical: 2, 
-    borderRadius: 4, 
-    zIndex: 2 
+  giftBadge: {
+    position: 'absolute', top: 8, left: 8,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#D1FAE5', paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: 4, zIndex: 2,
   },
   giftText: { fontSize: 9, color: '#059669', fontWeight: '700', marginLeft: 2 },
   outOfStockBadge: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
-    backgroundColor: '#EF4444',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    zIndex: 2,
+    position: 'absolute', top: 8, left: 8,
+    backgroundColor: '#EF4444', paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 4, zIndex: 2,
   },
-  outOfStockText: {
-    fontSize: 9,
-    color: '#FFFFFF',
-    fontWeight: '700',
+  outOfStockText: { fontSize: 9, color: '#FFFFFF', fontWeight: '700' },
+  discountBadge: {
+    position: 'absolute', top: 8, left: 8,
+    backgroundColor: '#EF4444', paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 4, zIndex: 2,
   },
+  discountText: { fontSize: 10, color: '#FFFFFF', fontWeight: '700' },
   productImageContainer: { width: '100%', aspectRatio: 0.95, backgroundColor: '#F9FAFB' },
   productImage: { width: '100%', height: '100%', resizeMode: 'cover' },
   outOfStockImage: { opacity: 0.5 },
   productInfo: { padding: 10 },
-  productName: { 
-    fontSize: 12, 
-    fontWeight: '600', 
-    color: '#111827', 
-    marginBottom: 3, 
-    lineHeight: 15, 
-    height: 30 
-  },
+  productName: { fontSize: 12, fontWeight: '600', color: '#111827', marginBottom: 3, lineHeight: 15, height: 30 },
   categoryText: { fontSize: 11, color: '#3B82F6', fontWeight: '500', marginBottom: 2 },
-  sellerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-    gap: 2,
-  },
-  sellerText: { 
-    fontSize: 10, 
-    color: '#6B7280',
-    flex: 1,
-  },
-  priceContainer: { 
-    marginTop: 'auto',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
+  sellerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 2 },
+  sellerText: { fontSize: 10, color: '#6B7280', flex: 1 },
+  priceContainer: { marginTop: 'auto', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  priceWrapper: { flexDirection: 'column', alignItems: 'flex-start' },
   freePrice: { fontSize: 12, fontWeight: '700', color: '#059669' },
   price: { fontSize: 14, fontWeight: '700', color: '#EF4444' },
-  emptyContainer: { 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    paddingVertical: 48, 
-    paddingHorizontal: 16 
-  },
-  emptyText: { 
-    fontSize: 14, 
-    color: '#6B7280', 
-    marginTop: 12, 
-    textAlign: 'center', 
-    fontWeight: '500' 
-  },
-  discountBadge: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
-    backgroundColor: '#EF4444',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    zIndex: 2,
-  },
-  discountText: {
-    fontSize: 10,
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  priceWrapper: {
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-  },
-  originalPrice: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    textDecorationLine: 'line-through',
-    marginBottom: 2,
-  },
-  ratingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-    gap: 6,
-  },
-  starsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  ratingText: {
-    fontSize: 10,
-    color: '#6B7280',
-  },
-  
+  originalPrice: { fontSize: 11, color: '#9CA3AF', textDecorationLine: 'line-through', marginBottom: 2 },
+  ratingContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 6 },
+  starsContainer: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  ratingText: { fontSize: 10, color: '#6B7280' },
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 48, paddingHorizontal: 16 },
+  emptyText: { fontSize: 14, color: '#6B7280', marginTop: 12, textAlign: 'center', fontWeight: '500' },
   conditionText: { fontSize: 12, color: '#9CA3AF', marginTop: 4, textAlign: 'center' },
   bottomPadding: { height: Platform.OS === 'ios' ? 74 : 64 },
 });
