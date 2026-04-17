@@ -682,7 +682,7 @@ class Login(APIView):
     
 class Register(APIView):
     def get(self, request):
-        user_id = request.headers.get("X-User-Id")  # get from headers
+        user_id = request.headers.get("X-User-Id")
 
         if user_id:
             try:
@@ -698,7 +698,6 @@ class Register(APIView):
             except User.DoesNotExist:
                 return Response({"error": "User not found"}, status=404)
 
-        # fallback: if no user_id header provided, return all users
         users = [
             {
                 "user_id": u.id,
@@ -714,22 +713,30 @@ class Register(APIView):
         if serializer.is_valid(raise_exception=True):
             user = serializer.save()
             
-            # Create customer for new user - use 'customer' field instead of 'user'
-            customer_data = {"customer": user.id}  # Changed from "user" to "customer"
+            # Create customer for new user
+            customer_data = {"customer": user.id}
             customer_serializer = CustomerSerializer(data=customer_data)
             if customer_serializer.is_valid(raise_exception=True):
-                customer_serializer.save()
+                customer = customer_serializer.save()
+                
+                # Create wallet for the user
+                wallet = UserWallet.objects.create(
+                    user=user,
+                    available_balance=Decimal('0.00'),
+                    pending_balance=Decimal('0.00')
+                )
                 
                 return Response({
                     "user_id": user.id,
                     "username": user.username,
                     "email": user.email,
                     "registration_stage": user.registration_stage,
+                    "wallet_id": str(wallet.wallet_id),
                     "message": "User registered successfully"
                 })
             
     def put(self, request):
-        user_id = request.headers.get("X-User-Id")  # get from headers
+        user_id = request.headers.get("X-User-Id")
         
         if not user_id:
             return Response({"error": "User ID is required"}, status=400)
@@ -743,7 +750,6 @@ class Register(APIView):
         if serializer.is_valid(raise_exception=True):
             serializer.save()
             return Response(serializer.data)
-
 
 class Profiling(APIView):
     def get(self, request):
