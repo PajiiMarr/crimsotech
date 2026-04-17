@@ -28138,6 +28138,41 @@ class RiderOrdersActive(viewsets.ViewSet):
         except (Rider.DoesNotExist, ValueError):
             return None
 
+    def _get_today_declines_count(self, rider):
+        """Get number of declines for a rider today"""
+        today = timezone.now().date()
+        today_start = timezone.make_aware(datetime.combine(today, datetime.min.time()))
+        today_end = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        
+        return Delivery.objects.filter(
+            rider=rider,
+            status='declined',
+            updated_at__range=[today_start, today_end]
+        ).count()
+
+    @action(detail=False, methods=['get'])
+    def get_decline_limit_info(self, request):
+        """
+        Get information about rider's decline limits for today
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        today_declines = self._get_today_declines_count(rider)
+        max_declines_per_day = 3
+        
+        return Response({
+            "success": True,
+            "today_declines": today_declines,
+            "max_declines_per_day": max_declines_per_day,
+            "declines_remaining": max_declines_per_day - today_declines,
+            "has_reached_limit": today_declines >= max_declines_per_day
+        })
+        
     @action(detail=False, methods=['get'], url_path='order-details/(?P<order_id>[^/.]+)')
     def order_details(self, request, order_id=None):
         """
@@ -28924,6 +28959,14 @@ class RiderOrdersActive(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        # Check daily decline limit (max 3 declines per day)
+        today_declines = self._get_today_declines_count(rider)
+        if today_declines >= 3:
+            return Response(
+                {"success": False, "error": "You have reached the maximum of 3 declines per day. You cannot decline more orders today."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         order_id = request.data.get('order_id')
         reason = request.data.get('reason', '')  # Optional decline reason
 
@@ -29015,7 +29058,8 @@ class RiderOrdersActive(viewsets.ViewSet):
                     "order_id": str(delivery.order.order)
                 },
                 "other_riders_pending": other_pending,
-                "declined_at": delivery.updated_at.isoformat()
+                "declined_at": delivery.updated_at.isoformat(),
+                "declines_remaining": 3 - (today_declines + 1)  # Remaining declines for today
             }
         })
     

@@ -243,14 +243,58 @@ const showConfirmationModal = (config: {
     });
   };
 
-  // Handle decline delivery
-  // Handle decline delivery
+  // Add a new state for decline limit info
+  const [declineLimitInfo, setDeclineLimitInfo] = useState({
+    todayDeclines: 0,
+    maxDeclines: 3,
+    declinesRemaining: 3,
+    hasReachedLimit: false
+  });
+  
+  // Add function to fetch decline limit info
+  const fetchDeclineLimitInfo = async () => {
+    try {
+      const response = await AxiosInstance.get('/rider-orders-active/get_decline_limit_info/', {
+        headers: { 'X-User-Id': user?.user_id }
+      });
+      if (response.data.success) {
+        setDeclineLimitInfo({
+          todayDeclines: response.data.today_declines,
+          maxDeclines: response.data.max_declines_per_day,
+          declinesRemaining: response.data.declines_remaining,
+          hasReachedLimit: response.data.has_reached_limit
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching decline limit:', error);
+    }
+  };
+  
+  // Call this in useEffect
+  useEffect(() => {
+    if (orderId) {
+      fetchOrderDetails();
+      fetchDeclineLimitInfo(); // Add this line
+    }
+  }, [orderId]);
+  
+  // Update handleDeclineDelivery to check limit first
   const handleDeclineDelivery = async () => {
     if (!orderDetails?.delivery?.id) return;
     
+    // Check if rider has reached daily decline limit
+    if (declineLimitInfo.hasReachedLimit) {
+      Alert.alert(
+        'Limit Reached',
+        `You have reached the maximum of ${declineLimitInfo.maxDeclines} declines per day. You cannot decline more orders today.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
     showConfirmationModal({
       title: 'Decline Order',
-      message: 'Are you sure you want to decline this delivery?',
+      message: `Are you sure you want to decline this delivery? You have ${declineLimitInfo.declinesRemaining} decline${declineLimitInfo.declinesRemaining !== 1 ? 's' : ''} remaining today.`,
       confirmText: 'Decline',
       confirmColor: '#DC2626',
       icon: 'close-circle-outline',
@@ -273,13 +317,19 @@ const showConfirmationModal = (config: {
           }
         } catch (err: any) {
           console.error('Error declining delivery:', err);
-          Alert.alert('Error', err?.response?.data?.error || 'Failed to decline order');
+          // Check if error is due to decline limit
+          if (err?.response?.data?.error && err.response.data.error.includes('maximum of 3 declines')) {
+            Alert.alert('Limit Reached', err.response.data.error);
+          } else {
+            Alert.alert('Error', err?.response?.data?.error || 'Failed to decline order');
+          }
         } finally {
           setIsActionLoading(false);
         }
       },
     });
   };
+  
 
   // Handle mark as picked up
   // Handle mark as picked up
@@ -1259,62 +1309,62 @@ const handleCancelAcceptedOrder = async () => {
   </View>
 </Modal>
 
-      {/* Edge-to-Edge Action Buttons for Pending/Accept/Decline */}
-      {showAcceptDecline && (
-        <View style={{ 
-          backgroundColor: '#FFFFFF', 
-          borderTopWidth: 1, 
-          borderTopColor: '#E5E7EB',
-          paddingTop: 12,
-          paddingBottom: 20,
-        }}>
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <TouchableOpacity
-              onPress={handleDeclineDelivery}
-              disabled={isActionLoading}
-              style={{
-                flex: 1,
-                backgroundColor: '#FFFFFF',
-                paddingVertical: 14,
-                borderRadius: 0,
-                borderWidth: 1,
-                borderColor: '#DC2626',
-                marginLeft: 16,
-              }}
-            >
-              <Text style={{ 
-                fontSize: 16, 
-                fontWeight: '600', 
-                color: '#DC2626', 
-                textAlign: 'center' 
-              }}>
-                {isActionLoading ? 'Processing...' : 'Decline'}
-              </Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              onPress={handleAcceptDelivery}
-              disabled={isActionLoading}
-              style={{
-                flex: 1,
-                backgroundColor: '#EE4D2D',
-                paddingVertical: 14,
-                borderRadius: 0,
-                marginRight: 16,
-              }}
-            >
-              <Text style={{ 
-                fontSize: 16, 
-                fontWeight: '600', 
-                color: '#FFFFFF', 
-                textAlign: 'center' 
-              }}>
-                {isActionLoading ? 'Processing...' : 'Accept'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+          {showAcceptDecline && (
+            <View style={{ 
+              backgroundColor: '#FFFFFF', 
+              borderTopWidth: 1, 
+              borderTopColor: '#E5E7EB',
+              paddingTop: 12,
+              paddingBottom: 20,
+            }}>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  onPress={handleDeclineDelivery}
+                  disabled={isActionLoading || declineLimitInfo.hasReachedLimit}
+                  style={{
+                    flex: 1,
+                    backgroundColor: declineLimitInfo.hasReachedLimit ? '#9CA3AF' : '#FFFFFF',
+                    paddingVertical: 14,
+                    borderRadius: 0,
+                    borderWidth: 1,
+                    borderColor: '#DC2626',
+                    marginLeft: 16,
+                    opacity: declineLimitInfo.hasReachedLimit ? 0.7 : 1,
+                  }}
+                >
+                  <Text style={{ 
+                    fontSize: 16, 
+                    fontWeight: '600', 
+                    color: declineLimitInfo.hasReachedLimit ? '#FFFFFF' : '#DC2626', 
+                    textAlign: 'center' 
+                  }}>
+                    {declineLimitInfo.hasReachedLimit ? 'Limit Reached' : (isActionLoading ? 'Processing...' : `Decline (${declineLimitInfo.declinesRemaining} left)`)}
+                  </Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  onPress={handleAcceptDelivery}
+                  disabled={isActionLoading}
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#EE4D2D',
+                    paddingVertical: 14,
+                    borderRadius: 0,
+                    marginRight: 16,
+                  }}
+                >
+                  <Text style={{ 
+                    fontSize: 16, 
+                    fontWeight: '600', 
+                    color: '#FFFFFF', 
+                    textAlign: 'center' 
+                  }}>
+                    {isActionLoading ? 'Processing...' : 'Accept'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
 
       {/* Edge-to-Edge Action Buttons for Accepted Status - Mark as Picked Up and Cancel */}
       {showAcceptedActions && (

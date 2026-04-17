@@ -302,7 +302,7 @@ export default function PurchasesPage() {
             const statusToUse = item.status || order.status || 'pending';
             const mappedStatus = mapStatus(statusToUse);
             
-            let imageUrl = 'https://via.placeholder.com/100?text=No+Image';
+            let imageUrl = 'https://via.placeholder.com/70?text=No+Image';
             
             if (item.primary_image?.url) {
               const formatted = formatImageUrl(item.primary_image.url);
@@ -532,7 +532,7 @@ export default function PurchasesPage() {
         {showPickupBanner && (
           <View style={styles.pickupBanner}>
             <View style={styles.pickupBannerIcon}>
-              <MaterialIcons name="event" size={16} color="#F59E0B" />
+              <MaterialIcons name="event" size={14} color="#F59E0B" />
             </View>
             <View style={styles.pickupBannerContent}>
               <Text style={styles.pickupBannerTitle}>Pickup Scheduled</Text>
@@ -553,10 +553,10 @@ export default function PurchasesPage() {
         {/* Shop Header */}
         <View style={styles.shopHeader}>
           <View style={styles.shopInfo}>
-            <MaterialIcons name="store" size={16} color="#6B7280" />
+            <MaterialIcons name="store" size={14} color="#6B7280" />
             <Text style={styles.shopName} numberOfLines={1}>{item.shop_name}</Text>
           </View>
-          <MaterialIcons name="chevron-right" size={20} color="#9CA3AF" />
+          <MaterialIcons name="chevron-right" size={16} color="#9CA3AF" />
         </View>
 
         {/* Product Info */}
@@ -574,14 +574,14 @@ export default function PurchasesPage() {
             {/* Variant - if available */}
             {item.variant_info && item.variant_info.title && (
               <View style={styles.infoRow}>
-                <MaterialIcons name="label-outline" size={14} color="#9CA3AF" />
+                <MaterialIcons name="label-outline" size={12} color="#9CA3AF" />
                 <Text style={styles.infoText} numberOfLines={1}>{item.variant_info.title}</Text>
               </View>
             )}
 
             {/* Payment Method */}
             <View style={styles.infoRow}>
-              <MaterialIcons name="payment" size={14} color="#9CA3AF" />
+              <MaterialIcons name="payment" size={12} color="#9CA3AF" />
               <Text style={styles.infoText} numberOfLines={1}>{item.order.payment_method}</Text>
             </View>
 
@@ -601,7 +601,7 @@ export default function PurchasesPage() {
         {/* Voucher Applied */}
         {item.item?.voucher_applied && (
           <View style={styles.voucherContainer}>
-            <MaterialIcons name="local-offer" size={14} color="#10B981" />
+            <MaterialIcons name="local-offer" size={12} color="#10B981" />
             <Text style={styles.voucherText} numberOfLines={1}>
               {item.item.voucher_applied.name} ({item.item.voucher_applied.code})
             </Text>
@@ -611,7 +611,7 @@ export default function PurchasesPage() {
         {/* Total and Action */}
         <View style={styles.footer}>
           <View style={styles.totalContainer}>
-            <Text style={styles.totalLabel}>Total to Pay:</Text>
+            <Text style={styles.totalLabel}>Total:</Text>
             <Text style={styles.totalAmount}>{formatCurrency(parseFloat(item.order.total_amount))}</Text>
           </View>
 
@@ -623,7 +623,7 @@ export default function PurchasesPage() {
                 style={[styles.actionButton, styles.detailsButton]}
                 onPress={() => router.push(`/customer/view-refund?orderId=${item.order_id}`)}
               >
-                <MaterialIcons name="visibility" size={14} color="#6B7280" />
+                <MaterialIcons name="visibility" size={12} color="#6B7280" />
                 <Text style={styles.detailsButtonText}>Details</Text>
               </TouchableOpacity>
             )}
@@ -656,7 +656,7 @@ export default function PurchasesPage() {
   return (
     <CustomerLayout disableScroll>
       <View style={styles.container}>
-        {/* Status Tabs */}
+        {/* Status Tabs - Box style */}
         <ScrollView 
           horizontal 
           showsHorizontalScrollIndicator={false}
@@ -754,7 +754,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
-    height: 52,
+    height: 48,
     position: 'absolute',
     top: 0,
     left: 0,
@@ -767,53 +767,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'nowrap',
-    minHeight: 52,
+    minHeight: 48,
   },
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
-    width: 100,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    paddingRight: 12,
-    borderRadius: 0,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     backgroundColor: '#F3F4F6',
     marginRight: 8,
-    justifyContent: 'center',
+    borderRadius: 0,
     height: 36,
-    position: 'relative',
   },
   activeTab: {
-    backgroundColor: 'transparent',
-    borderBottomWidth: 3,
-    borderBottomColor: '#F97316',
-    borderRadius: 0,
-    paddingBottom: 6,
+    backgroundColor: '#F97316',
   },
   tabLabel: {
     fontSize: 13,
     fontWeight: '500',
     color: '#6B7280',
-    flexShrink: 0,
-    textAlign: 'center',
-    includeFontPadding: false,
   },
   activeTabLabel: {
-    color: '#111827',
-    fontWeight: '700',
+    color: '#FFFFFF',
   },
   tabBadge: {
     backgroundColor: '#E5E7EB',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    height: 20,
-    minWidth: 22,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    marginLeft: 6,
+    minWidth: 20,
     alignItems: 'center',
-    justifyContent: 'center',
-    position: 'absolute',
-    right: 8,
-    top: 6,
   },
   activeTabBadge: {
     backgroundColor: '#FFFFFF',
@@ -827,16 +811,16 @@ const styles = StyleSheet.create({
     color: '#F97316',
   },
   listContent: {
-    padding: 16,
+    padding: 12,
     paddingBottom: 80,
   },
   orderCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    marginBottom: 12,
-    padding: 12,
+    borderRadius: 10,
+    marginBottom: 10,
+    padding: 10,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: '#F0F0F0',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -856,16 +840,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: '#FEF3C7',
     borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
+    padding: 8,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#FCD34D',
-    gap: 12,
+    gap: 8,
   },
   pickupBannerIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#FDE68A',
     alignItems: 'center',
     justifyContent: 'center',
@@ -874,12 +858,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   pickupBannerTitle: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: '#92400E',
   },
   pickupBannerDate: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
     color: '#B45309',
     marginTop: 2,
@@ -891,18 +875,18 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   pickupBannerLocationText: {
-    fontSize: 10,
+    fontSize: 9,
     color: '#B45309',
   },
   pickupBannerBadge: {
     backgroundColor: '#FDE68A',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     alignSelf: 'flex-start',
   },
   pickupBannerBadgeText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '600',
     color: '#92400E',
   },
@@ -910,10 +894,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
-    paddingBottom: 8,
+    marginBottom: 8,
+    paddingBottom: 6,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: '#F0F0F0',
   },
   shopInfo: {
     flexDirection: 'row',
@@ -922,19 +906,19 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   shopName: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#374151',
     flex: 1,
   },
   productContainer: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
+    gap: 10,
+    marginBottom: 8,
   },
   productImage: {
-    width: 80,
-    height: 80,
+    width: 70,
+    height: 70,
     borderRadius: 8,
     backgroundColor: '#F3F4F6',
   },
@@ -943,7 +927,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   productName: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#111827',
     marginBottom: 2,
@@ -951,11 +935,11 @@ const styles = StyleSheet.create({
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
     marginTop: 2,
   },
   infoText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#6B7280',
     flex: 1,
   },
@@ -964,12 +948,12 @@ const styles = StyleSheet.create({
   },
   statusBadge: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
     borderRadius: 4,
   },
   statusText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
   },
   priceRow: {
@@ -979,25 +963,25 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   quantity: {
-    fontSize: 13,
+    fontSize: 11,
     color: '#6B7280',
   },
   price: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: '#F97316',
   },
   voucherContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 12,
-    padding: 8,
+    gap: 4,
+    marginBottom: 8,
+    padding: 6,
     backgroundColor: '#F0FDF4',
     borderRadius: 6,
   },
   voucherText: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#10B981',
     fontWeight: '500',
     flex: 1,
@@ -1006,9 +990,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 12,
+    paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
+    borderTopColor: '#F0F0F0',
   },
   totalContainer: {
     flexDirection: 'row',
@@ -1016,86 +1000,46 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   totalLabel: {
-    fontSize: 13,
+    fontSize: 11,
     color: '#6B7280',
   },
   totalAmount: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '700',
     color: '#111827',
   },
   actionButtons: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
     flexWrap: 'wrap',
     justifyContent: 'flex-end',
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
     backgroundColor: 'transparent',
     gap: 4,
   },
-  viewButton: {
-    borderColor: '#D1D5DB',
-  },
-  viewButtonText: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#6B7280',
-  },
-  cancelButton: {
-    borderColor: '#FECACA',
-  },
-  cancelButtonText: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#EF4444',
-  },
-  trackButton: {
-    borderColor: '#BFDBFE',
-  },
-  trackButtonText: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#3B82F6',
-  },
-  refundButton: {
-    borderColor: '#FED7AA',
-  },
-  refundButtonText: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#F97316',
-  },
-  rateButton: {
-    borderColor: '#FED7AA',
-  },
-  rateButtonText: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#F97316',
-  },
   detailsButton: {
     borderColor: '#D1D5DB',
   },
   detailsButtonText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '500',
     color: '#6B7280',
   },
   reasonContainer: {
-    marginTop: 8,
-    padding: 8,
+    marginTop: 6,
+    padding: 6,
     backgroundColor: '#FEF2F2',
     borderRadius: 6,
   },
   reasonText: {
-    fontSize: 12,
+    fontSize: 10,
     color: '#EF4444',
   },
   emptyContainer: {
