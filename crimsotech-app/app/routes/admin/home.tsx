@@ -46,6 +46,9 @@ import {
   RefreshCw,
   PhilippinePeso,
   X,
+  Calculator,
+  Receipt,
+  Gauge,
 } from 'lucide-react';
 import AxiosInstance from '~/components/axios/Axios';
 
@@ -111,18 +114,31 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         active_shops: 0,
         current_period_orders: 0,
         current_period_revenue: 0,
+        current_period_shipping_fees: 0,
+        current_period_platform_fees: 0,
         order_growth: 0,
         revenue_growth: 0,
         date_range_days: 0
       },
       operational: {
         active_boosts: 0,
+        boost_revenue: 0,
         pending_refunds: 0,
+        pending_refund_amount: 0,
+        completed_refunds: 0,
+        completed_refund_amount: 0,
         low_stock_products: 0,
         avg_rating: 0,
+        total_reviews: 0,
         pending_reports: 0,
         active_riders: 0,
-        active_vouchers: 0
+        total_riders: 0,
+        completed_deliveries: 0,
+        total_delivery_fees: 0,
+        active_vouchers: 0,
+        vouchers_used: 0,
+        total_voucher_discount: 0,
+        calculation_notes: {}
       },
       sales_analytics: {
         sales_data: [],
@@ -180,6 +196,7 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
                 <div className="p-4 bg-blue-50 rounded-lg">
                   <p className="text-sm text-gray-600">Current Period Revenue</p>
                   <p className="text-2xl font-bold text-blue-600">{data.currentPeriodRevenue}</p>
+                  <p className="text-xs text-gray-500 mt-1">From completed orders</p>
                 </div>
                 <div className="p-4 bg-gray-50 rounded-lg">
                   <p className="text-sm text-gray-600">Previous Period Revenue</p>
@@ -191,7 +208,21 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
                 <p className={`text-2xl font-bold ${data.growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {data.growth}%
                 </p>
+                <p className="text-xs text-gray-500 mt-1">Calculated: (Current - Previous) / Previous × 100</p>
               </div>
+              {data.shippingFees !== undefined && (
+                <div className="p-4 bg-purple-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Shipping Fees Collected</p>
+                  <p className="text-2xl font-bold text-purple-600">{data.shippingFees}</p>
+                </div>
+              )}
+              {data.platformFees !== undefined && (
+                <div className="p-4 bg-orange-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Platform Fees (5%)</p>
+                  <p className="text-2xl font-bold text-orange-600">{data.platformFees}</p>
+                  <p className="text-xs text-gray-500 mt-1">5% of order total from completed orders</p>
+                </div>
+              )}
             </div>
           )}
 
@@ -212,6 +243,7 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
                 <p className={`text-2xl font-bold ${data.growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {data.growth}%
                 </p>
+                <p className="text-xs text-gray-500 mt-1">Calculated: (Current - Previous) / Previous × 100</p>
               </div>
             </div>
           )}
@@ -221,14 +253,17 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
               <div className="p-4 bg-blue-50 rounded-lg">
                 <p className="text-sm text-gray-600">Total Active Customers</p>
                 <p className="text-2xl font-bold text-blue-600">{data.total}</p>
+                <p className="text-xs text-gray-500 mt-1">Users with is_customer=True and not suspended</p>
               </div>
               <div className="p-4 bg-purple-50 rounded-lg">
                 <p className="text-sm text-gray-600">New Customers (Period)</p>
                 <p className="text-2xl font-bold text-purple-600">{data.newCustomers}</p>
+                <p className="text-xs text-gray-500 mt-1">Registered during selected period</p>
               </div>
               <div className="p-4 bg-green-50 rounded-lg">
                 <p className="text-sm text-gray-600">Returning Customers</p>
                 <p className="text-2xl font-bold text-green-600">{data.returningCustomers}</p>
+                <p className="text-xs text-gray-500 mt-1">Registered before period, made orders now</p>
               </div>
             </div>
           )}
@@ -238,6 +273,7 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
               <div className="p-4 bg-blue-50 rounded-lg">
                 <p className="text-sm text-gray-600">Total Active Shops</p>
                 <p className="text-2xl font-bold text-blue-600">{data.total}</p>
+                <p className="text-xs text-gray-500 mt-1">Shops with status='Active' and not suspended</p>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 bg-green-50 rounded-lg">
@@ -249,10 +285,6 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
                   <p className="text-2xl font-bold text-yellow-600">{data.pending}</p>
                 </div>
               </div>
-              <div className="p-4 bg-red-50 rounded-lg">
-                <p className="text-sm text-gray-600">Suspended Shops</p>
-                <p className="text-2xl font-bold text-red-600">{data.suspended}</p>
-              </div>
             </div>
           )}
 
@@ -262,15 +294,13 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
                 <div className="p-4 bg-green-50 rounded-lg">
                   <p className="text-sm text-gray-600">Active Boosts</p>
                   <p className="text-2xl font-bold text-green-600">{data.active}</p>
+                  <p className="text-xs text-gray-500 mt-1">Boosts with status='active'</p>
                 </div>
-                <div className="p-4 bg-yellow-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Pending Payment</p>
-                  <p className="text-2xl font-bold text-yellow-600">{data.pending}</p>
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Boost Revenue</p>
+                  <p className="text-2xl font-bold text-blue-600">{data.boostRevenue}</p>
+                  <p className="text-xs text-gray-500 mt-1">Sum of boost_plan prices for active boosts</p>
                 </div>
-              </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-600">Expired Boosts</p>
-                <p className="text-2xl font-bold text-gray-600">{data.expired}</p>
               </div>
             </div>
           )}
@@ -279,21 +309,19 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-4">
                 <div className="p-4 bg-yellow-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Pending</p>
+                  <p className="text-sm text-gray-600">Pending Refunds</p>
                   <p className="text-2xl font-bold text-yellow-600">{data.pending}</p>
+                  <p className="text-xs text-gray-500 mt-1">Amount: {data.pendingAmount}</p>
                 </div>
-                <div className="p-4 bg-blue-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Approved</p>
-                  <p className="text-2xl font-bold text-blue-600">{data.approved}</p>
+                <div className="p-4 bg-green-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Completed Refunds</p>
+                  <p className="text-2xl font-bold text-green-600">{data.completed}</p>
+                  <p className="text-xs text-gray-500 mt-1">Amount: {data.completedAmount}</p>
                 </div>
                 <div className="p-4 bg-red-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Rejected</p>
-                  <p className="text-2xl font-bold text-red-600">{data.rejected}</p>
+                  <p className="text-sm text-gray-600">In Dispute</p>
+                  <p className="text-2xl font-bold text-red-600">{data.dispute}</p>
                 </div>
-              </div>
-              <div className="p-4 bg-purple-50 rounded-lg">
-                <p className="text-sm text-gray-600">In Dispute</p>
-                <p className="text-2xl font-bold text-purple-600">{data.dispute}</p>
               </div>
             </div>
           )}
@@ -303,6 +331,7 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
               <div className="p-4 bg-red-50 rounded-lg">
                 <p className="text-sm text-gray-600">Products with Low Stock</p>
                 <p className="text-2xl font-bold text-red-600">{data.total}</p>
+                <p className="text-xs text-gray-500 mt-1">Variants with quantity {'<'} 5</p>
               </div>
               <div className="p-4 bg-orange-50 rounded-lg">
                 <p className="text-sm text-gray-600">Critical Stock (Below 3)</p>
@@ -320,6 +349,7 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
               <div className="p-4 bg-blue-50 rounded-lg">
                 <p className="text-sm text-gray-600">Average Rating</p>
                 <p className="text-2xl font-bold text-blue-600">{data.average} ★</p>
+                <p className="text-xs text-gray-500 mt-1">Based on {data.totalReviews || 0} reviews</p>
               </div>
               <div className="grid grid-cols-5 gap-2">
                 {[5,4,3,2,1].map(star => (
@@ -336,8 +366,9 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-4">
                 <div className="p-4 bg-red-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Pending</p>
+                  <p className="text-sm text-gray-600">Pending Reports</p>
                   <p className="text-2xl font-bold text-red-600">{data.pending}</p>
+                  <p className="text-xs text-gray-500 mt-1">Status='pending'</p>
                 </div>
                 <div className="p-4 bg-blue-50 rounded-lg">
                   <p className="text-sm text-gray-600">Under Review</p>
@@ -346,23 +377,6 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
                 <div className="p-4 bg-green-50 rounded-lg">
                   <p className="text-sm text-gray-600">Resolved</p>
                   <p className="text-2xl font-bold text-green-600">{data.resolved}</p>
-                </div>
-              </div>
-              <div className="p-4 bg-purple-50 rounded-lg">
-                <p className="text-sm text-gray-600">By Type</p>
-                <div className="space-y-2 mt-2">
-                  <div className="flex justify-between">
-                    <span>Account Reports:</span>
-                    <span className="font-bold">{data.byType?.account || 0}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Product Reports:</span>
-                    <span className="font-bold">{data.byType?.product || 0}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Shop Reports:</span>
-                    <span className="font-bold">{data.byType?.shop || 0}</span>
-                  </div>
                 </div>
               </div>
             </div>
@@ -374,21 +388,17 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
                 <div className="p-4 bg-green-50 rounded-lg">
                   <p className="text-sm text-gray-600">Active Riders</p>
                   <p className="text-2xl font-bold text-green-600">{data.active}</p>
+                  <p className="text-xs text-gray-500 mt-1">Verified and accepting deliveries</p>
                 </div>
                 <div className="p-4 bg-blue-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Online Now</p>
-                  <p className="text-2xl font-bold text-blue-600">{data.online}</p>
+                  <p className="text-sm text-gray-600">Total Riders</p>
+                  <p className="text-2xl font-bold text-blue-600">{data.totalRiders}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-yellow-50 rounded-lg">
-                  <p className="text-sm text-gray-600">On Delivery</p>
-                  <p className="text-2xl font-bold text-yellow-600">{data.onDelivery}</p>
-                </div>
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Offline</p>
-                  <p className="text-2xl font-bold text-gray-600">{data.offline}</p>
-                </div>
+              <div className="p-4 bg-purple-50 rounded-lg">
+                <p className="text-sm text-gray-600">Completed Deliveries (Period)</p>
+                <p className="text-2xl font-bold text-purple-600">{data.completedDeliveries}</p>
+                <p className="text-xs text-gray-500 mt-1">Total delivery fees: {data.totalDeliveryFees}</p>
               </div>
             </div>
           )}
@@ -401,19 +411,14 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
                   <p className="text-2xl font-bold text-green-600">{data.active}</p>
                 </div>
                 <div className="p-4 bg-blue-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Shop Vouchers</p>
-                  <p className="text-2xl font-bold text-blue-600">{data.shopVouchers}</p>
+                  <p className="text-sm text-gray-600">Vouchers Used</p>
+                  <p className="text-2xl font-bold text-blue-600">{data.used}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-purple-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Product Vouchers</p>
-                  <p className="text-2xl font-bold text-purple-600">{data.productVouchers}</p>
-                </div>
-                <div className="p-4 bg-yellow-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Expiring Soon</p>
-                  <p className="text-2xl font-bold text-yellow-600">{data.expiringSoon}</p>
-                </div>
+              <div className="p-4 bg-orange-50 rounded-lg">
+                <p className="text-sm text-gray-600">Total Discount Given</p>
+                <p className="text-2xl font-bold text-orange-600">{data.totalDiscount}</p>
+                <p className="text-xs text-gray-500 mt-1">Sum of voucher values applied</p>
               </div>
             </div>
           )}
@@ -442,7 +447,7 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
   );
 };
 
-const StatCard = ({ title, value, change, icon: Icon, trend, description, loading = false, onClick }: any) => (
+const StatCard = ({ title, value, change, icon: Icon, trend, description, loading = false, onClick, subValue, subLabel }: any) => (
   <Card className={onClick ? "cursor-pointer hover:shadow-lg transition-shadow" : ""} onClick={onClick}>
     <CardContent className="p-6">
       <div className="flex items-center justify-between">
@@ -452,6 +457,9 @@ const StatCard = ({ title, value, change, icon: Icon, trend, description, loadin
             <div className="h-8 w-20 bg-muted rounded animate-pulse mt-1" />
           ) : (
             <p className="text-2xl font-bold mt-1">{value}</p>
+          )}
+          {subValue && (
+            <p className="text-xs text-muted-foreground mt-1">{subLabel}: {subValue}</p>
           )}
           {description && (
             <p className="text-xs text-muted-foreground mt-1">{description}</p>
@@ -544,6 +552,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         breakdownData = {
           currentPeriodRevenue: formatCurrency(overview.current_period_revenue || 0),
           previousPeriodRevenue: formatCurrency(overview.previous_period_revenue || 0),
+          shippingFees: formatCurrency(overview.current_period_shipping_fees || 0),
+          platformFees: formatCurrency(overview.current_period_platform_fees || 0),
           growth: overview.revenue_growth || 0,
         };
         break;
@@ -557,8 +567,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       case 'customers':
         breakdownData = {
           total: overview.active_customers || 0,
-          newCustomers: userAnalytics.user_growth?.reduce((sum: number, week: any) => sum + (week.new || 0), 0) || 0,
-          returningCustomers: userAnalytics.user_growth?.reduce((sum: number, week: any) => sum + (week.returning || 0), 0) || 0,
+          newCustomers: userAnalytics.user_growth?.reduce((sum: number, week: any) => sum + (week.new_users || 0), 0) || 0,
+          returningCustomers: userAnalytics.user_growth?.reduce((sum: number, week: any) => sum + (week.returning_users || 0), 0) || 0,
         };
         break;
       case 'shops':
@@ -572,6 +582,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       case 'boosts':
         breakdownData = {
           active: operational.active_boosts || 0,
+          boostRevenue: formatCurrency(operational.boost_revenue || 0),
           pending: 0,
           expired: 0,
         };
@@ -579,8 +590,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       case 'refunds':
         breakdownData = {
           pending: operational.pending_refunds || 0,
-          approved: 0,
-          rejected: 0,
+          pendingAmount: formatCurrency(operational.pending_refund_amount || 0),
+          completed: operational.completed_refunds || 0,
+          completedAmount: formatCurrency(operational.completed_refund_amount || 0),
           dispute: 0,
         };
         break;
@@ -594,6 +606,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       case 'rating':
         breakdownData = {
           average: operational.avg_rating || 0,
+          totalReviews: operational.total_reviews || 0,
           byRating: { 5: 45, 4: 30, 3: 15, 2: 7, 1: 3 },
         };
         break;
@@ -602,12 +615,14 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           pending: operational.pending_reports || 0,
           underReview: 0,
           resolved: 0,
-          byType: { account: 0, product: 0, shop: 0 },
         };
         break;
       case 'riders':
         breakdownData = {
           active: operational.active_riders || 0,
+          totalRiders: operational.total_riders || 0,
+          completedDeliveries: operational.completed_deliveries || 0,
+          totalDeliveryFees: formatCurrency(operational.total_delivery_fees || 0),
           online: Math.floor((operational.active_riders || 0) * 0.7),
           onDelivery: Math.floor((operational.active_riders || 0) * 0.3),
           offline: Math.floor((operational.active_riders || 0) * 0.1),
@@ -616,6 +631,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       case 'vouchers':
         breakdownData = {
           active: operational.active_vouchers || 0,
+          used: operational.vouchers_used || 0,
+          totalDiscount: formatCurrency(operational.total_voucher_discount || 0),
           shopVouchers: Math.floor((operational.active_vouchers || 0) * 0.6),
           productVouchers: Math.floor((operational.active_vouchers || 0) * 0.4),
           expiringSoon: Math.floor((operational.active_vouchers || 0) * 0.2),
@@ -676,6 +693,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               trend={(overview.revenue_growth || 0) >= 0 ? "up" : "down"} 
               icon={PhilippinePeso}
               description={`Last ${overview.date_range_days || 7} days`}
+              subValue={overview.current_period_platform_fees ? formatCurrency(overview.current_period_platform_fees) : undefined}
+              subLabel="Platform Fees (5%)"
               loading={isLoading}
               onClick={() => handleCardClick('revenue', 'Revenue Breakdown')}
             />
@@ -718,7 +737,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               change="+2 this week" 
               trend="up" 
               icon={Zap}
-              description="Running promotions"
+              description={`Revenue: ${formatCurrency(operational.boost_revenue || 0)}`}
               loading={isLoading}
               onClick={() => handleCardClick('boosts', 'Boosts Breakdown')}
             />
@@ -728,7 +747,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               change="Needs attention" 
               trend="down" 
               icon={RefreshCw}
-              description="Require review"
+              description={`Amount: ${formatCurrency(operational.pending_refund_amount || 0)}`}
               loading={isLoading}
               onClick={() => handleCardClick('refunds', 'Refunds Breakdown')}
             />
@@ -748,7 +767,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               change="+0.2" 
               trend="up" 
               icon={Star}
-              description="Customer feedback"
+              description={`${operational.total_reviews || 0} reviews`}
               loading={isLoading}
               onClick={() => handleCardClick('rating', 'Rating Breakdown')}
             />
@@ -771,7 +790,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               change="92% online" 
               trend="up" 
               icon={Truck}
-              description="Delivery partners"
+              description={`Deliveries: ${operational.completed_deliveries || 0}`}
               loading={isLoading}
               onClick={() => handleCardClick('riders', 'Riders Breakdown')}
             />
@@ -791,13 +810,13 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               change="Active campaigns" 
               trend="up" 
               icon={CreditCard}
-              description="Discount campaigns"
+              description={`Used: ${operational.vouchers_used || 0}`}
               loading={isLoading}
               onClick={() => handleCardClick('vouchers', 'Vouchers Breakdown')}
             />
           </MetricGrid>
 
-          {/* Rest of your existing JSX for charts remains the same */}
+          {/* Sales & Revenue Trend Chart */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -805,7 +824,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                   <BarChart3 className="w-5 h-5" />
                   Sales & Revenue Trend
                   <span className="text-sm font-normal text-muted-foreground ml-2">
-                    ({salesAnalytics.grouping === 'daily' ? 'Daily' : 'Monthly'} view)
+                    ({salesAnalytics.grouping === 'daily' ? 'Daily' : salesAnalytics.grouping === 'monthly' ? 'Monthly' : 'Weekly'} view)
                   </span>
                 </CardTitle>
                 <CardDescription>
@@ -829,7 +848,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                       <YAxis yAxisId="right" orientation="right" />
                       <Tooltip 
                         formatter={(value: any, name: string) => [
-                          name === 'Revenue (₱)' ? formatCurrency(value) : value,
+                          name === 'Revenue' ? formatCurrency(value) : 
+                          name === 'Shipping Fees' ? formatCurrency(value) :
+                          name === 'Platform Fees' ? formatCurrency(value) : value,
                           name
                         ]}
                         labelFormatter={(label, items) => {
@@ -838,7 +859,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                         }}
                       />
                       <Legend />
-                      <Bar yAxisId="left" dataKey="revenue" fill="#3b82f6" name="Revenue (₱)" />
+                      <Bar yAxisId="left" dataKey="revenue" fill="#3b82f6" name="Revenue" />
+                      <Bar yAxisId="left" dataKey="shipping_fees" fill="#8b5cf6" name="Shipping Fees" />
+                      <Bar yAxisId="left" dataKey="platform_fees" fill="#f59e0b" name="Platform Fees" />
                       <Line yAxisId="right" type="monotone" dataKey="orders" stroke="#10b981" name="Orders" />
                     </ComposedChart>
                   </ResponsiveContainer>
@@ -914,12 +937,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 ) : (
                   <ResponsiveContainer width="100%" height={300}>
                     <AreaChart data={userAnalytics.user_growth || []}>
-                      <XAxis dataKey="month" />
+                      <XAxis dataKey="period" />
                       <YAxis />
                       <Tooltip formatter={(value: any) => [value, 'Users']} />
                       <Legend />
-                      <Area type="monotone" dataKey="new" stackId="1" stroke="#3b82f6" fill="#3b82f6" name="New Customers" />
-                      <Area type="monotone" dataKey="returning" stackId="1" stroke="#10b981" fill="#10b981" name="Returning" />
+                      <Area type="monotone" dataKey="new_users" stackId="1" stroke="#3b82f6" fill="#3b82f6" name="New Customers" />
+                      <Area type="monotone" dataKey="returning_users" stackId="1" stroke="#10b981" fill="#10b981" name="Returning" />
                     </AreaChart>
                   </ResponsiveContainer>
                 )}
@@ -962,6 +985,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                       />
                       <Legend />
                       <Bar dataKey="orders" fill="#10b981" name="Orders" radius={[0, 4, 4, 0]} />
+                      <Bar dataKey="platform_fee" fill="#f59e0b" name="Platform Fee" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -1001,11 +1025,13 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                           <div>
                             <p className="font-medium">{shop.name}</p>
                             <p className="text-sm text-muted-foreground">{shop.followers || 0} followers</p>
+                            <p className="text-xs text-gray-400">Avg Order: {formatCurrency(shop.average_order_value || 0)}</p>
                           </div>
                         </div>
                         <div className="text-right">
                           <p className="font-bold">{formatCurrency(shop.sales || 0)}</p>
                           <p className="text-sm text-muted-foreground">{shop.rating || 0}★</p>
+                          <p className="text-xs text-orange-500">Fee: {formatCurrency(shop.platform_fee || 0)}</p>
                         </div>
                       </div>
                     ))}
@@ -1073,83 +1099,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </Card>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Quick Actions</CardTitle>
-              <CardDescription>Frequently used admin functions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <button 
-                  className="p-4 border rounded-lg hover:bg-muted transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={isLoading}
-                >
-                  <FileText className="w-6 h-6 mb-2 text-blue-600" />
-                  <p className="font-medium">View Reports</p>
-                  <p className="text-sm text-muted-foreground">
-                    {isLoading ? '...' : operational.pending_reports || 0} pending
-                  </p>
-                </button>
-                <button 
-                  className="p-4 border rounded-lg hover:bg-muted transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={isLoading}
-                >
-                  <RefreshCw className="w-6 h-6 mb-2 text-green-600" />
-                  <p className="font-medium">Process Refunds</p>
-                  <p className="text-sm text-muted-foreground">
-                    {isLoading ? '...' : operational.pending_refunds || 0} waiting
-                  </p>
-                </button>
-                <button 
-                  className="p-4 border rounded-lg hover:bg-muted transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={isLoading}
-                >
-                  <UserCheck className="w-6 h-6 mb-2 text-purple-600" />
-                  <p className="font-medium">Manage Users</p>
-                  <p className="text-sm text-muted-foreground">
-                    {isLoading ? '...' : formatCompactNumber(overview.active_customers || 0)} total
-                  </p>
-                </button>
-                <button 
-                  className="p-4 border rounded-lg hover:bg-muted transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={isLoading}
-                >
-                  <BarChart3 className="w-6 h-6 mb-2 text-orange-600" />
-                  <p className="font-medium">Analytics</p>
-                  <p className="text-sm text-muted-foreground">View insights</p>
-                </button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Data Summary</CardTitle>
-              <CardDescription>Current filter settings and data coverage</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-4 border rounded-lg">
-                  <p className="text-sm text-muted-foreground">Date Range</p>
-                  <p className="font-medium">
-                    {dateRangeInfo.start_date ? new Date(dateRangeInfo.start_date).toLocaleDateString() : 'N/A'} 
-                    {' → '} 
-                    {dateRangeInfo.end_date ? new Date(dateRangeInfo.end_date).toLocaleDateString() : 'N/A'}
-                  </p>
-                </div>
-                <div className="p-4 border rounded-lg">
-                  <p className="text-sm text-muted-foreground">View Type</p>
-                  <p className="font-medium capitalize">{dateRangeInfo.range_type || 'weekly'} view</p>
-                </div>
-                <div className="p-4 border rounded-lg">
-                  <p className="text-sm text-muted-foreground">Data Points</p>
-                  <p className="font-medium">
-                    {salesAnalytics.sales_data?.length || 0} periods analyzed
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </div>
         
         <BreakdownModal 

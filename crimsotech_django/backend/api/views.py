@@ -1211,7 +1211,7 @@ class AdminDashboard(viewsets.ViewSet):
             if start_date > end_date:
                 start_date, end_date = end_date, start_date
 
-            max_days = 365 * 2  # 2 years max
+            max_days = 365 * 2
             date_range_days = (end_date - start_date).days
 
             if date_range_days > max_days:
@@ -1265,13 +1265,26 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__date__lte=end_date
             ).count()
 
-            current_revenue = Order.objects.filter(
+            # Calculate revenue breakdown
+            current_completed_orders = Order.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date,
                 status='completed'
-            ).aggregate(
+            )
+            current_revenue = current_completed_orders.aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
+
+            # Calculate shipping fees from completed orders
+            current_shipping_fees = Delivery.objects.filter(
+                order__in=current_completed_orders,
+                status='delivered'
+            ).aggregate(
+                total_shipping=Sum('delivery_fee')
+            )['total_shipping'] or Decimal('0')
+
+            # Calculate platform fees (5% of order total for completed orders)
+            current_platform_fees = current_revenue * Decimal('0.05')
 
             # Previous period metrics
             previous_orders = Order.objects.filter(
@@ -1279,11 +1292,12 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__date__lte=previous_end_date
             ).count()
 
-            previous_revenue = Order.objects.filter(
+            previous_completed_orders = Order.objects.filter(
                 created_at__date__gte=previous_start_date,
                 created_at__date__lte=previous_end_date,
                 status='completed'
-            ).aggregate(
+            )
+            previous_revenue = previous_completed_orders.aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
 
@@ -1297,7 +1311,7 @@ class AdminDashboard(viewsets.ViewSet):
             if float(previous_revenue) > 0:
                 revenue_growth = ((float(current_revenue) - float(previous_revenue)) / float(previous_revenue)) * 100
 
-            # Active customers (users with is_customer=True and not suspended, as of end date)
+            # Active customers
             active_customers = User.objects.filter(
                 is_customer=True,
                 is_suspended=False,
@@ -1310,7 +1324,7 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__date__lte=end_date
             ).count()
 
-            # Lifetime totals (up to end date)
+            # Lifetime totals
             total_revenue = Order.objects.filter(
                 status='completed',
                 created_at__date__lte=end_date
@@ -1329,11 +1343,14 @@ class AdminDashboard(viewsets.ViewSet):
                 'active_shops': active_shops,
                 'current_period_orders': current_orders,
                 'current_period_revenue': float(current_revenue),
+                'current_period_shipping_fees': float(current_shipping_fees),
+                'current_period_platform_fees': float(current_platform_fees),
                 'previous_period_orders': previous_orders,
                 'previous_period_revenue': float(previous_revenue),
                 'order_growth': round(order_growth, 1),
                 'revenue_growth': round(revenue_growth, 1),
                 'date_range_days': date_range_days,
+                'breakdown_note': 'Platform fees calculated as 5% of order total from completed orders',
             }
         except Exception as e:
             print(f"Error in _get_overview_data: {str(e)}")
@@ -1342,36 +1359,43 @@ class AdminDashboard(viewsets.ViewSet):
             raise
 
     def _get_sales_analytics_data(self, start_date, end_date, range_type='weekly'):
-        """Extract sales analytics data with dynamic grouping"""
         try:
             sales_data = []
             date_range_days = (end_date - start_date).days + 1
 
-            # Determine grouping based on range type and number of days
             if range_type == 'daily' or date_range_days <= 7:
-                # Daily grouping for short ranges
                 current_date = start_date
                 while current_date <= end_date:
-                    day_data = Order.objects.filter(
+                    day_orders = Order.objects.filter(
                         created_at__date=current_date
-                    ).aggregate(
-                        revenue=Sum('total_amount'),
-                        orders=Count('order')
                     )
+                    
+                    day_completed = day_orders.filter(status='completed')
+                    day_revenue = day_completed.aggregate(
+                        revenue=Sum('total_amount')
+                    )['revenue'] or Decimal('0')
+                    
+                    day_shipping = Delivery.objects.filter(
+                        order__in=day_completed,
+                        status='delivered'
+                    ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
+                    
+                    day_platform_fees = day_revenue * Decimal('0.05')
 
                     sales_data.append({
                         'date': current_date.isoformat(),
                         'name': current_date.strftime('%a, %b %d'),
-                        'revenue': float(day_data['revenue'] or 0),
-                        'orders': day_data['orders'] or 0,
+                        'revenue': float(day_revenue),
+                        'orders': day_orders.count(),
+                        'completed_orders': day_completed.count(),
+                        'shipping_fees': float(day_shipping),
+                        'platform_fees': float(day_platform_fees),
                     })
 
                     current_date += timedelta(days=1)
-
                 grouping = 'daily'
 
             elif range_type == 'monthly' or date_range_days > 60:
-                # Monthly grouping for long ranges
                 monthly_sales = Order.objects.filter(
                     created_at__date__gte=start_date,
                     created_at__date__lte=end_date
@@ -1384,43 +1408,71 @@ class AdminDashboard(viewsets.ViewSet):
 
                 for month_data in monthly_sales:
                     if month_data['month']:
+                        month_start = month_data['month'].date()
+                        month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+                        
+                        month_completed = Order.objects.filter(
+                            created_at__date__gte=month_start,
+                            created_at__date__lte=month_end,
+                            status='completed'
+                        )
+                        month_revenue = month_data['revenue'] or Decimal('0')
+                        
+                        month_shipping = Delivery.objects.filter(
+                            order__in=month_completed,
+                            status='delivered'
+                        ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
+                        
+                        month_platform_fees = month_revenue * Decimal('0.05')
+
                         sales_data.append({
                             'date': month_data['month'].strftime('%Y-%m-%d'),
                             'name': month_data['month'].strftime('%b %Y'),
-                            'revenue': float(month_data['revenue'] or 0),
+                            'revenue': float(month_revenue),
                             'orders': month_data['orders'] or 0,
+                            'completed_orders': month_completed.count(),
+                            'shipping_fees': float(month_shipping),
+                            'platform_fees': float(month_platform_fees),
                         })
-
                 grouping = 'monthly'
 
             else:
-                # Weekly grouping (default)
                 current_date = start_date
                 week_num = 1
                 while current_date <= end_date:
                     week_end = min(current_date + timedelta(days=6), end_date)
-
-                    week_data = Order.objects.filter(
+                    
+                    week_orders = Order.objects.filter(
                         created_at__date__gte=current_date,
                         created_at__date__lte=week_end
-                    ).aggregate(
-                        revenue=Sum('total_amount'),
-                        orders=Count('order')
                     )
+                    
+                    week_completed = week_orders.filter(status='completed')
+                    week_revenue = week_completed.aggregate(
+                        revenue=Sum('total_amount')
+                    )['revenue'] or Decimal('0')
+                    
+                    week_shipping = Delivery.objects.filter(
+                        order__in=week_completed,
+                        status='delivered'
+                    ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
+                    
+                    week_platform_fees = week_revenue * Decimal('0.05')
 
                     sales_data.append({
                         'date': current_date.isoformat(),
-                        'name': f'Week {week_num} ({current_date.strftime("%b %d")})',
-                        'revenue': float(week_data['revenue'] or 0),
-                        'orders': week_data['orders'] or 0,
+                        'name': f'Week {week_num}',
+                        'revenue': float(week_revenue),
+                        'orders': week_orders.count(),
+                        'completed_orders': week_completed.count(),
+                        'shipping_fees': float(week_shipping),
+                        'platform_fees': float(week_platform_fees),
                     })
 
                     current_date = week_end + timedelta(days=1)
                     week_num += 1
-
                 grouping = 'weekly'
 
-            # Order status distribution for the period
             order_status_data = Order.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date
@@ -1448,13 +1500,11 @@ class AdminDashboard(viewsets.ViewSet):
             raise
 
     def _get_user_analytics_data(self, start_date, end_date, range_type='weekly'):
-        """Extract user analytics data with date filtering"""
         try:
             user_growth_data = []
             date_range_days = (end_date - start_date).days + 1
 
             if range_type == 'monthly' or date_range_days > 60:
-                # Monthly grouping
                 monthly_users = User.objects.filter(
                     is_customer=True,
                     created_at__date__gte=start_date,
@@ -1467,7 +1517,6 @@ class AdminDashboard(viewsets.ViewSet):
 
                 for month_data in monthly_users:
                     if month_data['month']:
-                        # Calculate returning users (users with orders in this month)
                         month_start = month_data['month'].date()
                         month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
@@ -1478,13 +1527,21 @@ class AdminDashboard(viewsets.ViewSet):
                             order__created_at__date__lte=month_end
                         ).distinct().count()
 
+                        # Calculate total orders from users in this month
+                        total_orders = Order.objects.filter(
+                            user__is_customer=True,
+                            created_at__date__gte=month_start,
+                            created_at__date__lte=month_end
+                        ).count()
+
                         user_growth_data.append({
-                            'month': month_data['month'].strftime('%b %Y'),
-                            'new': month_data['new_users'],
-                            'returning': returning_users,
+                            'period': month_data['month'].strftime('%b %Y'),
+                            'new_users': month_data['new_users'],
+                            'returning_users': returning_users,
+                            'total_orders': total_orders,
+                            'calculation_note': 'New users = customers who registered in this period. Returning users = customers who registered before this period but made orders now.',
                         })
             else:
-                # Weekly grouping
                 current_date = start_date
                 week_num = 1
                 while current_date <= end_date:
@@ -1503,10 +1560,17 @@ class AdminDashboard(viewsets.ViewSet):
                         order__created_at__date__lte=week_end
                     ).distinct().count()
 
+                    weekly_orders = Order.objects.filter(
+                        user__is_customer=True,
+                        created_at__date__gte=current_date,
+                        created_at__date__lte=week_end
+                    ).count()
+
                     user_growth_data.append({
-                        'month': f'Week {week_num}',
-                        'new': weekly_new,
-                        'returning': weekly_returning,
+                        'period': f'Week {week_num}',
+                        'new_users': weekly_new,
+                        'returning_users': weekly_returning,
+                        'total_orders': weekly_orders,
                     })
 
                     current_date = week_end + timedelta(days=1)
@@ -1522,9 +1586,7 @@ class AdminDashboard(viewsets.ViewSet):
             raise
 
     def _get_product_analytics_data(self, start_date, end_date):
-        """Extract product analytics data with date filtering"""
         try:
-            # Get products with order counts in date range
             product_stats = Checkout.objects.filter(
                 created_at__gte=start_date,
                 created_at__lte=end_date,
@@ -1539,12 +1601,21 @@ class AdminDashboard(viewsets.ViewSet):
 
             product_performance = []
             for stat in product_stats:
+                product_id = stat['cart_item__product__id']
                 product_name = stat['cart_item__product__name'] or 'Unknown Product'
+                
+                # Calculate platform fee for this product (5% of revenue)
+                product_revenue = float(stat['total_revenue'] or 0)
+                platform_fee = product_revenue * 0.05
+
                 product_performance.append({
                     'name': product_name[:30] + ('...' if len(product_name) > 30 else ''),
                     'full_name': product_name,
+                    'product_id': str(product_id) if product_id else None,
                     'orders': stat['order_count'],
-                    'revenue': float(stat['total_revenue'] or 0),
+                    'revenue': product_revenue,
+                    'platform_fee': round(platform_fee, 2),
+                    'calculation_note': 'Platform fee = 5% of product revenue from orders in this period',
                 })
 
             return {
@@ -1574,9 +1645,14 @@ class AdminDashboard(viewsets.ViewSet):
             for stat in shop_stats:
                 shop_id = stat['cart_item__product__shop__id']
                 shop_name = stat['cart_item__product__shop__name'] or 'Unknown Shop'
+                shop_sales = float(stat['total_sales'] or 0)
+                shop_orders = stat['order_count'] or 0
 
                 try:
                     shop = Shop.objects.get(id=shop_id)
+                    
+                    # Calculate platform fee for this shop (5% of sales)
+                    platform_fee = shop_sales * 0.05
 
                     avg_rating = Review.objects.filter(
                         shop=shop,
@@ -1594,11 +1670,15 @@ class AdminDashboard(viewsets.ViewSet):
 
                     shop_performance.append({
                         'name': shop_name,
-                        'sales': float(stat['total_sales'] or 0),
-                        'orders': stat['order_count'] or 0,
+                        'shop_id': str(shop.id),
+                        'sales': shop_sales,
+                        'orders': shop_orders,
+                        'platform_fee': round(platform_fee, 2),
+                        'average_order_value': round(shop_sales / shop_orders, 2) if shop_orders > 0 else 0,
                         'rating': round(float(avg_rating), 1),
                         'followers': follower_count,
                         'products': product_count,
+                        'calculation_note': 'Platform fee = 5% of total sales from this shop in the selected period',
                     })
                 except Shop.DoesNotExist:
                     continue
@@ -1614,12 +1694,21 @@ class AdminDashboard(viewsets.ViewSet):
 
     def _get_operational_data(self, start_date, end_date):
         try:
-            # Active Boosts
+            # Active Boosts (from products being boosted)
             active_boosts = Boost.objects.filter(
                 start_date__date__lte=end_date,
                 end_date__date__gte=start_date,
                 status='active'
             ).count()
+            
+            # Calculate boost revenue (price of active boost plans)
+            boost_revenue = Boost.objects.filter(
+                start_date__date__lte=end_date,
+                end_date__date__gte=start_date,
+                status='active'
+            ).aggregate(
+                total_revenue=Sum('boost_plan__price')
+            )['total_revenue'] or Decimal('0')
 
             # Pending Refunds
             pending_refunds = Refund.objects.filter(
@@ -1627,8 +1716,32 @@ class AdminDashboard(viewsets.ViewSet):
                 requested_at__date__lte=end_date,
                 status='pending'
             ).count()
+            
+            # Calculate total refund amount pending
+            pending_refund_amount = Refund.objects.filter(
+                requested_at__date__gte=start_date,
+                requested_at__date__lte=end_date,
+                status='pending'
+            ).aggregate(
+                total_amount=Sum('total_refund_amount')
+            )['total_amount'] or Decimal('0')
 
-            # Low Stock Products (quantity < 5)
+            # Completed Refunds in period
+            completed_refunds = Refund.objects.filter(
+                processed_at__date__gte=start_date,
+                processed_at__date__lte=end_date,
+                status='approved'
+            ).count()
+            
+            completed_refund_amount = Refund.objects.filter(
+                processed_at__date__gte=start_date,
+                processed_at__date__lte=end_date,
+                status='approved'
+            ).aggregate(
+                total_amount=Sum('approved_refund_amount')
+            )['total_amount'] or Decimal('0')
+
+            # Low Stock Products
             low_stock_variants = Variants.objects.filter(
                 quantity__lt=5,
                 is_active=True,
@@ -1643,6 +1756,11 @@ class AdminDashboard(viewsets.ViewSet):
             ).aggregate(
                 avg_rating=Avg('average_rating')
             )['avg_rating'] or 0
+            
+            total_reviews = Review.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).count()
 
             # Pending Reports
             pending_reports = Report.objects.filter(
@@ -1653,24 +1771,75 @@ class AdminDashboard(viewsets.ViewSet):
 
             # Active Riders
             active_riders = Rider.objects.filter(
-                verified=True
+                verified=True,
+                is_accepting_deliveries=True
             ).count()
+            
+            total_riders = Rider.objects.filter(verified=True).count()
 
-            # Active Vouchers - FIXED: Changed 'valid_until' to 'end_date'
+            # Total deliveries completed in period
+            completed_deliveries = Delivery.objects.filter(
+                delivered_at__date__gte=start_date,
+                delivered_at__date__lte=end_date,
+                status='delivered'
+            ).count()
+            
+            total_delivery_fees = Delivery.objects.filter(
+                delivered_at__date__gte=start_date,
+                delivered_at__date__lte=end_date,
+                status='delivered'
+            ).aggregate(
+                total_fees=Sum('delivery_fee')
+            )['total_fees'] or Decimal('0')
+
+            # Active Vouchers
             active_vouchers = Voucher.objects.filter(
                 is_active=True,
                 start_date__lte=end_date,
                 end_date__gte=start_date
             ).count()
+            
+            # Vouchers used in period
+            vouchers_used = Checkout.objects.filter(
+                created_at__gte=start_date,
+                created_at__lte=end_date,
+                voucher__isnull=False
+            ).count()
+            
+            total_voucher_discount = Checkout.objects.filter(
+                created_at__gte=start_date,
+                created_at__lte=end_date,
+                voucher__isnull=False
+            ).aggregate(
+                total_discount=Sum('voucher__value')
+            )['total_discount'] or Decimal('0')
 
             return {
                 'active_boosts': active_boosts,
+                'boost_revenue': float(boost_revenue),
                 'pending_refunds': pending_refunds,
+                'pending_refund_amount': float(pending_refund_amount),
+                'completed_refunds': completed_refunds,
+                'completed_refund_amount': float(completed_refund_amount),
                 'low_stock_products': low_stock_variants,
                 'avg_rating': round(float(avg_rating), 1),
+                'total_reviews': total_reviews,
                 'pending_reports': pending_reports,
                 'active_riders': active_riders,
+                'total_riders': total_riders,
+                'completed_deliveries': completed_deliveries,
+                'total_delivery_fees': float(total_delivery_fees),
                 'active_vouchers': active_vouchers,
+                'vouchers_used': vouchers_used,
+                'total_voucher_discount': float(total_voucher_discount),
+                'calculation_notes': {
+                    'boost_revenue': 'Sum of boost_plan prices for active boosts in this period',
+                    'pending_refund_amount': 'Sum of total_refund_amount for pending refunds',
+                    'completed_refund_amount': 'Sum of approved_refund_amount for approved refunds',
+                    'total_delivery_fees': 'Sum of delivery_fee from completed deliveries',
+                    'total_voucher_discount': 'Sum of voucher values applied to checkouts',
+                    'platform_fee': 'Calculated as 5% of total revenue from completed orders',
+                }
             }
         except Exception as e:
             print(f"Error in _get_operational_data: {str(e)}")
@@ -1679,7 +1848,6 @@ class AdminDashboard(viewsets.ViewSet):
             raise
 
     def _get_status_color(self, status):
-        """Get color code for order status"""
         color_map = {
             'pending': '#f59e0b',
             'processing': '#3b82f6',
@@ -1689,8 +1857,8 @@ class AdminDashboard(viewsets.ViewSet):
             'cancelled': '#ef4444',
             'refunded': '#6b7280',
         }
-        return color_map.get(status.lower(), '#6b7280')   
-
+        return color_map.get(status.lower(), '#6b7280')
+    
 class AdminAnalytics(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_comprehensive_analytics(self, request):
