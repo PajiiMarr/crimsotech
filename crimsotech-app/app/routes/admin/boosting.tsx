@@ -27,7 +27,6 @@ import {
   Edit,
   Archive,
   MoreVertical,
-  DollarSign,
   Eye,
   EyeOff,
   Trash2,
@@ -38,7 +37,8 @@ import {
   RefreshCw,
   ExternalLink,
   Ban,
-  AlertTriangle
+  AlertTriangle,
+  PhilippinePeso
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
@@ -776,7 +776,7 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
                         <p className="text-xs text-muted-foreground mt-2">From all boosts</p>
                       </div>
                       <div className="p-2 sm:p-3 bg-green-100 rounded-full">
-                        <DollarSign className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
+                        <PhilippinePeso className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
                       </div>
                     </div>
                   </CardContent>

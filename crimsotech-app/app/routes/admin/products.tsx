@@ -40,40 +40,45 @@ import {
   ShieldCheck,
   ShieldOff,
   User,
-  RotateCcw,
+  MoreHorizontal,
+  Layers,
+  ShoppingBag,
+  DollarSign,
+  Percent,
+  TrendingUp as TrendingUpIcon,
+  AlertCircle,
+  ThumbsUp,
+  Gift,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import AxiosInstance from "~/components/axios/Axios";
 import DateRangeFilter from "~/components/ui/date-range-filter";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "~/components/ui/dialog";
-import {
-  Drawer,
-  DrawerClose,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from "~/components/ui/drawer";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+} from "~/components/ui/alert-dialog";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select";
-import { useIsMobile } from "~/hooks/use-mobile";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "~/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "~/components/ui/dialog";
+import { Progress } from "~/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -186,8 +191,94 @@ interface LoaderData {
   };
 }
 
-// ─── Condition Helpers ───────────────────────────────────────────────────────
+// ─── Action Configs ──────────────────────────────────────────────────────────
 
+const actionConfigs: Record<
+  string,
+  {
+    title: string;
+    description: string;
+    confirmText: string;
+    variant: "default" | "destructive" | "outline";
+    needsReason: boolean;
+    needsSuspensionDays: boolean;
+  }
+> = {
+  publish: {
+    title: "Publish Product",
+    description: "Are you sure you want to publish this product? This will make it visible to customers.",
+    confirmText: "Publish",
+    variant: "default",
+    needsReason: false,
+    needsSuspensionDays: false,
+  },
+  unpublish: {
+    title: "Unpublish Product",
+    description: "This will unpublish the product and make it invisible to customers.",
+    confirmText: "Unpublish",
+    variant: "outline",
+    needsReason: false,
+    needsSuspensionDays: false,
+  },
+  archive: {
+    title: "Archive Product",
+    description: "This will archive the product. It can be restored later if needed.",
+    confirmText: "Archive",
+    variant: "outline",
+    needsReason: false,
+    needsSuspensionDays: false,
+  },
+  restore: {
+    title: "Restore Product",
+    description: "This will restore the product to its previous state.",
+    confirmText: "Restore",
+    variant: "default",
+    needsReason: false,
+    needsSuspensionDays: false,
+  },
+  remove: {
+    title: "Remove Product",
+    description: "This will remove the product from the platform. This action can be reversed.",
+    confirmText: "Remove",
+    variant: "destructive",
+    needsReason: true,
+    needsSuspensionDays: false,
+  },
+  restoreRemoved: {
+    title: "Restore Product",
+    description: "This will restore the removed product and make it available again.",
+    confirmText: "Restore",
+    variant: "default",
+    needsReason: false,
+    needsSuspensionDays: false,
+  },
+  suspend: {
+    title: "Suspend Product",
+    description: "This will suspend the product temporarily. Customers won't be able to view or purchase it.",
+    confirmText: "Suspend",
+    variant: "destructive",
+    needsReason: true,
+    needsSuspensionDays: true,
+  },
+  unsuspend: {
+    title: "Unsuspend Product",
+    description: "This will unsuspend the product and make it available to customers again.",
+    confirmText: "Unsuspend",
+    variant: "default",
+    needsReason: false,
+    needsSuspensionDays: false,
+  },
+  deleteDraft: {
+    title: "Delete Draft",
+    description: "Are you sure you want to delete this draft product? This action cannot be undone.",
+    confirmText: "Delete",
+    variant: "destructive",
+    needsReason: false,
+    needsSuspensionDays: false,
+  },
+};
+
+// ─── Condition Helpers ───────────────────────────────────────────────────────
 const getConditionLabel = (condition: number): string => {
   switch (condition) {
     case 1:
@@ -216,6 +307,23 @@ const getConditionColor = (condition: number): string => {
     default:
       return "bg-gray-50 text-gray-700 border-gray-200";
   }
+};
+
+const getCategoryColor = (category: string): string => {
+  const colors = [
+    "bg-blue-100 text-blue-800 border-blue-200",
+    "bg-green-100 text-green-800 border-green-200",
+    "bg-purple-100 text-purple-800 border-purple-200",
+    "bg-yellow-100 text-yellow-800 border-yellow-200",
+    "bg-pink-100 text-pink-800 border-pink-200",
+    "bg-indigo-100 text-indigo-800 border-indigo-200",
+    "bg-red-100 text-red-800 border-red-200",
+    "bg-teal-100 text-teal-800 border-teal-200",
+    "bg-orange-100 text-orange-800 border-orange-200",
+    "bg-cyan-100 text-cyan-800 border-cyan-200",
+  ];
+  const hash = category.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return colors[hash % colors.length];
 };
 
 // ─── Status Helpers ──────────────────────────────────────────────────────────
@@ -266,10 +374,7 @@ const normalizeUploadStatus = (uploadStatus: string): string => {
     case "scheduled":
       return "Scheduled";
     default:
-      return (
-        uploadStatus.charAt(0).toUpperCase() +
-        uploadStatus.slice(1).toLowerCase()
-      );
+      return uploadStatus.charAt(0).toUpperCase() + uploadStatus.slice(1).toLowerCase();
   }
 };
 
@@ -280,8 +385,7 @@ const getStatusConfig = (status: string) => {
     case "Published":
       return {
         variant: "default" as const,
-        className:
-          "bg-green-50 text-green-700 border-green-200 hover:bg-green-100",
+        className: "bg-green-50 text-green-700 border-green-200 hover:bg-green-100",
         icon: CheckCircle,
         iconClassName: "text-green-600",
       };
@@ -294,12 +398,11 @@ const getStatusConfig = (status: string) => {
         iconClassName: "text-blue-600",
       };
     case "Suspended":
-    case "Banned":
       return {
         variant: "destructive" as const,
-        className: "bg-red-50 text-red-700 border-red-200 hover:bg-red-100",
-        icon: Ban,
-        iconClassName: "text-red-600",
+        className: "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100",
+        icon: AlertTriangle,
+        iconClassName: "text-amber-600",
       };
     case "Draft":
       return {
@@ -311,8 +414,7 @@ const getStatusConfig = (status: string) => {
     case "Archived":
       return {
         variant: "outline" as const,
-        className:
-          "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100",
+        className: "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100",
         icon: Archive,
         iconClassName: "text-purple-600",
       };
@@ -328,16 +430,14 @@ const getStatusConfig = (status: string) => {
     case "Processing":
       return {
         variant: "secondary" as const,
-        className:
-          "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100",
+        className: "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100",
         icon: Clock,
         iconClassName: "text-amber-600",
       };
     case "Out of Stock":
       return {
         variant: "secondary" as const,
-        className:
-          "bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100",
+        className: "bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100",
         icon: AlertTriangle,
         iconClassName: "text-orange-600",
       };
@@ -364,33 +464,23 @@ const getUploadStatusConfig = (uploadStatus: string) => {
     case "published":
       return {
         variant: "default" as const,
-        className:
-          "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100",
+        className: "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100",
         icon: PlayCircle,
         iconClassName: "text-emerald-600",
       };
     case "draft":
       return {
         variant: "secondary" as const,
-        className:
-          "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100",
+        className: "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100",
         icon: PauseCircle,
         iconClassName: "text-slate-600",
       };
     case "archived":
       return {
         variant: "outline" as const,
-        className:
-          "bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100",
+        className: "bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100",
         icon: Archive,
         iconClassName: "text-violet-600",
-      };
-    case "scheduled":
-      return {
-        variant: "secondary" as const,
-        className: "bg-cyan-50 text-cyan-700 border-cyan-200 hover:bg-cyan-100",
-        icon: Clock,
-        iconClassName: "text-cyan-600",
       };
     default:
       return {
@@ -411,13 +501,7 @@ const getRemovedStatusConfig = () => ({
 
 // ─── Status Badge ────────────────────────────────────────────────────────────
 
-function StatusBadge({
-  status,
-  type = "status",
-}: {
-  status: string;
-  type?: "status" | "upload" | "removed";
-}) {
+function StatusBadge({ status, type = "status" }: { status: string; type?: "status" | "upload" | "removed" }) {
   let config;
   if (type === "removed") {
     config = getRemovedStatusConfig();
@@ -428,114 +512,19 @@ function StatusBadge({
   }
   const Icon = config.icon;
   return (
-    <Badge
-      variant={config.variant}
-      className={`flex items-center gap-1.5 text-xs ${config.className}`}
-    >
+    <Badge variant={config.variant} className={`flex items-center gap-1.5 text-xs ${config.className}`}>
       <Icon className={`w-3 h-3 ${config.iconClassName}`} />
       {status}
     </Badge>
   );
 }
 
-// ─── Action Modal/Drawer Component ──────────────────────────────────────────
-
-interface ActionModalDrawerProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onConfirm: () => void;
-  title: string;
-  description: string;
-  confirmText: string;
-  variant?: "default" | "destructive";
-  isLoading?: boolean;
-  children?: React.ReactNode;
-}
-
-function ActionModalDrawer({
-  open,
-  onOpenChange,
-  onConfirm,
-  title,
-  description,
-  confirmText,
-  variant = "default",
-  isLoading = false,
-  children,
-}: ActionModalDrawerProps) {
-  const isMobile = useIsMobile();
-
-  const confirmButton = (
-    <Button
-      onClick={onConfirm}
-      disabled={isLoading}
-      className={variant === "destructive" ? "bg-destructive hover:bg-destructive/90" : ""}
-    >
-      {isLoading ? (
-        <>
-          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-          Processing...
-        </>
-      ) : (
-        confirmText
-      )}
-    </Button>
-  );
-
-  const cancelButton = (
-    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
-      Cancel
-    </Button>
-  );
-
-  if (isMobile) {
-    return (
-      <Drawer open={open} onOpenChange={onOpenChange}>
-        <DrawerContent>
-          <DrawerHeader className="text-left">
-            <DrawerTitle>{title}</DrawerTitle>
-            <DrawerDescription>{description}</DrawerDescription>
-          </DrawerHeader>
-          {children && <div className="px-4 pb-4">{children}</div>}
-          <DrawerFooter className="pt-2">
-            {confirmButton}
-            {cancelButton}
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
-    );
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        {children && <div className="py-4">{children}</div>}
-        <DialogFooter>
-          {cancelButton}
-          {confirmButton}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // ─── Add Category Modal/Drawer ───────────────────────────────────────────────
 
-function AddCategoryModalDrawer({
-  onCategoryAdded,
-  userId,
-}: {
-  onCategoryAdded?: () => void;
-  userId: string;
-}) {
+function AddCategoryModalDrawer({ onCategoryAdded, userId }: { onCategoryAdded?: () => void; userId: string }) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({ name: "" });
-  const isMobile = useIsMobile();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -556,13 +545,9 @@ function AddCategoryModalDrawer({
     try {
       const payload = { name: formData.name.trim(), user_id: userId };
       const sessionUserId = localStorage.getItem("userId") || userId;
-      const response = await AxiosInstance.post(
-        "/admin-products/add_category/",
-        payload,
-        {
-          headers: { "X-User-Id": sessionUserId },
-        },
-      );
+      const response = await AxiosInstance.post("/admin-products/add_category/", payload, {
+        headers: { "X-User-Id": sessionUserId },
+      });
 
       if (response.data.success) {
         toast.success(response.data.message || "Category added successfully!");
@@ -573,11 +558,7 @@ function AddCategoryModalDrawer({
         toast.error(response.data.message || "Failed to add category");
       }
     } catch (error: any) {
-      toast.error(
-        error.response?.data?.message ||
-          error.response?.data?.error ||
-          "Failed to add category. Please try again.",
-      );
+      toast.error(error.response?.data?.message || error.response?.data?.error || "Failed to add category");
     } finally {
       setIsLoading(false);
     }
@@ -587,120 +568,494 @@ function AddCategoryModalDrawer({
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
-  const FormFields = () => (
-    <div className="space-y-2">
-      <Label htmlFor="category-name">Category Name *</Label>
-      <Input
-        id="category-name"
-        name="name"
-        value={formData.name}
-        onChange={handleChange}
-        placeholder="e.g., Electronics, Clothing, Books"
-        required
-        maxLength={50}
-        autoComplete="off"
-      />
-      <p className="text-xs text-muted-foreground">
-        Maximum 50 characters. {50 - formData.name.length} characters remaining.
-      </p>
+  return (
+    <div>
+      <Button onClick={() => setOpen(true)} className="flex items-center gap-2">
+        <Plus className="w-4 h-4" />
+        Add Category
+      </Button>
+
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogContent className="sm:max-w-[500px] max-w-[95vw]">
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold">Add New Category</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Create a new product category. Name is required (max 50 characters).
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="category-name">Category Name *</Label>
+              <Input
+                id="category-name"
+                value={formData.name}
+                onChange={handleChange}
+                placeholder="e.g., Electronics, Clothing, Books"
+                required
+                maxLength={50}
+              />
+              <p className="text-xs text-muted-foreground">
+                Maximum 50 characters. {50 - formData.name.length} characters remaining.
+              </p>
+            </div>
+          </div>
+
+          <AlertDialogFooter className="mt-6 sm:flex-row flex-col gap-2">
+            <AlertDialogCancel onClick={() => setOpen(false)} className="mt-0 sm:w-auto w-full order-2 sm:order-1">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleSubmit} disabled={isLoading} className="sm:w-auto w-full order-1 sm:order-2">
+              {isLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                "Add Category"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
+}
 
-  if (isMobile) {
-    return (
-      <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerTrigger asChild>
-          <Button className="flex items-center gap-2">
-            <Plus className="w-4 h-4" />
-            Add Category
-          </Button>
-        </DrawerTrigger>
-        <DrawerContent>
-          <DrawerHeader className="text-left">
-            <DrawerTitle>Add New Category</DrawerTitle>
-            <DrawerDescription>
-              Create a new product category. Name is required (max 50
-              characters).
-            </DrawerDescription>
-          </DrawerHeader>
-          <form onSubmit={handleSubmit} className="px-4 space-y-4">
-            <FormFields />
-          </form>
-          <DrawerFooter className="pt-2">
-            <Button
-              onClick={handleSubmit}
-              disabled={isLoading}
-              className="w-full"
-            >
-              {isLoading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  Adding...
-                </>
-              ) : (
-                "Add Category"
-              )}
-            </Button>
-            <DrawerClose asChild>
-              <Button variant="outline" disabled={isLoading}>
-                Cancel
-              </Button>
-            </DrawerClose>
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
-    );
-  }
+// ─── Interactive Number Card Component ───────────────────────────────────────
+
+interface InteractiveNumberCardProps {
+  title: string;
+  value: number;
+  icon: React.ReactNode;
+  color: string;
+  breakdown: {
+    label: string;
+    value: number;
+    percentage?: number;
+    color?: string;
+  }[];
+  totalLabel?: string;
+  onViewDetails?: () => void;
+}
+
+function InteractiveNumberCard({
+  title,
+  value,
+  icon,
+  color,
+  breakdown,
+  totalLabel = "Total",
+  onViewDetails,
+}: InteractiveNumberCardProps) {
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  const handleClick = () => {
+    setIsDialogOpen(true);
+    if (onViewDetails) onViewDetails();
+  };
+
+  const totalBreakdownValue = breakdown.reduce((sum, item) => sum + item.value, 0);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button className="flex items-center gap-2">
-          <Plus className="w-4 h-4" />
-          Add Category
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[500px]">
-        <DialogHeader>
-          <DialogTitle>Add New Category</DialogTitle>
-          <DialogDescription>
-            Create a new product category. Name is required (max 50 characters).
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <FormFields />
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-              disabled={isLoading}
+    <>
+      <Card
+        className="cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95"
+        onClick={handleClick}
+      >
+        <CardContent className="p-4 sm:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">{title}</p>
+              <p className="text-xl sm:text-2xl font-bold mt-1">{value.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground mt-2">Click for breakdown</p>
+            </div>
+            <div className={`p-2 sm:p-3 ${color} rounded-full`}>
+              {icon}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="sm:max-w-2xl max-w-[95vw] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <div className={`p-2 ${color} rounded-full`}>
+                {icon}
+              </div>
+              {title} Breakdown
+            </DialogTitle>
+            <DialogDescription>
+              Detailed breakdown of {title.toLowerCase()} - Total: {value.toLocaleString()}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-4 space-y-6">
+            {/* Summary Card */}
+            <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg p-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Overall {title}</p>
+                  <p className="text-3xl font-bold">{value.toLocaleString()}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-muted-foreground">{totalLabel}</p>
+                  <p className="text-sm font-medium">{totalBreakdownValue.toLocaleString()} accounted</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Breakdown List */}
+            <div className="space-y-3">
+              <h4 className="font-semibold text-lg">Breakdown by Category</h4>
+              {breakdown.map((item, index) => (
+                <div key={index} className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-3 h-3 rounded-full ${item.color || color.replace('bg-', 'bg-').replace('/10', '')}`} />
+                      <span className="text-sm font-medium">{item.label}</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm font-semibold">{item.value.toLocaleString()}</span>
+                      {item.percentage !== undefined && (
+                        <span className="text-xs text-muted-foreground w-12 text-right">
+                          {item.percentage.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {item.percentage !== undefined && (
+                    <Progress value={item.percentage} className="h-2" />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Chart Visualization */}
+            <div className="pt-4 border-t">
+              <h4 className="font-semibold text-lg mb-3">Distribution</h4>
+              <div className="flex flex-wrap gap-2">
+                {breakdown.map((item, index) => {
+                  const percentage = item.percentage || (totalBreakdownValue > 0 ? (item.value / totalBreakdownValue) * 100 : 0);
+                  return (
+                    <div
+                      key={index}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50"
+                    >
+                      <div className={`w-2 h-2 rounded-full ${item.color || color.replace('bg-', 'bg-').replace('/10', '')}`} />
+                      <span className="text-xs">{item.label}</span>
+                      <span className="text-xs font-medium">{percentage.toFixed(1)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+                Close
+              </Button>
+              {onViewDetails && (
+                <Button onClick={() => {
+                  setIsDialogOpen(false);
+                  onViewDetails();
+                }}>
+                  View All {title}
+                </Button>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// ─── Actions Cell ────────────────────────────────────────────────────────────
+
+function ActionsCell({ product, user, onRefresh }: { product: Product; user: any; onRefresh: () => void }) {
+  const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [showDialog, setShowDialog] = useState(false);
+  const [reason, setReason] = useState("");
+  const [suspensionDays, setSuspensionDays] = useState(7);
+  const [processing, setProcessing] = useState(false);
+
+  const currentConfig = activeAction ? actionConfigs[activeAction] : null;
+
+  const handleActionClick = (actionId: string) => {
+    setActiveAction(actionId);
+    setReason("");
+    setSuspensionDays(7);
+    setShowDialog(true);
+  };
+
+  const handleCancel = () => {
+    if (processing) return;
+    setShowDialog(false);
+    setActiveAction(null);
+    setReason("");
+    setSuspensionDays(7);
+  };
+
+  const handleConfirm = async () => {
+    if (!activeAction || !currentConfig) return;
+    if (currentConfig.needsReason && !reason.trim()) {
+      toast.error("Please provide a reason for this action");
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const adminId = user?.id || user?.user_id || localStorage.getItem("userId") || "";
+
+      if (!adminId) {
+        toast.error("User authentication required. Please log in again.");
+        setProcessing(false);
+        return;
+      }
+
+      const payload: any = {
+        product_id: product.id,
+        action_type: activeAction,
+        user_id: adminId,
+      };
+
+      if (reason.trim()) payload.reason = reason;
+      if (activeAction === "suspend") payload.suspension_days = suspensionDays;
+
+      const response = await AxiosInstance.put("/admin-products/update_product_status/", payload, {
+        headers: { "X-User-Id": adminId },
+      });
+
+      if (response.data.success || response.data.message) {
+        toast.success(response.data.message || "Product status updated successfully");
+        onRefresh();
+      } else {
+        toast.error(response.data.error || "Failed to update product status");
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || error.response?.data?.message || "Failed to update product status");
+    } finally {
+      setProcessing(false);
+      handleCancel();
+    }
+  };
+
+  const getAvailableActions = () => {
+    const actions: { label: string; id: string; destructive: boolean }[] = [];
+    const normalizedStatus = normalizeStatus(product.status);
+    const normalizedUploadStatus = normalizeUploadStatus(product.upload_status);
+
+    if (normalizedUploadStatus === "Draft" && !product.is_removed) {
+      actions.push({ label: "Publish", id: "publish", destructive: false });
+      actions.push({ label: "Delete Draft", id: "deleteDraft", destructive: true });
+    }
+
+    if (normalizedUploadStatus === "Published" && !product.is_removed) {
+      if (normalizedStatus === "Active") {
+        actions.push({ label: "Unpublish", id: "unpublish", destructive: false });
+        actions.push({ label: "Archive", id: "archive", destructive: false });
+        actions.push({ label: "Suspend", id: "suspend", destructive: true });
+        actions.push({ label: "Remove", id: "remove", destructive: true });
+      } else if (normalizedStatus === "Suspended") {
+        actions.push({ label: "Unsuspend", id: "unsuspend", destructive: false });
+        actions.push({ label: "Remove", id: "remove", destructive: true });
+      }
+    }
+
+    if (normalizedUploadStatus === "Archived" && !product.is_removed) {
+      actions.push({ label: "Restore", id: "restore", destructive: false });
+      actions.push({ label: "Remove", id: "remove", destructive: true });
+    }
+
+    if (product.is_removed) {
+      actions.push({ label: "Restore Product", id: "restoreRemoved", destructive: false });
+    }
+
+    return actions;
+  };
+
+  const actions = getAvailableActions();
+  const safeActions = actions.filter((a) => !a.destructive);
+  const dangerActions = actions.filter((a) => a.destructive);
+
+  return (
+    <>
+      <div className="flex items-center gap-1">
+        <Link
+          to={`/admin/products/${product.id}`}
+          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          title="View Details"
+        >
+          <Eye className="w-4 h-4" />
+        </Link>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="h-8 w-8 p-0">
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => navigator.clipboard.writeText(product.id)}>
+              Copy Product ID
+            </DropdownMenuItem>
+
+            {safeActions.length > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                {safeActions.map((a) => (
+                  <DropdownMenuItem key={a.id} onClick={() => handleActionClick(a.id)} className="cursor-pointer">
+                    {a.label}
+                  </DropdownMenuItem>
+                ))}
+              </>
+            )}
+
+            {dangerActions.length > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                {dangerActions.map((a) => (
+                  <DropdownMenuItem
+                    key={a.id}
+                    onClick={() => handleActionClick(a.id)}
+                    className="cursor-pointer text-destructive focus:text-destructive"
+                  >
+                    {a.label}
+                  </DropdownMenuItem>
+                ))}
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <AlertDialog open={showDialog} onOpenChange={!processing ? setShowDialog : undefined}>
+        <AlertDialogContent className="sm:max-w-[500px] max-w-[95vw]">
+          {currentConfig && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-lg font-semibold">{currentConfig.title}</h3>
+                <p className="text-sm text-muted-foreground mt-1">{currentConfig.description}</p>
+              </div>
+
+              <div className="bg-muted/50 rounded-lg p-3">
+                <p className="text-sm font-medium">Product: {product.name}</p>
+                <div className="flex flex-wrap items-center gap-2 mt-1">
+                  <StatusBadge status={product.status} type="status" />
+                  <StatusBadge status={product.upload_status} type="upload" />
+                  {product.is_removed && <StatusBadge status="Removed" type="removed" />}
+                  <span className="text-xs text-muted-foreground">Stock: {product.total_stock} units</span>
+                </div>
+              </div>
+
+              {currentConfig.needsReason && (
+                <div className="space-y-2">
+                  <Label htmlFor={`reason-${product.id}`} className="text-sm font-medium">
+                    Reason for{" "}
+                    {activeAction === "suspend"
+                      ? "Suspension"
+                      : activeAction === "remove"
+                        ? "Removal"
+                        : activeAction === "reject"
+                          ? "Rejection"
+                          : "Action"}{" "}
+                    <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    id={`reason-${product.id}`}
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder={`Enter reason for ${activeAction}ing this product...`}
+                    className="h-10"
+                    disabled={processing}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    This reason will be recorded and may be shared with the seller.
+                  </p>
+                </div>
+              )}
+
+              {activeAction === "suspend" && (
+                <div className="space-y-2">
+                  <Label htmlFor={`days-${product.id}`} className="text-sm font-medium">
+                    Suspension Duration
+                  </Label>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      id={`days-${product.id}`}
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={suspensionDays}
+                      onChange={(e) => setSuspensionDays(Math.max(1, parseInt(e.target.value) || 7))}
+                      className="h-10 w-24"
+                      disabled={processing}
+                    />
+                    <span className="text-sm text-muted-foreground">days</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    The product will be automatically unsuspended after this period.
+                  </p>
+                </div>
+              )}
+
+              {currentConfig.variant === "destructive" && (
+                <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3">
+                  <p className="text-sm font-medium text-destructive flex items-center gap-1">
+                    <AlertTriangle className="w-4 h-4" />
+                    Warning: This action may have consequences
+                  </p>
+                  {activeAction === "deleteDraft" && (
+                    <p className="text-xs text-destructive mt-1">This draft will be permanently deleted.</p>
+                  )}
+                  {activeAction === "remove" && (
+                    <p className="text-xs text-destructive mt-1">The product will be hidden from customers.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <AlertDialogFooter className="mt-6 sm:flex-row flex-col gap-2">
+            <AlertDialogCancel
+              onClick={handleCancel}
+              disabled={processing}
+              className="mt-0 sm:w-auto w-full order-2 sm:order-1"
             >
               Cancel
-            </Button>
-            <Button type="submit" disabled={isLoading}>
-              {isLoading ? (
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirm}
+              disabled={processing || (currentConfig?.needsReason === true && !reason.trim())}
+              className={`sm:w-auto w-full order-1 sm:order-2 ${
+                currentConfig?.variant === "destructive"
+                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  : ""
+              }`}
+            >
+              {processing ? (
                 <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  Adding...
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />
+                  Processing...
                 </>
               ) : (
-                "Add Category"
+                currentConfig?.confirmText
               )}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
-export async function loader({
-  request,
-  context,
-}: Route.LoaderArgs): Promise<LoaderData> {
+export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
   let user = (context as any).user;
@@ -733,43 +1088,28 @@ export async function loader({
 
   try {
     const params = new URLSearchParams();
-    params.append(
-      "start_date",
-      startDate || defaultStartDate.toISOString().split("T")[0],
-    );
-    params.append(
-      "end_date",
-      endDate || defaultEndDate.toISOString().split("T")[0],
-    );
+    params.append("start_date", startDate || defaultStartDate.toISOString().split("T")[0]);
+    params.append("end_date", endDate || defaultEndDate.toISOString().split("T")[0]);
     if (rangeType) params.append("range_type", rangeType);
 
-    const metricsResponse = await AxiosInstance.get(
-      `/admin-products/get_metrics/?${params.toString()}`,
-      {
-        headers: { "X-User-Id": session.get("userId") },
-      },
-    );
+    const metricsResponse = await AxiosInstance.get(`/admin-products/get_metrics/?${params.toString()}`, {
+      headers: { "X-User-Id": session.get("userId") },
+    });
     if (metricsResponse.data.success) {
       productMetrics = metricsResponse.data.metrics;
     }
 
-    const categoriesResponse = await AxiosInstance.get(
-      `/admin-products/get_categories/`,
-      {
-        headers: { "X-User-Id": session.get("userId") },
-      },
-    );
+    const categoriesResponse = await AxiosInstance.get(`/admin-products/get_categories/`, {
+      headers: { "X-User-Id": session.get("userId") },
+    });
     if (categoriesResponse.data.success) {
       categoriesList = categoriesResponse.data.categories;
     }
 
     const productsParams = new URLSearchParams(params);
-    const productsResponse = await AxiosInstance.get(
-      `/admin-products/get_products_list/?${productsParams.toString()}`,
-      {
-        headers: { "X-User-Id": session.get("userId") },
-      },
-    );
+    const productsResponse = await AxiosInstance.get(`/admin-products/get_products_list/?${productsParams.toString()}`, {
+      headers: { "X-User-Id": session.get("userId") },
+    });
 
     if (productsResponse.data.success) {
       productsList = productsResponse.data.products.map((product: Product) => ({
@@ -780,21 +1120,11 @@ export async function loader({
 
       if (productsList.length > 0) {
         filterOptions = {
-          categories: [
-            ...new Set(productsList.map((p: Product) => p.category)),
-          ].filter(Boolean) as string[],
-          statuses: [
-            ...new Set(productsList.map((p: Product) => p.status)),
-          ].filter(Boolean) as string[],
-          shops: [...new Set(productsList.map((p: Product) => p.shop))].filter(
-            Boolean,
-          ) as string[],
+          categories: [...new Set(productsList.map((p: Product) => p.category))].filter(Boolean) as string[],
+          statuses: [...new Set(productsList.map((p: Product) => p.status))].filter(Boolean) as string[],
+          shops: [...new Set(productsList.map((p: Product) => p.shop))].filter(Boolean) as string[],
           boostPlans: ["Basic", "Premium", "Ultimate", "None"],
-          conditions: [
-            ...new Set(
-              productsList.map((p: Product) => getConditionLabel(p.condition)),
-            ),
-          ].filter(Boolean) as string[],
+          conditions: [...new Set(productsList.map((p: Product) => getConditionLabel(p.condition)))].filter(Boolean) as string[],
         };
       }
     }
@@ -854,35 +1184,18 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
       shops: [],
       boostPlans: [],
       conditions: [],
-    },
+    }
   );
   const [isLoading, setIsLoading] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [categoryStats, setCategoryStats] = useState<CategoryStats[]>([]);
 
-  // Action modal state
-  const [actionModalOpen, setActionModalOpen] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [actionType, setActionType] = useState<string>("");
-  const [actionReason, setActionReason] = useState("");
-  const [suspensionDays, setSuspensionDays] = useState(7);
-  const [isActionLoading, setIsActionLoading] = useState(false);
-
   const [dateRange, setDateRange] = useState({
-    start: initialDateRange?.start
-      ? new Date(initialDateRange.start)
-      : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+    start: initialDateRange?.start ? new Date(initialDateRange.start) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
     end: initialDateRange?.end ? new Date(initialDateRange.end) : new Date(),
-    rangeType:
-      (initialDateRange?.rangeType as
-        | "daily"
-        | "weekly"
-        | "monthly"
-        | "yearly"
-        | "custom") || "weekly",
+    rangeType: (initialDateRange?.rangeType as "daily" | "weekly" | "monthly" | "yearly" | "custom") || "weekly",
   });
 
-  // Calculate category stats
   useEffect(() => {
     const categoryProductCount: Record<string, number> = {};
     const sourceCategories = categories.length > 0 ? categories : [];
@@ -908,11 +1221,7 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     setCategoryStats(stats);
   }, [categories, products]);
 
-  const fetchProductData = async (
-    start: Date,
-    end: Date,
-    rangeType: string,
-  ) => {
+  const fetchProductData = async (start: Date, end: Date, rangeType: string) => {
     setIsLoading(true);
     try {
       const params = new URLSearchParams();
@@ -923,14 +1232,11 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
       const [metricsRes, categoriesRes, productsRes] = await Promise.all([
         AxiosInstance.get(`/admin-products/get_metrics/?${params.toString()}`),
         AxiosInstance.get(`/admin-products/get_categories/`),
-        AxiosInstance.get(
-          `/admin-products/get_products_list/?${params.toString()}`,
-        ),
+        AxiosInstance.get(`/admin-products/get_products_list/?${params.toString()}`),
       ]);
 
       if (metricsRes.data.success) setProductMetrics(metricsRes.data.metrics);
-      if (categoriesRes.data.success)
-        setCategories(categoriesRes.data.categories);
+      if (categoriesRes.data.success) setCategories(categoriesRes.data.categories);
 
       if (productsRes.data.success) {
         const normalized = productsRes.data.products.map((p: Product) => ({
@@ -942,21 +1248,11 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
 
         if (normalized.length > 0) {
           setFilterOptions({
-            categories: [
-              ...new Set(normalized.map((p: Product) => p.category)),
-            ].filter(Boolean) as string[],
-            statuses: [
-              ...new Set(normalized.map((p: Product) => p.status)),
-            ].filter(Boolean) as string[],
-            shops: [
-              ...new Set(normalized.map((p: Product) => p.shop)),
-            ].filter(Boolean) as string[],
+            categories: [...new Set(normalized.map((p: Product) => p.category))].filter(Boolean) as string[],
+            statuses: [...new Set(normalized.map((p: Product) => p.status))].filter(Boolean) as string[],
+            shops: [...new Set(normalized.map((p: Product) => p.shop))].filter(Boolean) as string[],
             boostPlans: ["Basic", "Premium", "Ultimate", "None"],
-            conditions: [
-              ...new Set(
-                normalized.map((p: Product) => getConditionLabel(p.condition)),
-              ),
-            ].filter(Boolean) as string[],
+            conditions: [...new Set(normalized.map((p: Product) => getConditionLabel(p.condition)))].filter(Boolean) as string[],
           });
         }
       }
@@ -967,20 +1263,11 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     }
   };
 
-  const handleDateRangeChange = (range: {
-    start: Date;
-    end: Date;
-    rangeType: string;
-  }) => {
+  const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
     setDateRange({
       start: range.start,
       end: range.end,
-      rangeType: range.rangeType as
-        | "daily"
-        | "weekly"
-        | "monthly"
-        | "yearly"
-        | "custom",
+      rangeType: range.rangeType as any,
     });
     fetchProductData(range.start, range.end, range.rangeType);
   };
@@ -988,88 +1275,16 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
   const refreshCategories = async () => {
     setIsLoading(true);
     try {
-      const categoriesResponse = await AxiosInstance.get(
-        `/admin-products/get_categories/`,
-      );
+      const categoriesResponse = await AxiosInstance.get(`/admin-products/get_categories/`);
       if (categoriesResponse.data.success) {
         setCategories(categoriesResponse.data.categories);
         toast.success("Categories refreshed successfully");
       }
-      await fetchProductData(
-        dateRange.start,
-        dateRange.end,
-        dateRange.rangeType,
-      );
+      await fetchProductData(dateRange.start, dateRange.end, dateRange.rangeType);
     } catch (error) {
       toast.error("Failed to refresh categories");
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleActionClick = (product: Product, action: string) => {
-    setSelectedProduct(product);
-    setActionType(action);
-    setActionReason("");
-    setSuspensionDays(7);
-    setActionModalOpen(true);
-  };
-
-  const handleConfirmAction = async () => {
-    if (!selectedProduct || !actionType) return;
-
-    const adminId = user?.id || user?.user_id || localStorage.getItem("userId") || "";
-
-    if (!adminId) {
-      toast.error("User authentication required. Please log in again.");
-      setActionModalOpen(false);
-      return;
-    }
-
-    if (actionType === "remove" && !actionReason.trim()) {
-      toast.error("Please provide a reason for removal");
-      return;
-    }
-
-    setIsActionLoading(true);
-    try {
-      const payload: any = {
-        product_id: selectedProduct.id,
-        action_type: actionType,
-        user_id: adminId,
-      };
-
-      if (actionReason.trim()) {
-        payload.reason = actionReason;
-      }
-
-      if (actionType === "suspend") {
-        payload.suspension_days = suspensionDays;
-      }
-
-      const response = await AxiosInstance.put(
-        "/admin-products/update_product_status/",
-        payload,
-        {
-          headers: { "X-User-Id": adminId },
-        },
-      );
-
-      if (response.data.success || response.data.message) {
-        toast.success(response.data.message || "Product status updated successfully");
-        setActionModalOpen(false);
-        await fetchProductData(dateRange.start, dateRange.end, dateRange.rangeType);
-      } else {
-        toast.error(response.data.error || "Failed to update product status");
-      }
-    } catch (error: any) {
-      toast.error(
-        error.response?.data?.error ||
-          error.response?.data?.message ||
-          "Failed to update product status",
-      );
-    } finally {
-      setIsActionLoading(false);
     }
   };
 
@@ -1082,287 +1297,241 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     growth_metrics: {},
   };
 
-  const formatPercentage = (value: number) => {
-    if (value === undefined || value === null) return "N/A";
-    return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+  // Calculate breakdowns for each metric
+  const calculateProductBreakdown = () => {
+    const statusBreakdown: Record<string, number> = {};
+    const categoryBreakdown: Record<string, number> = {};
+    const conditionBreakdown: Record<string, number> = {};
+
+    products.forEach((product) => {
+      // Status breakdown
+      const status = product.status;
+      statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
+
+      // Category breakdown
+      const category = product.category || "Uncategorized";
+      categoryBreakdown[category] = (categoryBreakdown[category] || 0) + 1;
+
+      // Condition breakdown
+      const condition = getConditionLabel(product.condition);
+      conditionBreakdown[condition] = (conditionBreakdown[condition] || 0) + 1;
+    });
+
+    return {
+      byStatus: Object.entries(statusBreakdown).map(([label, value]) => ({
+        label,
+        value,
+        percentage: (value / metrics.total_products) * 100,
+        color: "bg-blue-500",
+      })),
+      byCategory: Object.entries(categoryBreakdown).map(([label, value]) => ({
+        label,
+        value,
+        percentage: (value / metrics.total_products) * 100,
+        color: "bg-green-500",
+      })),
+      byCondition: Object.entries(conditionBreakdown).map(([label, value]) => ({
+        label,
+        value,
+        percentage: (value / metrics.total_products) * 100,
+        color: "bg-purple-500",
+      })),
+    };
   };
 
-  const growthMetrics = metrics.growth_metrics || {};
+  const calculateLowStockBreakdown = () => {
+    const lowStockProducts = products.filter(p => p.low_stock);
+    const byCategory: Record<string, number> = {};
+    const byStatus: Record<string, number> = {};
 
-  const productFilterConfig = {
-    category: { options: filterOptions.categories, placeholder: "Category" },
-    status: { options: filterOptions.statuses, placeholder: "Status" },
-    shop: { options: filterOptions.shops, placeholder: "Shop" },
+    lowStockProducts.forEach((product) => {
+      const category = product.category || "Uncategorized";
+      byCategory[category] = (byCategory[category] || 0) + 1;
+
+      const status = product.status;
+      byStatus[status] = (byStatus[status] || 0) + 1;
+    });
+
+    return {
+      byCategory: Object.entries(byCategory).map(([label, value]) => ({
+        label,
+        value,
+        percentage: metrics.low_stock_alert > 0 ? (value / metrics.low_stock_alert) * 100 : 0,
+        color: "bg-red-500",
+      })),
+      byStatus: Object.entries(byStatus).map(([label, value]) => ({
+        label,
+        value,
+        percentage: metrics.low_stock_alert > 0 ? (value / metrics.low_stock_alert) * 100 : 0,
+        color: "bg-orange-500",
+      })),
+    };
   };
 
-  const getCategoryColor = (category: string) => {
-    const colors = [
-      "bg-blue-100 text-blue-800 border-blue-200",
-      "bg-green-100 text-green-800 border-green-200",
-      "bg-purple-100 text-purple-800 border-purple-200",
-      "bg-yellow-100 text-yellow-800 border-yellow-200",
-      "bg-pink-100 text-pink-800 border-pink-200",
-      "bg-indigo-100 text-indigo-800 border-indigo-200",
-      "bg-red-100 text-red-800 border-red-200",
-      "bg-teal-100 text-teal-800 border-teal-200",
-      "bg-orange-100 text-orange-800 border-orange-200",
-      "bg-cyan-100 text-cyan-800 border-cyan-200",
-    ];
-    const hash = category
-      .split("")
-      .reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    return colors[hash % colors.length];
+  const calculateBoostBreakdown = () => {
+    const boostedProducts = products.filter(p => p.boost);
+    const byBoostType: Record<string, number> = {};
+
+    boostedProducts.forEach((product) => {
+      const boostType = product.boost || "Unknown";
+      byBoostType[boostType] = (byBoostType[boostType] || 0) + 1;
+    });
+
+    return {
+      byType: Object.entries(byBoostType).map(([label, value]) => ({
+        label,
+        value,
+        percentage: metrics.active_boosts > 0 ? (value / metrics.active_boosts) * 100 : 0,
+        color: "bg-yellow-500",
+      })),
+    };
   };
 
-  const getActionConfig = () => {
-    switch (actionType) {
-      case "publish":
-        return {
-          title: "Publish Product",
-          description: "Are you sure you want to publish this product? This will make it visible to customers.",
-          confirmText: "Publish",
-          variant: "default" as const,
-        };
-      case "unpublish":
-        return {
-          title: "Unpublish Product",
-          description: "This will unpublish the product and make it invisible to customers.",
-          confirmText: "Unpublish",
-          variant: "default" as const,
-        };
-      case "archive":
-        return {
-          title: "Archive Product",
-          description: "This will archive the product. It can be restored later if needed.",
-          confirmText: "Archive",
-          variant: "default" as const,
-        };
-      case "restore":
-        return {
-          title: "Restore Product",
-          description: "This will restore the product to its previous state.",
-          confirmText: "Restore",
-          variant: "default" as const,
-        };
-      case "remove":
-        return {
-          title: "Remove Product",
-          description: "This will remove the product from the platform. This action can be reversed.",
-          confirmText: "Remove",
-          variant: "destructive" as const,
-        };
-      case "restoreRemoved":
-        return {
-          title: "Restore Product",
-          description: "This will restore the removed product and make it available again.",
-          confirmText: "Restore",
-          variant: "default" as const,
-        };
-      case "suspend":
-        return {
-          title: "Suspend Product",
-          description: "This will suspend the product temporarily. Customers won't be able to view or purchase it.",
-          confirmText: "Suspend",
-          variant: "destructive" as const,
-        };
-      case "unsuspend":
-        return {
-          title: "Unsuspend Product",
-          description: "This will unsuspend the product and make it available to customers again.",
-          confirmText: "Unsuspend",
-          variant: "default" as const,
-        };
-      case "deleteDraft":
-        return {
-          title: "Delete Draft",
-          description: "Are you sure you want to delete this draft product? This action cannot be undone.",
-          confirmText: "Delete",
-          variant: "destructive" as const,
-        };
-      default:
-        return {
-          title: "Confirm Action",
-          description: "Are you sure you want to perform this action?",
-          confirmText: "Confirm",
-          variant: "default" as const,
-        };
-    }
+  const calculateRatingBreakdown = () => {
+    const ratingRanges = {
+      "5★": 0,
+      "4★": 0,
+      "3★": 0,
+      "2★": 0,
+      "1★": 0,
+      "No Rating": 0,
+    };
+
+    products.forEach((product) => {
+      if (product.rating >= 4.5) ratingRanges["5★"]++;
+      else if (product.rating >= 3.5) ratingRanges["4★"]++;
+      else if (product.rating >= 2.5) ratingRanges["3★"]++;
+      else if (product.rating >= 1.5) ratingRanges["2★"]++;
+      else if (product.rating >= 0.5) ratingRanges["1★"]++;
+      else ratingRanges["No Rating"]++;
+    });
+
+    return {
+      byRating: Object.entries(ratingRanges).map(([label, value]) => ({
+        label,
+        value,
+        percentage: (value / products.length) * 100,
+        color: 
+          label === "5★" ? "bg-yellow-500" :
+          label === "4★" ? "bg-lime-500" :
+          label === "3★" ? "bg-blue-500" :
+          label === "2★" ? "bg-orange-500" :
+          label === "1★" ? "bg-red-500" : "bg-gray-500",
+      })),
+    };
   };
 
-  const actionConfig = getActionConfig();
+  const productBreakdown = calculateProductBreakdown();
+  const lowStockBreakdown = calculateLowStockBreakdown();
+  const boostBreakdown = calculateBoostBreakdown();
+  const ratingBreakdown = calculateRatingBreakdown();
 
-  // Build columns with action handler
-  const columns = buildColumns(user, handleActionClick);
+  const MetricCardSkeleton = () => (
+    <Card>
+      <CardContent className="p-4 sm:p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <Skeleton className="h-4 w-20 mb-2" />
+            <Skeleton className="h-8 w-16 mt-1" />
+            <Skeleton className="h-3 w-24 mt-2" />
+          </div>
+          <Skeleton className="w-10 h-10 sm:w-12 sm:h-12 rounded-full" />
+        </div>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <UserProvider user={user}>
       <SidebarLayout>
         <div className="space-y-6">
-          {/* Header */}
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-3xl font-bold">Products</h1>
-            </div>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <h1 className="text-2xl sm:text-3xl font-bold">Products</h1>
           </div>
 
-          {/* Date Range Filter */}
-          <DateRangeFilter
-            onDateRangeChange={handleDateRangeChange}
-            isLoading={isLoading}
-          />
+          <DateRangeFilter onDateRangeChange={handleDateRangeChange} isLoading={isLoading} />
 
-          {/* Key Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">
-                      Total Products
-                    </p>
-                    <p className="text-2xl font-bold mt-1">
-                      {isLoading ? "..." : metrics.total_products}
-                    </p>
-                    {!isLoading &&
-                      growthMetrics.product_growth !== undefined && (
-                        <div
-                          className={`flex items-center gap-1 mt-2 text-sm ${growthMetrics.product_growth >= 0 ? "text-green-600" : "text-red-600"}`}
-                        >
-                          {growthMetrics.product_growth >= 0 ? (
-                            <TrendingUp className="w-4 h-4" />
-                          ) : (
-                            <TrendingDown className="w-4 h-4" />
-                          )}
-                          <span>
-                            {formatPercentage(growthMetrics.product_growth)}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            vs previous {growthMetrics.period_days || 7} days
-                          </span>
-                        </div>
-                      )}
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Across all categories
-                    </p>
-                  </div>
-                  <div className="p-3 bg-blue-100 rounded-full">
-                    <Package className="w-6 h-6 text-blue-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          {/* Interactive Number Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {isLoading ? (
+              <>
+                <MetricCardSkeleton />
+                <MetricCardSkeleton />
+                <MetricCardSkeleton />
+                <MetricCardSkeleton />
+              </>
+            ) : (
+              <>
+                <InteractiveNumberCard
+                  title="Total Products"
+                  value={metrics.total_products}
+                  icon={<Package className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-blue-600"
+                  breakdown={[
+                    { label: "By Status", value: metrics.total_products, color: "bg-blue-500" },
+                    ...productBreakdown.byStatus.slice(0, 5),
+                  ]}
+                  totalLabel="Total Products"
+                />
 
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">
-                      Low Stock Alert
-                    </p>
-                    <p className="text-2xl font-bold mt-1 text-red-600">
-                      {isLoading ? "..." : metrics.low_stock_alert}
-                    </p>
-                    {!isLoading &&
-                      growthMetrics.low_stock_growth !== undefined && (
-                        <div
-                          className={`flex items-center gap-1 mt-2 text-sm ${growthMetrics.low_stock_growth >= 0 ? "text-red-600" : "text-green-600"}`}
-                        >
-                          {growthMetrics.low_stock_growth >= 0 ? (
-                            <TrendingUp className="w-4 h-4" />
-                          ) : (
-                            <TrendingDown className="w-4 h-4" />
-                          )}
-                          <span>
-                            {formatPercentage(growthMetrics.low_stock_growth)}
-                          </span>
-                        </div>
-                      )}
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Need restocking
-                    </p>
-                  </div>
-                  <div className="p-3 bg-red-100 rounded-full">
-                    <AlertTriangle className="w-6 h-6 text-red-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                <InteractiveNumberCard
+                  title="Low Stock Alert"
+                  value={metrics.low_stock_alert}
+                  icon={<AlertTriangle className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-red-600"
+                  breakdown={[
+                    { label: "By Category", value: metrics.low_stock_alert, color: "bg-red-500" },
+                    ...lowStockBreakdown.byCategory.slice(0, 5),
+                  ]}
+                  totalLabel="Low Stock Products"
+                />
 
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">
-                      Active Boosts
-                    </p>
-                    <p className="text-2xl font-bold mt-1">
-                      {isLoading ? "..." : metrics.active_boosts}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Running now
-                    </p>
-                  </div>
-                  <div className="p-3 bg-yellow-100 rounded-full">
-                    <Zap className="w-6 h-6 text-yellow-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                <InteractiveNumberCard
+                  title="Active Boosts"
+                  value={metrics.active_boosts}
+                  icon={<Zap className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-yellow-600"
+                  breakdown={[
+                    { label: "By Boost Type", value: metrics.active_boosts, color: "bg-yellow-500" },
+                    ...boostBreakdown.byType.slice(0, 5),
+                  ]}
+                  totalLabel="Active Boosts"
+                />
 
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Avg Rating</p>
-                    <p className="text-2xl font-bold mt-1">
-                      {isLoading
-                        ? "..."
-                        : metrics.avg_rating > 0
-                          ? `${metrics.avg_rating.toFixed(1)}★`
-                          : "No ratings"}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Overall quality
-                    </p>
-                  </div>
-                  <div className="p-3 bg-green-100 rounded-full">
-                    <Star className="w-6 h-6 text-green-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                <InteractiveNumberCard
+                  title="Avg Rating"
+                  value={metrics.avg_rating > 0 ? parseFloat(metrics.avg_rating.toFixed(1)) : 0}
+                  icon={<Star className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-yellow-500"
+                  breakdown={[
+                    { label: "Rating Distribution", value: products.length, color: "bg-yellow-500" },
+                    ...ratingBreakdown.byRating,
+                  ]}
+                  totalLabel="Total Products"
+                />
+              </>
+            )}
           </div>
 
           {/* Categories Section */}
           <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
+            <CardHeader className="pb-3">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                   <CardTitle className="flex items-center gap-2">
                     <Tag className="w-5 h-5" />
                     Product Categories
                   </CardTitle>
                   <CardDescription>
-                    Total categories: {categories.length} | Total products:{" "}
-                    {products.length}
+                    Total categories: {categories.length} | Total products: {products.length}
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={refreshCategories}
-                    disabled={isLoading}
-                  >
-                    <RefreshCw
-                      className={`w-4 h-4 mr-1 ${isLoading ? "animate-spin" : ""}`}
-                    />
+                  <Button variant="outline" size="sm" onClick={refreshCategories} disabled={isLoading}>
+                    <RefreshCw className={`w-4 h-4 mr-1 ${isLoading ? "animate-spin" : ""}`} />
                     Refresh
                   </Button>
-                  <AddCategoryModalDrawer
-                    onCategoryAdded={refreshCategories}
-                    userId={user?.id || ""}
-                  />
+                  <AddCategoryModalDrawer onCategoryAdded={refreshCategories} userId={user?.id || ""} />
                 </div>
               </div>
             </CardHeader>
@@ -1379,46 +1548,24 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
                     <div
                       key={category.name}
                       className={`group relative px-4 py-3 rounded-lg border transition-all duration-200 hover:shadow-md cursor-pointer ${getCategoryColor(category.name)} ${selectedCategory === category.name ? "ring-2 ring-offset-1 ring-current" : ""}`}
-                      onClick={() =>
-                        setSelectedCategory(
-                          category.name === selectedCategory
-                            ? "all"
-                            : category.name,
-                        )
-                      }
+                      onClick={() => setSelectedCategory(category.name === selectedCategory ? "all" : category.name)}
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                           <Tag className="w-3.5 h-3.5" />
-                          <span className="font-medium text-sm">
-                            {category.name}
-                          </span>
+                          <span className="font-medium text-sm">{category.name}</span>
                         </div>
-                        <Badge
-                          variant="secondary"
-                          className="ml-2 bg-white/50 text-xs"
-                        >
+                        <Badge variant="secondary" className="ml-2 bg-white/50 text-xs">
                           {category.count}
                         </Badge>
                       </div>
                       <div className="mt-2 h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
                         <div
                           className="h-full rounded-full transition-all duration-300 bg-current opacity-50"
-                          style={{
-                            width: `${Math.min(category.percentage, 100)}%`,
-                          }}
+                          style={{ width: `${Math.min(category.percentage, 100)}%` }}
                         />
                       </div>
-                      <div className="text-xs mt-1 opacity-75">
-                        {category.percentage.toFixed(1)}% of total
-                      </div>
-                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
-                        <div className="font-medium">{category.name}</div>
-                        <div className="text-xs text-gray-300">
-                          {category.count} products
-                        </div>
-                        <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
-                      </div>
+                      <div className="text-xs mt-1 opacity-75">{category.percentage.toFixed(1)}% of total</div>
                     </div>
                   ))}
                 </div>
@@ -1427,17 +1574,11 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
                   <div className="inline-flex p-3 rounded-full bg-gray-100 mb-4">
                     <Tag className="w-6 h-6 text-gray-400" />
                   </div>
-                  <h3 className="text-lg font-medium mb-2">
-                    No Categories Found
-                  </h3>
+                  <h3 className="text-lg font-medium mb-2">No Categories Found</h3>
                   <p className="text-sm text-muted-foreground max-w-md mx-auto mb-6">
-                    No product categories have been created yet. Add your first
-                    category to get started.
+                    No product categories have been created yet. Add your first category to get started.
                   </p>
-                  <AddCategoryModalDrawer
-                    onCategoryAdded={refreshCategories}
-                    userId={user?.id || ""}
-                  />
+                  <AddCategoryModalDrawer onCategoryAdded={refreshCategories} userId={user?.id || ""} />
                 </div>
               )}
             </CardContent>
@@ -1445,96 +1586,27 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
 
           {/* Products Table */}
           <Card>
-            <CardHeader>
-              <div className="flex justify-between items-center">
-                <div>
-                  <CardTitle>All Products</CardTitle>
-                  <CardDescription>
-                    {dateRange.start && dateRange.end
-                      ? `Products from ${dateRange.start.toLocaleDateString()} to ${dateRange.end.toLocaleDateString()}`
-                      : "Showing all products"}
-                  </CardDescription>
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  {isLoading ? (
-                    <div className="flex items-center gap-2">
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      Loading...
-                    </div>
-                  ) : (
-                    `${products.length} products found`
-                  )}
-                </div>
-              </div>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg sm:text-xl">All Products</CardTitle>
+              <CardDescription>
+                {isLoading ? "Loading products..." : `${products.length} products found`}
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              {isLoading ? (
-                <div className="space-y-3">
-                  {[...Array(5)].map((_, i) => (
-                    <Skeleton key={i} className="h-12 w-full" />
-                  ))}
-                </div>
-              ) : (
-                <DataTable
-                  columns={columns}
-                  data={products}
-                  filterConfig={productFilterConfig}
-                  searchConfig={{
-                    column: "name",
-                    placeholder: "Search products...",
-                  }}
-                />
-              )}
+              <DataTable
+                columns={buildColumns(user, () => fetchProductData(dateRange.start, dateRange.end, dateRange.rangeType))}
+                data={products}
+                filterConfig={{
+                  category: { options: filterOptions.categories, placeholder: "Category" },
+                  status: { options: filterOptions.statuses, placeholder: "Status" },
+                  shop: { options: filterOptions.shops, placeholder: "Shop" },
+                }}
+                searchConfig={{ column: "name", placeholder: "Search products..." }}
+                isLoading={isLoading}
+              />
             </CardContent>
           </Card>
         </div>
-
-        {/* Action Modal/Drawer */}
-        {selectedProduct && (
-          <ActionModalDrawer
-            open={actionModalOpen}
-            onOpenChange={setActionModalOpen}
-            onConfirm={handleConfirmAction}
-            title={actionConfig.title}
-            description={`Product: ${selectedProduct.name}`}
-            confirmText={actionConfig.confirmText}
-            variant={actionConfig.variant}
-            isLoading={isActionLoading}
-          >
-            {(actionType === "remove" || actionType === "suspend") && (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="reason">
-                    Reason for {actionType === "remove" ? "Removal" : "Suspension"}
-                    {actionType === "remove" && <span className="text-red-500 ml-1">*</span>}
-                  </Label>
-                  <Input
-                    id="reason"
-                    value={actionReason}
-                    onChange={(e) => setActionReason(e.target.value)}
-                    placeholder={`Enter reason for ${actionType === "remove" ? "removal" : "suspension"}...`}
-                  />
-                </div>
-                {actionType === "suspend" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="suspension-days">Suspension Duration (days)</Label>
-                    <Input
-                      id="suspension-days"
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={suspensionDays}
-                      onChange={(e) => setSuspensionDays(parseInt(e.target.value) || 7)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      The product will be automatically unsuspended after this period.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-          </ActionModalDrawer>
-        )}
       </SidebarLayout>
     </UserProvider>
   );
@@ -1542,92 +1614,12 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
 
 // ─── Columns Factory ─────────────────────────────────────────────────────────
 
-function buildColumns(
-  user: any,
-  onActionClick: (product: Product, actionType: string) => void,
-): ColumnDef<Product>[] {
-  const getAvailableActions = (product: Product) => {
-    const actions: {
-      label: string;
-      action: string;
-      variant: "default" | "secondary" | "outline" | "destructive";
-    }[] = [];
-    const normalizedStatus = normalizeStatus(product.status);
-    const normalizedUploadStatus = normalizeUploadStatus(product.upload_status);
-
-    if (normalizedUploadStatus === "Draft" && !product.is_removed) {
-      actions.push({ label: "Publish", action: "publish", variant: "default" });
-      actions.push({
-        label: "Delete",
-        action: "deleteDraft",
-        variant: "destructive",
-      });
-    }
-
-    if (normalizedUploadStatus === "Published" && !product.is_removed) {
-      if (normalizedStatus === "Active") {
-        actions.push({
-          label: "Unpublish",
-          action: "unpublish",
-          variant: "secondary",
-        });
-        actions.push({
-          label: "Archive",
-          action: "archive",
-          variant: "outline",
-        });
-        actions.push({
-          label: "Suspend",
-          action: "suspend",
-          variant: "destructive",
-        });
-        actions.push({
-          label: "Remove",
-          action: "remove",
-          variant: "destructive",
-        });
-      } else if (normalizedStatus === "Suspended") {
-        actions.push({
-          label: "Unsuspend",
-          action: "unsuspend",
-          variant: "default",
-        });
-        actions.push({
-          label: "Remove",
-          action: "remove",
-          variant: "destructive",
-        });
-      }
-    }
-
-    if (normalizedUploadStatus === "Archived" && !product.is_removed) {
-      actions.push({ label: "Restore", action: "restore", variant: "default" });
-      actions.push({
-        label: "Remove",
-        action: "remove",
-        variant: "destructive",
-      });
-    }
-
-    if (product.is_removed) {
-      actions.push({
-        label: "Restore",
-        action: "restoreRemoved",
-        variant: "default",
-      });
-    }
-
-    return actions;
-  };
-
+function buildColumns(user: any, onRefresh: () => void): ColumnDef<Product>[] {
   return [
     {
       accessorKey: "name",
       header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-        >
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           Product
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
@@ -1638,10 +1630,7 @@ function buildColumns(
           <div className="min-w-[180px]">
             <div className="font-medium text-sm">{product.name}</div>
             {product.description && (
-              <div
-                className="text-xs text-muted-foreground truncate max-w-[200px] mt-0.5"
-                title={product.description}
-              >
+              <div className="text-xs text-muted-foreground truncate max-w-[200px] mt-0.5" title={product.description}>
                 {product.description}
               </div>
             )}
@@ -1650,9 +1639,7 @@ function buildColumns(
               <span className="text-xs text-muted-foreground">
                 {product.customer.first_name} {product.customer.last_name}
               </span>
-              <span className="text-xs text-blue-600">
-                @{product.customer.username}
-              </span>
+              <span className="text-xs text-blue-600">@{product.customer.username}</span>
             </div>
           </div>
         );
@@ -1670,9 +1657,7 @@ function buildColumns(
     {
       accessorKey: "shop",
       header: "Shop",
-      cell: ({ row }) => (
-        <div className="text-sm whitespace-nowrap">{row.getValue("shop")}</div>
-      ),
+      cell: ({ row }) => <div className="text-sm whitespace-nowrap">{row.getValue("shop")}</div>,
     },
     {
       accessorKey: "condition",
@@ -1680,10 +1665,7 @@ function buildColumns(
       cell: ({ row }) => {
         const condition = row.getValue("condition") as number;
         return (
-          <Badge
-            variant="outline"
-            className={`text-xs ${getConditionColor(condition)}`}
-          >
+          <Badge variant="outline" className={`text-xs ${getConditionColor(condition)}`}>
             {getConditionLabel(condition)}
           </Badge>
         );
@@ -1692,35 +1674,18 @@ function buildColumns(
     {
       accessorKey: "price",
       header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-        >
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           Price
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
       ),
-      cell: ({ row }) => {
-        return (
-          <div className="font-medium text-sm whitespace-nowrap">
-            {row.getValue("price")}
-          </div>
-        );
-      },
-      sortingFn: (rowA, rowB) => {
-        return (
-          parseFloat(rowA.original.min_price) -
-          parseFloat(rowB.original.min_price)
-        );
-      },
+      cell: ({ row }) => <div className="font-medium text-sm whitespace-nowrap">{row.getValue("price")}</div>,
+      sortingFn: (rowA, rowB) => parseFloat(rowA.original.min_price) - parseFloat(rowB.original.min_price),
     },
     {
       accessorKey: "total_stock",
       header: ({ column }) => (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-        >
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}>
           Stock
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
@@ -1730,9 +1695,7 @@ function buildColumns(
         return (
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
-              <span
-                className={`text-sm font-medium ${product.low_stock ? "text-red-600" : ""}`}
-              >
+              <span className={`text-sm font-medium ${product.low_stock ? "text-red-600" : ""}`}>
                 {product.total_stock}
               </span>
               {product.low_stock && (
@@ -1744,16 +1707,8 @@ function buildColumns(
             {product.variants_count > 1 && (
               <div className="text-xs text-muted-foreground">
                 {product.variants_count} variants
-                {product.low_stock_variants > 0 && (
-                  <span className="text-amber-600 ml-1">
-                    · {product.low_stock_variants} low
-                  </span>
-                )}
-                {product.out_of_stock_variants > 0 && (
-                  <span className="text-red-600 ml-1">
-                    · {product.out_of_stock_variants} OOS
-                  </span>
-                )}
+                {product.low_stock_variants > 0 && <span className="text-amber-600 ml-1">· {product.low_stock_variants} low</span>}
+                {product.out_of_stock_variants > 0 && <span className="text-red-600 ml-1">· {product.out_of_stock_variants} OOS</span>}
               </div>
             )}
           </div>
@@ -1795,17 +1750,12 @@ function buildColumns(
         return (
           <div className="space-y-0.5">
             <div className="flex items-center gap-1">
-              <Star
-                className={`w-4 h-4 ${product.rating > 0 ? "text-yellow-500 fill-current" : "text-gray-300"}`}
-              />
-              <span className="text-sm">
-                {product.rating > 0 ? product.rating.toFixed(1) : "—"}
-              </span>
+              <Star className={`w-4 h-4 ${product.rating > 0 ? "text-yellow-500 fill-current" : "text-gray-300"}`} />
+              <span className="text-sm">{product.rating > 0 ? product.rating.toFixed(1) : "—"}</span>
             </div>
             {product.total_reviews > 0 && (
               <div className="text-xs text-muted-foreground">
-                {product.total_reviews} review
-                {product.total_reviews !== 1 ? "s" : ""}
+                {product.total_reviews} review{product.total_reviews !== 1 ? "s" : ""}
               </div>
             )}
           </div>
@@ -1821,10 +1771,7 @@ function buildColumns(
           return (
             <div className="flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-green-600" />
-              <Badge
-                variant="outline"
-                className="bg-green-50 text-green-700 border-green-200 text-xs"
-              >
+              <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-xs">
                 {product.refund_days}d
               </Badge>
             </div>
@@ -1833,10 +1780,7 @@ function buildColumns(
         return (
           <div className="flex items-center gap-1">
             <ShieldOff className="w-3.5 h-3.5 text-gray-400" />
-            <Badge
-              variant="outline"
-              className="bg-gray-50 text-gray-500 border-gray-200 text-xs"
-            >
+            <Badge variant="outline" className="bg-gray-50 text-gray-500 border-gray-200 text-xs">
               None
             </Badge>
           </div>
@@ -1846,41 +1790,7 @@ function buildColumns(
     {
       id: "actions",
       header: "Actions",
-      cell: ({ row }) => {
-        const product = row.original;
-        const actions = getAvailableActions(product);
-
-        return (
-          <div className="flex items-center gap-2">
-            <Link
-              to={`/admin/products/${product.id}`}
-              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-              title="View Details"
-            >
-              <Eye className="w-4 h-4" />
-            </Link>
-
-            {actions.length > 0 && (
-              <Select onValueChange={(value) => onActionClick(product, value)}>
-                <SelectTrigger className="w-[130px] h-8 text-xs">
-                  <SelectValue placeholder="Actions" />
-                </SelectTrigger>
-                <SelectContent>
-                  {actions.map((action) => (
-                    <SelectItem
-                      key={action.action}
-                      value={action.action}
-                      className={`text-xs ${action.variant === "destructive" ? "text-red-600 focus:text-red-600" : ""}`}
-                    >
-                      {action.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-        );
-      },
+      cell: ({ row }) => <ActionsCell product={row.original} user={user} onRefresh={onRefresh} />,
     },
   ];
 }
