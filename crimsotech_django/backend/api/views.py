@@ -22886,7 +22886,17 @@ class SellerOrderList(viewsets.ViewSet):
                 
                 order.pickup_expire_date = timezone.now() + timedelta(days=3)
                 
-                message = "Order ready for pickup"
+                # Generate pickup code (6 characters: letters and numbers)
+                import random
+                import string
+                pickup_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+                
+                # Store in metadata
+                if not order.metadata:
+                    order.metadata = {}
+                order.metadata['pickup_code'] = pickup_code
+                
+                message = f"Order ready for pickup. Pickup code: {pickup_code}"
                 
             elif action_type == 'picked_up':
                 if not is_pickup:
@@ -23254,6 +23264,7 @@ class SellerOrderList(viewsets.ViewSet):
                     'delivery_info': delivery_info,
                     'proof_images': proof_images,
                     'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
+                    'metadata': order.metadata,
                 }
             }, status=status.HTTP_200_OK)
         except Shop.DoesNotExist:
@@ -26805,6 +26816,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     ),
                     'pickup_expire_date': order.pickup_expire_date.isoformat() if order.pickup_expire_date else None,
                     'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
+                    'metadata': order.metadata if order.metadata else None,
                 },
                 'shipping_info': shipping_info,
                 'delivery_address': delivery_address_info,
@@ -28250,7 +28262,9 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "rider_contact": delivery.rider.rider.contact_number if delivery and delivery.rider and delivery.rider.rider else None,
                 "picked_at": delivery.picked_at if delivery else None,
                 "delivered_at": delivery.delivered_at if delivery else None,
-                "created_at": delivery.created_at if delivery else None
+                "created_at": delivery.created_at if delivery else None,
+                "updated_at": delivery.updated_at if delivery else None,
+                "failed_reason": delivery.failed_reason if hasattr(delivery, 'failed_reason') and delivery.failed_reason else None
             } if delivery else None,
             "payment": {
                 "id": str(payment.id) if payment else None,
@@ -28566,6 +28580,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                     "created_at": order.created_at.isoformat(),
                 },
                 "status": delivery.status,
+                "failed_reason": delivery.failed_reason if delivery.failed_reason else None, 
                 "picked_at": delivery.picked_at.isoformat() if delivery.picked_at else None,
                 "delivered_at": delivery.delivered_at.isoformat() if delivery.delivered_at else None,
                 "created_at": delivery.created_at.isoformat(),

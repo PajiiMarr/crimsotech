@@ -106,8 +106,12 @@ interface OrderDetails {
   delivery_info?: DeliveryInfo;
   pickup_date?: string;
   pickup_expire_date?: string; 
-  proof_images?: ProofImage[];  
+  proof_images?: ProofImage[]; 
+  metadata?: {  // Add this
+    pickup_code?: string;
+  }; 
 }
+
 
 
 
@@ -259,6 +263,30 @@ const [selectedImage, setSelectedImage] = useState<string | null>(null);
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const generatePickupCode = async () => {
+    if (!orderId || !shopId) return;
+    
+    try {
+      setProcessing(true);
+      const response = await AxiosInstance.post(
+        `/seller-order-list/${orderId}/generate_pickup_code/`,
+        { shop_id: shopId }
+      );
+      
+      if (response.data.success) {
+        Alert.alert('Success', 'Pickup code generated successfully');
+        await fetchOrderDetails(); // Refresh to get the new code
+      } else {
+        Alert.alert('Error', response.data.message || 'Failed to generate pickup code');
+      }
+    } catch (error: any) {
+      console.error('Error generating pickup code:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to generate pickup code');
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -427,10 +455,17 @@ const fetchAvailableActions = async () => {
       customIcon = 'package-outline';
     }
     // For ready_for_pickup status
-    else if (displayStatus === 'ready_for_pickup') {
-      customDescription = 'Order is ready at your store. Customer has been notified and can pick up the item.';
-      customIcon = 'storefront-outline';
-    }
+    // For ready_for_pickup status
+else if (displayStatus === 'ready_for_pickup') {
+  customDescription = 'Order is ready at your store. Customer has been notified.';
+  customIcon = 'storefront-outline';
+  
+  // Add pickup code display inside the status card
+  const pickupCode = order?.metadata?.pickup_code;
+  if (pickupCode) {
+    customDescription = `Order is ready at your store. Customer has been notified.\n\nPickup Code: ${pickupCode}`;
+  }
+}
     
     const config = getStatusConfig(displayStatus);
     
@@ -765,6 +800,7 @@ const renderActionButtons = () => {
           </TouchableOpacity>
         )}
 
+        
         {/* Picked Up Button (Pickup orders) */}
         {showPickedUp && isPickup && (
           <TouchableOpacity
