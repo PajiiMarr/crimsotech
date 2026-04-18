@@ -14,6 +14,33 @@ import {
 import { Button } from '~/components/ui/button';
 import { Badge } from '~/components/ui/badge';
 import { Skeleton } from '~/components/ui/skeleton';
+import { Input } from '~/components/ui/input';
+import { Label } from '~/components/ui/label';
+import { Textarea } from '~/components/ui/textarea';
+import { Progress } from '~/components/ui/progress';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "~/components/ui/dialog";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerClose,
+} from "~/components/ui/drawer";
 import { 
   Zap,
   TrendingUp,
@@ -35,10 +62,14 @@ import {
   CheckCircle,
   XCircle,
   RefreshCw,
-  ExternalLink,
-  Ban,
-  AlertTriangle,
-  PhilippinePeso
+  PhilippinePeso,
+  Tag,
+  Wallet,
+  Save,
+  X,
+  BarChart3,
+  PieChart,
+  TrendingDown
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
@@ -51,14 +82,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select"
 import { useState, useEffect } from 'react';
+import { useIsMobile } from '~/hooks/use-mobile';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -133,6 +158,538 @@ interface LoaderData {
   user: any;
 }
 
+// ── Interactive Number Card Component ─────────────────────────────────────────
+
+interface InteractiveNumberCardProps {
+  title: string;
+  value: number;
+  icon: React.ReactNode;
+  color: string;
+  breakdown: {
+    label: string;
+    value: number;
+    percentage?: number;
+    color?: string;
+  }[];
+  totalLabel?: string;
+  onViewDetails?: () => void;
+  suffix?: string;
+  growth?: number;
+  periodDays?: number;
+  subtitle?: string;
+}
+
+function InteractiveNumberCard({
+  title,
+  value,
+  icon,
+  color,
+  breakdown,
+  totalLabel = "Total",
+  onViewDetails,
+  suffix = "",
+  growth,
+  periodDays = 7,
+  subtitle,
+}: InteractiveNumberCardProps) {
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  const handleClick = () => {
+    setIsDialogOpen(true);
+    if (onViewDetails) onViewDetails();
+  };
+
+  const totalBreakdownValue = breakdown.reduce((sum, item) => sum + (item.value || 0), 0);
+  const formatValue = (val: number) => {
+    if (val === undefined || val === null) return "0";
+    return val.toLocaleString();
+  };
+
+  const formatPercentage = (value: number) => {
+    if (value === undefined || value === null) return null;
+    return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+  };
+
+  return (
+    <>
+      <Card
+        className="cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95"
+        onClick={handleClick}
+      >
+        <CardContent className="p-4 sm:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">{title}</p>
+              <p className="text-xl sm:text-2xl font-bold mt-1">
+                {formatValue(value)}{suffix}
+              </p>
+              {growth !== undefined && (
+                <div className={`flex items-center gap-1 mt-2 text-sm ${growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {growth >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                  <span>{formatPercentage(growth)}</span>
+                  <span className="text-xs text-muted-foreground">
+                    vs previous {periodDays} days
+                  </span>
+                </div>
+              )}
+              {subtitle && (
+                <p className="text-xs text-muted-foreground mt-2">{subtitle}</p>
+              )}
+              <p className="text-xs text-muted-foreground mt-1">Click for breakdown</p>
+            </div>
+            <div className={`p-2 sm:p-3 ${color} rounded-full`}>
+              {icon}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="sm:max-w-2xl max-w-[95vw] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <div className={`p-2 ${color} rounded-full`}>
+                {icon}
+              </div>
+              {title} Breakdown
+            </DialogTitle>
+            <DialogDescription>
+              Detailed breakdown of {title.toLowerCase()} - Total: {formatValue(value)}{suffix}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-4 space-y-6">
+            {/* Summary Card */}
+            <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg p-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Overall {title}</p>
+                  <p className="text-3xl font-bold">{formatValue(value)}{suffix}</p>
+                  {growth !== undefined && (
+                    <div className={`flex items-center gap-1 mt-1 text-sm ${growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      <span>{formatPercentage(growth)}</span>
+                      <span className="text-xs text-muted-foreground">vs previous period</span>
+                    </div>
+                  )}
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-muted-foreground">{totalLabel}</p>
+                  <p className="text-sm font-medium">{formatValue(totalBreakdownValue)} accounted</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Breakdown List */}
+            <div className="space-y-3">
+              <h4 className="font-semibold text-lg">Breakdown</h4>
+              {breakdown.filter(item => item.value > 0 || item.label.includes("──")).map((item, index) => (
+                <div key={index} className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      {item.color && item.color !== "bg-transparent" && (
+                        <div className={`w-3 h-3 rounded-full ${item.color}`} />
+                      )}
+                      <span className="text-sm font-medium">{item.label}</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm font-semibold">{formatValue(item.value)}</span>
+                      {item.percentage !== undefined && (
+                        <span className="text-xs text-muted-foreground w-12 text-right">
+                          {item.percentage.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {item.percentage !== undefined && item.value > 0 && (
+                    <Progress value={item.percentage} className="h-2" />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Chart Visualization */}
+            <div className="pt-4 border-t">
+              <h4 className="font-semibold text-lg mb-3">Distribution</h4>
+              <div className="flex flex-wrap gap-2">
+                {breakdown.filter(item => item.value > 0 && !item.label.includes("──")).map((item, index) => {
+                  const percentage = item.percentage || (totalBreakdownValue > 0 ? (item.value / totalBreakdownValue) * 100 : 0);
+                  return (
+                    <div
+                      key={index}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50"
+                    >
+                      {item.color && item.color !== "bg-transparent" && (
+                        <div className={`w-2 h-2 rounded-full ${item.color}`} />
+                      )}
+                      <span className="text-xs">{item.label}</span>
+                      <span className="text-xs font-medium">{percentage.toFixed(1)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+                Close
+              </Button>
+              {onViewDetails && (
+                <Button onClick={() => {
+                  setIsDialogOpen(false);
+                  onViewDetails();
+                }}>
+                  View All {title}
+                </Button>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// ── New Plan Form Data Interface ──────────────────────────────────────────────
+
+interface NewPlanData {
+  name: string;
+  price: string;
+  duration: string;
+  timeUnit: string;
+  description: string;
+  features: string[];
+}
+
+// Helper function to safely get features as string array
+const getFeaturesAsArray = (features: any): string[] => {
+  if (!features) return [];
+  if (Array.isArray(features)) {
+    return features.map(f => typeof f === 'string' ? f : String(f));
+  }
+  if (typeof features === 'string') {
+    return features.split(',').map(f => f.trim()).filter(f => f);
+  }
+  if (typeof features === 'object') {
+    try {
+      return Object.values(features).map(v => String(v));
+    } catch {
+      return [String(features)];
+    }
+  }
+  return [String(features)];
+};
+
+// ── New Plan Modal/Drawer Component ──────────────────────────────────────────
+
+interface NewPlanModalDrawerProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSuccess?: () => void;
+  userId?: string;
+}
+
+function NewPlanModalDrawer({ open, onOpenChange, onSuccess, userId }: NewPlanModalDrawerProps) {
+  const isMobile = useIsMobile();
+  const [isLoading, setIsLoading] = useState(false);
+  const [formData, setFormData] = useState<NewPlanData>({
+    name: "",
+    price: "",
+    duration: "",
+    timeUnit: "days",
+    description: "",
+    features: [],
+  });
+  const [featureInput, setFeatureInput] = useState("");
+
+  const handleAddFeature = () => {
+    if (featureInput.trim()) {
+      setFormData(prev => ({
+        ...prev,
+        features: [...prev.features, featureInput.trim()]
+      }));
+      setFeatureInput("");
+    }
+  };
+
+  const handleRemoveFeature = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      features: prev.features.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!formData.name.trim()) {
+      toast.error("Plan name is required");
+      return;
+    }
+    if (!formData.price || parseFloat(formData.price) <= 0) {
+      toast.error("Valid price is required");
+      return;
+    }
+    if (!formData.duration || parseInt(formData.duration) <= 0) {
+      toast.error("Valid duration is required");
+      return;
+    }
+    if (!userId) {
+      toast.error("User authentication required. Please log in again.");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const payload = {
+        name: formData.name.trim(),
+        price: parseFloat(formData.price),
+        duration: parseInt(formData.duration),
+        time_unit: formData.timeUnit,
+        description: formData.description || generateDescriptionForPlan(formData.name, parseFloat(formData.price), parseInt(formData.duration), formData.timeUnit),
+        features: formData.features.length > 0 ? formData.features : generateFeaturesForPlan(formData.name, parseInt(formData.duration), formData.timeUnit),
+        user_id: userId,
+        status: "active"
+      };
+
+      const response = await AxiosInstance.post("/admin-boosting/create_boost_plan/", payload, {
+        headers: { "X-User-Id": userId },
+      });
+
+      if (response.data.success) {
+        toast.success(response.data.message || "Boost plan created successfully!");
+        setFormData({
+          name: "",
+          price: "",
+          duration: "",
+          timeUnit: "days",
+          description: "",
+          features: [],
+        });
+        onOpenChange(false);
+        if (onSuccess) onSuccess();
+      } else {
+        toast.error(response.data.message || "Failed to create boost plan");
+      }
+    } catch (error: any) {
+      console.error('Error creating boost plan:', error);
+      toast.error(error.response?.data?.message || error.response?.data?.error || "Failed to create boost plan");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const formContent = (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="plan-name" className="flex items-center gap-2">
+          <Tag className="w-4 h-4" />
+          Plan Name *
+        </Label>
+        <Input
+          id="plan-name"
+          value={formData.name}
+          onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+          placeholder="e.g., Basic Boost, Premium Boost, Ultimate Boost"
+          required
+          maxLength={50}
+          disabled={isLoading}
+        />
+        <p className="text-xs text-muted-foreground">
+          Maximum 50 characters. {50 - formData.name.length} remaining.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="price" className="flex items-center gap-2">
+            <Wallet className="w-4 h-4" />
+            Price (₱) *
+          </Label>
+          <Input
+            id="price"
+            type="number"
+            step="0.01"
+            min="0"
+            value={formData.price}
+            onChange={(e) => setFormData(prev => ({ ...prev, price: e.target.value }))}
+            placeholder="0.00"
+            required
+            disabled={isLoading}
+          />
+        </div>
+        
+        <div className="space-y-2">
+          <Label htmlFor="duration" className="flex items-center gap-2">
+            <Clock className="w-4 h-4" />
+            Duration *
+          </Label>
+          <div className="flex gap-2">
+            <Input
+              id="duration"
+              type="number"
+              min="1"
+              value={formData.duration}
+              onChange={(e) => setFormData(prev => ({ ...prev, duration: e.target.value }))}
+              placeholder="1"
+              required
+              className="flex-1"
+              disabled={isLoading}
+            />
+            <Select
+              value={formData.timeUnit}
+              onValueChange={(value) => setFormData(prev => ({ ...prev, timeUnit: value }))}
+              disabled={isLoading}
+            >
+              <SelectTrigger className="w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hours">Hours</SelectItem>
+                <SelectItem value="days">Days</SelectItem>
+                <SelectItem value="weeks">Weeks</SelectItem>
+                <SelectItem value="months">Months</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="description">Description (Optional)</Label>
+        <Textarea
+          id="description"
+          value={formData.description}
+          onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+          placeholder="Describe what this boost plan offers..."
+          rows={3}
+          disabled={isLoading}
+        />
+        <p className="text-xs text-muted-foreground">
+          Leave empty for auto-generated description based on plan name.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Features (Optional)</Label>
+        <div className="flex gap-2">
+          <Input
+            value={featureInput}
+            onChange={(e) => setFeatureInput(e.target.value)}
+            placeholder="Add a feature (e.g., 'Top search placement')"
+            onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddFeature())}
+            disabled={isLoading}
+            className="flex-1"
+          />
+          <Button type="button" onClick={handleAddFeature} disabled={isLoading || !featureInput.trim()}>
+            Add
+          </Button>
+        </div>
+        
+        {formData.features.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {formData.features.map((feature, index) => (
+              <div key={index} className="flex items-center justify-between p-2 bg-muted/50 rounded-lg">
+                <span className="text-sm">{feature}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleRemoveFeature(index)}
+                  disabled={isLoading}
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Add custom features for this plan. Leave empty for auto-generated features based on plan name.
+        </p>
+      </div>
+    </form>
+  );
+
+  if (!isMobile) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[600px] max-w-[95vw] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-yellow-500" />
+              Create New Boost Plan
+            </DialogTitle>
+            <DialogDescription>
+              Create a new boost plan for products. Set pricing, duration, and features.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {formContent}
+          
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
+              Cancel
+            </Button>
+            <Button onClick={handleSubmit} disabled={isLoading} className="gap-2">
+              {isLoading ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Create Plan
+                </>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      <DrawerContent className="max-h-[90vh]">
+        <DrawerHeader>
+          <DrawerTitle className="flex items-center gap-2">
+            <Zap className="w-5 h-5 text-yellow-500" />
+            Create New Boost Plan
+          </DrawerTitle>
+          <DrawerDescription>
+            Create a new boost plan for products. Set pricing, duration, and features.
+          </DrawerDescription>
+        </DrawerHeader>
+        
+        <div className="px-4 overflow-y-auto flex-1">
+          {formContent}
+        </div>
+        
+        <DrawerFooter className="flex-row justify-end gap-3">
+          <DrawerClose asChild>
+            <Button variant="outline" disabled={isLoading}>Cancel</Button>
+          </DrawerClose>
+          <Button onClick={handleSubmit} disabled={isLoading} className="gap-2">
+            {isLoading ? (
+              <>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                Creating...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                Create Plan
+              </>
+            )}
+          </Button>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
 // Helper function to normalize status
 const normalizeBoostStatus = (status: string): string => {
   if (!status) return 'Unknown';
@@ -156,7 +713,6 @@ const normalizeBoostStatus = (status: string): string => {
   }
 };
 
-// Helper function to normalize boost plan status
 const normalizePlanStatus = (status: string): string => {
   if (!status) return 'Unknown';
   const lowerStatus = status.toLowerCase();
@@ -178,7 +734,6 @@ const normalizePlanStatus = (status: string): string => {
   }
 };
 
-// Helper function to get boost status badge styling
 const getBoostStatusConfig = (status: string) => {
   const normalizedStatus = normalizeBoostStatus(status);
   
@@ -235,7 +790,6 @@ const getBoostStatusConfig = (status: string) => {
   }
 };
 
-// Helper function to get plan status badge styling
 const getPlanStatusConfig = (status: string) => {
   const normalizedStatus = normalizePlanStatus(status);
   
@@ -278,7 +832,6 @@ const getPlanStatusConfig = (status: string) => {
   }
 };
 
-// Boost Status Badge Component
 function BoostStatusBadge({ status }: { status: string }) {
   const config = getBoostStatusConfig(status);
   const Icon = config.icon;
@@ -294,7 +847,6 @@ function BoostStatusBadge({ status }: { status: string }) {
   );
 }
 
-// Plan Status Badge Component
 function PlanStatusBadge({ status }: { status: string }) {
   const config = getPlanStatusConfig(status);
   const Icon = config.icon;
@@ -310,7 +862,6 @@ function PlanStatusBadge({ status }: { status: string }) {
   );
 }
 
-// Helper functions
 function generateFeaturesForPlan(name: string, duration: number, timeUnit: string): string[] {
   const baseFeatures = [
     'Featured placement in category',
@@ -369,8 +920,6 @@ function calculateRevenueForPlan(price: number, usageCount: number): number {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
-
-
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
 
@@ -387,7 +936,6 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
   const { user } = loaderData;
 
-  // State management
   const [boosts, setBoosts] = useState<Boost[]>([]);
   const [boostPlans, setBoostPlans] = useState<BoostPlan[]>([]);
   const [boostMetrics, setBoostMetrics] = useState<BoostMetrics>({
@@ -403,13 +951,13 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
     archived_plans: 0
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [isNewPlanOpen, setIsNewPlanOpen] = useState(false);
   const [dateRange, setDateRange] = useState({
     start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
     end: new Date(),
     rangeType: 'weekly' as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
   });
 
-  // Fetch data function
   const fetchBoostData = async (start: Date, end: Date, rangeType: string = 'weekly') => {
     try {
       setIsLoading(true);
@@ -468,8 +1016,8 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
           duration: plan.duration,
           timeUnit: (plan.time_unit as 'hours' | 'days' | 'weeks' | 'months') || 'days',
           status: plan.status,
-          description: generateDescriptionForPlan(plan.name, plan.price, plan.duration, plan.time_unit),
-          features: generateFeaturesForPlan(plan.name, plan.duration, plan.time_unit),
+          description: plan.description || generateDescriptionForPlan(plan.name, plan.price, plan.duration, plan.time_unit),
+          features: getFeaturesAsArray(plan.features || generateFeaturesForPlan(plan.name, plan.duration, plan.time_unit)),
           usageCount: plan.usage_count || 0,
           revenue: calculateRevenueForPlan(plan.price, plan.usage_count),
           createdBy: plan.user_name || 'Admin',
@@ -480,7 +1028,6 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
         }));
         setBoostPlans(transformedPlans);
 
-        // Fix: Compare normalized statuses for consistency
         const normalizedPlans = transformedPlans.map((plan: BoostPlan) => ({
           ...plan,
           normalizedStatus: normalizePlanStatus(plan.status)
@@ -518,12 +1065,10 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
     }
   };
 
-  // Initial data fetch
   useEffect(() => {
     fetchBoostData(dateRange.start, dateRange.end, dateRange.rangeType);
   }, []);
 
-  // Handle date range change
   const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
     setDateRange({
       start: range.start,
@@ -533,7 +1078,6 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
     fetchBoostData(range.start, range.end, range.rangeType);
   };
 
-  // Function to update boost status
   const updateBoostStatus = async (boostId: string, actionType: string, reason?: string) => {
     setIsLoading(true);
     try {
@@ -552,8 +1096,6 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
 
       if (response.data.success || response.data.message) {
         toast.success(response.data.message || 'Boost status updated successfully');
-        
-        // Refresh the boosts data
         await fetchBoostData(dateRange.start, dateRange.end, dateRange.rangeType);
         return true;
       } else {
@@ -562,21 +1104,13 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
       }
     } catch (error: any) {
       console.error('Error updating boost status:', error);
-      
-      if (error.response?.data?.error) {
-        toast.error(error.response.data.error);
-      } else if (error.response?.data?.message) {
-        toast.error(error.response.data.message);
-      } else {
-        toast.error('Failed to update boost status');
-      }
+      toast.error(error.response?.data?.error || error.response?.data?.message || 'Failed to update boost status');
       return false;
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Function to update boost plan status
   const updateBoostPlanStatus = async (planId: string, actionType: string) => {
     setIsLoading(true);
     try {
@@ -594,8 +1128,6 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
 
       if (response.data.success || response.data.message) {
         toast.success(response.data.message || 'Boost plan status updated successfully');
-        
-        // Refresh the boost plans data
         await fetchBoostData(dateRange.start, dateRange.end, dateRange.rangeType);
         return true;
       } else {
@@ -604,28 +1136,153 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
       }
     } catch (error: any) {
       console.error('Error updating boost plan status:', error);
-      
-      if (error.response?.data?.error) {
-        toast.error(error.response.data.error);
-      } else if (error.response?.data?.message) {
-        toast.error(error.response.data.message);
-      } else {
-        toast.error('Failed to update boost plan status');
-      }
+      toast.error(error.response?.data?.error || error.response?.data?.message || 'Failed to update boost plan status');
       return false;
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Format percentage for display
   const formatPercentage = (value: number) => {
     if (value === undefined || value === null) return 'N/A';
     return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
   };
 
-  // Get growth metrics
   const growthMetrics = boostMetrics.growth_metrics || {};
+
+  // Calculate breakdowns for metrics
+  const calculateTotalBoostsBreakdown = () => {
+    const statusBreakdown: Record<string, number> = {};
+    const typeBreakdown: Record<string, number> = {};
+
+    boosts.forEach((boost) => {
+      const status = normalizeBoostStatus(boost.status);
+      statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
+      
+      const type = boost.boostType;
+      typeBreakdown[type] = (typeBreakdown[type] || 0) + 1;
+    });
+
+    const totalBoosts = boostMetrics.total_boosts || boosts.length;
+
+    return {
+      byStatus: Object.entries(statusBreakdown).map(([label, value]) => ({
+        label,
+        value,
+        percentage: totalBoosts > 0 ? (value / totalBoosts) * 100 : 0,
+        color: 
+          label === "Active" ? "bg-green-500" :
+          label === "Pending" ? "bg-yellow-500" :
+          label === "Expired" ? "bg-gray-500" :
+          label === "Cancelled" ? "bg-red-500" :
+          label === "Suspended" ? "bg-amber-500" :
+          label === "Completed" ? "bg-blue-500" : "bg-gray-500",
+      })),
+      byType: Object.entries(typeBreakdown).map(([label, value]) => ({
+        label,
+        value,
+        percentage: totalBoosts > 0 ? (value / totalBoosts) * 100 : 0,
+        color:
+          label === "Starter Boost" ? "bg-emerald-500" :
+          label === "Basic Boost" ? "bg-blue-500" :
+          label === "Premium Boost" ? "bg-purple-500" :
+          label === "Ultimate Boost" ? "bg-orange-500" :
+          label === "Pro Boost" ? "bg-red-500" : "bg-gray-500",
+      })),
+    };
+  };
+
+  const calculateRevenueBreakdown = () => {
+    const revenueByStatus: Record<string, number> = {};
+    const revenueByType: Record<string, number> = {};
+
+    boosts.forEach((boost) => {
+      const status = normalizeBoostStatus(boost.status);
+      revenueByStatus[status] = (revenueByStatus[status] || 0) + boost.cost;
+      
+      const type = boost.boostType;
+      revenueByType[type] = (revenueByType[type] || 0) + boost.cost;
+    });
+
+    const totalRevenue = boostMetrics.total_revenue || boosts.reduce((sum, b) => sum + b.cost, 0);
+
+    return {
+      byStatus: Object.entries(revenueByStatus).map(([label, value]) => ({
+        label,
+        value,
+        percentage: totalRevenue > 0 ? (value / totalRevenue) * 100 : 0,
+        color: 
+          label === "Active" ? "bg-green-500" :
+          label === "Pending" ? "bg-yellow-500" :
+          label === "Expired" ? "bg-gray-500" :
+          label === "Cancelled" ? "bg-red-500" :
+          label === "Suspended" ? "bg-amber-500" :
+          label === "Completed" ? "bg-blue-500" : "bg-gray-500",
+      })),
+      byType: Object.entries(revenueByType).map(([label, value]) => ({
+        label,
+        value,
+        percentage: totalRevenue > 0 ? (value / totalRevenue) * 100 : 0,
+        color:
+          label === "Starter Boost" ? "bg-emerald-500" :
+          label === "Basic Boost" ? "bg-blue-500" :
+          label === "Premium Boost" ? "bg-purple-500" :
+          label === "Ultimate Boost" ? "bg-orange-500" :
+          label === "Pro Boost" ? "bg-red-500" : "bg-gray-500",
+      })),
+    };
+  };
+
+  const calculateActivePlansBreakdown = () => {
+    const statusBreakdown: Record<string, number> = {};
+    
+    boostPlans.forEach((plan) => {
+      const status = normalizePlanStatus(plan.status);
+      statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
+    });
+
+    const totalPlans = boostPlans.length;
+
+    return {
+      byStatus: Object.entries(statusBreakdown).map(([label, value]) => ({
+        label,
+        value,
+        percentage: totalPlans > 0 ? (value / totalPlans) * 100 : 0,
+        color:
+          label === "Active" ? "bg-green-500" :
+          label === "Inactive" ? "bg-gray-500" :
+          label === "Archived" ? "bg-purple-500" :
+          label === "Removed" ? "bg-rose-500" : "bg-gray-500",
+      })),
+    };
+  };
+
+  const calculatePlanRevenueBreakdown = () => {
+    const revenueByPlan: Record<string, number> = {};
+    
+    boostPlans.forEach((plan) => {
+      revenueByPlan[plan.name] = (revenueByPlan[plan.name] || 0) + plan.revenue;
+    });
+
+    const totalPlanRevenue = boostPlans.reduce((sum, p) => sum + p.revenue, 0);
+    const sortedPlans = Object.entries(revenueByPlan)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+
+    return {
+      byPlan: sortedPlans.map(([label, value]) => ({
+        label,
+        value,
+        percentage: totalPlanRevenue > 0 ? (value / totalPlanRevenue) * 100 : 0,
+        color: "bg-yellow-500",
+      })),
+    };
+  };
+
+  const totalBoostsBreakdown = calculateTotalBoostsBreakdown();
+  const revenueBreakdown = calculateRevenueBreakdown();
+  const activePlansBreakdown = calculateActivePlansBreakdown();
+  const planRevenueBreakdown = calculatePlanRevenueBreakdown();
 
   const boostFilterConfig = {
     status: {
@@ -677,7 +1334,7 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <h1 className="text-2xl sm:text-3xl font-bold">Boosts Management</h1>
-              <Button className="gap-2 w-full sm:w-auto">
+              <Button onClick={() => setIsNewPlanOpen(true)} className="gap-2 w-full sm:w-auto">
                 <Plus className="w-4 h-4" />
                 Create First Boost Plan
               </Button>
@@ -697,13 +1354,20 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
                 <p className="text-sm text-muted-foreground text-center mb-6 max-w-md">
                   You haven't created any boost plans yet. Boost plans help sellers increase their product visibility.
                 </p>
-                <Button className="gap-2">
+                <Button onClick={() => setIsNewPlanOpen(true)} className="gap-2">
                   <Plus className="w-4 h-4" />
                   Create Your First Boost Plan
                 </Button>
               </CardContent>
             </Card>
           </div>
+
+          <NewPlanModalDrawer
+            open={isNewPlanOpen}
+            onOpenChange={setIsNewPlanOpen}
+            onSuccess={() => fetchBoostData(dateRange.start, dateRange.end, dateRange.rangeType)}
+            userId={user?.id || user?.user_id}
+          />
         </SidebarLayout>
       </UserProvider>
     );
@@ -732,87 +1396,69 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
               </>
             ) : (
               <>
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Total Boosts</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">{boostMetrics.total_boosts}</p>
-                        {!isLoading && growthMetrics.boost_growth !== undefined && (
-                          <div className={`flex items-center gap-1 mt-2 text-sm ${
-                            growthMetrics.boost_growth >= 0 ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                            <span>{formatPercentage(growthMetrics.boost_growth)}</span>
-                            <span className="text-xs text-muted-foreground">
-                              vs previous {growthMetrics.period_days || 7} days
-                            </span>
-                          </div>
-                        )}
-                        <p className="text-xs text-muted-foreground mt-2">{boostMetrics.active_boosts} active</p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
-                        <Zap className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <InteractiveNumberCard
+                  title="Total Boosts"
+                  value={boostMetrics.total_boosts || boosts.length}
+                  icon={<Zap className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-blue-600"
+                  growth={growthMetrics.boost_growth}
+                  periodDays={growthMetrics.period_days}
+                  subtitle={`${boostMetrics.active_boosts} active boosts`}
+                  breakdown={[
+                    { label: "By Status", value: boostMetrics.total_boosts || boosts.length, color: "bg-blue-500" },
+                    ...totalBoostsBreakdown.byStatus,
+                    { label: "──────────", value: 0, color: "bg-transparent" },
+                    { label: "By Type", value: boostMetrics.total_boosts || boosts.length, color: "bg-blue-500" },
+                    ...totalBoostsBreakdown.byType,
+                  ]}
+                  totalLabel="Total Boosts"
+                />
 
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Total Revenue</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">₱{boostMetrics.total_revenue.toLocaleString()}</p>
-                        {!isLoading && growthMetrics.revenue_growth !== undefined && (
-                          <div className={`flex items-center gap-1 mt-2 text-sm ${
-                            growthMetrics.revenue_growth >= 0 ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                            <span>{formatPercentage(growthMetrics.revenue_growth)}</span>
-                            <span className="text-xs text-muted-foreground">
-                              vs previous {growthMetrics.period_days || 7} days
-                            </span>
-                          </div>
-                        )}
-                        <p className="text-xs text-muted-foreground mt-2">From all boosts</p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-green-100 rounded-full">
-                        <PhilippinePeso className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <InteractiveNumberCard
+                  title="Total Revenue"
+                  value={boostMetrics.total_revenue || boosts.reduce((sum, b) => sum + b.cost, 0)}
+                  icon={<PhilippinePeso className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-green-600"
+                  suffix=""
+                  growth={growthMetrics.revenue_growth}
+                  periodDays={growthMetrics.period_days}
+                  subtitle="From all boosts"
+                  breakdown={[
+                    { label: "By Status", value: boostMetrics.total_revenue || boosts.reduce((sum, b) => sum + b.cost, 0), color: "bg-green-500" },
+                    ...revenueBreakdown.byStatus,
+                    { label: "──────────", value: 0, color: "bg-transparent" },
+                    { label: "By Type", value: boostMetrics.total_revenue || boosts.reduce((sum, b) => sum + b.cost, 0), color: "bg-green-500" },
+                    ...revenueBreakdown.byType,
+                  ]}
+                  totalLabel="Total Revenue"
+                />
 
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Active Plans</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">{plansSummary.active_plans}</p>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          {plansSummary.inactive_plans} inactive, {plansSummary.archived_plans} archived
-                        </p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
-                        <Package className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <InteractiveNumberCard
+                  title="Active Plans"
+                  value={plansSummary.active_plans}
+                  icon={<Package className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-purple-600"
+                  subtitle={`${plansSummary.inactive_plans} inactive, ${plansSummary.archived_plans} archived`}
+                  breakdown={[
+                    { label: "By Status", value: boostPlans.length, color: "bg-purple-500" },
+                    ...activePlansBreakdown.byStatus,
+                  ]}
+                  totalLabel="Total Plans"
+                />
 
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Plan Revenue</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">₱{totalPlansRevenue.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground mt-2">Total from all plans</p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
-                        <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <InteractiveNumberCard
+                  title="Plan Revenue"
+                  value={totalPlansRevenue}
+                  icon={<TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-yellow-600"
+                  suffix=""
+                  subtitle="Total from all plans"
+                  breakdown={[
+                    { label: "Top Plans by Revenue", value: totalPlansRevenue, color: "bg-yellow-500" },
+                    ...planRevenueBreakdown.byPlan.slice(0, 5),
+                  ]}
+                  totalLabel="Total Plan Revenue"
+                />
               </>
             )}
           </div>
@@ -825,7 +1471,7 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
                   {boostPlans.length} total
                 </Badge>
               </div>
-              <Button size="sm" className="gap-2">
+              <Button onClick={() => setIsNewPlanOpen(true)} size="sm" className="gap-2">
                 <Plus className="h-4 w-4" />
                 New Plan
               </Button>
@@ -848,8 +1494,8 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {boostPlans.map((plan) => {
-                  // Get normalized status for display and comparison
                   const normalizedStatus = normalizePlanStatus(plan.status);
+                  const safeFeatures = getFeaturesAsArray(plan.features);
                   
                   return (
                   <Card key={plan.id} className="overflow-hidden hover:shadow-md transition-shadow">
@@ -926,22 +1572,22 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
                           </div>
                         </div>
 
-                        {plan.features && plan.features.length > 0 && (
+                        {safeFeatures && safeFeatures.length > 0 && (
                           <div className="space-y-1">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-medium">Includes:</span>
                               <span className="text-xs text-blue-600">
-                                {plan.features.length} features
+                                {safeFeatures.length} features
                               </span>
                             </div>
                             <div className="flex flex-wrap gap-1">
-                              {plan.features.slice(0, 3).map((feature, index) => (
+                              {safeFeatures.slice(0, 3).map((feature, index) => (
                                 <Badge 
                                   key={index} 
                                   variant="secondary" 
                                   className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700"
                                 >
-                                  {feature.split(' ')[0]}
+                                  {typeof feature === 'string' ? (feature.split(' ')[0] || feature.substring(0, 15)) : String(feature).substring(0, 15)}
                                 </Badge>
                               ))}
                             </div>
@@ -1006,6 +1652,13 @@ export default function Boosts({ loaderData }: { loaderData: LoaderData }) {
             </CardContent>
           </Card>
         </div>
+
+        <NewPlanModalDrawer
+          open={isNewPlanOpen}
+          onOpenChange={setIsNewPlanOpen}
+          onSuccess={() => fetchBoostData(dateRange.start, dateRange.end, dateRange.rangeType)}
+          userId={user?.id || user?.user_id}
+        />
       </SidebarLayout>
     </UserProvider>
   );
@@ -1218,7 +1871,6 @@ const columns: ColumnDef<Boost>[] = [
         }
 
         try {
-          // Get user ID from localStorage or global context
           const sessionUserId = localStorage.getItem('userId') || 
                                (window as any).user?.id || 
                                '';
@@ -1234,7 +1886,6 @@ const columns: ColumnDef<Boost>[] = [
           
           if (response.data.success || response.data.message) {
             toast.success(response.data.message || 'Boost status updated successfully');
-            // Trigger a page refresh or data reload
             window.location.reload();
           } else {
             toast.error(response.data.error || 'Failed to update boost status');
@@ -1245,35 +1896,29 @@ const columns: ColumnDef<Boost>[] = [
         }
       };
 
-      // Function to determine available actions based on boost state
       const getAvailableActions = () => {
         const actions = [];
         const normalizedStatus = normalizeBoostStatus(boost.status);
         
-        // Active boosts
         if (normalizedStatus === 'Active') {
           actions.push({ label: 'Suspend Boost', action: 'suspend', variant: 'destructive' as const });
           actions.push({ label: 'Cancel Boost', action: 'cancel', variant: 'destructive' as const });
         }
         
-        // Pending boosts
         if (normalizedStatus === 'Pending') {
           actions.push({ label: 'Approve Boost', action: 'approve', variant: 'default' as const });
           actions.push({ label: 'Reject Boost', action: 'reject', variant: 'destructive' as const });
         }
         
-        // Suspended boosts
         if (normalizedStatus === 'Suspended') {
           actions.push({ label: 'Resume Boost', action: 'resume', variant: 'default' as const });
           actions.push({ label: 'Cancel Boost', action: 'cancel', variant: 'destructive' as const });
         }
         
-        // Expired boosts
         if (normalizedStatus === 'Expired') {
           actions.push({ label: 'Renew Boost', action: 'renew', variant: 'default' as const });
         }
         
-        // Cancelled boosts
         if (normalizedStatus === 'Cancelled') {
           actions.push({ label: 'Restore Boost', action: 'restore', variant: 'default' as const });
         }
@@ -1302,7 +1947,7 @@ const columns: ColumnDef<Boost>[] = [
                 {actions.map((action) => (
                   <SelectItem key={action.action} value={action.action}>
                     {action.label}
-                </SelectItem>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>

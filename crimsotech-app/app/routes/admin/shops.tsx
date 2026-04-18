@@ -32,6 +32,9 @@ import {
   Clock,
   AlertCircle,
   MoreHorizontal,
+  TrendingUp,
+  TrendingDown,
+  Zap,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import AxiosInstance from "~/components/axios/Axios";
@@ -53,6 +56,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "~/components/ui/dialog";
+import { Progress } from "~/components/ui/progress";
 
 export function meta(): Route.MetaDescriptors {
   return [{ title: "Shops | Admin" }];
@@ -101,6 +112,171 @@ interface ShopMetrics {
 
 interface LoaderData {
   user: any;
+}
+
+// ── Interactive Number Card Component ─────────────────────────────────────────
+
+interface InteractiveNumberCardProps {
+  title: string;
+  value: number;
+  icon: React.ReactNode;
+  color: string;
+  breakdown: {
+    label: string;
+    value: number;
+    percentage?: number;
+    color?: string;
+  }[];
+  totalLabel?: string;
+  onViewDetails?: () => void;
+  suffix?: string;
+}
+
+function InteractiveNumberCard({
+  title,
+  value,
+  icon,
+  color,
+  breakdown,
+  totalLabel = "Total",
+  onViewDetails,
+  suffix = "",
+}: InteractiveNumberCardProps) {
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  const handleClick = () => {
+    setIsDialogOpen(true);
+    if (onViewDetails) onViewDetails();
+  };
+
+  const totalBreakdownValue = breakdown.reduce((sum, item) => sum + (item.value || 0), 0);
+
+  // Safely format number with fallback
+  const formatValue = (val: number) => {
+    if (val === undefined || val === null) return "0";
+    return val.toLocaleString();
+  };
+
+  return (
+    <>
+      <Card
+        className="cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95"
+        onClick={handleClick}
+      >
+        <CardContent className="p-4 sm:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">{title}</p>
+              <p className="text-xl sm:text-2xl font-bold mt-1">
+                {formatValue(value)}{suffix}
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">Click for breakdown</p>
+            </div>
+            <div className={`p-2 sm:p-3 ${color} rounded-full`}>
+              {icon}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="sm:max-w-2xl max-w-[95vw] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <div className={`p-2 ${color} rounded-full`}>
+                {icon}
+              </div>
+              {title} Breakdown
+            </DialogTitle>
+            <DialogDescription>
+              Detailed breakdown of {title.toLowerCase()} - Total: {formatValue(value)}{suffix}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-4 space-y-6">
+            {/* Summary Card */}
+            <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg p-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Overall {title}</p>
+                  <p className="text-3xl font-bold">{formatValue(value)}{suffix}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-muted-foreground">{totalLabel}</p>
+                  <p className="text-sm font-medium">{formatValue(totalBreakdownValue)} accounted</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Breakdown List */}
+            <div className="space-y-3">
+              <h4 className="font-semibold text-lg">Breakdown</h4>
+              {breakdown.filter(item => item.value > 0 || item.label.includes("──")).map((item, index) => (
+                <div key={index} className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      {item.color && item.color !== "bg-transparent" && (
+                        <div className={`w-3 h-3 rounded-full ${item.color}`} />
+                      )}
+                      <span className="text-sm font-medium">{item.label}</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm font-semibold">{formatValue(item.value)}</span>
+                      {item.percentage !== undefined && (
+                        <span className="text-xs text-muted-foreground w-12 text-right">
+                          {item.percentage.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {item.percentage !== undefined && item.value > 0 && (
+                    <Progress value={item.percentage} className="h-2" />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Chart Visualization */}
+            <div className="pt-4 border-t">
+              <h4 className="font-semibold text-lg mb-3">Distribution</h4>
+              <div className="flex flex-wrap gap-2">
+                {breakdown.filter(item => item.value > 0 && !item.label.includes("──")).map((item, index) => {
+                  const percentage = item.percentage || (totalBreakdownValue > 0 ? (item.value / totalBreakdownValue) * 100 : 0);
+                  return (
+                    <div
+                      key={index}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50"
+                    >
+                      {item.color && item.color !== "bg-transparent" && (
+                        <div className={`w-2 h-2 rounded-full ${item.color}`} />
+                      )}
+                      <span className="text-xs">{item.label}</span>
+                      <span className="text-xs font-medium">{percentage.toFixed(1)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+                Close
+              </Button>
+              {onViewDetails && (
+                <Button onClick={() => {
+                  setIsDialogOpen(false);
+                  onViewDetails();
+                }}>
+                  View All {title}
+                </Button>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
 
 // ── Action configs ─────────────────────────────────────────────────────────────
@@ -516,7 +692,7 @@ function ActionsCell({
                     {normalizeShopStatus(shop.status)}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
-                    {shop.followers?.toLocaleString() || 0} followers
+                    {(shop.followers || 0).toLocaleString()} followers
                   </span>
                 </div>
               </div>
@@ -722,7 +898,7 @@ function buildColumns(
       cell: ({ row }) => (
         <div className="flex items-center gap-1 text-sm whitespace-nowrap">
           <Users className="w-3.5 h-3.5 text-muted-foreground" />
-          {(row.getValue("followers") as number).toLocaleString()}
+          {((row.getValue("followers") as number) || 0).toLocaleString()}
         </div>
       ),
     },
@@ -740,7 +916,7 @@ function buildColumns(
       cell: ({ row }) => (
         <div className="flex items-center gap-1 text-sm whitespace-nowrap">
           <Package className="w-3.5 h-3.5 text-muted-foreground" />
-          {row.getValue("products") as number}
+          {(row.getValue("products") as number) || 0}
         </div>
       ),
     },
@@ -749,19 +925,20 @@ function buildColumns(
       header: "Rating",
       cell: ({ row }) => {
         const shop = row.original;
+        const rating = shop.rating || 0;
         return (
           <div className="space-y-0.5">
             <div className="flex items-center gap-1">
               <Star
-                className={`w-4 h-4 ${shop.rating > 0 ? "text-yellow-500 fill-current" : "text-gray-300"}`}
+                className={`w-4 h-4 ${rating > 0 ? "text-yellow-500 fill-current" : "text-gray-300"}`}
               />
               <span className="text-sm">
-                {shop.rating > 0 ? shop.rating.toFixed(1) : "—"}
+                {rating > 0 ? rating.toFixed(1) : "—"}
               </span>
             </div>
-            {shop.totalRatings > 0 && (
+            {(shop.totalRatings || 0) > 0 && (
               <div className="text-xs text-muted-foreground">
-                {shop.totalRatings} review{shop.totalRatings !== 1 ? "s" : ""}
+                {shop.totalRatings || 0} review{(shop.totalRatings || 0) !== 1 ? "s" : ""}
               </div>
             )}
           </div>
@@ -781,7 +958,7 @@ function buildColumns(
       ),
       cell: ({ row }) => (
         <div className="font-medium text-sm whitespace-nowrap">
-          ₱{parseFloat(row.getValue("totalSales") as string).toLocaleString()}
+          ₱{((row.getValue("totalSales") as number) || 0).toLocaleString()}
         </div>
       ),
     },
@@ -867,6 +1044,11 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
           shopsResponse.data.shops.map((s: Shop) => ({
             ...s,
             status: normalizeShopStatus(s.status),
+            followers: s.followers || 0,
+            products: s.products || 0,
+            rating: s.rating || 0,
+            totalRatings: s.totalRatings || 0,
+            totalSales: s.totalSales || 0,
           })),
         );
       }
@@ -900,17 +1082,155 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
 
   const growthMetrics = shopMetrics.growth_metrics || {};
 
+  // Calculate breakdowns for each metric with safe fallbacks
+  const calculateTotalShopsBreakdown = () => {
+    const statusBreakdown: Record<string, number> = {};
+    const verificationBreakdown = {
+      "Verified": 0,
+      "Unverified": 0,
+    };
+
+    (shops || []).forEach((shop) => {
+      // Status breakdown
+      const status = normalizeShopStatus(shop.status);
+      statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
+
+      // Verification breakdown
+      if (shop.verified) {
+        verificationBreakdown["Verified"]++;
+      } else {
+        verificationBreakdown["Unverified"]++;
+      }
+    });
+
+    const totalShops = shopMetrics.total_shops || 0;
+    
+    return {
+      byStatus: Object.entries(statusBreakdown).map(([label, value]) => ({
+        label,
+        value,
+        percentage: totalShops > 0 ? (value / totalShops) * 100 : 0,
+        color: 
+          label === "Active" ? "bg-green-500" :
+          label === "Pending" ? "bg-yellow-500" :
+          label === "Suspended" ? "bg-amber-500" :
+          label === "Banned" ? "bg-red-500" :
+          label === "Deleted" ? "bg-rose-500" : "bg-gray-500",
+      })),
+      byVerification: Object.entries(verificationBreakdown).map(([label, value]) => ({
+        label,
+        value,
+        percentage: totalShops > 0 ? (value / totalShops) * 100 : 0,
+        color: label === "Verified" ? "bg-blue-500" : "bg-gray-500",
+      })),
+    };
+  };
+
+  const calculateActiveShopsBreakdown = () => {
+    const activeShopsList = (shops || []).filter(s => normalizeShopStatus(s.status) === "Active");
+    const byVerification = {
+      "Verified": activeShopsList.filter(s => s.verified).length,
+      "Unverified": activeShopsList.filter(s => !s.verified).length,
+    };
+    const activeShops = shopMetrics.active_shops || 0;
+
+    return {
+      byVerification: Object.entries(byVerification).map(([label, value]) => ({
+        label,
+        value,
+        percentage: activeShops > 0 ? (value / activeShops) * 100 : 0,
+        color: label === "Verified" ? "bg-blue-500" : "bg-gray-500",
+      })),
+    };
+  };
+
+  const calculateFollowersBreakdown = () => {
+    const byRange = {
+      "0-100": 0,
+      "101-500": 0,
+      "501-1000": 0,
+      "1001-5000": 0,
+      "5000+": 0,
+    };
+
+    (shops || []).forEach((shop) => {
+      const followers = shop.followers || 0;
+      if (followers <= 100) byRange["0-100"]++;
+      else if (followers <= 500) byRange["101-500"]++;
+      else if (followers <= 1000) byRange["501-1000"]++;
+      else if (followers <= 5000) byRange["1001-5000"]++;
+      else byRange["5000+"]++;
+    });
+
+    const totalShops = shops.length || 1;
+    
+    return {
+      byRange: Object.entries(byRange).map(([label, value]) => ({
+        label,
+        value,
+        percentage: (value / totalShops) * 100,
+        color:
+          label === "5000+" ? "bg-purple-500" :
+          label === "1001-5000" ? "bg-blue-500" :
+          label === "501-1000" ? "bg-green-500" :
+          label === "101-500" ? "bg-yellow-500" : "bg-gray-500",
+      })),
+    };
+  };
+
+  const calculateRatingBreakdown = () => {
+    const ratingRanges = {
+      "4.5-5★": 0,
+      "4-4.4★": 0,
+      "3-3.9★": 0,
+      "2-2.9★": 0,
+      "1-1.9★": 0,
+      "No Rating": 0,
+    };
+
+    (shops || []).forEach((shop) => {
+      const rating = shop.rating || 0;
+      if (rating >= 4.5) ratingRanges["4.5-5★"]++;
+      else if (rating >= 4) ratingRanges["4-4.4★"]++;
+      else if (rating >= 3) ratingRanges["3-3.9★"]++;
+      else if (rating >= 2) ratingRanges["2-2.9★"]++;
+      else if (rating >= 1) ratingRanges["1-1.9★"]++;
+      else ratingRanges["No Rating"]++;
+    });
+
+    const totalShops = shops.length || 1;
+    
+    return {
+      byRating: Object.entries(ratingRanges).map(([label, value]) => ({
+        label,
+        value,
+        percentage: (value / totalShops) * 100,
+        color:
+          label === "4.5-5★" ? "bg-yellow-500" :
+          label === "4-4.4★" ? "bg-lime-500" :
+          label === "3-3.9★" ? "bg-blue-500" :
+          label === "2-2.9★" ? "bg-orange-500" :
+          label === "1-1.9★" ? "bg-red-500" : "bg-gray-500",
+      })),
+    };
+  };
+
+  const totalShopsBreakdown = calculateTotalShopsBreakdown();
+  const activeShopsBreakdown = calculateActiveShopsBreakdown();
+  const followersBreakdown = calculateFollowersBreakdown();
+  const ratingBreakdown = calculateRatingBreakdown();
+
   const shopFilterConfig = {
     status: {
-      options: [...new Set(shops.map((s) => s.status))],
+      options: [...new Set((shops || []).map((s) => s.status))],
       placeholder: "Status",
     },
     owner: {
-      options: [...new Set(shops.map((s) => s.owner))],
+      options: [...new Set((shops || []).map((s) => s.owner))],
       placeholder: "Owner",
     },
     location: {
-      options: [...new Set(shops.map((s) => s.location))],
+      options: [...new Set((shops || []).map((s) => s.location))],
       placeholder: "Location",
     },
     verification: {
@@ -953,7 +1273,7 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
             isLoading={isLoading}
           />
 
-          {/* Key Metrics */}
+          {/* Interactive Number Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {isLoading ? (
               <>
@@ -964,91 +1284,57 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
               </>
             ) : (
               <>
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Total Shops</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">
-                          {shopMetrics.total_shops}
-                        </p>
-                        {growthMetrics.shop_growth !== undefined && (
-                          <div
-                            className={`flex items-center gap-1 mt-2 text-sm ${growthMetrics.shop_growth >= 0 ? "text-green-600" : "text-red-600"}`}
-                          >
-                            <span>{formatPercentage(growthMetrics.shop_growth)}</span>
-                            <span className="text-xs text-muted-foreground">
-                              vs previous {growthMetrics.period_days || 7} days
-                            </span>
-                          </div>
-                        )}
-                        <p className="text-xs text-muted-foreground mt-2">
-                          {shopMetrics.verified_shops} verified
-                        </p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
-                        <Store className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <InteractiveNumberCard
+                  title="Total Shops"
+                  value={shopMetrics.total_shops || 0}
+                  icon={<Store className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-blue-600"
+                  breakdown={[
+                    { label: "By Status", value: shopMetrics.total_shops || 0, color: "bg-blue-500" },
+                    ...totalShopsBreakdown.byStatus,
+                    { label: "──────────", value: 0, color: "bg-transparent" },
+                    { label: "By Verification", value: shopMetrics.total_shops || 0, color: "bg-blue-500" },
+                    ...totalShopsBreakdown.byVerification,
+                  ]}
+                  totalLabel="Total Shops"
+                />
 
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Active Shops</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1 text-green-600">
-                          {shopMetrics.active_shops}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          {shopMetrics.suspended_shops} suspended
-                        </p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-green-100 rounded-full">
-                        <Activity className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <InteractiveNumberCard
+                  title="Active Shops"
+                  value={shopMetrics.active_shops || 0}
+                  icon={<Activity className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-green-600"
+                  breakdown={[
+                    { label: "By Verification", value: shopMetrics.active_shops || 0, color: "bg-green-500" },
+                    ...activeShopsBreakdown.byVerification,
+                  ]}
+                  totalLabel="Active Shops"
+                />
 
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Total Followers</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">
-                          {shopMetrics.total_followers.toLocaleString()}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Across all shops
-                        </p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
-                        <Users className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <InteractiveNumberCard
+                  title="Total Followers"
+                  value={shopMetrics.total_followers || 0}
+                  icon={<Users className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-purple-600"
+                  breakdown={[
+                    { label: "By Follower Range", value: shops.length || 0, color: "bg-purple-500" },
+                    ...followersBreakdown.byRange,
+                  ]}
+                  totalLabel="Shops"
+                />
 
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Avg Rating</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">
-                          {shopMetrics.avg_rating.toFixed(1)}★
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Overall quality
-                        </p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
-                        <Star className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <InteractiveNumberCard
+                  title="Avg Rating"
+                  value={shopMetrics.avg_rating > 0 ? parseFloat(shopMetrics.avg_rating.toFixed(1)) : 0}
+                  icon={<Star className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-yellow-500"
+                  suffix="★"
+                  breakdown={[
+                    { label: "Rating Distribution", value: shops.length || 0, color: "bg-yellow-500" },
+                    ...ratingBreakdown.byRating,
+                  ]}
+                  totalLabel="Total Shops"
+                />
               </>
             )}
           </div>
