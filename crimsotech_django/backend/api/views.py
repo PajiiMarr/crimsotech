@@ -21183,7 +21183,7 @@ class CartListView(APIView):
             from django.db import IntegrityError
 
             with transaction.atomic():
-                # Lock the row for update to prevent race conditions
+                # First try to get an existing cart item that is NOT ordered
                 cart_item = CartItem.objects.select_for_update().filter(
                     user=user,
                     variant=variant,
@@ -21191,7 +21191,7 @@ class CartListView(APIView):
                 ).first()
                 
                 if cart_item:
-                    # Update existing
+                    # Update existing active cart item
                     new_quantity = cart_item.quantity + quantity
                     if new_quantity > variant.quantity:
                         return Response({
@@ -21203,40 +21203,71 @@ class CartListView(APIView):
                     cart_item.save()
                     created = False
                 else:
-                    # Create new
-                    cart_item = CartItem.objects.create(
+                    # Check if there's an existing item that IS ordered (from a previous order)
+                    # This is the key fix - handle the ordered items
+                    ordered_item = CartItem.objects.select_for_update().filter(
                         user=user,
                         variant=variant,
-                        product=variant.product,
-                        quantity=quantity,
-                        is_ordered=False
-                    )
-                    created = True
+                        is_ordered=True
+                    ).first()
+                    
+                    if ordered_item:
+                        # Reuse the ordered cart item - convert it back to active cart
+                        # Update its quantity and set is_ordered=False
+                        ordered_item.quantity = quantity
+                        ordered_item.is_ordered = False
+                        ordered_item.save()
+                        cart_item = ordered_item
+                        created = True  # Treat as new for the cart
+                    else:
+                        # No existing item at all, create new
+                        cart_item = CartItem.objects.create(
+                            user=user,
+                            variant=variant,
+                            product=variant.product,
+                            quantity=quantity,
+                            is_ordered=False
+                        )
+                        created = True
 
         except IntegrityError as e:
-            # Handle unique constraint violation - try fetching again
+            # Handle race condition - someone created an item between our checks
             try:
                 with transaction.atomic():
-                    cart_item = CartItem.objects.select_for_update().get(
+                    # Try to get or create with a more aggressive approach
+                    cart_item, created = CartItem.objects.get_or_create(
                         user=user,
                         variant=variant,
-                        is_ordered=False
+                        defaults={
+                            'product': variant.product,
+                            'quantity': quantity,
+                            'is_ordered': False
+                        }
                     )
-                    new_quantity = cart_item.quantity + quantity
-                    if new_quantity > variant.quantity:
-                        return Response({
-                            "error": f"Only {variant.quantity} items available. You already have {cart_item.quantity} in your cart.",
-                            "available_quantity": variant.quantity,
-                            "current_quantity": cart_item.quantity
-                        }, status=400)
-                    cart_item.quantity = new_quantity
-                    cart_item.save()
-                    created = False
-            except CartItem.DoesNotExist:
+                    
+                    if not created:
+                        # If it exists but is_ordered might be True, update it
+                        if cart_item.is_ordered:
+                            cart_item.is_ordered = False
+                            cart_item.quantity = quantity
+                            cart_item.save()
+                        else:
+                            # Normal case - update quantity
+                            new_quantity = cart_item.quantity + quantity
+                            if new_quantity > variant.quantity:
+                                return Response({
+                                    "error": f"Only {variant.quantity} items available. You already have {cart_item.quantity} in your cart.",
+                                    "available_quantity": variant.quantity,
+                                    "current_quantity": cart_item.quantity
+                                }, status=400)
+                            cart_item.quantity = new_quantity
+                            cart_item.save()
+                    created = not created  # Adjust flag
+            except Exception as nested_e:
                 return Response({
                     "success": False,
                     "error": "Failed to add item to cart",
-                    "details": str(e)
+                    "details": str(nested_e)
                 }, status=500)
         except Exception as e:
             import traceback

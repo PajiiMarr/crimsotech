@@ -150,10 +150,10 @@ const paymentMethods = [
     id: "maya",
     name: "Maya",
     description: "Pay using Maya wallet",
-    icon: "credit-card",
-    iconSet: "FontAwesome" as const,
+    icon: "wallet",  
+    iconSet: "FontAwesome5" as const,  
     iconColor: "#EA580C",
-    imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/67/Maya_Logo_2022.svg/120px-Maya_Logo_2022.svg.png",
+    imageUrl: null,  
   },
 ];
 
