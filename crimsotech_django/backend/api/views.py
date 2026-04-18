@@ -719,11 +719,13 @@ class Register(APIView):
             if customer_serializer.is_valid(raise_exception=True):
                 customer = customer_serializer.save()
                 
-                # Create wallet for the user
-                wallet = UserWallet.objects.create(
+                # Check if wallet already exists before creating
+                wallet, created = UserWallet.objects.get_or_create(
                     user=user,
-                    available_balance=Decimal('0.00'),
-                    pending_balance=Decimal('0.00')
+                    defaults={
+                        'available_balance': Decimal('0.00'),
+                        'pending_balance': Decimal('0.00')
+                    }
                 )
                 
                 return Response({
@@ -732,6 +734,7 @@ class Register(APIView):
                     "email": user.email,
                     "registration_stage": user.registration_stage,
                     "wallet_id": str(wallet.wallet_id),
+                    "wallet_created": created,
                     "message": "User registered successfully"
                 })
             
@@ -750,7 +753,7 @@ class Register(APIView):
         if serializer.is_valid(raise_exception=True):
             serializer.save()
             return Response(serializer.data)
-
+        
 class Profiling(APIView):
     def get(self, request):
         user_id = request.headers.get('X-User-Id')
