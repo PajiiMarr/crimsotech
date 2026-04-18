@@ -82,6 +82,7 @@ interface OrderDetails {
     picked_at: string | null;
     delivered_at: string | null;
     created_at: string;
+    failed_reason?: string;
   };
   payment: {
     id: string;
@@ -563,80 +564,92 @@ const handleCancelAcceptedOrder = async () => {
 
   // Get status color
   // Get status color
-  const getStatusColor = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'pending':
-        return '#F59E0B';
-      case 'pending_offer':
-        return '#F59E0B';
-      case 'accepted':
-        // Different color for waiting_for_rider (ready for pickup)
-        if (orderDetails?.order_status === 'waiting_for_rider') {
-          return '#10B981'; // Green to indicate ready for pickup
-        }
-        return '#F59E0B'; // Orange/yellow for waiting
-      case 'picked_up':
-        return '#3B82F6'; // Blue for in transit
-      case 'delivered':
+const getStatusColor = (status: string) => {
+  switch (status?.toLowerCase()) {
+    case 'pending':
+      return '#F59E0B';
+    case 'pending_offer':
+      return '#F59E0B';
+    case 'accepted':
+      if (orderDetails?.order_status === 'waiting_for_rider') {
         return '#10B981';
-      case 'cancelled':
-        return '#EF4444';
-      case 'declined':
-        return '#EF4444';
-      default:
-        return '#6B7280';
-    }
-  };
-  // Get status label
-  // Get status label
-  const getStatusLabel = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'picked_up':
-        return 'In Transit';
-      case 'pending_offer':
-        return 'Pending';
-      case 'accepted':
-        // Check if order status is rider_assigned
-        if (orderDetails?.order_status === 'rider_assigned') {
-          return 'Accepted - Waiting for pick up';
-        }
-        // Check if order status is waiting_for_rider
-        if (orderDetails?.order_status === 'waiting_for_rider') {
-          return 'Approved - Waiting';
-        }
-        return 'Accepted';
-      default:
-        return status?.charAt(0).toUpperCase() + status?.slice(1) || 'Unknown';
-    }
-  };
-  // Get status message
-  // Get status message
-  const getStatusMessage = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'accepted':
-        // Check if order status is rider_assigned
-        if (orderDetails?.order_status === 'rider_assigned') {
-          return 'You have accepted this delivery. Waiting for the seller to mark the order as ready for pickup.';
-        }
-        // Check if order status is waiting_for_rider
-        if (orderDetails?.order_status === 'waiting_for_rider') {
-          return 'Order is approved and ready for pickup. Please proceed to the seller to pick up the items.';
-        }
-        return 'You have accepted this delivery. Waiting for the seller to mark it as ready for pickup.';
-      case 'pending':
-        return 'This order is pending your response. Please accept or decline within the time limit.';
-      case 'picked_up':
-        return 'You have picked up the items and are now on your way to deliver to the customer.';
-      case 'delivered':
-        return 'This order has been successfully delivered to the customer.';
-      case 'cancelled':
-        return 'This order has been cancelled.';
-      case 'declined':
-        return 'You have declined this delivery order.';
-      default:
-        return '';
-    }
-  };
+      }
+      return '#F59E0B';
+    case 'picked_up':
+      return '#3B82F6';
+    case 'delivered':
+      return '#10B981';
+    case 'failed':
+      // Check if failed reason is return_to_seller for different color
+      if (orderDetails?.delivery?.failed_reason === 'return_to_seller') {
+        return '#D97706'; // Amber/Warning color for RTS
+      }
+      return '#EF4444';
+    case 'cancelled':
+      return '#EF4444';
+    case 'declined':
+      return '#EF4444';
+    default:
+      return '#6B7280';
+  }
+};
+
+// Get status label
+const getStatusLabel = (status: string) => {
+  switch (status?.toLowerCase()) {
+    case 'picked_up':
+      return 'In Transit';
+    case 'pending_offer':
+      return 'Pending';
+    case 'accepted':
+      if (orderDetails?.order_status === 'rider_assigned') {
+        return 'Accepted - Waiting for pick up';
+      }
+      if (orderDetails?.order_status === 'waiting_for_rider') {
+        return 'Approved - Waiting';
+      }
+      return 'Accepted';
+    case 'failed':
+      // Special label for return_to_seller
+      if (orderDetails?.delivery?.failed_reason === 'return_to_seller') {
+        return 'Failed - Return to Seller';
+      }
+      return 'Failed';
+    default:
+      return status?.charAt(0).toUpperCase() + status?.slice(1) || 'Unknown';
+  }
+};
+
+// Get status message
+const getStatusMessage = (status: string) => {
+  switch (status?.toLowerCase()) {
+    case 'accepted':
+      if (orderDetails?.order_status === 'rider_assigned') {
+        return 'You have accepted this delivery. Waiting for the seller to mark the order as ready for pickup.';
+      }
+      if (orderDetails?.order_status === 'waiting_for_rider') {
+        return 'Order is approved and ready for pickup. Please proceed to the seller to pick up the items.';
+      }
+      return 'You have accepted this delivery. Waiting for the seller to mark it as ready for pickup.';
+    case 'pending':
+      return 'This order is pending your response. Please accept or decline within the time limit.';
+    case 'picked_up':
+      return 'You have picked up the items and are now on your way to deliver to the customer.';
+    case 'delivered':
+      return 'This order has been successfully delivered to the customer.';
+    case 'failed':
+      if (orderDetails?.delivery?.failed_reason === 'return_to_seller') {
+        return 'Delivery failed. Items are being returned to the seller.';
+      }
+      return 'This delivery has failed. Please check the reason for more details.';
+    case 'cancelled':
+      return 'This order has been cancelled.';
+    case 'declined':
+      return 'You have declined this delivery order.';
+    default:
+      return '';
+  }
+};
 
   // Format shop address from shop fields
   const formatShopAddress = (item: OrderItem) => {
@@ -788,6 +801,83 @@ const handleCancelAcceptedOrder = async () => {
             ) : null}
           </View>
         </View>
+
+        {/* FAILED SECTION - Shown when status is failed */}
+{/* FAILED SECTION - Shown when status is failed */}
+{orderDetails.delivery?.status === 'failed' && (
+  <View style={{ 
+    backgroundColor: '#FFFFFF', 
+    borderBottomWidth: 1, 
+    borderTopWidth: 1, 
+    borderColor: '#F3F4F6',
+    marginBottom: -1,
+    marginTop: -1
+  }}>
+    <View style={{ padding: 16 }}>
+      {/* Determine which failed UI to show */}
+      {orderDetails.delivery?.failed_reason === 'return_to_seller' ? (
+        // Return to Seller UI
+        <>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <Ionicons name="return-down-back-outline" size={20} color="#D97706" />
+            <Text style={{ fontSize: 15, fontWeight: '600', marginLeft: 8, color: '#92400E' }}>
+              Failed - Return to Seller
+            </Text>
+          </View>
+          
+          <View style={{ backgroundColor: '#FFFBEB', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#FDE68A' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <Ionicons name="time-outline" size={14} color="#B45309" />
+              <Text style={{ fontSize: 12, color: '#92400E', marginLeft: 6 }}>
+                Failed on {formatDate(orderDetails.delivery?.created_at)} {/* Changed from updated_at to created_at */}
+              </Text>
+            </View>
+            
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <Ionicons name="alert-circle-outline" size={14} color="#B45309" />
+              <Text style={{ fontSize: 12, color: '#92400E', marginLeft: 6, flex: 1 }}>
+                Items are being returned to the seller
+              </Text>
+            </View>
+            
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+              <Ionicons name="storefront-outline" size={14} color="#B45309" style={{ marginTop: 1 }} />
+              <Text style={{ fontSize: 12, color: '#92400E', marginLeft: 6, flex: 1 }}>
+                Return to: {sellerInfo?.shop_name || 'Seller'}
+              </Text>
+            </View>
+          </View>
+        </>
+      ) : (
+        // Generic Failed UI
+        <>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <Ionicons name="close-circle-outline" size={20} color="#DC2626" />
+            <Text style={{ fontSize: 15, fontWeight: '600', marginLeft: 8, color: '#DC2626' }}>
+              Delivery Failed
+            </Text>
+          </View>
+          
+          <View style={{ backgroundColor: '#FEF2F2', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#FEE2E2' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <Ionicons name="time-outline" size={14} color="#DC2626" />
+              <Text style={{ fontSize: 12, color: '#991B1B', marginLeft: 6 }}>
+                Failed on {formatDate(orderDetails.delivery?.created_at)} {/* Changed from updated_at to created_at */}
+              </Text>
+            </View>
+            
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+              <Ionicons name="information-circle-outline" size={14} color="#DC2626" style={{ marginTop: 1 }} />
+              <Text style={{ fontSize: 12, color: '#991B1B', marginLeft: 6, flex: 1 }}>
+                Reason: {orderDetails.delivery?.failed_reason?.replace(/_/g, ' ') || 'Unknown'}
+              </Text>
+            </View>
+          </View>
+        </>
+      )}
+    </View>
+  </View>
+)}
 
         {/* DELIVERED SECTION - Shown when status is delivered */}
         {showDelivered && (
@@ -1145,7 +1235,7 @@ const handleCancelAcceptedOrder = async () => {
 <Modal
   visible={failedReasonModalVisible}
   transparent={true}
-  animationType="fade"
+  animationType="none"
   onRequestClose={() => setFailedReasonModalVisible(false)}
 >
   <View style={{

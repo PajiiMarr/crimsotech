@@ -111,6 +111,9 @@ interface OrderData {
     pickup_date?: string | null;   
     shop_name?: string; 
     shop_id?: string;
+    metadata?: {  
+      pickup_code?: string;
+    };
   };
   shipping_info: ShippingInfo;
   delivery_address: DeliveryAddress;
@@ -674,6 +677,7 @@ export default function ViewTrackOrderPage() {
               const pickupColor = '#F59E0B';
               const pickupExpireDate = order?.pickup_expire_date || order?.pickup_date;
               const formattedExpireDate = pickupExpireDate ? formatDate(pickupExpireDate) : null;
+              const pickupCode = order?.metadata?.pickup_code; // Get the pickup code
               
               return (
                 <View style={[styles.statusBanner, { backgroundColor: `${pickupColor}20` }]}>
@@ -691,6 +695,15 @@ export default function ViewTrackOrderPage() {
                       )}
                       {formattedExpireDate && '.'}
                     </Text>
+                    {/* Display pickup code if available */}
+                      {pickupCode && (
+                        <View style={styles.pickupCodeContainer}>
+                          <MaterialCommunityIcons name="qrcode" size={16} color="#F59E0B" />
+                          <Text style={styles.pickupCodeText}>
+                            Pickup Code: <Text style={styles.pickupCodeValue}>{pickupCode}</Text>
+                          </Text>
+                        </View>
+                      )}
                   </View>
                 </View>
               );
@@ -1745,5 +1758,28 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 5,
+  },
+  pickupCodeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  pickupCodeText: {
+    fontSize: 13,
+    color: '#92400E',
+    fontWeight: '500',
+  },
+  pickupCodeValue: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#D97706',
+    letterSpacing: 1,
   },
 });

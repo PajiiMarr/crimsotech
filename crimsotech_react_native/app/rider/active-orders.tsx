@@ -57,6 +57,7 @@ interface Delivery {
   updated_at: string;
   time_elapsed: string;
   is_late: boolean;
+  failed_reason?: string; 
 }
 
 interface ActiveOrderMetrics {
@@ -99,6 +100,11 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: keyof 
     label: 'Delivered', 
     color: '#D1FAE5',
     icon: 'checkmark-circle-outline'
+  },
+  failed: { 
+    label: 'Failed', 
+    color: '#FEE2E2',
+    icon: 'alert-circle-outline'
   },
   default: { 
     label: 'Unknown', 
@@ -436,6 +442,7 @@ export default function ActiveOrders() {
     });
   };
 
+  
   // Handle mark as failed
   const handleMarkFailed = async (delivery: Delivery) => {
     Alert.alert(
@@ -476,14 +483,17 @@ export default function ActiveOrders() {
   };
 
   // Prepare filtered data - Only pending and to process
+  // Prepare filtered data - Only pending and to process
   const pendingStatuses = ['pending', 'pending_offer'];
-  const toProcessStatuses = ['accepted', 'picked_up'];
-
+  // Include failed orders with return_to_seller reason in To Process tab
+  const toProcessStatuses = ['accepted', 'picked_up', 'failed'];
+  
   const filteredDeliveries = useMemo(() => {
     return activeTab === 'pending' 
       ? deliveries.filter(d => pendingStatuses.includes(d.status))
-      : deliveries.filter(d => toProcessStatuses.includes(d.status));
+      : deliveries.filter(d => toProcessStatuses.includes(d.status));  // Now includes 'failed'
   }, [deliveries, activeTab]);
+
 
   // Get status badge
   const getStatusBadge = (status: string) => {
@@ -518,13 +528,14 @@ export default function ActiveOrders() {
   };
 
   // Get tab count
-  const getTabCount = (tabId: string) => {
-    if (tabId === 'pending') {
-      return deliveries.filter(d => pendingStatuses.includes(d.status)).length;
-    } else {
-      return deliveries.filter(d => toProcessStatuses.includes(d.status)).length;
-    }
-  };
+// Get tab count
+const getTabCount = (tabId: string) => {
+  if (tabId === 'pending') {
+    return deliveries.filter(d => pendingStatuses.includes(d.status)).length;
+  } else {
+    return deliveries.filter(d => toProcessStatuses.includes(d.status)).length;  // Now includes 'failed'
+  }
+};
 
   // Initial data fetch
   useEffect(() => {
@@ -629,6 +640,17 @@ export default function ActiveOrders() {
               filteredDeliveries.map((delivery) => {
                 const customer = delivery.order.customer;
                 const address = delivery.order.shipping_address;
+
+                const getFailedReasonDisplay = () => {
+                  if (delivery.status !== 'failed') return null;
+                  const reason = delivery.failed_reason;
+                  if (reason === 'return_to_seller') {
+                    return { text: 'Return to Seller', color: '#D97706', bgColor: '#FFFBEB' };
+                  }
+                  return { text: reason?.replace(/_/g, ' ') || 'Failed', color: '#DC2626', bgColor: '#FEF2F2' };
+                };
+                
+                const failedReason = getFailedReasonDisplay();
                 
                 return (
                   <TouchableOpacity 
@@ -709,6 +731,26 @@ export default function ActiveOrders() {
                             {address?.recipient_phone || 'No contact'}
                           </Text>
                         </View>
+                        
+                        {/* Add Failed Reason Display for failed orders */}
+                        {failedReason && (
+                          <View style={{ 
+                            flexDirection: 'row', 
+                            alignItems: 'center', 
+                            marginBottom: 6,
+                            backgroundColor: failedReason.bgColor,
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                            borderRadius: 6,
+                            marginTop: 4
+                          }}>
+                            <Ionicons name="alert-circle-outline" size={12} color={failedReason.color} />
+                            <Text style={{ fontSize: 11, color: failedReason.color, marginLeft: 6, fontWeight: '500' }}>
+                              {failedReason.text}
+                            </Text>
+                          </View>
+                        )}
+                        
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                           <Ionicons name="card-outline" size={12} color="#6B7280" />
                           <Text style={{ fontSize: 11, color: '#6B7280', marginLeft: 6 }}>
