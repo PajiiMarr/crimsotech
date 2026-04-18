@@ -264,7 +264,6 @@ interface LoaderData {
   error?: string;
 }
 
-// Define the image type for carousel
 interface CarouselImage {
   id: string;
   src: string;
@@ -291,7 +290,6 @@ export async function loader({
 
   await requireRole(request, context, ["isAdmin"]);
 
-  // Get session for authentication
   const { getSession } = await import("~/sessions.server");
   const session = await getSession(request.headers.get("Cookie"));
 
@@ -300,7 +298,6 @@ export async function loader({
   }
 
   try {
-    // Fetch product data from API
     const response = await AxiosInstance.get(
       `/admin-products/get_product/?product_id=${product_id}`,
     );
@@ -328,7 +325,6 @@ function isValidProductId(id: string): boolean {
   return uuidPattern.test(id);
 }
 
-// Action configurations
 const actionConfigs = {
   publish: {
     title: "Publish Product",
@@ -431,7 +427,6 @@ export default function ViewProduct({
   console.log("User in component:", user);
   console.log("User ID:", user?.id || user?.user_id);
 
-  // State for dynamic product data
   const [product, setProduct] = useState<ProductData | null>(initialProduct);
   const [error, setError] = useState<string | undefined>(initialError);
   const [loading, setLoading] = useState(false);
@@ -445,12 +440,10 @@ export default function ViewProduct({
   const [selectedProofImage, setSelectedProofImage] = useState<string | null>(
     null,
   );
-  // State for selected variant
   const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const { toast } = useToast();
 
-  // Function to fetch updated product data
   const fetchProductData = async () => {
     if (!product?.id) return;
 
@@ -469,17 +462,13 @@ export default function ViewProduct({
     }
   };
 
-  // Function to handle successful action and refresh data
   const handleSuccessfulAction = async () => {
-    // For deleteDraft action, redirect to products list
     if (activeAction === "deleteDraft") {
       setTimeout(() => {
         window.location.href = "/admin/products";
       }, 100);
       return;
     }
-
-    // For other actions, fetch updated product data
     await fetchProductData();
   };
 
@@ -490,13 +479,11 @@ export default function ViewProduct({
         product.reviews.length
       : 0);
 
-  // Determine available actions based on status and upload_status
   const getAvailableActions = () => {
     if (!product) return [];
 
     const actions = [];
 
-    // Actions based on upload_status
     if (product.upload_status === "draft") {
       actions.push(
         {
@@ -536,7 +523,6 @@ export default function ViewProduct({
       });
     }
 
-    // Actions based on removal status
     if (product.is_removed) {
       actions.push({
         id: "restoreRemoved",
@@ -553,7 +539,6 @@ export default function ViewProduct({
       });
     }
 
-    // Actions based on general status
     if (
       product.status === "Active" &&
       !product.is_removed &&
@@ -592,7 +577,6 @@ export default function ViewProduct({
   const handleConfirm = async () => {
     if (!activeAction || !product) return;
 
-    // Validate required reason for remove action
     if (activeAction === "remove" && !reason.trim()) {
       toast({
         title: "Validation Error",
@@ -604,7 +588,6 @@ export default function ViewProduct({
 
     setProcessing(true);
     try {
-      // Get the user ID - check multiple possible properties
       const adminUserId = user?.id || user?.user_id;
       
       if (!adminUserId) {
@@ -631,12 +614,10 @@ export default function ViewProduct({
       console.log("User object:", user);
       console.log("User ID being sent:", adminUserId);
 
-      // Add reason for applicable actions
       if (reason.trim()) {
         requestData.reason = reason;
       }
 
-      // Add suspension days for suspend action
       if (activeAction === "suspend") {
         requestData.suspension_days = suspensionDays;
       }
@@ -656,7 +637,6 @@ export default function ViewProduct({
         variant: "success",
       });
 
-      // Handle successful action (fetch updated data)
       await handleSuccessfulAction();
     } catch (error: any) {
       console.error("=== ERROR DETAILS ===");
@@ -744,7 +724,6 @@ export default function ViewProduct({
             </p>
           </div>
 
-          {/* Product info */}
           <div className="bg-muted/50 rounded-lg p-3">
             <p className="text-sm font-medium">Product: {product.name}</p>
             <p className="text-xs text-muted-foreground mt-1">
@@ -753,7 +732,6 @@ export default function ViewProduct({
             </p>
           </div>
 
-          {/* Reason input for remove action */}
           {activeAction === "remove" && (
             <div className="space-y-2">
               <Label htmlFor="reason" className="text-sm font-medium">
@@ -773,7 +751,6 @@ export default function ViewProduct({
             </div>
           )}
 
-          {/* Reason and suspension days for suspend action */}
           {activeAction === "suspend" && (
             <div className="space-y-3">
               <div className="space-y-2">
@@ -820,7 +797,6 @@ export default function ViewProduct({
             </div>
           )}
 
-          {/* Warning message for destructive actions */}
           {currentAction.variant === "destructive" && (
             <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3">
               <p className="text-sm font-medium text-destructive flex items-center gap-1">
@@ -961,7 +937,7 @@ export default function ViewProduct({
         <div className="container mx-auto p-4 sm:p-6">
           <Card>
             <CardContent className="p-4 sm:p-6 text-center">
-              <Package className="w-8 h-8 sm:w-12 sm:h-12 text-gray-400 mx-auto mb-3 sm:mb-4" />
+              <Package className="w-8 h-8 sm:w-12 sm:w-12 text-gray-400 mx-auto mb-3 sm:mb-4" />
               <h2 className="text-lg sm:text-xl font-semibold mb-2">
                 Product Not Found
               </h2>
@@ -977,9 +953,7 @@ export default function ViewProduct({
 
   const allVariants = product.variants || [];
 
-  // Calculate price display based on selected variant
   const priceDisplay = () => {
-    // If a variant is selected, show its price
     if (selectedVariant) {
       const variant = allVariants.find((v) => v.id === selectedVariant);
       if (variant && variant.price) {
@@ -987,7 +961,6 @@ export default function ViewProduct({
       }
     }
 
-    // Otherwise show the price range
     if (product.price_range.min && product.price_range.max) {
       if (product.price_range.min === product.price_range.max) {
         return `₱${parseFloat(product.price_range.min).toLocaleString()}`;
@@ -998,17 +971,14 @@ export default function ViewProduct({
     return "Price not available";
   };
 
-  // Handle variant click
   const handleVariantClick = (variantId: string) => {
     setSelectedVariant(variantId === selectedVariant ? null : variantId);
   };
 
-  // Get all images to display in carousel (prioritize product media, then all variant images)
   const getAllCarouselImages = (): CarouselImage[] => {
     const images: CarouselImage[] = [];
-    const imageSet = new Set<string>(); // To avoid duplicates
+    const imageSet = new Set<string>();
 
-    // Add all product media first (prioritize these)
     if (product.media && product.media.length > 0) {
       product.media.forEach((media) => {
         if (media.file_data) {
@@ -1023,7 +993,6 @@ export default function ViewProduct({
       });
     }
 
-    // Add all variant images (even if not selected)
     if (allVariants.length > 0) {
       allVariants.forEach((variant) => {
         if (variant.image && !imageSet.has(variant.image)) {
@@ -1047,7 +1016,6 @@ export default function ViewProduct({
     <UserProvider user={user}>
       <TooltipProvider>
         <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
-          {/* Loading indicator */}
           {loading && (
             <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
               <div className="flex flex-col items-center gap-2 bg-white p-6 rounded-lg shadow-lg">
@@ -1059,7 +1027,6 @@ export default function ViewProduct({
             </div>
           )}
 
-          {/* Product removed banner */}
           {product?.is_removed && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
               <div className="flex items-center gap-3">
@@ -1085,9 +1052,7 @@ export default function ViewProduct({
             </div>
           )}
 
-          {/* Responsive Header with Admin Actions Dropdown */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            {/* Breadcrumb */}
             <nav className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 flex-wrap">
               <a
                 href="/admin"
@@ -1109,7 +1074,6 @@ export default function ViewProduct({
               </span>
             </nav>
 
-            {/* Admin Actions Dropdown */}
             {availableActions.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1149,9 +1113,7 @@ export default function ViewProduct({
             )}
           </div>
 
-          {/* Main Content Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
-            {/* Left Column - Images */}
             <div className="lg:h-[800px]">
               <Card className="h-full">
                 <CardContent className="p-3 sm:p-4 h-full">
@@ -1200,7 +1162,6 @@ export default function ViewProduct({
                           </>
                         )}
                       </Carousel>
-                      {/* Image count indicator */}
                       <div className="flex justify-center items-center gap-2 mt-3">
                         <div className="flex gap-1">
                           {carouselImages.map((_, index) => (
@@ -1233,11 +1194,9 @@ export default function ViewProduct({
               </Card>
             </div>
 
-            {/* Right Column - Product Details */}
             <div className="lg:h-[800px]">
               <Card className="h-full flex flex-col">
                 <CardContent className="p-3 sm:p-4 flex-1 flex flex-col min-h-0">
-                  {/* Product Header */}
                   <div className="flex-shrink-0">
                     <div className="flex flex-col xs:flex-row xs:items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
@@ -1295,7 +1254,6 @@ export default function ViewProduct({
                       </div>
                     </div>
 
-                    {/* Rating and Engagement */}
                     <div className="flex items-center gap-3 sm:gap-4 mt-3 flex-wrap">
                       <div className="flex items-center gap-2">
                         <div className="flex items-center gap-1">
@@ -1330,7 +1288,6 @@ export default function ViewProduct({
 
                   <Separator className="my-4" />
 
-                  {/* Selected Variant Details Card */}
                   {selectedVariant && (
                     <>
                       <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 mb-4">
@@ -1390,7 +1347,6 @@ export default function ViewProduct({
                                 )}
                               </div>
 
-                              {/* Additional Variant Info */}
                               <div className="flex flex-wrap gap-2 pt-2 border-t">
                                 {variant.weight && (
                                   <Tooltip>
@@ -1448,7 +1404,6 @@ export default function ViewProduct({
                                 )}
                               </div>
 
-                              {/* Proof Image */}
                               {variant.proof_image && (
                                 <div className="flex items-center gap-2 pt-2 border-t">
                                   <Shield className="w-4 h-4 text-green-600" />
@@ -1470,7 +1425,6 @@ export default function ViewProduct({
                                 </div>
                               )}
 
-                              {/* Variant Image */}
                               {variant.image && variant.image !== variant.proof_image && (
                                 <div className="flex items-center gap-2 pt-2 border-t">
                                   <ImageIcon className="w-4 h-4 text-blue-600" />
@@ -1499,9 +1453,7 @@ export default function ViewProduct({
                     </>
                   )}
 
-                  {/* Scrollable Content Area */}
                   <div className="flex-1 overflow-y-auto min-h-0 pr-2 space-y-4">
-                    {/* Key Stats Grid */}
                     <div className="grid grid-cols-2 gap-3">
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -1568,7 +1520,6 @@ export default function ViewProduct({
                       </div>
                     </div>
 
-                    {/* Low Stock Warning */}
                     {(product.variant_stats?.low_stock_variants || 0) > 0 && (
                       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                         <div className="flex items-center gap-2">
@@ -1581,9 +1532,7 @@ export default function ViewProduct({
                       </div>
                     )}
 
-                    {/* Out of Stock Warning */}
-                    {(product.variant_stats?.out_of_stock_variants || 0) >
-                      0 && (
+                    {(product.variant_stats?.out_of_stock_variants || 0) > 0 && (
                       <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                         <div className="flex items-center gap-2">
                           <XCircle className="w-4 h-4 text-red-600" />
@@ -1597,7 +1546,6 @@ export default function ViewProduct({
 
                     <Separator />
 
-                    {/* Description */}
                     <div>
                       <h3 className="font-medium text-sm mb-3 flex items-center gap-2">
                         <Package className="w-4 h-4" />
@@ -1610,7 +1558,6 @@ export default function ViewProduct({
                       </div>
                     </div>
 
-                    {/* Product Variants */}
                     {allVariants.length > 0 && (
                       <>
                         <Separator />
@@ -1643,7 +1590,6 @@ export default function ViewProduct({
                                   onClick={() => handleVariantClick(variant.id)}
                                 >
                                   <div className="flex flex-col sm:flex-row gap-3">
-                                    {/* Variant Image */}
                                     {variant.image && (
                                       <div className="sm:w-24 sm:h-24 w-full h-32 flex-shrink-0">
                                         <img
@@ -1662,7 +1608,6 @@ export default function ViewProduct({
                                       </div>
                                     )}
 
-                                    {/* Variant Details */}
                                     <div className="flex-1 space-y-2">
                                       <div className="flex flex-wrap items-start justify-between gap-2">
                                         <div>
@@ -1692,7 +1637,6 @@ export default function ViewProduct({
                                         </Badge>
                                       </div>
 
-                                      {/* Options */}
                                       {variant.options &&
                                         variant.options.length > 0 && (
                                           <div className="flex flex-wrap gap-2">
@@ -1708,7 +1652,6 @@ export default function ViewProduct({
                                           </div>
                                         )}
 
-                                      {/* Pricing */}
                                       <div className="flex items-center gap-3">
                                         <span className="text-base font-semibold text-primary">
                                           ₱
@@ -1747,7 +1690,6 @@ export default function ViewProduct({
                                           )}
                                       </div>
 
-                                      {/* Additional Variant Info */}
                                       <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                                         {variant.weight && (
                                           <span className="flex items-center gap-1">
@@ -1782,7 +1724,6 @@ export default function ViewProduct({
                                         )}
                                       </div>
 
-                                      {/* Proof Image */}
                                       {variant.proof_image && (
                                         <div className="mt-2 flex items-center gap-2">
                                           <Shield className="w-3 h-3 text-green-600" />
@@ -1830,7 +1771,6 @@ export default function ViewProduct({
             </div>
           </div>
 
-          {/* Bottom Section - Accordion */}
           <Accordion
             type="single"
             collapsible
@@ -1909,7 +1849,6 @@ export default function ViewProduct({
                       </p>
                     </div>
 
-                    {/* Removal info section */}
                     {product.is_removed && (
                       <>
                         <div>
@@ -2161,18 +2100,23 @@ export default function ViewProduct({
                   {product.customer ? (
                     <>
                       <div className="flex items-center gap-3 mb-4">
-                        <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-full flex items-center justify-center">
-                          <User className="w-5 h-5 sm:w-6 sm:h-6 text-muted-foreground" />
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="font-semibold text-sm sm:text-base break-words">
-                            {product.customer.first_name}{" "}
-                            {product.customer.last_name}
-                          </h3>
-                          <p className="text-xs sm:text-sm text-muted-foreground">
-                            @{product.customer.username || "No username"}
-                          </p>
-                        </div>
+                        <Link
+                          to={`/admin/users/${product.customer.id}`}
+                          className="flex items-center gap-3 group min-w-0 hover:opacity-80 transition-opacity"
+                        >
+                          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-muted rounded-full flex items-center justify-center">
+                            <User className="w-5 h-5 sm:w-6 sm:h-6 text-muted-foreground" />
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="font-semibold text-sm sm:text-base break-words group-hover:underline text-primary">
+                              {product.customer.first_name}{" "}
+                              {product.customer.last_name}
+                            </h3>
+                            <p className="text-xs sm:text-sm text-muted-foreground">
+                              @{product.customer.username || "No username"}
+                            </p>
+                          </div>
+                        </Link>
                       </div>
 
                       <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
@@ -2406,7 +2350,6 @@ export default function ViewProduct({
             )}
           </Accordion>
 
-          {/* Image Modal */}
           {selectedImage && (
             <div
               className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
@@ -2430,7 +2373,6 @@ export default function ViewProduct({
             </div>
           )}
 
-          {/* Proof Image Modal */}
           {selectedProofImage && (
             <div
               className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
@@ -2452,12 +2394,11 @@ export default function ViewProduct({
                 </Button>
                 <div className="absolute top-2 left-2">
                   <Badge className="bg-green-600">Proof Image</Badge>
-                </div>
+              </div>
               </div>
             </div>
           )}
 
-          {/* Responsive Dialog */}
           {isMobile ? renderMobileDialog() : renderDesktopDialog()}
         </div>
       </TooltipProvider>

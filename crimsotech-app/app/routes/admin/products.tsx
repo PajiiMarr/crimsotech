@@ -73,6 +73,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import { useIsMobile } from "~/hooks/use-mobile";
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -98,11 +99,11 @@ interface Product {
   description: string;
   category: string;
   shop: string;
-  price: string; // Already formatted: "₱30,972.34"
+  price: string;
   min_price: string;
   max_price: string;
   total_stock: number;
-  condition: number; // 1=New, 2=Like New, 3=Good, 4=Fair
+  condition: number;
   status: string;
   upload_status: string;
   views: number;
@@ -437,133 +438,89 @@ function StatusBadge({
   );
 }
 
-// ─── Loader ──────────────────────────────────────────────────────────────────
+// ─── Action Modal/Drawer Component ──────────────────────────────────────────
 
-export async function loader({
-  request,
-  context,
-}: Route.LoaderArgs): Promise<LoaderData> {
-  const { requireRole } = await import("~/middleware/role-require.server");
-  const { fetchUserRole } = await import("~/middleware/role.server");
-  let user = (context as any).user;
-  if (!user) {
-    user = await fetchUserRole({ request, context });
-  }
-  await requireRole(request, context, ["isAdmin"]);
-  const { getSession } = await import("~/sessions.server");
-  const session = await getSession(request.headers.get("Cookie"));
+interface ActionModalDrawerProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+  title: string;
+  description: string;
+  confirmText: string;
+  variant?: "default" | "destructive";
+  isLoading?: boolean;
+  children?: React.ReactNode;
+}
 
-  const url = new URL(request.url);
-  const startDate = url.searchParams.get("start_date");
-  const endDate = url.searchParams.get("end_date");
-  const rangeType = url.searchParams.get("range_type") || "weekly";
+function ActionModalDrawer({
+  open,
+  onOpenChange,
+  onConfirm,
+  title,
+  description,
+  confirmText,
+  variant = "default",
+  isLoading = false,
+  children,
+}: ActionModalDrawerProps) {
+  const isMobile = useIsMobile();
 
-  const defaultStartDate = new Date();
-  defaultStartDate.setDate(defaultStartDate.getDate() - 7);
-  const defaultEndDate = new Date();
+  const confirmButton = (
+    <Button
+      onClick={onConfirm}
+      disabled={isLoading}
+      className={variant === "destructive" ? "bg-destructive hover:bg-destructive/90" : ""}
+    >
+      {isLoading ? (
+        <>
+          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+          Processing...
+        </>
+      ) : (
+        confirmText
+      )}
+    </Button>
+  );
 
-  let productMetrics = null;
-  let productsList: Product[] = [];
-  let categoriesList: Category[] = [];
-  let filterOptions: FilterOptions = {
-    categories: [],
-    statuses: [],
-    shops: [],
-    boostPlans: [],
-    conditions: [],
-  };
+  const cancelButton = (
+    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
+      Cancel
+    </Button>
+  );
 
-  try {
-    const params = new URLSearchParams();
-    params.append(
-      "start_date",
-      startDate || defaultStartDate.toISOString().split("T")[0],
+  if (isMobile) {
+    return (
+      <Drawer open={open} onOpenChange={onOpenChange}>
+        <DrawerContent>
+          <DrawerHeader className="text-left">
+            <DrawerTitle>{title}</DrawerTitle>
+            <DrawerDescription>{description}</DrawerDescription>
+          </DrawerHeader>
+          {children && <div className="px-4 pb-4">{children}</div>}
+          <DrawerFooter className="pt-2">
+            {confirmButton}
+            {cancelButton}
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
     );
-    params.append(
-      "end_date",
-      endDate || defaultEndDate.toISOString().split("T")[0],
-    );
-    if (rangeType) params.append("range_type", rangeType);
-
-    const metricsResponse = await AxiosInstance.get(
-      `/admin-products/get_metrics/?${params.toString()}`,
-      {
-        headers: { "X-User-Id": session.get("userId") },
-      },
-    );
-    if (metricsResponse.data.success) {
-      productMetrics = metricsResponse.data.metrics;
-    }
-
-    const categoriesResponse = await AxiosInstance.get(
-      `/admin-products/get_categories/`,
-      {
-        headers: { "X-User-Id": session.get("userId") },
-      },
-    );
-    if (categoriesResponse.data.success) {
-      categoriesList = categoriesResponse.data.categories;
-    }
-
-    const productsParams = new URLSearchParams(params);
-    const productsResponse = await AxiosInstance.get(
-      `/admin-products/get_products_list/?${productsParams.toString()}`,
-      {
-        headers: { "X-User-Id": session.get("userId") },
-      },
-    );
-
-    if (productsResponse.data.success) {
-      productsList = productsResponse.data.products.map((product: Product) => ({
-        ...product,
-        status: normalizeStatus(product.status),
-        upload_status: normalizeUploadStatus(product.upload_status),
-      }));
-
-      if (productsList.length > 0) {
-        filterOptions = {
-          categories: [
-            ...new Set(productsList.map((p: Product) => p.category)),
-          ].filter(Boolean) as string[],
-          statuses: [
-            ...new Set(productsList.map((p: Product) => p.status)),
-          ].filter(Boolean) as string[],
-          shops: [...new Set(productsList.map((p: Product) => p.shop))].filter(
-            Boolean,
-          ) as string[],
-          boostPlans: ["Basic", "Premium", "Ultimate", "None"],
-          conditions: [
-            ...new Set(
-              productsList.map((p: Product) => getConditionLabel(p.condition)),
-            ),
-          ].filter(Boolean) as string[],
-        };
-      }
-    }
-  } catch (error) {
-    console.error("Error fetching product data:", error);
-    productMetrics = {
-      total_products: 0,
-      low_stock_alert: 0,
-      active_boosts: 0,
-      avg_rating: 0,
-      has_data: false,
-      growth_metrics: {},
-    };
   }
 
-  return {
-    user,
-    productMetrics,
-    products: productsList,
-    categories: categoriesList,
-    filterOptions,
-    dateRange: {
-      start: startDate || defaultStartDate.toISOString().split("T")[0],
-      end: endDate || defaultEndDate.toISOString().split("T")[0],
-      rangeType,
-    },
-  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {children && <div className="py-4">{children}</div>}
+        <DialogFooter>
+          {cancelButton}
+          {confirmButton}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // ─── Add Category Modal/Drawer ───────────────────────────────────────────────
@@ -578,14 +535,7 @@ function AddCategoryModalDrawer({
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({ name: "" });
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
+  const isMobile = useIsMobile();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -745,6 +695,135 @@ function AddCategoryModalDrawer({
   );
 }
 
+// ─── Loader ──────────────────────────────────────────────────────────────────
+
+export async function loader({
+  request,
+  context,
+}: Route.LoaderArgs): Promise<LoaderData> {
+  const { requireRole } = await import("~/middleware/role-require.server");
+  const { fetchUserRole } = await import("~/middleware/role.server");
+  let user = (context as any).user;
+  if (!user) {
+    user = await fetchUserRole({ request, context });
+  }
+  await requireRole(request, context, ["isAdmin"]);
+  const { getSession } = await import("~/sessions.server");
+  const session = await getSession(request.headers.get("Cookie"));
+
+  const url = new URL(request.url);
+  const startDate = url.searchParams.get("start_date");
+  const endDate = url.searchParams.get("end_date");
+  const rangeType = url.searchParams.get("range_type") || "weekly";
+
+  const defaultStartDate = new Date();
+  defaultStartDate.setDate(defaultStartDate.getDate() - 7);
+  const defaultEndDate = new Date();
+
+  let productMetrics = null;
+  let productsList: Product[] = [];
+  let categoriesList: Category[] = [];
+  let filterOptions: FilterOptions = {
+    categories: [],
+    statuses: [],
+    shops: [],
+    boostPlans: [],
+    conditions: [],
+  };
+
+  try {
+    const params = new URLSearchParams();
+    params.append(
+      "start_date",
+      startDate || defaultStartDate.toISOString().split("T")[0],
+    );
+    params.append(
+      "end_date",
+      endDate || defaultEndDate.toISOString().split("T")[0],
+    );
+    if (rangeType) params.append("range_type", rangeType);
+
+    const metricsResponse = await AxiosInstance.get(
+      `/admin-products/get_metrics/?${params.toString()}`,
+      {
+        headers: { "X-User-Id": session.get("userId") },
+      },
+    );
+    if (metricsResponse.data.success) {
+      productMetrics = metricsResponse.data.metrics;
+    }
+
+    const categoriesResponse = await AxiosInstance.get(
+      `/admin-products/get_categories/`,
+      {
+        headers: { "X-User-Id": session.get("userId") },
+      },
+    );
+    if (categoriesResponse.data.success) {
+      categoriesList = categoriesResponse.data.categories;
+    }
+
+    const productsParams = new URLSearchParams(params);
+    const productsResponse = await AxiosInstance.get(
+      `/admin-products/get_products_list/?${productsParams.toString()}`,
+      {
+        headers: { "X-User-Id": session.get("userId") },
+      },
+    );
+
+    if (productsResponse.data.success) {
+      productsList = productsResponse.data.products.map((product: Product) => ({
+        ...product,
+        status: normalizeStatus(product.status),
+        upload_status: normalizeUploadStatus(product.upload_status),
+      }));
+
+      if (productsList.length > 0) {
+        filterOptions = {
+          categories: [
+            ...new Set(productsList.map((p: Product) => p.category)),
+          ].filter(Boolean) as string[],
+          statuses: [
+            ...new Set(productsList.map((p: Product) => p.status)),
+          ].filter(Boolean) as string[],
+          shops: [...new Set(productsList.map((p: Product) => p.shop))].filter(
+            Boolean,
+          ) as string[],
+          boostPlans: ["Basic", "Premium", "Ultimate", "None"],
+          conditions: [
+            ...new Set(
+              productsList.map((p: Product) => getConditionLabel(p.condition)),
+            ),
+          ].filter(Boolean) as string[],
+        };
+      }
+    }
+  } catch (error) {
+    console.error("Error fetching product data:", error);
+    productMetrics = {
+      total_products: 0,
+      low_stock_alert: 0,
+      active_boosts: 0,
+      avg_rating: 0,
+      has_data: false,
+      growth_metrics: {},
+    };
+  }
+
+  return {
+    user,
+    productMetrics,
+    products: productsList,
+    categories: categoriesList,
+    filterOptions,
+    dateRange: {
+      start: startDate || defaultStartDate.toISOString().split("T")[0],
+      end: endDate || defaultEndDate.toISOString().split("T")[0],
+      rangeType,
+    },
+  };
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function Products({ loaderData }: { loaderData: LoaderData }) {
@@ -780,6 +859,14 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [categoryStats, setCategoryStats] = useState<CategoryStats[]>([]);
+
+  // Action modal state
+  const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [actionType, setActionType] = useState<string>("");
+  const [actionReason, setActionReason] = useState("");
+  const [suspensionDays, setSuspensionDays] = useState(7);
+  const [isActionLoading, setIsActionLoading] = useState(false);
 
   const [dateRange, setDateRange] = useState({
     start: initialDateRange?.start
@@ -861,9 +948,9 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
             statuses: [
               ...new Set(normalized.map((p: Product) => p.status)),
             ].filter(Boolean) as string[],
-            shops: [...new Set(normalized.map((p: Product) => p.shop))].filter(
-              Boolean,
-            ) as string[],
+            shops: [
+              ...new Set(normalized.map((p: Product) => p.shop)),
+            ].filter(Boolean) as string[],
             boostPlans: ["Basic", "Premium", "Ultimate", "None"],
             conditions: [
               ...new Set(
@@ -920,6 +1007,72 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     }
   };
 
+  const handleActionClick = (product: Product, action: string) => {
+    setSelectedProduct(product);
+    setActionType(action);
+    setActionReason("");
+    setSuspensionDays(7);
+    setActionModalOpen(true);
+  };
+
+  const handleConfirmAction = async () => {
+    if (!selectedProduct || !actionType) return;
+
+    const adminId = user?.id || user?.user_id || localStorage.getItem("userId") || "";
+
+    if (!adminId) {
+      toast.error("User authentication required. Please log in again.");
+      setActionModalOpen(false);
+      return;
+    }
+
+    if (actionType === "remove" && !actionReason.trim()) {
+      toast.error("Please provide a reason for removal");
+      return;
+    }
+
+    setIsActionLoading(true);
+    try {
+      const payload: any = {
+        product_id: selectedProduct.id,
+        action_type: actionType,
+        user_id: adminId,
+      };
+
+      if (actionReason.trim()) {
+        payload.reason = actionReason;
+      }
+
+      if (actionType === "suspend") {
+        payload.suspension_days = suspensionDays;
+      }
+
+      const response = await AxiosInstance.put(
+        "/admin-products/update_product_status/",
+        payload,
+        {
+          headers: { "X-User-Id": adminId },
+        },
+      );
+
+      if (response.data.success || response.data.message) {
+        toast.success(response.data.message || "Product status updated successfully");
+        setActionModalOpen(false);
+        await fetchProductData(dateRange.start, dateRange.end, dateRange.rangeType);
+      } else {
+        toast.error(response.data.error || "Failed to update product status");
+      }
+    } catch (error: any) {
+      toast.error(
+        error.response?.data?.error ||
+          error.response?.data?.message ||
+          "Failed to update product status",
+      );
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   const metrics = productMetrics || {
     total_products: 0,
     low_stock_alert: 0,
@@ -961,8 +1114,85 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
     return colors[hash % colors.length];
   };
 
-  // Build columns with access to user context
-  const columns = buildColumns(user);
+  const getActionConfig = () => {
+    switch (actionType) {
+      case "publish":
+        return {
+          title: "Publish Product",
+          description: "Are you sure you want to publish this product? This will make it visible to customers.",
+          confirmText: "Publish",
+          variant: "default" as const,
+        };
+      case "unpublish":
+        return {
+          title: "Unpublish Product",
+          description: "This will unpublish the product and make it invisible to customers.",
+          confirmText: "Unpublish",
+          variant: "default" as const,
+        };
+      case "archive":
+        return {
+          title: "Archive Product",
+          description: "This will archive the product. It can be restored later if needed.",
+          confirmText: "Archive",
+          variant: "default" as const,
+        };
+      case "restore":
+        return {
+          title: "Restore Product",
+          description: "This will restore the product to its previous state.",
+          confirmText: "Restore",
+          variant: "default" as const,
+        };
+      case "remove":
+        return {
+          title: "Remove Product",
+          description: "This will remove the product from the platform. This action can be reversed.",
+          confirmText: "Remove",
+          variant: "destructive" as const,
+        };
+      case "restoreRemoved":
+        return {
+          title: "Restore Product",
+          description: "This will restore the removed product and make it available again.",
+          confirmText: "Restore",
+          variant: "default" as const,
+        };
+      case "suspend":
+        return {
+          title: "Suspend Product",
+          description: "This will suspend the product temporarily. Customers won't be able to view or purchase it.",
+          confirmText: "Suspend",
+          variant: "destructive" as const,
+        };
+      case "unsuspend":
+        return {
+          title: "Unsuspend Product",
+          description: "This will unsuspend the product and make it available to customers again.",
+          confirmText: "Unsuspend",
+          variant: "default" as const,
+        };
+      case "deleteDraft":
+        return {
+          title: "Delete Draft",
+          description: "Are you sure you want to delete this draft product? This action cannot be undone.",
+          confirmText: "Delete",
+          variant: "destructive" as const,
+        };
+      default:
+        return {
+          title: "Confirm Action",
+          description: "Are you sure you want to perform this action?",
+          confirmText: "Confirm",
+          variant: "default" as const,
+        };
+    }
+  };
+
+  const actionConfig = getActionConfig();
+
+  // Build columns with action handler
+  const columns = buildColumns(user, handleActionClick);
 
   return (
     <UserProvider user={user}>
@@ -1182,7 +1412,6 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
                       <div className="text-xs mt-1 opacity-75">
                         {category.percentage.toFixed(1)}% of total
                       </div>
-                      {/* Tooltip */}
                       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10">
                         <div className="font-medium">{category.name}</div>
                         <div className="text-xs text-gray-300">
@@ -1259,6 +1488,53 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
             </CardContent>
           </Card>
         </div>
+
+        {/* Action Modal/Drawer */}
+        {selectedProduct && (
+          <ActionModalDrawer
+            open={actionModalOpen}
+            onOpenChange={setActionModalOpen}
+            onConfirm={handleConfirmAction}
+            title={actionConfig.title}
+            description={`Product: ${selectedProduct.name}`}
+            confirmText={actionConfig.confirmText}
+            variant={actionConfig.variant}
+            isLoading={isActionLoading}
+          >
+            {(actionType === "remove" || actionType === "suspend") && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="reason">
+                    Reason for {actionType === "remove" ? "Removal" : "Suspension"}
+                    {actionType === "remove" && <span className="text-red-500 ml-1">*</span>}
+                  </Label>
+                  <Input
+                    id="reason"
+                    value={actionReason}
+                    onChange={(e) => setActionReason(e.target.value)}
+                    placeholder={`Enter reason for ${actionType === "remove" ? "removal" : "suspension"}...`}
+                  />
+                </div>
+                {actionType === "suspend" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="suspension-days">Suspension Duration (days)</Label>
+                    <Input
+                      id="suspension-days"
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={suspensionDays}
+                      onChange={(e) => setSuspensionDays(parseInt(e.target.value) || 7)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      The product will be automatically unsuspended after this period.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </ActionModalDrawer>
+        )}
       </SidebarLayout>
     </UserProvider>
   );
@@ -1266,71 +1542,10 @@ export default function Products({ loaderData }: { loaderData: LoaderData }) {
 
 // ─── Columns Factory ─────────────────────────────────────────────────────────
 
-function buildColumns(user: any): ColumnDef<Product>[] {
-  const handleAction = async (product: Product, actionType: string) => {
-    let reason = "";
-    let suspensionDays = 7;
-
-    if (actionType === "remove" || actionType === "suspend") {
-      reason =
-        prompt(
-          `Enter reason for ${actionType === "remove" ? "removal" : "suspension"}:`,
-        ) || "";
-      if (!reason) {
-        toast.error("Reason is required");
-        return;
-      }
-
-      if (actionType === "suspend") {
-        const daysInput = prompt("Enter suspension days (default: 7):", "7");
-        suspensionDays = parseInt(daysInput || "7", 10);
-        if (isNaN(suspensionDays) || suspensionDays <= 0) suspensionDays = 7;
-      }
-    }
-
-    // Resolve the admin user ID with fallbacks
-    const adminId =
-      user?.id || user?.user_id || localStorage.getItem("userId") || "";
-
-    if (!adminId) {
-      toast.error("User authentication required. Please log in again.");
-      return;
-    }
-
-    try {
-      const payload = {
-        product_id: product.id,
-        action_type: actionType,
-        user_id: adminId, // ← was user?.id (could be undefined)
-        ...(reason && { reason }),
-        ...(actionType === "suspend" && { suspension_days: suspensionDays }),
-      };
-
-      const response = await AxiosInstance.put(
-        "/admin-products/update_product_status/",
-        payload,
-        {
-          headers: { "X-User-Id": adminId }, // ← was user?.id (could be undefined)
-        },
-      );
-
-      if (response.data.success || response.data.message) {
-        toast.success(
-          response.data.message || "Product status updated successfully",
-        );
-        window.location.reload();
-      } else {
-        toast.error(response.data.error || "Failed to update product status");
-      }
-    } catch (error: any) {
-      toast.error(
-        error.response?.data?.error ||
-          error.response?.data?.message ||
-          "Failed to update product status",
-      );
-    }
-  };
-
+function buildColumns(
+  user: any,
+  onActionClick: (product: Product, actionType: string) => void,
+): ColumnDef<Product>[] {
   const getAvailableActions = (product: Product) => {
     const actions: {
       label: string;
@@ -1406,7 +1621,6 @@ function buildColumns(user: any): ColumnDef<Product>[] {
   };
 
   return [
-    // ── Product Name + Seller ──
     {
       accessorKey: "name",
       header: ({ column }) => (
@@ -1444,8 +1658,6 @@ function buildColumns(user: any): ColumnDef<Product>[] {
         );
       },
     },
-
-    // ── Category ──
     {
       accessorKey: "category",
       header: "Category",
@@ -1455,8 +1667,6 @@ function buildColumns(user: any): ColumnDef<Product>[] {
         </Badge>
       ),
     },
-
-    // ── Shop ──
     {
       accessorKey: "shop",
       header: "Shop",
@@ -1464,8 +1674,6 @@ function buildColumns(user: any): ColumnDef<Product>[] {
         <div className="text-sm whitespace-nowrap">{row.getValue("shop")}</div>
       ),
     },
-
-    // ── Condition ──
     {
       accessorKey: "condition",
       header: "Condition",
@@ -1481,8 +1689,6 @@ function buildColumns(user: any): ColumnDef<Product>[] {
         );
       },
     },
-
-    // ── Price ──
     {
       accessorKey: "price",
       header: ({ column }) => (
@@ -1495,7 +1701,6 @@ function buildColumns(user: any): ColumnDef<Product>[] {
         </Button>
       ),
       cell: ({ row }) => {
-        // Price is already formatted from backend e.g. "₱30,972.34"
         return (
           <div className="font-medium text-sm whitespace-nowrap">
             {row.getValue("price")}
@@ -1509,8 +1714,6 @@ function buildColumns(user: any): ColumnDef<Product>[] {
         );
       },
     },
-
-    // ── Stock ──
     {
       accessorKey: "total_stock",
       header: ({ column }) => (
@@ -1556,17 +1759,7 @@ function buildColumns(user: any): ColumnDef<Product>[] {
           </div>
         );
       },
-      filterFn: (row, _id, value) => {
-        if (value === "all") return true;
-        const p = row.original;
-        if (value === "low") return p.low_stock;
-        if (value === "in-stock") return !p.low_stock && p.total_stock > 0;
-        if (value === "out-of-stock") return p.total_stock === 0;
-        return true;
-      },
     },
-
-    // ── Status ──
     {
       accessorKey: "status",
       header: "Status",
@@ -1594,8 +1787,6 @@ function buildColumns(user: any): ColumnDef<Product>[] {
         );
       },
     },
-
-    // ── Rating & Reviews ──
     {
       accessorKey: "rating",
       header: "Rating",
@@ -1621,8 +1812,6 @@ function buildColumns(user: any): ColumnDef<Product>[] {
         );
       },
     },
-
-    // ── Refund Policy ──
     {
       id: "refund",
       header: "Refund",
@@ -1654,8 +1843,6 @@ function buildColumns(user: any): ColumnDef<Product>[] {
         );
       },
     },
-
-    // ── Actions ──
     {
       id: "actions",
       header: "Actions",
@@ -1674,7 +1861,7 @@ function buildColumns(user: any): ColumnDef<Product>[] {
             </Link>
 
             {actions.length > 0 && (
-              <Select onValueChange={(value) => handleAction(product, value)}>
+              <Select onValueChange={(value) => onActionClick(product, value)}>
                 <SelectTrigger className="w-[130px] h-8 text-xs">
                   <SelectValue placeholder="Actions" />
                 </SelectTrigger>
