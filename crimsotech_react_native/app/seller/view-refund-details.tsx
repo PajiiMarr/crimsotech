@@ -840,10 +840,10 @@ const renderActionButtons = () => {
     // Show "Provide Tracking" button ONLY when return status is 'pending' (not yet shipped)
     if (returnStatus === 'pending') {
       buttons.push(
-        <TouchableOpacity key="tracking" style={[styles.actionBtn, styles.trackingBtn]} onPress={() => setShowTrackingModal(true)} disabled={actionLoading}>
-          <Ionicons name="send-outline" size={16} color="#fff" />
-          <Text style={styles.actionBtnText}>Provide Tracking</Text>
-        </TouchableOpacity>
+        // <TouchableOpacity key="tracking" style={[styles.actionBtn, styles.trackingBtn]} onPress={() => setShowTrackingModal(true)} disabled={actionLoading}>
+        //   <Ionicons name="send-outline" size={16} color="#fff" />
+        //   <Text style={styles.actionBtnText}>Provide Tracking</Text>
+        // </TouchableOpacity>
       );
     }
     
@@ -1515,6 +1515,7 @@ const renderActionButtons = () => {
         {/* Status Card */}
         {/* Status Card */}
 {/* Status Card */}
+{/* Status Card */}
 <View style={styles.statusCard}>
   <View style={styles.statusRow}>
     <Text style={styles.requestNumber}>#{refund.request_number || String(refundId).slice(0, 8).toUpperCase()}</Text>
@@ -1525,6 +1526,53 @@ const renderActionButtons = () => {
     </View>
   </View>
   <Text style={styles.statusDescription}>{getStatusDescription()}</Text>
+  
+  {/* ADD RETURN DEADLINE - Show for Approved - Waiting for return status */}
+  {getDisplayStatus(refund) === 'Approved - Waiting for return' && refund.return_request?.return_deadline && (
+    <View style={styles.returnDeadlineNotice}>
+      <Ionicons name="time-outline" size={16} color="#F59E0B" />
+      <Text style={styles.returnDeadlineNoticeText}>
+        Return Deadline: {formatDate(refund.return_request.return_deadline)}
+      </Text>
+    </View>
+  )}
+  
+  {/* ADD SHIPPING PROOFS HERE - below the status description when status is Approved - Shipped */}
+  {getDisplayStatus(refund) === 'Approved - Shipped' && refund.return_request?.medias && refund.return_request.medias.length > 0 && (
+    <View style={{ marginTop: 12 }}>
+      <Text style={[styles.cardTitle, { fontSize: 13, marginBottom: 8 }]}>Shipping Proofs</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
+        {refund.return_request.medias.map((media: any, idx: number) => {
+          const fileUrl = media.file_url;
+          const isVideo = media.file_type === 'video' || 
+                         media.file_type === 'video/mp4' ||
+                         (fileUrl && (fileUrl.includes('.mp4') || fileUrl.includes('.mov') || fileUrl.includes('.webm')));
+          
+          if (!fileUrl) return null;
+          
+          return (
+            <TouchableOpacity
+              key={idx}
+              style={styles.mediaThumbWrapper}
+              onPress={() => openMediaViewer(fileUrl, media.file_type)}
+            >
+              {isVideo ? (
+                <View style={styles.videoThumb}>
+                  <Image source={{ uri: fileUrl }} style={styles.mediaThumb} resizeMode="cover" />
+                  <View style={styles.playOverlay}>
+                    <Ionicons name="play-circle" size={30} color="#fff" />
+                  </View>
+                </View>
+              ) : (
+                <Image source={{ uri: fileUrl }} style={styles.mediaThumb} resizeMode="cover" />
+              )}
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
+  )}
+  
   <Text style={styles.dateText}>Requested: {formatDate(refund.requested_at)}</Text>
 </View>
 
@@ -1632,7 +1680,8 @@ const renderActionButtons = () => {
         </View>
 
         {/* Return Request */}
-        {/* Return Request */}
+{/* Return Request */}
+{/* Return Request */}
 {refund.return_request && (
   <View style={styles.card}>
     <Text style={styles.cardTitle}>Return Request</Text>
@@ -1648,7 +1697,42 @@ const renderActionButtons = () => {
     <InfoRow label="Received At" value={formatDate(refund.return_request.received_at)} />
     <InfoRow label="Return Deadline" value={formatDate(refund.return_request.return_deadline)} />
     {refund.return_request.notes && <InfoRow label="Notes" value={refund.return_request.notes} />}
-    {renderMedia(refund.return_request.media, 'Return Media')}
+    
+    {/* Display shipping proofs from return_request.medias (plural) */}
+    {/* {refund.return_request.medias && refund.return_request.medias.length > 0 && (
+      <>
+        <Text style={[styles.cardTitle, { marginTop: 8 }]}>Shipping Proofs</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
+          {refund.return_request.medias.map((media: any, idx: number) => {
+            const fileUrl = media.file_url;
+            const isVideo = media.file_type === 'video' || 
+                           media.file_type === 'video/mp4' ||
+                           (fileUrl && (fileUrl.includes('.mp4') || fileUrl.includes('.mov') || fileUrl.includes('.webm')));
+            
+            if (!fileUrl) return null;
+            
+            return (
+              <TouchableOpacity
+                key={idx}
+                style={styles.mediaThumbWrapper}
+                onPress={() => openMediaViewer(fileUrl, media.file_type)}
+              >
+                {isVideo ? (
+                  <View style={styles.videoThumb}>
+                    <Image source={{ uri: fileUrl }} style={styles.mediaThumb} resizeMode="cover" />
+                    <View style={styles.playOverlay}>
+                      <Ionicons name="play-circle" size={30} color="#fff" />
+                    </View>
+                  </View>
+                ) : (
+                  <Image source={{ uri: fileUrl }} style={styles.mediaThumb} resizeMode="cover" />
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </>
+    )} */}
   </View>
 )}
 
@@ -1984,5 +2068,22 @@ noticeText: {
   fontSize: 12,
   color: '#1E40AF',
   lineHeight: 16,
+},
+returnDeadlineNotice: {
+  flexDirection: 'row',
+  alignItems: 'center',
+ 
+  padding: 10,
+  borderRadius: 8,
+  marginTop: 12,
+  gap: 8,
+  borderWidth: 1,
+  borderColor: '#FDE68A',
+},
+returnDeadlineNoticeText: {
+  fontSize: 12,
+  color: '#92400E',
+  fontWeight: '500',
+  flex: 1,
 },
 });

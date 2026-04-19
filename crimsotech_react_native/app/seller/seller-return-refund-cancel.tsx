@@ -10,9 +10,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   TextInput,
-  Modal,
   Alert,
-  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -119,63 +117,51 @@ const TYPE_CONFIG: Record<string, { label: string; color: string; bgColor: strin
 };
 
 // ========== STATUS HELPER FUNCTIONS ==========
-// Get display status (same as in view-refund-details)
 const getDisplayStatus = (refund: ReturnItem) => {
   if (!refund) return '';
   const status = refund.status?.toLowerCase();
   const refundType = refund.refund_type;
   
-  // If refund is approved and type is 'return', show combined status
   if (status === 'approved' && refundType === 'return') {
     return 'Approved - Waiting for return';
   }
   
-  // Otherwise return the regular status
   return STATUS_CONFIG[status]?.label || (refund.status || 'pending').replace('_', ' ').toUpperCase();
 };
 
-// Get status color
 const getStatusColor = (refund: ReturnItem) => {
   if (!refund) return '#9CA3AF';
   const status = refund.status?.toLowerCase();
   const refundType = refund.refund_type;
   
-  // If refund is approved and type is 'return', use blue color
   if (status === 'approved' && refundType === 'return') {
-    return '#3B82F6'; // Blue color for waiting
+    return '#3B82F6';
   }
   
-  // Otherwise return the regular status color
   return STATUS_CONFIG[status]?.color || '#9CA3AF';
 };
 
-// Get status background color
 const getStatusBgColor = (refund: ReturnItem) => {
   if (!refund) return '#f9fafb';
   const status = refund.status?.toLowerCase();
   const refundType = refund.refund_type;
   
-  // If refund is approved and type is 'return', use light blue background
   if (status === 'approved' && refundType === 'return') {
-    return '#EFF6FF'; // Light blue background
+    return '#EFF6FF';
   }
   
-  // Otherwise return the regular status background
   return STATUS_CONFIG[status]?.bgColor || '#f9fafb';
 };
 
-// Get status icon
 const getStatusIcon = (refund: ReturnItem): keyof typeof Ionicons.glyphMap => {
   if (!refund) return 'time-outline';
   const status = refund.status?.toLowerCase();
   const refundType = refund.refund_type;
   
-  // For approved return type, use a different icon
   if (status === 'approved' && refundType === 'return') {
-    return 'time-outline'; // Clock icon for waiting
+    return 'time-outline';
   }
   
-  // Use regular status icon
   return STATUS_CONFIG[status]?.icon || 'time-outline';
 };
 
@@ -199,7 +185,6 @@ export default function Refunds() {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<string>('all');
-  const [expandedRefunds, setExpandedRefunds] = useState<Set<string>>(new Set());
   const [stats, setStats] = useState<ReturnStats>({
     total_requests: 0,
     pending: 0,
@@ -231,207 +216,167 @@ export default function Refunds() {
     filterRefunds();
   }, [searchQuery, activeTab, refundData]);
 
-const fetchRefundData = async () => {
-  if (!userId || !shopId) {
-    setLoading(false);
-    return;
-  }
-
-  setLoading(true);
-  try {
-    console.log('Fetching refund data for seller:', { userId, shopId });
-    
-    const response = await AxiosInstance.get('/return-refund/get_shop_refunds/', {
-      headers: {
-        'X-User-Id': userId,
-        'X-Shop-Id': shopId,
-        'Accept': 'application/json'
-      },
-      params: { shop_id: shopId }
-    });
-
-    console.log('Refund API Response:', response.data);
-
-    // Based on your Django view, the response structure is:
-    // {
-    //   "shops": [{"id": "...", "name": "..."}],
-    //   "results": [...]  // This is the refunds array
-    // }
-    
-    let serverList = [];
-    
-    if (response.data && response.data.results) {
-      // Structure from your Django view
-      serverList = response.data.results;
-      console.log('Found results array with length:', serverList.length);
-    } else if (Array.isArray(response.data)) {
-      serverList = response.data;
-    } else {
-      console.log('Unexpected response structure:', response.data);
-      serverList = [];
+  const fetchRefundData = async () => {
+    if (!userId || !shopId) {
+      setLoading(false);
+      return;
     }
 
-    const returnItems: ReturnItem[] = serverList.map((r: any) => ({
-      id: r.refund_id || r.refund || r.id,
-      order_id: r.order_id || r.order_info?.order_id || r.order?.order || '',
-      buyer_notified_at: r.buyer_notified_at || null,
-      product: {
-        id: r.order_items?.[0]?.product_id || r.order_items?.[0]?.product?.id || 'unknown',
-        name: r.order_items?.[0]?.product_name || r.order_items?.[0]?.product?.name || r.order_items?.[0]?.name || 'Product',
-        price: Number(r.order_items?.[0]?.price) || Number(r.amount) || 0,
-        shop: r.shop || r.order_items?.[0]?.shop || { id: shopId, name: '' },
-        image: r.order_items?.[0]?.product_image || ''
-      },
-      quantity: r.order_items?.[0]?.quantity || 1,
-      amount: Number(r.amount) || Number(r.order_items?.[0]?.total) || 0,
-      type: r.refund_type === 'return' ? 'return' : 'refund',
-      refund_type: r.refund_type || 'keep',
-      status: r.status || 'pending',
-      reason: r.reason || '',
-      description: r.customer_note || r.detailed_reason || '',
-      created_at: r.requested_at || '',
-      updated_at: r.updated_at || r.requested_at || '',
-      refund_amount: r.amount ? Number(r.amount) : undefined,
-      refund_method: r.final_refund_method || r.buyer_preferred_refund_method || undefined,
-      refund_payment_status: r.refund_payment_status || 'pending',
-      tracking_number: r.return_request?.tracking_number || undefined,
-      dispute_reason: r.dispute?.reason || undefined,
-      resolution: r.dispute?.resolution || undefined,
-      reviewed_by: r.processed_by?.username || undefined,
-      reviewed_at: r.processed_at || undefined,
-      courier: r.return_request?.logistic_service || undefined,
-      notes: r.customer_note || r.notes || '',
-      order_items: r.order_items || [],
-      return_request: r.return_request ? {
-        status: r.return_request.status,
-        tracking_number: r.return_request.tracking_number,
-        shipped_at: r.return_request.shipped_at,
-        received_at: r.return_request.received_at,
-        notes: r.return_request.notes
-      } : undefined,
-      dispute: r.dispute ? {
-        status: r.dispute.status,
-        reason: r.dispute.reason,
-        resolution: r.dispute.resolution
-      } : undefined,
-      available_actions: (function(status){
-        switch(status){
-          case 'pending': return ['approve','reject','propose_negotiation'];
-          case 'negotiation': return ['propose_negotiation','contact_customer'];
-          case 'approved': return ['schedule_pickup','process_refund'];
-          case 'dispute': return ['contact_customer','resolve_dispute'];
-          case 'rejected': return [];
-          case 'cancelled': return [];
-          case 'failed': return [];
-          default: return [];
-        }
-      })(r.status)
-    }));
+    setLoading(true);
+    try {
+      console.log('Fetching refund data for seller:', { userId, shopId });
+      
+      const response = await AxiosInstance.get('/return-refund/get_shop_refunds/', {
+        headers: {
+          'X-User-Id': userId,
+          'X-Shop-Id': shopId,
+          'Accept': 'application/json'
+        },
+        params: { shop_id: shopId }
+      });
 
-    console.log('Processed return items:', returnItems.length);
-    setRefundData(returnItems);
+      console.log('Refund API Response:', response.data);
 
-    // Calculate stats
-    const newStats = {
-      total_requests: returnItems.length,
-      pending: returnItems.filter(i => i.status === 'pending').length,
-      negotiation: returnItems.filter(i => i.status === 'negotiation').length,
-      approved: returnItems.filter(i => i.status === 'approved').length,
-      dispute: returnItems.filter(i => i.status === 'dispute').length,
-      rejected: returnItems.filter(i => i.status === 'rejected').length,
-      cancelled: returnItems.filter(i => i.status === 'cancelled').length,
-      failed: returnItems.filter(i => i.status === 'failed').length,
-      return_refund_requests: returnItems.filter(i => i.type === 'return' || i.type === 'refund').length,
-      cancellation_requests: returnItems.filter(i => i.type === 'cancellation').length,
-      failed_delivery_requests: returnItems.filter(i => i.type === 'failed_delivery').length,
-      under_review: returnItems.filter(i => ['pending', 'negotiation'].includes(i.status)).length,
-      returning: returnItems.filter(i => i.status === 'approved').length,
-      refunded: returnItems.filter(i => i.status === 'approved').length,
-      disputed: returnItems.filter(i => i.status === 'dispute').length,
-      rejected_cancelled: returnItems.filter(i => ['rejected', 'cancelled', 'failed'].includes(i.status)).length,
-    };
+      let serverList = [];
+      
+      if (response.data && response.data.results) {
+        serverList = response.data.results;
+      } else if (Array.isArray(response.data)) {
+        serverList = response.data;
+      } else {
+        serverList = [];
+      }
 
-    setStats(newStats);
+      const returnItems: ReturnItem[] = serverList.map((r: any) => ({
+        id: r.refund_id || r.refund || r.id,
+        order_id: r.order_id || r.order_info?.order_id || r.order?.order || '',
+        buyer_notified_at: r.buyer_notified_at || null,
+        product: {
+          id: r.order_items?.[0]?.product_id || r.order_items?.[0]?.product?.id || 'unknown',
+          name: r.order_items?.[0]?.product_name || r.order_items?.[0]?.product?.name || r.order_items?.[0]?.name || 'Product',
+          price: Number(r.order_items?.[0]?.price) || Number(r.amount) || 0,
+          shop: r.shop || r.order_items?.[0]?.shop || { id: shopId, name: '' },
+          image: r.order_items?.[0]?.product_image || ''
+        },
+        quantity: r.order_items?.[0]?.quantity || 1,
+        amount: Number(r.amount) || Number(r.order_items?.[0]?.total) || 0,
+        type: r.refund_type === 'return' ? 'return' : 'refund',
+        refund_type: r.refund_type || 'keep',
+        status: r.status || 'pending',
+        reason: r.reason || '',
+        description: r.customer_note || r.detailed_reason || '',
+        created_at: r.requested_at || '',
+        updated_at: r.updated_at || r.requested_at || '',
+        refund_amount: r.amount ? Number(r.amount) : undefined,
+        refund_method: r.final_refund_method || r.buyer_preferred_refund_method || undefined,
+        refund_payment_status: r.refund_payment_status || 'pending',
+        tracking_number: r.return_request?.tracking_number || undefined,
+        dispute_reason: r.dispute?.reason || undefined,
+        resolution: r.dispute?.resolution || undefined,
+        reviewed_by: r.processed_by?.username || undefined,
+        reviewed_at: r.processed_at || undefined,
+        courier: r.return_request?.logistic_service || undefined,
+        notes: r.customer_note || r.notes || '',
+        order_items: r.order_items || [],
+        return_request: r.return_request ? {
+          status: r.return_request.status,
+          tracking_number: r.return_request.tracking_number,
+          shipped_at: r.return_request.shipped_at,
+          received_at: r.return_request.received_at,
+          notes: r.return_request.notes
+        } : undefined,
+        dispute: r.dispute ? {
+          status: r.dispute.status,
+          reason: r.dispute.reason,
+          resolution: r.dispute.resolution
+        } : undefined,
+        available_actions: (function(status){
+          switch(status){
+            case 'pending': return ['approve','reject','propose_negotiation'];
+            case 'negotiation': return ['propose_negotiation','contact_customer'];
+            case 'approved': return ['schedule_pickup','process_refund'];
+            case 'dispute': return ['contact_customer','resolve_dispute'];
+            default: return [];
+          }
+        })(r.status)
+      }));
 
-  } catch (error) {
-    console.error('Error fetching refund data:', error);
-    Alert.alert('Error', 'Failed to load refund requests');
-    setRefundData([]);
-  } finally {
-    setLoading(false);
-    setRefreshing(false);
-  }
-};
+      setRefundData(returnItems);
+
+      const newStats = {
+        total_requests: returnItems.length,
+        pending: returnItems.filter(i => i.status === 'pending').length,
+        negotiation: returnItems.filter(i => i.status === 'negotiation').length,
+        approved: returnItems.filter(i => i.status === 'approved').length,
+        dispute: returnItems.filter(i => i.status === 'dispute').length,
+        rejected: returnItems.filter(i => i.status === 'rejected').length,
+        cancelled: returnItems.filter(i => i.status === 'cancelled').length,
+        failed: returnItems.filter(i => i.status === 'failed').length,
+        return_refund_requests: returnItems.filter(i => i.type === 'return' || i.type === 'refund').length,
+        cancellation_requests: returnItems.filter(i => i.type === 'cancellation').length,
+        failed_delivery_requests: returnItems.filter(i => i.type === 'failed_delivery').length,
+        under_review: returnItems.filter(i => ['pending', 'negotiation'].includes(i.status)).length,
+        returning: returnItems.filter(i => i.status === 'approved').length,
+        refunded: returnItems.filter(i => i.status === 'approved').length,
+        disputed: returnItems.filter(i => i.status === 'dispute').length,
+        rejected_cancelled: returnItems.filter(i => ['rejected', 'cancelled', 'failed'].includes(i.status)).length,
+      };
+
+      setStats(newStats);
+
+    } catch (error) {
+      console.error('Error fetching refund data:', error);
+      Alert.alert('Error', 'Failed to load refund requests');
+      setRefundData([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
 
   const onRefresh = () => {
     setRefreshing(true);
     fetchRefundData();
   };
 
-  // Get refunds for current tab based on exact logic from web
   const getRefundsForTab = (tabId: string): ReturnItem[] => {
     if (!refundData) return [];
 
     switch(tabId) {
       case 'all':
         return refundData;
-
       case 'new':
-        // New Requests: status='pending' AND refund_payment_status='pending'
         return refundData.filter(refund =>
           refund.status === 'pending' &&
           refund.refund_payment_status === 'pending'
         );
-
       case 'to-process':
-  // To Process tab - include refunds that require seller action or are in-progress
-  return refundData.filter(refund => {
-    const st = refund.status;
-    const rtype = refund.refund_type || '';
-    const rrStatus = refund.return_request?.status || '';
-    const paymentStatus = refund.refund_payment_status || '';
+        return refundData.filter(refund => {
+          const st = refund.status;
+          const rtype = refund.refund_type || '';
+          const rrStatus = refund.return_request?.status || '';
+          const paymentStatus = refund.refund_payment_status || '';
 
-    // Exclude final states
-    if (['completed', 'rejected', 'cancelled', 'failed'].includes(st)) return false;
-
-    // 1. Negotiation status - waiting for buyer response OR seller to take action
-    if (st === 'negotiation') return true;
-
-    // 2. Awaiting Shipment: approved returns waiting for buyer to ship
-    if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped', 'received'].includes(rrStatus))) return true;
-
-    // 3. In Transit (shipped by buyer) - waiting for seller to receive
-    if (rtype === 'return' && st === 'approved' && rrStatus === 'shipped') return true;
-
-    // 4. Received (need inspection)
-    if (rtype === 'return' && st === 'approved' && rrStatus === 'received') return true;
-
-    // 5. Inspection complete (seller decision needed)
-    if (rtype === 'return' && st === 'approved' && rrStatus === 'inspected') return true;
-
-    // 6. Ready to Process Payment
-    if (st === 'approved' && (
-      (rtype === 'keep' && paymentStatus === 'processing') ||
-      (rtype === 'return' && paymentStatus === 'processing' && rrStatus === 'approved')
-    )) return true;
-
-    return false;
-  });
-
+          if (['completed', 'rejected', 'cancelled', 'failed'].includes(st)) return false;
+          if (st === 'negotiation') return true;
+          if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped', 'received'].includes(rrStatus))) return true;
+          if (rtype === 'return' && st === 'approved' && rrStatus === 'shipped') return true;
+          if (rtype === 'return' && st === 'approved' && rrStatus === 'received') return true;
+          if (rtype === 'return' && st === 'approved' && rrStatus === 'inspected') return true;
+          if (st === 'approved' && ((rtype === 'keep' && paymentStatus === 'processing') || (rtype === 'return' && paymentStatus === 'processing' && rrStatus === 'approved'))) return true;
+          return false;
+        });
       case 'disputes':
         return refundData.filter(refund => 
           refund.status === 'dispute' || 
           refund.dispute?.status === 'under_review'
         );
-
       case 'completed':
-        // Completed: payment_status='completed' OR status IN ('rejected', 'cancelled', 'failed')
         return refundData.filter(refund => 
           refund.refund_payment_status === 'completed' ||
           ['rejected', 'cancelled', 'failed'].includes(refund.status) ||
           (refund.status === 'approved' && refund.return_request?.status === 'rejected')
         );
-
       default:
         return refundData;
     }
@@ -466,6 +411,10 @@ const fetchRefundData = async () => {
     }
   };
 
+  const formatCurrency = (amount: number) => {
+    return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+  };
+
   const getStatusBadge = (refund: ReturnItem) => {
     const displayStatus = getDisplayStatus(refund);
     const statusColor = getStatusColor(refund);
@@ -494,59 +443,27 @@ const fetchRefundData = async () => {
     return getRefundsForTab(tabId).length;
   };
 
-  const toggleRefundExpansion = (refundId: string) => {
-    const newExpanded = new Set(expandedRefunds);
-    if (newExpanded.has(refundId)) {
-      newExpanded.delete(refundId);
-    } else {
-      newExpanded.add(refundId);
-    }
-    setExpandedRefunds(newExpanded);
+  const getProductImageUrl = (refund: ReturnItem): string => {
+    if (refund.order_items?.[0]?.product_image) return refund.order_items[0].product_image;
+    if (refund.product?.image) return refund.product.image;
+    return 'https://via.placeholder.com/40';
   };
 
-  const handleViewDetails = (refundId: string) => {
+  const getBorderColor = (refund: ReturnItem): string => {
+    const statusColor = getStatusColor(refund);
+    return statusColor;
+  };
+
+  const handleCardPress = (refundId: string) => {
     router.push(`/seller/view-refund-details?refundId=${refundId}&shopId=${shopId}&tab=${activeTab}`);
   };
 
-  const getActionIcon = (refund: ReturnItem) => {
-    const status = refund.status?.toLowerCase();
-    const refundType = refund.refund_type;
-    
-    // For approved return type
-    if (status === 'approved' && refundType === 'return') {
-      return { name: 'time-outline', color: '#3B82F6' };
-    }
-    
-    // Regular status logic
-    switch(refund.status) {
-      case 'pending':
-        return { name: 'eye-outline', color: '#3b82f6' };
-      case 'negotiation':
-        return { name: 'chatbubble-outline', color: '#3b82f6' };
-      case 'approved':
-        return { name: 'checkmark-circle-outline', color: '#10b981' };
-      case 'dispute':
-        return { name: 'warning-outline', color: '#8b5cf6' };
-      case 'rejected':
-      case 'cancelled':
-      case 'failed':
-        return { name: 'document-text-outline', color: '#6b7280' };
-      default:
-        return { name: 'eye-outline', color: '#6b7280' };
-    }
-  };
-
-  const getActionButtons = (refund: ReturnItem) => {
-    const actionIcon = getActionIcon(refund);
-    
-    return (
-      <TouchableOpacity
-        style={[styles.actionIconButton, { backgroundColor: `${actionIcon.color}10` }]}
-        onPress={() => handleViewDetails(refund.id)}
-      >
-        <Ionicons name={actionIcon.name as any} size={14} color={actionIcon.color} />
-      </TouchableOpacity>
-    );
+  const counts = {
+    all: refundData.length,
+    new: getRefundsForTab('new').length,
+    'to-process': getRefundsForTab('to-process').length,
+    disputes: getRefundsForTab('disputes').length,
+    completed: getRefundsForTab('completed').length,
   };
 
   if (!shopId) {
@@ -607,13 +524,39 @@ const fetchRefundData = async () => {
             </View>
           ) : null}
 
+          {/* Stats Cards */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statsScroll}>
+            <View style={styles.statsContainer}>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>{stats.total_requests}</Text>
+                <Text style={styles.statLabel}>Total</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={[styles.statValue, { color: '#f59e0b' }]}>{stats.pending}</Text>
+                <Text style={styles.statLabel}>Pending</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={[styles.statValue, { color: '#3b82f6' }]}>{stats.negotiation}</Text>
+                <Text style={styles.statLabel}>Negotiation</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={[styles.statValue, { color: '#10b981' }]}>{stats.approved}</Text>
+                <Text style={styles.statLabel}>Approved</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={[styles.statValue, { color: '#8b5cf6' }]}>{stats.dispute}</Text>
+                <Text style={styles.statLabel}>Dispute</Text>
+              </View>
+            </View>
+          </ScrollView>
+
           {/* Search Bar */}
           <View style={styles.searchContainer}>
             <View style={styles.searchBox}>
               <Ionicons name="search-outline" size={18} color="#94A3B8" />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search refunds..."
+                placeholder="Search refunds by ID or reason..."
                 placeholderTextColor="#94A3B8"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -626,42 +569,25 @@ const fetchRefundData = async () => {
             </View>
           </View>
 
-          {/* Status Tabs */}
+          {/* Tabs */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsScroll}>
             <View style={styles.tabsContainer}>
               {STATUS_TABS.map((tab) => {
                 const isActive = activeTab === tab.id;
-                const count = getTabCount(tab.id);
-
+                const count = counts[tab.id as keyof typeof counts] || 0;
                 return (
                   <TouchableOpacity
                     key={tab.id}
-                    style={[
-                      styles.tabButton,
-                      isActive && styles.tabButtonActive
-                    ]}
+                    style={[styles.tabButton, isActive && styles.tabButtonActive]}
                     onPress={() => setActiveTab(tab.id)}
                   >
-                    <Ionicons 
-                      name={tab.icon as any} 
-                      size={14} 
-                      color={isActive ? '#3b82f6' : '#64748B'} 
-                    />
-                    <Text style={[
-                      styles.tabText,
-                      isActive && styles.tabTextActive
-                    ]}>
+                    <Ionicons name={tab.icon as any} size={14} color={isActive ? '#3b82f6' : '#64748B'} />
+                    <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
                       {tab.label}
                     </Text>
                     {count > 0 && (
-                      <View style={[
-                        styles.tabBadge,
-                        isActive && styles.tabBadgeActive
-                      ]}>
-                        <Text style={[
-                          styles.tabBadgeText,
-                          isActive && styles.tabBadgeTextActive
-                        ]}>{count}</Text>
+                      <View style={[styles.tabBadge, isActive && styles.tabBadgeActive]}>
+                        <Text style={[styles.tabBadgeText, isActive && styles.tabBadgeTextActive]}>{count}</Text>
                       </View>
                     )}
                   </TouchableOpacity>
@@ -669,30 +595,6 @@ const fetchRefundData = async () => {
               })}
             </View>
           </ScrollView>
-
-          {/* Stats Cards */}
-          <View style={styles.statsGrid}>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{stats.total_requests}</Text>
-              <Text style={styles.statLabel}>Total</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statValue, { color: '#f59e0b' }]}>{stats.pending}</Text>
-              <Text style={styles.statLabel}>Pending</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statValue, { color: '#3b82f6' }]}>{stats.negotiation}</Text>
-              <Text style={styles.statLabel}>Negotiation</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statValue, { color: '#10b981' }]}>{stats.approved}</Text>
-              <Text style={styles.statLabel}>Approved</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={[styles.statValue, { color: '#8b5cf6' }]}>{stats.dispute}</Text>
-              <Text style={styles.statLabel}>Dispute</Text>
-            </View>
-          </View>
 
           {/* Refunds List */}
           <View style={styles.listContainer}>
@@ -710,70 +612,46 @@ const fetchRefundData = async () => {
               </View>
             ) : (
               filteredRefunds.map((refund) => {
-                const isExpanded = expandedRefunds.has(refund.id);
+                const borderColor = getBorderColor(refund);
+                const primaryItem = refund.order_items?.[0];
+                const productName = primaryItem?.product_name || refund.product?.name || 'Product';
+                const productImage = getProductImageUrl(refund);
+                const itemCount = refund.order_items?.length || 1;
 
                 return (
-                  <View key={refund.id} style={styles.refundCard}>
-                    {/* Top Section - Header */}
+                  <TouchableOpacity
+                    key={refund.id}
+                    style={[styles.refundCard, { borderLeftColor: borderColor, borderLeftWidth: 4 }]}
+                    onPress={() => handleCardPress(refund.id)}
+                    activeOpacity={0.7}
+                  >
+                    {/* Header */}
                     <View style={styles.cardHeader}>
                       <View style={styles.cardHeaderLeft}>
                         <View style={styles.refundIdContainer}>
                           <Ionicons name="cube-outline" size={14} color="#64748B" />
-                          <Text style={styles.refundId}>Refund #{refund.id.slice(0, 8)}</Text>
+                          <Text style={styles.refundId} numberOfLines={1}>
+                            {productName}
+                            {itemCount > 1 && ` +${itemCount - 1} more`}
+                          </Text>
                         </View>
                         <View style={styles.refundMeta}>
-                          <Text style={styles.orderId}>Order: {refund.order_id.slice(0, 8)}</Text>
+                          <Text style={styles.orderId}>Refund #{refund.id.slice(0, 8)}</Text>
                           <Text style={styles.metaDot}>•</Text>
                           <Text style={styles.refundDate}>{formatDate(refund.created_at)}</Text>
                         </View>
                       </View>
-                      <TouchableOpacity
-                        onPress={() => toggleRefundExpansion(refund.id)}
-                        style={styles.expandButton}
-                      >
-                        {getStatusBadge(refund)}
-                        <Ionicons 
-                          name={isExpanded ? 'chevron-up' : 'chevron-down'} 
-                          size={18} 
-                          color="#94A3B8" 
-                        />
-                      </TouchableOpacity>
+                      {getStatusBadge(refund)}
                     </View>
 
                     {/* Product Info */}
                     <View style={styles.productInfo}>
-                      {refund.order_items && refund.order_items.length > 0 ? (
-                        <View style={styles.productImages}>
-                          {refund.order_items.slice(0, 3).map((item: any, index: number) => (
-                            <View key={index} style={styles.productImageWrapper}>
-                              {item.product?.image ? (
-                                <Image 
-                                  source={{ uri: item.product.image }} 
-                                  style={styles.productThumb}
-                                />
-                              ) : (
-                                <View style={[styles.productThumb, styles.productThumbPlaceholder]}>
-                                  <Ionicons name="cube-outline" size={12} color="#CBD5E1" />
-                                </View>
-                              )}
-                            </View>
-                          ))}
-                          {refund.order_items.length > 3 && (
-                            <View style={styles.moreProductsBadge}>
-                              <Text style={styles.moreProductsText}>+{refund.order_items.length - 3}</Text>
-                            </View>
-                          )}
-                        </View>
-                      ) : (
-                        <View style={styles.productImageWrapper}>
-                          <View style={[styles.productThumb, styles.productThumbPlaceholder]}>
-                            <Ionicons name="cube-outline" size={16} color="#CBD5E1" />
-                          </View>
-                        </View>
-                      )}
+                      <View style={styles.productImageWrapper}>
+                        <Image source={{ uri: productImage }} style={styles.productThumb} />
+                      </View>
                       <View style={styles.productDetails}>
                         <Text style={styles.productName} numberOfLines={1}>
-                          {refund.order_items?.[0]?.product?.name || refund.product?.name || 'Product'}
+                          {productName}
                         </Text>
                         <View style={styles.productTypeRow}>
                           {getTypeBadge(refund.type)}
@@ -784,107 +662,23 @@ const fetchRefundData = async () => {
 
                     {/* Reason */}
                     <View style={styles.reasonContainer}>
-                      <Ionicons name="chatbubble-outline" size={12} color="#64748B" />
+                      <Ionicons name="chatbubble-outline" size={10} color="#64748B" />
                       <Text style={styles.reasonText} numberOfLines={1}>{refund.reason}</Text>
                     </View>
 
-                    {/* Payment Status */}
-                    {refund.refund_payment_status && (
-                      <View style={styles.paymentStatus}>
-                        <Text style={styles.paymentStatusLabel}>Payment Status:</Text>
-                        <Text style={styles.paymentStatusValue}>{refund.refund_payment_status}</Text>
-                      </View>
-                    )}
-
-                    {/* Expanded Section - Details */}
-                    {isExpanded && (
-                      <View style={styles.expandedDetails}>
-                        <View style={styles.divider} />
-                        
-                        <Text style={styles.expandedTitle}>Products Being Refunded</Text>
-                        {refund.order_items?.map((item: any, index: number) => (
-                          <View key={index} style={styles.expandedProductItem}>
-                            <View style={styles.expandedProductImage}>
-                              {item.product?.image ? (
-                                <Image source={{ uri: item.product.image }} style={styles.expandedProductThumb} />
-                              ) : (
-                                <View style={[styles.expandedProductThumb, styles.placeholderThumb]}>
-                                  <Ionicons name="cube-outline" size={16} color="#CBD5E1" />
-                                </View>
-                              )}
-                            </View>
-                            <View style={styles.expandedProductInfo}>
-                              <Text style={styles.expandedProductName} numberOfLines={1}>{item.product?.name}</Text>
-                              <Text style={styles.expandedProductMeta}>
-                                {item.product?.shop?.name || 'Shop'} • Qty: {item.quantity}
-                              </Text>
-                            </View>
-                            <View style={styles.expandedProductPrice}>
-                              <Text style={styles.priceAmount}>₱{item.amount || item.price}</Text>
-                              <Text style={styles.priceEach}>₱{item.price} each</Text>
-                            </View>
-                          </View>
-                        ))}
-
-                        <Text style={styles.expandedTitle}>Refund Details</Text>
-                        <View style={styles.detailsGrid}>
-                          <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Refund ID:</Text>
-                            <Text style={styles.detailValue}>{refund.id}</Text>
-                          </View>
-                          <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Order ID:</Text>
-                            <Text style={styles.detailValue}>{refund.order_id}</Text>
-                          </View>
-                          <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Amount:</Text>
-                            <Text style={styles.detailValue}>₱{refund.refund_amount || refund.amount || 'N/A'}</Text>
-                          </View>
-                          <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Request Date:</Text>
-                            <Text style={styles.detailValue}>{formatDate(refund.created_at)}</Text>
-                          </View>
-                          <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Refund Type:</Text>
-                            <Text style={styles.detailValue}>{refund.type}</Text>
-                          </View>
-                          <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Method:</Text>
-                            <Text style={styles.detailValue}>{refund.refund_type === 'return' ? 'Return Item' : 'Keep Item'}</Text>
-                          </View>
-                          <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Preferred Method:</Text>
-                            <Text style={styles.detailValue}>{refund.preferred_refund_method || 'N/A'}</Text>
-                          </View>
-                          <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Payment Status:</Text>
-                            <Text style={styles.detailValue}>{refund.refund_payment_status || 'pending'}</Text>
-                          </View>
-                          {refund.return_request && (
-                            <View style={styles.detailRow}>
-                              <Text style={styles.detailLabel}>Return Status:</Text>
-                              <Text style={styles.detailValue}>{refund.return_request.status}</Text>
-                            </View>
-                          )}
-                        </View>
-                      </View>
-                    )}
-
-                    {/* Bottom Section - Actions */}
-                    <View style={styles.cardFooter}>
-                      <TouchableOpacity
-                        style={styles.viewDetailsButton}
-                        onPress={() => handleViewDetails(refund.id)}
-                      >
-                        <Ionicons name="eye-outline" size={14} color="#3b82f6" />
-                        <Text style={styles.viewDetailsText}>View Details</Text>
-                      </TouchableOpacity>
-
-                      <View style={styles.actionButtons}>
-                        {getActionButtons(refund)}
-                      </View>
+                    {/* Payment Status and Amount */}
+                    <View style={styles.paymentRow}>
+                      <Text style={styles.paymentStatus}>
+                        Payment: {refund.refund_payment_status || 'pending'}
+                      </Text>
+                      <Text style={styles.totalAmount}>{formatCurrency(refund.amount || 0)}</Text>
                     </View>
-                  </View>
+
+                    {/* Footer with chevron */}
+                    <View style={styles.cardFooter}>
+                      <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
+                    </View>
+                  </TouchableOpacity>
                 );
               })
             )}
@@ -946,6 +740,36 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#166534',
   },
+  statsScroll: {
+    marginBottom: 16,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 16,
+  },
+  statCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 10,
+    minWidth: 70,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  statValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  statLabel: {
+    fontSize: 9,
+    color: '#6B7280',
+  },
   searchContainer: {
     marginBottom: 16,
   },
@@ -962,7 +786,7 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     color: '#111827',
     padding: 0,
   },
@@ -1015,42 +839,12 @@ const styles = StyleSheet.create({
   tabBadgeTextActive: {
     color: '#FFFFFF',
   },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
-  },
-  statCard: {
-    flex: 1,
-    minWidth: '18%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 8,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  statValue: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  statLabel: {
-    fontSize: 9,
-    color: '#6B7280',
-    textAlign: 'center',
-  },
   listContainer: {
     gap: 12,
   },
   refundCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 8,
     padding: 12,
     borderWidth: 1,
     borderColor: '#F3F4F6',
@@ -1068,6 +862,7 @@ const styles = StyleSheet.create({
   },
   cardHeaderLeft: {
     flex: 1,
+    marginRight: 8,
   },
   refundIdContainer: {
     flexDirection: 'row',
@@ -1076,9 +871,10 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   refundId: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#111827',
+    flex: 1,
   },
   refundMeta: {
     flexDirection: 'row',
@@ -1086,21 +882,16 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   orderId: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#6B7280',
   },
   metaDot: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#6B7280',
   },
   refundDate: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#6B7280',
-  },
-  expandButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -1119,38 +910,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     gap: 8,
   },
-  productImages: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   productImageWrapper: {
-    marginRight: -4,
+    width: 40,
+    height: 40,
+    borderRadius: 4,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
   },
   productThumb: {
-    width: 32,
-    height: 32,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#FFFFFF',
-  },
-  productThumbPlaceholder: {
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  moreProductsBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 4,
-    backgroundColor: '#E5E7EB',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: -8,
-  },
-  moreProductsText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#4B5563',
+    width: 40,
+    height: 40,
   },
   productDetails: {
     flex: 1,
@@ -1186,140 +956,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginBottom: 4,
+    marginBottom: 6,
   },
   reasonText: {
     flex: 1,
-    fontSize: 11,
+    fontSize: 10,
     color: '#4B5563',
   },
-  paymentStatus: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  paymentStatusLabel: {
-    fontSize: 10,
-    color: '#6B7280',
-  },
-  paymentStatusValue: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#3b82f6',
-  },
-  expandedDetails: {
-    marginTop: 12,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#E5E7EB',
-    marginBottom: 12,
-  },
-  expandedTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  expandedProductItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-    gap: 8,
-  },
-  expandedProductImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-    overflow: 'hidden',
-  },
-  expandedProductThumb: {
-    width: 40,
-    height: 40,
-  },
-  placeholderThumb: {
-    backgroundColor: '#F3F4F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  expandedProductInfo: {
-    flex: 1,
-  },
-  expandedProductName: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  expandedProductMeta: {
-    fontSize: 10,
-    color: '#6B7280',
-  },
-  expandedProductPrice: {
-    alignItems: 'flex-end',
-  },
-  priceAmount: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  priceEach: {
-    fontSize: 9,
-    color: '#9CA3AF',
-  },
-  detailsGrid: {
-    gap: 6,
-  },
-  detailRow: {
+  paymentRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 8,
   },
-  detailLabel: {
+  paymentStatus: {
     fontSize: 10,
     color: '#6B7280',
   },
-  detailValue: {
-    fontSize: 10,
-    fontWeight: '500',
+  totalAmount: {
+    fontSize: 12,
+    fontWeight: '600',
     color: '#111827',
-    flex: 1,
-    textAlign: 'right',
   },
   cardFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
-    marginTop: 12,
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
-  },
-  viewDetailsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 4,
-  },
-  viewDetailsText: {
-    fontSize: 11,
-    color: '#3b82f6',
-    fontWeight: '500',
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  actionIconButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   emptyContainer: {
     alignItems: 'center',
