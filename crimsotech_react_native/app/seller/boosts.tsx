@@ -46,6 +46,17 @@ type BoostCounts = {
   cancelled: number;
 };
 
+// Helper function to safely get feature text
+const getFeatureText = (feature: any): string => {
+  if (typeof feature === 'string') {
+    return feature;
+  }
+  if (feature && typeof feature === 'object') {
+    return feature.feature_name || feature.name || feature.value || 'Feature';
+  }
+  return 'Feature';
+};
+
 export default function BoostsScreen() {
   const { userId, shopId } = useAuth();
   const [plans, setPlans] = useState<BoostPlan[]>([]);
@@ -71,7 +82,13 @@ export default function BoostsScreen() {
       });
 
       if (response.data && response.data.success) {
-        setPlans(response.data.plans || []);
+        const plansData = response.data.plans || [];
+        // Transform plans to ensure features are strings
+        const transformedPlans = plansData.map((plan: any) => ({
+          ...plan,
+          features: plan.features?.map((f: any) => getFeatureText(f)) || []
+        }));
+        setPlans(transformedPlans);
       } else {
         setPlans([]);
       }
@@ -143,7 +160,7 @@ export default function BoostsScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#EE4D2D" />
           <Text style={styles.loadingText}>Loading boost plans...</Text>
@@ -153,12 +170,21 @@ export default function BoostsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      {/* Header with Back Button */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Boost Your Products</Text>
-        <Text style={styles.headerSubtitle}>
-          Increase visibility and sales
-        </Text>
+        <TouchableOpacity 
+          style={styles.backButton} 
+          onPress={() => router.back()}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="arrow-back" size={24} color="#1F2937" />
+        </TouchableOpacity>
+        <View style={styles.headerTextContainer}>
+          <Text style={styles.headerTitle}>Boost Your Products</Text>
+          <Text style={styles.headerSubtitle}>Increase visibility and sales</Text>
+        </View>
+        <View style={styles.backButtonPlaceholder} />
       </View>
 
       <ScrollView
@@ -236,7 +262,7 @@ export default function BoostsScreen() {
                     plan.features.map((feature, index) => (
                       <View key={index} style={styles.featureItem}>
                         <Ionicons name="checkmark-circle" size={16} color="#10B981" />
-                        <Text style={styles.featureText}>{feature}</Text>
+                        <Text style={styles.featureText}>{getFeatureText(feature)}</Text>
                       </View>
                     ))
                   ) : (
@@ -342,7 +368,10 @@ const styles = StyleSheet.create({
     color: '#6B7280',
   },
   header: {
-    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
@@ -358,15 +387,25 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  backButton: {
+    padding: 4,
+  },
+  backButtonPlaceholder: {
+    width: 32,
+  },
+  headerTextContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
     color: '#1F2937',
-    marginBottom: 4,
   },
   headerSubtitle: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#6B7280',
+    marginTop: 2,
   },
   content: {
     flex: 1,
@@ -631,5 +670,3 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 });
-
-

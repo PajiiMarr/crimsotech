@@ -1,34 +1,44 @@
 // app/seller/pay-boosting.tsx
-import React, { useState, useEffect } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect, useRef } from "react";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Alert, ActivityIndicator, Image,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
-import AxiosInstance from '../../contexts/axios';
-import { useAuth } from '../../contexts/AuthContext';
-
-const PAYMENT_METHODS = [
-  { id: 'gcash', label: 'GCash', icon: 'phone-portrait-outline' as const },
-  { id: 'maya', label: 'Maya', icon: 'card-outline' as const },
-  { id: 'bank_transfer', label: 'Bank Transfer', icon: 'business-outline' as const },
-  { id: 'cash', label: 'Cash', icon: 'cash-outline' as const },
-];
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  Modal,
+  Platform,
+} from "react-native";
+import { WebView } from "react-native-webview";
+import { Ionicons } from "@expo/vector-icons";
+import { router, useLocalSearchParams } from "expo-router";
+import AxiosInstance from "../../contexts/axios";
+import { useAuth } from "../../contexts/AuthContext";
 
 export default function PayBoosting() {
-  const { planId, productIds } = useLocalSearchParams<{ planId: string; productIds: string }>();
+  const { planId, productIds } = useLocalSearchParams<{
+    planId: string;
+    productIds: string;
+  }>();
   const { userId, shopId } = useAuth();
 
   const [plan, setPlan] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('gcash');
-  const [receipt, setReceipt] = useState<string | null>(null);
+  const [processingMaya, setProcessingMaya] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showWebView, setShowWebView] = useState(false);
+  const [paymentUrl, setPaymentUrl] = useState("");
+  const [webViewLoading, setWebViewLoading] = useState(true);
+  const [paymentStatus, setPaymentStatus] = useState<
+    "pending" | "processing" | "success" | "failed" | "cancelled"
+  >("pending");
+  const [hasShownSuccess, setHasShownSuccess] = useState(false);
+  const webViewRef = useRef<WebView>(null);
 
-  const productIdList = productIds ? productIds.split(',').filter(Boolean) : [];
+  const productIdList = productIds ? productIds.split(",").filter(Boolean) : [];
 
   useEffect(() => {
     loadPlan();
@@ -37,73 +47,215 @@ export default function PayBoosting() {
   const loadPlan = async () => {
     try {
       setLoading(true);
-      const res = await AxiosInstance.get(`/seller-boosts/${planId}/plan_detail/`, {
-        headers: { 'X-User-Id': userId || '' },
-      });
-      setPlan(res.data?.plan || res.data);
-    } catch {
-      Alert.alert('Error', 'Failed to load plan details');
+      const response = await AxiosInstance.get(
+        `/seller-boosts/${planId}/plan_detail/`,
+        {
+          headers: { "X-User-Id": userId || "" },
+        },
+      );
+      setPlan(response.data?.plan || response.data);
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Failed to load plan details");
     } finally {
       setLoading(false);
     }
   };
 
-  const pickReceipt = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.85,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setReceipt(result.assets[0].uri);
-    }
-  };
+  const handleInitiatePayment = async () => {
+    if (!plan || !planId || !productIds || !userId) return;
 
-  const takePhoto = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Required', 'Camera permission is needed to take a photo');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({ quality: 0.85 });
-    if (!result.canceled && result.assets[0]) {
-      setReceipt(result.assets[0].uri);
-    }
-  };
-
-  const handleSubmit = async () => {
-    if (!receipt) {
-      Alert.alert('Required', 'Please upload your payment receipt');
-      return;
-    }
+    setProcessingMaya(true);
+    setError(null);
 
     try {
-      setSubmitting(true);
-      const formData = new FormData();
-      formData.append('plan_id', planId || '');
-      formData.append('customer_id', userId || '');
-      formData.append('shop_id', shopId || '');
-      formData.append('payment_method', paymentMethod);
-      productIdList.forEach(id => formData.append('product_ids', id));
-      formData.append('receipt_image', { uri: receipt, name: 'receipt.jpg', type: 'image/jpeg' } as any);
-
-      await AxiosInstance.post('/seller-boosts/add_receipt/', formData, {
-        headers: {
-          'X-User-Id': userId || '',
-          'Content-Type': 'multipart/form-data',
+      const response = await AxiosInstance.post(
+        "/seller-boosts/initiate_maya_payment/",
+        {
+          plan_id: planId,
+          product_ids: productIds,
+          user_id: userId,
+          shop_id: shopId,
+          platform: "mobile",
         },
-      });
+      );
+
+      if (response.data.success && response.data.redirect_url) {
+        setPaymentUrl(response.data.redirect_url);
+        setShowWebView(true);
+        setHasShownSuccess(false);
+      } else {
+        setError(response.data.error || "Failed to initiate Maya payment");
+        Alert.alert(
+          "Error",
+          response.data.error || "Failed to initiate Maya payment",
+        );
+      }
+    } catch (err: any) {
+      const errorMsg =
+        err.response?.data?.error ||
+        err.message ||
+        "Error initiating Maya payment";
+      setError(errorMsg);
+      Alert.alert("Error", errorMsg);
+    } finally {
+      setProcessingMaya(false);
+    }
+  };
+
+  const handleWebViewMessage = (event: any) => {
+    const data = event.nativeEvent.data;
+    console.log("WebView message:", data);
+    
+    if (data && data.startsWith('redirect:')) {
+      const redirectUrl = data.replace('redirect:', '');
+      console.log("Redirect URL from message:", redirectUrl);
+      
+      if (redirectUrl.includes('crimsotechreactnative://boost-success')) {
+        setHasShownSuccess(true);
+        setShowWebView(false);
+        setWebViewLoading(true);
+        setPaymentStatus("success");
+        
+        const params = redirectUrl.split('?')[1];
+        router.dismissAll();
+        router.push(`/seller/boost-success?${params}` as any);
+      }
+    }
+  };
+
+  const handleWebViewNavigationStateChange = async (navState: any) => {
+    const { url } = navState;
+    console.log("WebView URL:", url);
+
+    if (hasShownSuccess) return;
+
+    // Check for custom scheme redirect
+    if (url.startsWith('crimsotechreactnative://boost-success')) {
+      console.log("Custom scheme detected:", url);
+      setHasShownSuccess(true);
+      setShowWebView(false);
+      setWebViewLoading(true);
+      setPaymentStatus("success");
+      
+      const params = url.split('?')[1];
+      router.dismissAll();
+      router.push(`/seller/boost-success?${params}` as any);
+      return;
+    }
+
+    // Check for success URL (web-based redirect)
+    if (
+      url.includes("/boost-success") ||
+      url.includes("boost_status=success")
+    ) {
+      console.log("Success URL detected");
+      setHasShownSuccess(true);
+      setShowWebView(false);
+      setWebViewLoading(true);
+      setPaymentStatus("success");
 
       Alert.alert(
-        'Submitted!',
-        'Your boost payment has been submitted for verification. Your products will be boosted once verified.',
-        [{ text: 'Done', onPress: () => { router.dismissAll(); router.push('/seller/boosts' as any); } }]
+        "Payment Successful!",
+        "Your boost payment has been processed successfully. Your products will be boosted now.",
+        [
+          {
+            text: "View Boosts",
+            onPress: () => {
+              router.dismissAll();
+              router.push("/seller/boosts" as any);
+            },
+          },
+        ],
       );
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.response?.data?.detail || 'Failed to submit payment';
-      Alert.alert('Error', msg);
-    } finally {
-      setSubmitting(false);
+      return;
     }
+
+    // Check for failure URL
+    if (url.includes("/boost-failure") || url.includes("status=failed")) {
+      console.log("Failure URL detected");
+      setHasShownSuccess(true);
+      setShowWebView(false);
+      setWebViewLoading(true);
+      setPaymentStatus("failed");
+
+      Alert.alert(
+        "Payment Failed",
+        "Your payment could not be processed. Please try again.",
+        [
+          {
+            text: "Try Again",
+            onPress: () => {
+              setShowWebView(false);
+              setPaymentUrl("");
+              setHasShownSuccess(false);
+            },
+          },
+          {
+            text: "Cancel",
+            style: "cancel",
+            onPress: () => router.back(),
+          },
+        ],
+      );
+      return;
+    }
+
+    // Check for cancel URL
+    if (url.includes("/boost-cancel") || url.includes("status=cancelled")) {
+      console.log("Cancel URL detected");
+      setHasShownSuccess(true);
+      setShowWebView(false);
+      setWebViewLoading(true);
+      setPaymentStatus("cancelled");
+
+      Alert.alert("Payment Cancelled", "You cancelled the payment process.", [
+        {
+          text: "OK",
+          onPress: () => {
+            setShowWebView(false);
+            setPaymentUrl("");
+            setHasShownSuccess(false);
+          },
+        },
+      ]);
+      return;
+    }
+  };
+
+  const handleWebViewLoadStart = () => {
+    setWebViewLoading(true);
+  };
+
+  const handleWebViewLoadEnd = () => {
+    setWebViewLoading(false);
+  };
+
+  const handleWebViewError = (syntheticEvent: any) => {
+    const { nativeEvent } = syntheticEvent;
+    console.error("WebView error:", nativeEvent);
+    setWebViewLoading(false);
+    Alert.alert(
+      "Loading Error",
+      "Failed to load payment page. Please check your internet connection and try again.",
+      [
+        {
+          text: "Try Again",
+          onPress: () => {
+            if (webViewRef.current) {
+              webViewRef.current.reload();
+            }
+          },
+        },
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: () => {
+            setShowWebView(false);
+            setPaymentUrl("");
+          },
+        },
+      ],
+    );
   };
 
   const pricePerProduct = Number(plan?.price || 0);
@@ -113,176 +265,605 @@ export default function PayBoosting() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color="#1F2937" />
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.backBtn}
+          >
+            <Ionicons name="arrow-back" size={24} color="#1F2937" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Payment</Text>
-          <View style={{ width: 36 }} />
+          <View style={{ width: 40 }} />
         </View>
-        <View style={styles.center}><ActivityIndicator size="large" color="#EE4D2D" /></View>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#EE4D2D" />
+          <Text style={styles.loadingText}>Loading payment details...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (error || !plan) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.backBtn}
+          >
+            <Ionicons name="arrow-back" size={24} color="#1F2937" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Payment</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <View style={styles.center}>
+          <Ionicons name="alert-circle-outline" size={48} color="#F59E0B" />
+          <Text style={styles.errorTitle}>
+            {error || "Boost plan not found"}
+          </Text>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.retryBtnText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color="#1F2937" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Boost Payment</Text>
-        <View style={{ width: 36 }} />
-      </View>
-
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Order Summary */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Order Summary</Text>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Plan</Text>
-            <Text style={styles.summaryValue}>{plan?.name || 'Boost Plan'}</Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Products Selected</Text>
-            <Text style={styles.summaryValue}>{productIdList.length}</Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Price per Product</Text>
-            <Text style={styles.summaryValue}>₱{pricePerProduct.toFixed(2)}</Text>
-          </View>
-          {plan?.duration_days && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Boost Duration</Text>
-              <Text style={styles.summaryValue}>{plan.duration_days} days</Text>
-            </View>
-          )}
-          <View style={[styles.summaryRow, styles.totalRow]}>
-            <Text style={styles.totalLabel}>Total Amount</Text>
-            <Text style={styles.totalAmount}>₱{totalAmount.toFixed(2)}</Text>
-          </View>
+    <>
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.backBtn}
+          >
+            <Ionicons name="arrow-back" size={24} color="#1F2937" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Boost Payment</Text>
+          <View style={{ width: 40 }} />
         </View>
 
-        {/* Payment Method */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Payment Method</Text>
-          {PAYMENT_METHODS.map(method => (
-            <TouchableOpacity
-              key={method.id}
-              style={[styles.methodRow, paymentMethod === method.id && styles.methodRowSelected]}
-              onPress={() => setPaymentMethod(method.id)}
-            >
-              <Ionicons name={method.icon} size={22} color={paymentMethod === method.id ? '#EE4D2D' : '#6B7280'} />
-              <Text style={[styles.methodLabel, paymentMethod === method.id && styles.methodLabelSelected]}>
-                {method.label}
-              </Text>
-              <View style={[styles.radioOuter, paymentMethod === method.id && styles.radioOuterSelected]}>
-                {paymentMethod === method.id && <View style={styles.radioInner} />}
-              </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Receipt Upload */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Upload Receipt <Text style={styles.required}>*</Text></Text>
-          <Text style={styles.cardSubtitle}>
-            Please send payment to our account and upload the receipt for verification
-          </Text>
-
-          {receipt ? (
-            <View style={styles.receiptPreview}>
-              <Image source={{ uri: receipt }} style={styles.receiptImage} resizeMode="cover" />
-              <TouchableOpacity style={styles.changeReceiptBtn} onPress={pickReceipt}>
-                <Ionicons name="refresh-outline" size={14} color="#EE4D2D" />
-                <Text style={styles.changeReceiptText}>Change</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.uploadBtns}>
-              <TouchableOpacity style={styles.uploadBtn} onPress={takePhoto}>
-                <Ionicons name="camera-outline" size={24} color="#EE4D2D" />
-                <Text style={styles.uploadBtnText}>Take Photo</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.uploadBtn} onPress={pickReceipt}>
-                <Ionicons name="image-outline" size={24} color="#EE4D2D" />
-                <Text style={styles.uploadBtnText}>From Gallery</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-
-        {/* Submit */}
-        <TouchableOpacity
-          style={[styles.submitBtn, (submitting || !receipt) && styles.submitBtnDisabled]}
-          onPress={handleSubmit}
-          disabled={submitting || !receipt}
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
         >
-          {submitting ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <>
-              <Ionicons name="rocket-outline" size={18} color="#fff" />
-              <Text style={styles.submitText}>Submit Payment</Text>
-            </>
+          {/* Boost Overview Card */}
+          <View style={styles.overviewCard}>
+            <View style={styles.overviewIconContainer}>
+              <Ionicons name="rocket" size={40} color="#EE4D2D" />
+            </View>
+            <Text style={styles.overviewPlanName}>{plan.name}</Text>
+            <Text style={styles.overviewPlanType}>Boost Plan</Text>
+
+            <View style={styles.overviewDetails}>
+              <View style={styles.overviewDetailRow}>
+                <View style={styles.overviewDetailIcon}>
+                  <Ionicons name="cube-outline" size={18} color="#EE4D2D" />
+                </View>
+                <View>
+                  <Text style={styles.overviewDetailLabel}>Products</Text>
+                  <Text style={styles.overviewDetailValue}>
+                    {productIdList.length} product
+                    {productIdList.length !== 1 ? "s" : ""} selected
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.overviewDetailRow}>
+                <View style={styles.overviewDetailIcon}>
+                  <Ionicons name="time-outline" size={18} color="#EE4D2D" />
+                </View>
+                <View>
+                  <Text style={styles.overviewDetailLabel}>Duration</Text>
+                  <Text style={styles.overviewDetailValue}>
+                    {plan.duration} {plan.time_unit}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.overviewDetailRow}>
+                <View style={styles.overviewDetailIcon}>
+                  <Ionicons name="card-outline" size={18} color="#EE4D2D" />
+                </View>
+                <View>
+                  <Text style={styles.overviewDetailLabel}>Total</Text>
+                  <Text style={styles.overviewDetailValuePrice}>
+                    ₱{totalAmount.toFixed(2)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <Text style={styles.overviewNote}>
+              You will be redirected to Maya to complete your payment securely.
+            </Text>
+          </View>
+
+          {/* Payment Details Card */}
+          <View style={styles.paymentCard}>
+            <Text style={styles.paymentTitle}>Payment Details</Text>
+
+            <View style={styles.paymentRow}>
+              <View style={styles.paymentRowLeft}>
+                <View style={styles.paymentIconContainer}>
+                  <Ionicons name="card-outline" size={18} color="#EE4D2D" />
+                </View>
+                <View>
+                  <Text style={styles.paymentRowLabel}>Payment Method</Text>
+                  <Text style={styles.paymentRowValue}>Maya</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.paymentRow}>
+              <View style={styles.paymentRowLeft}>
+                <View style={styles.paymentIconContainer}>
+                  <Ionicons name="rocket-outline" size={18} color="#EE4D2D" />
+                </View>
+                <View>
+                  <Text style={styles.paymentRowLabel}>Boost Plan</Text>
+                  <Text style={styles.paymentRowValue}>{plan.name}</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.paymentRow}>
+              <View style={styles.paymentRowLeft}>
+                <View style={styles.paymentIconContainer}>
+                  <Ionicons name="cube-outline" size={18} color="#EE4D2D" />
+                </View>
+                <View>
+                  <Text style={styles.paymentRowLabel}>Products Selected</Text>
+                  <Text style={styles.paymentRowValue}>
+                    {productIdList.length} product
+                    {productIdList.length !== 1 ? "s" : ""}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.paymentRow}>
+              <View style={styles.paymentRowLeft}>
+                <View style={styles.paymentIconContainer}>
+                  <Ionicons name="time-outline" size={18} color="#EE4D2D" />
+                </View>
+                <View>
+                  <Text style={styles.paymentRowLabel}>Duration</Text>
+                  <Text style={styles.paymentRowValue}>
+                    {plan.duration} {plan.time_unit}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.totalRow}>
+              <View>
+                <Text style={styles.totalLabel}>Total Amount</Text>
+                <Text style={styles.totalSubtext}>
+                  Plan price × {productIdList.length} product
+                  {productIdList.length !== 1 ? "s" : ""}
+                </Text>
+              </View>
+              <Text style={styles.totalAmount}>₱{totalAmount.toFixed(2)}</Text>
+            </View>
+          </View>
+
+          {/* Action Buttons */}
+          <View style={styles.actionButtons}>
+            <TouchableOpacity
+              style={[
+                styles.payButton,
+                processingMaya && styles.payButtonDisabled,
+              ]}
+              onPress={handleInitiatePayment}
+              disabled={processingMaya}
+            >
+              {processingMaya ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="card-outline" size={20} color="#FFFFFF" />
+                  <Text style={styles.payButtonText}>Proceed to Payment</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => router.back()}
+              disabled={processingMaya}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+
+      {/* WebView Modal for Maya Payment */}
+      <Modal
+        visible={showWebView}
+        animationType="slide"
+        onRequestClose={() => {
+          if (paymentStatus !== "success" && !hasShownSuccess) {
+            Alert.alert(
+              "Cancel Payment",
+              "Are you sure you want to cancel this payment?",
+              [
+                { text: "No", style: "cancel" },
+                {
+                  text: "Yes",
+                  style: "destructive",
+                  onPress: () => {
+                    setShowWebView(false);
+                    setPaymentUrl("");
+                    setWebViewLoading(true);
+                    setHasShownSuccess(false);
+                  },
+                },
+              ],
+            );
+          } else {
+            setShowWebView(false);
+          }
+        }}
+      >
+        <SafeAreaView style={styles.webViewContainer}>
+          <View style={styles.webViewHeader}>
+            <TouchableOpacity
+              onPress={() => {
+                if (paymentStatus !== "success" && !hasShownSuccess) {
+                  Alert.alert(
+                    "Cancel Payment",
+                    "Are you sure you want to cancel this payment?",
+                    [
+                      { text: "No", style: "cancel" },
+                      {
+                        text: "Yes",
+                        style: "destructive",
+                        onPress: () => {
+                          setShowWebView(false);
+                          setPaymentUrl("");
+                          setWebViewLoading(true);
+                          setHasShownSuccess(false);
+                        },
+                      },
+                    ],
+                  );
+                } else {
+                  setShowWebView(false);
+                }
+              }}
+              style={styles.closeButton}
+            >
+              <Ionicons name="close" size={24} color="#374151" />
+            </TouchableOpacity>
+            <Text style={styles.webViewTitle}>Maya Payment</Text>
+            <TouchableOpacity
+              onPress={() => {
+                if (webViewRef.current) {
+                  webViewRef.current.reload();
+                }
+              }}
+              style={styles.reloadButton}
+            >
+              <Ionicons name="refresh" size={24} color="#374151" />
+            </TouchableOpacity>
+          </View>
+
+          {webViewLoading && (
+            <View style={styles.webViewLoadingOverlay}>
+              <ActivityIndicator size="large" color="#EE4D2D" />
+              <Text style={styles.loadingText}>Loading payment page...</Text>
+            </View>
           )}
-        </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
+
+          <WebView
+            ref={webViewRef}
+            source={{ uri: paymentUrl }}
+            style={styles.webView}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            startInLoadingState={true}
+            onNavigationStateChange={handleWebViewNavigationStateChange}
+            onMessage={handleWebViewMessage}
+            onLoadStart={handleWebViewLoadStart}
+            onLoadEnd={handleWebViewLoadEnd}
+            onError={handleWebViewError}
+            renderLoading={() => null}
+            incognito={false}
+            thirdPartyCookiesEnabled={true}
+            sharedCookiesEnabled={true}
+          />
+        </SafeAreaView>
+      </Modal>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  container: {
+    flex: 1,
+    backgroundColor: "#F9FAFB",
+  },
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: "#6B7280",
+    marginTop: 12,
+  },
+  errorTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#DC2626",
+    marginTop: 12,
+    textAlign: "center",
+  },
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 14, backgroundColor: '#fff',
-    borderBottomWidth: 1, borderBottomColor: '#E5E7EB',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
   },
-  backBtn: { padding: 4 },
-  headerTitle: { fontSize: 17, fontWeight: '700', color: '#1F2937' },
-  scrollContent: { padding: 16, paddingBottom: 40 },
-  card: {
-    backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12,
-    borderWidth: 1, borderColor: '#E5E7EB',
+  backBtn: {
+    padding: 4,
   },
-  cardTitle: { fontSize: 14, fontWeight: '700', color: '#1F2937', marginBottom: 4 },
-  cardSubtitle: { fontSize: 12, color: '#6B7280', marginBottom: 12 },
-  required: { color: '#EF4444' },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  summaryLabel: { fontSize: 13, color: '#6B7280' },
-  summaryValue: { fontSize: 13, color: '#1F2937', fontWeight: '500' },
-  totalRow: { borderBottomWidth: 0, marginTop: 4, paddingTop: 12 },
-  totalLabel: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
-  totalAmount: { fontSize: 17, fontWeight: '800', color: '#EE4D2D' },
-  methodRow: {
-    flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12,
-    borderBottomWidth: 1, borderBottomColor: '#F3F4F6',
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#1F2937",
   },
-  methodRowSelected: { backgroundColor: '#FFF5F5' },
-  methodLabel: { flex: 1, fontSize: 14, color: '#374151' },
-  methodLabelSelected: { color: '#EE4D2D', fontWeight: '600' },
-  radioOuter: {
-    width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: '#D1D5DB',
-    justifyContent: 'center', alignItems: 'center',
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 40,
   },
-  radioOuterSelected: { borderColor: '#EE4D2D' },
-  radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#EE4D2D' },
-  receiptPreview: { alignItems: 'center', gap: 10 },
-  receiptImage: { width: '100%', height: 200, borderRadius: 10 },
-  changeReceiptBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  changeReceiptText: { fontSize: 13, color: '#EE4D2D', fontWeight: '600' },
-  uploadBtns: { flexDirection: 'row', gap: 12 },
-  uploadBtn: {
-    flex: 1, borderWidth: 1, borderColor: '#EE4D2D', borderStyle: 'dashed',
-    borderRadius: 10, paddingVertical: 20, alignItems: 'center', gap: 8,
+  overviewCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  uploadBtnText: { fontSize: 13, color: '#EE4D2D', fontWeight: '600' },
-  submitBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#EE4D2D', paddingVertical: 15, borderRadius: 12, gap: 8, marginTop: 4,
+  overviewIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "#FFF5F5",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 12,
   },
-  submitBtnDisabled: { opacity: 0.5 },
-  submitText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  overviewPlanName: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1F2937",
+    marginBottom: 4,
+  },
+  overviewPlanType: {
+    fontSize: 13,
+    color: "#6B7280",
+    marginBottom: 16,
+  },
+  overviewDetails: {
+    width: "100%",
+    gap: 12,
+    marginBottom: 16,
+  },
+  overviewDetailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "#F9FAFB",
+    borderRadius: 10,
+  },
+  overviewDetailIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#FFF5F5",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  overviewDetailLabel: {
+    fontSize: 11,
+    color: "#6B7280",
+  },
+  overviewDetailValue: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  overviewDetailValuePrice: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#EE4D2D",
+  },
+  overviewNote: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    textAlign: "center",
+  },
+  paymentCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  paymentTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#1F2937",
+    marginBottom: 16,
+    textAlign: "center",
+  },
+  paymentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  paymentRowLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  paymentIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#FFF5F5",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  paymentRowLabel: {
+    fontSize: 12,
+    color: "#6B7280",
+  },
+  paymentRowValue: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  totalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingTop: 16,
+    marginTop: 8,
+  },
+  totalLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#1F2937",
+  },
+  totalSubtext: {
+    fontSize: 10,
+    color: "#6B7280",
+    marginTop: 2,
+  },
+  totalAmount: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#EE4D2D",
+  },
+  actionButtons: {
+    gap: 12,
+    marginTop: 8,
+  },
+  payButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#EE4D2D",
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+    shadowColor: "#EE4D2D",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  payButtonDisabled: {
+    opacity: 0.6,
+    shadowOpacity: 0,
+  },
+  payButtonText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  cancelButton: {
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#FFFFFF",
+  },
+  cancelButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#6B7280",
+  },
+  retryBtn: {
+    backgroundColor: "#EE4D2D",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 16,
+  },
+  retryBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  webViewContainer: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+  webViewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+    backgroundColor: "#FFFFFF",
+  },
+  closeButton: {
+    padding: 8,
+  },
+  reloadButton: {
+    padding: 8,
+  },
+  webViewTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#1F2937",
+  },
+  webView: {
+    flex: 1,
+  },
+  webViewLoadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    zIndex: 10,
+  },
 });
-

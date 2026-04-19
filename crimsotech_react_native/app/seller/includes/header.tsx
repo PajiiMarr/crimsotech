@@ -44,12 +44,17 @@ export default function Header({ shopId }: HeaderProps) {
 
   // Check if current screen is More tab
   const isMoreTab = pathname === '/seller/more';
+  // Exempt seller boost pages from showing header
+  const isBoostPage = pathname === '/seller/seller-boosts' || 
+                      pathname === '/seller/select-boost-product' || 
+                      pathname === '/seller/pay-boosting' ||
+                      pathname.includes('/seller/seller-boosts/');
 
   useEffect(() => {
-    if (shopId) {
+    if (shopId && !isBoostPage) {
       fetchShopDetails();
     }
-  }, [shopId]);
+  }, [shopId, isBoostPage]);
 
   const fetchShopDetails = async () => {
     try {
@@ -98,6 +103,11 @@ export default function Header({ shopId }: HeaderProps) {
   const handleSwitch = () => {
     router.push('/customer/profile');
   };
+
+  // Don't render header for boost pages
+  if (isBoostPage) {
+    return null;
+  }
 
   // If no shopId is provided, show a simplified header
   if (!shopId) {

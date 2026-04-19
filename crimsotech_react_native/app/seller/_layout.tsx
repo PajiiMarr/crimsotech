@@ -18,7 +18,13 @@ const FULLSCREEN_ROUTES = [
   'view-refund-details',
   'view-product',
   'return-address',
-  'view-order'
+  'view-order',
+  'seller-boosts',
+  'select-boost-product',
+  'pay-boosting',
+  'boost-details',
+  'boosts',
+  'boost-success',
 ];
 
 export default function SellerLayout() {
@@ -70,6 +76,7 @@ export default function SellerLayout() {
             <Stack.Screen name="arrange-shipment" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="boosts" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="boost-details" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="boost-success" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="create-address" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="create-gift" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="create-product-vouchers" options={{ animation: 'slide_from_right' }} />

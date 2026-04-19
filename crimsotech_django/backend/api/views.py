@@ -1,4 +1,6 @@
 import requests
+import requests as http_requests
+from datetime import datetime as dt
 from asyncio.log import logger
 from django.db import transaction
 from decimal import Decimal, ROUND_HALF_UP
@@ -5054,13 +5056,7 @@ class AdminBoosting(viewsets.ViewSet):
             return None
 
     def get_date_range_filter(self, start_date_str, end_date_str):
-        """Get date range filter or return default (last 30 days)"""
-        # Default to last 30 days if no date range provided
-        if not start_date_str and not end_date_str:
-            end_date = timezone.now()
-            start_date = end_date - timedelta(days=30)
-            return start_date, end_date
-        
+        """Get date range filter or return None for no filtering"""
         # Parse provided dates
         start_date = self.parse_date(start_date_str) if start_date_str else None
         end_date = self.parse_date(end_date_str) if end_date_str else None
@@ -5078,14 +5074,6 @@ class AdminBoosting(viewsets.ViewSet):
         
         if end_date and not timezone.is_aware(end_date):
             end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
-        
-        # If only start date provided, end date defaults to now
-        if start_date and not end_date:
-            end_date = timezone.now()
-        
-        # If only end date provided, start date defaults to 30 days before end date
-        if end_date and not start_date:
-            start_date = end_date - timedelta(days=30)
         
         return start_date, end_date
     
@@ -5143,7 +5131,7 @@ class AdminBoosting(viewsets.ViewSet):
             end_date_str = request.GET.get('end_date')
             range_type = request.GET.get('range_type', 'weekly')
             
-            # Get date range
+            # Get date range - don't apply to total counts
             try:
                 start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
             except ValueError as e:
@@ -5159,14 +5147,14 @@ class AdminBoosting(viewsets.ViewSet):
             all_boosts_qs = Boost.objects.all()
             total_boosts = all_boosts_qs.count()
             
-            # Calculate date-filtered metrics
+            # Calculate date-filtered metrics (only for period-specific metrics)
             date_filtered_boosts_qs = Boost.objects.all()
             if start_date and end_date:
                 date_filtered_boosts_qs = date_filtered_boosts_qs.filter(
                     created_at__range=[start_date, end_date]
                 )
             
-            # Active boosts in the date range
+            # Active boosts in the date range (or all if no date range)
             active_boosts_in_period = date_filtered_boosts_qs.filter(status='active').count()
             
             # Calculate revenue from boosts in the date range
@@ -5210,8 +5198,10 @@ class AdminBoosting(viewsets.ViewSet):
                 for boost in all_boosts_qs.select_related('boost_plan')
             )
             
-            # Calculate growth metrics
-            growth_metrics = self.calculate_growth_metrics(start_date, end_date)
+            # Calculate growth metrics (only if we have a date range)
+            growth_metrics = None
+            if start_date and end_date:
+                growth_metrics = self.calculate_growth_metrics(start_date, end_date)
             
             response_data = {
                 'success': True,
@@ -5231,8 +5221,8 @@ class AdminBoosting(viewsets.ViewSet):
                 },
                 'message': 'Metrics retrieved successfully',
                 'date_range': {
-                    'start_date': start_date_str or start_date.isoformat(),
-                    'end_date': end_date_str or end_date.isoformat(),
+                    'start_date': start_date_str or None,
+                    'end_date': end_date_str or None,
                     'actual_start': start_date.isoformat() if start_date else None,
                     'actual_end': end_date.isoformat() if end_date else None,
                     'range_type': range_type
@@ -5274,7 +5264,7 @@ class AdminBoosting(viewsets.ViewSet):
                 )
             ).order_by('-created_at')
             
-            # Get boosts for usage calculation within date range
+            # Get boosts for usage calculation within date range (or all if no date range)
             boosts_qs = Boost.objects.all()
             if start_date and end_date:
                 boosts_qs = boosts_qs.filter(
@@ -5333,8 +5323,8 @@ class AdminBoosting(viewsets.ViewSet):
                 'boost_plans': plans_data,
                 'message': 'Boost plans retrieved successfully',
                 'date_range': {
-                    'start_date': start_date_str or start_date.isoformat(),
-                    'end_date': end_date_str or end_date.isoformat(),
+                    'start_date': start_date_str or None,
+                    'end_date': end_date_str or None,
                     'actual_start': start_date.isoformat() if start_date else None,
                     'actual_end': end_date.isoformat() if end_date else None
                 }
@@ -5351,22 +5341,11 @@ class AdminBoosting(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_active_boosts(self, request):
         """
-        Get all boosts with related data with date range support
+        Get all boosts with related data - NO date filtering applied
+        This ensures the table shows ALL boosts
         """
         try:
-            start_date_str = request.GET.get('start_date')
-            end_date_str = request.GET.get('end_date')
-            
-            # Get date range
-            try:
-                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
-            except ValueError as e:
-                return Response(
-                    {'success': False, 'error': str(e)}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Base queryset - filter by date range if provided
+            # Get ALL boosts - no date filtering for the table
             boosts_qs = Boost.objects.all().order_by('-created_at').select_related(
                 'product',
                 'boost_plan',
@@ -5375,13 +5354,8 @@ class AdminBoosting(viewsets.ViewSet):
                 'customer__customer'
             )
             
-            if start_date and end_date:
-                boosts_qs = boosts_qs.filter(
-                    created_at__range=[start_date, end_date]
-                )
-            
             # DEBUG: Print query info
-            print(f"Found {boosts_qs.count()} boosts in date range")
+            print(f"Found {boosts_qs.count()} boosts total")
             
             boosts_data = []
             for boost in boosts_qs:
@@ -5412,7 +5386,7 @@ class AdminBoosting(viewsets.ViewSet):
                 if boost.start_date and boost.end_date:
                     duration_days = (boost.end_date - boost.start_date).days
                 
-                # Check if boost is removed (if you have is_removed field, otherwise use status)
+                # Check if boost is removed
                 is_removed = boost.status == 'cancelled' or boost.status == 'expired'
                 
                 boost_data = {
@@ -5441,13 +5415,7 @@ class AdminBoosting(viewsets.ViewSet):
                 'success': True,
                 'boosts': boosts_data,
                 'total_count': len(boosts_data),
-                'message': 'Boosts retrieved successfully',
-                'date_range': {
-                    'start_date': start_date_str or start_date.isoformat(),
-                    'end_date': end_date_str or end_date.isoformat(),
-                    'actual_start': start_date.isoformat() if start_date else None,
-                    'actual_end': end_date.isoformat() if end_date else None
-                }
+                'message': 'Boosts retrieved successfully'
             }
             
             return Response(response_data, status=status.HTTP_200_OK)
@@ -5765,7 +5733,6 @@ class AdminBoosting(viewsets.ViewSet):
             if boost.shop:
                 shop_picture_url = None
                 if hasattr(boost.shop, 'shop_picture') and boost.shop.shop_picture:
-                    # Use the utility to convert S3 URL to public URL
                     shop_picture_url = convert_s3_to_public_url(boost.shop.shop_picture.url)
                 
                 shop_data = {
@@ -5804,7 +5771,7 @@ class AdminBoosting(viewsets.ViewSet):
                         'max': float(max_price.price)
                     }
                 
-                # Get primary image using the utility
+                # Get primary image
                 primary_image = None
                 first_media = boost.product.productmedia_set.first()
                 if first_media and first_media.file_data:
@@ -5812,7 +5779,7 @@ class AdminBoosting(viewsets.ViewSet):
                 
                 # Get all media files with S3 URLs
                 media_files = []
-                for media in boost.product.productmedia_set.all()[:5]:  # Limit to 5 images
+                for media in boost.product.productmedia_set.all()[:5]:
                     if media.file_data:
                         media_files.append({
                             'id': str(media.id),
@@ -5882,7 +5849,6 @@ class AdminBoosting(viewsets.ViewSet):
                     days_remaining = 0
             
             # Get action history (you can implement this if you have a history model)
-            # For now, return empty list
             actions = []
             
             # Get receipt image with S3 URL
@@ -6106,7 +6072,7 @@ class AdminBoosting(viewsets.ViewSet):
                     'hours': timedelta(hours=boost.boost_plan.duration),
                     'days': timedelta(days=boost.boost_plan.duration),
                     'weeks': timedelta(weeks=boost.boost_plan.duration),
-                    'months': timedelta(days=boost.boost_plan.duration * 30)  # Approximate
+                    'months': timedelta(days=boost.boost_plan.duration * 30)
                 }
                 
                 boost.status = 'active'
@@ -6152,7 +6118,6 @@ class AdminBoosting(viewsets.ViewSet):
                 {'success': False, 'error': f'Error updating boost status: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
 
 class AdminOrders(viewsets.ViewSet):
     def parse_date(self, date_str):
@@ -7509,6 +7474,7 @@ class AdminRiders(viewsets.ViewSet):
             }, status=status.HTTP_404_NOT_FOUND)
 
 class AdminVouchers(viewsets.ViewSet):
+    
     @action(detail=False, methods=['post'])
     def add_voucher(self, request):
         """
@@ -7518,7 +7484,8 @@ class AdminVouchers(viewsets.ViewSet):
             data = request.data.copy()
             
             # Set created_by to current user
-            data['created_by'] = request.user.id if request.user.is_authenticated else None
+            if request.user.is_authenticated:
+                data['created_by'] = request.user.id
             
             # Validate required fields
             required_fields = ['name', 'code', 'discount_type', 'value']
@@ -7530,7 +7497,7 @@ class AdminVouchers(viewsets.ViewSet):
                     }, status=status.HTTP_400_BAD_REQUEST)
             
             # Check if voucher code already exists
-            if Voucher.objects.filter(code=data['code']).exists():
+            if Voucher.objects.filter(code=data['code'].upper()).exists():
                 return Response({
                     'success': False,
                     'error': 'Voucher code already exists'
@@ -7544,6 +7511,10 @@ class AdminVouchers(viewsets.ViewSet):
             if 'end_date' in data and data['end_date']:
                 if isinstance(data['end_date'], str):
                     data['end_date'] = parse_date(data['end_date'])
+            
+            # Handle shop field - convert empty string to None
+            if 'shop' in data and data['shop'] in ['', 'null', None, 'global']:
+                data['shop'] = None
             
             # Create voucher
             serializer = VoucherSerializer(data=data)
@@ -7561,7 +7532,13 @@ class AdminVouchers(viewsets.ViewSet):
                         'value': float(voucher.value),
                         'start_date': voucher.start_date.isoformat() if voucher.start_date else None,
                         'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
-                        'is_active': voucher.is_active
+                        'is_active': voucher.is_active,
+                        'minimum_spend': float(voucher.minimum_spend),
+                        'maximum_usage': voucher.maximum_usage,
+                        'shop': {
+                            'id': str(voucher.shop.id) if voucher.shop else None,
+                            'name': voucher.shop.name if voucher.shop else None
+                        } if voucher.shop else None
                     }
                 }, status=status.HTTP_201_CREATED)
             else:
@@ -7602,8 +7579,6 @@ class AdminVouchers(viewsets.ViewSet):
                 if end_date:
                     date_filter['added_at__lte'] = end_date
             
-            print(f"Date filter: {date_filter}")
-            
             # Calculate total vouchers with date filter
             total_vouchers = Voucher.objects.filter(**date_filter).count()
             
@@ -7613,11 +7588,8 @@ class AdminVouchers(viewsets.ViewSet):
             active_filter.update({
                 'is_active': True,
                 'start_date__lte': now,
+                'end_date__gte': now
             })
-            
-            # Add end_date condition if it exists
-            active_filter['end_date__gte'] = now
-            
             active_vouchers = Voucher.objects.filter(**active_filter).count()
             
             # Calculate expired vouchers (end_date < now)
@@ -7635,30 +7607,29 @@ class AdminVouchers(viewsets.ViewSet):
             if start_date_str:
                 start_date = parse_date(start_date_str)
                 if start_date:
-                    start_datetime = timezone.make_aware(
-                        datetime.combine(start_date, datetime.min.time())
-                    )
-                    usage_filter['created_at__gte'] = start_datetime
+                    usage_filter['created_at__gte'] = start_date
                     
             if end_date_str:
                 end_date = parse_date(end_date_str)
                 if end_date:
-                    end_datetime = timezone.make_aware(
-                        datetime.combine(end_date, datetime.max.time())
-                    )
-                    usage_filter['created_at__lte'] = end_datetime
+                    usage_filter['created_at__lte'] = end_date
             
             # Get checkouts that used vouchers
             checkouts_with_voucher = Checkout.objects.filter(
                 voucher__isnull=False,
                 **usage_filter
             )
-            
             total_usage = checkouts_with_voucher.count()
             
-            # Since there's no discount_amount field, we'll set total_discount to 0
-            # You can calculate this differently if needed, perhaps by summing voucher values
+            # Calculate total discount from checkouts
             total_discount = 0
+            for checkout in checkouts_with_voucher:
+                if checkout.voucher:
+                    if checkout.voucher.discount_type == 'percentage':
+                        discount = (checkout.voucher.value / 100) * checkout.total_amount
+                        total_discount += float(discount)
+                    else:
+                        total_discount += float(checkout.voucher.value)
             
             metrics = {
                 'total_vouchers': total_vouchers,
@@ -7666,7 +7637,7 @@ class AdminVouchers(viewsets.ViewSet):
                 'expired_vouchers': expired_vouchers,
                 'scheduled_vouchers': scheduled_vouchers,
                 'total_usage': total_usage,
-                'total_discount': float(total_discount),
+                'total_discount': round(total_discount, 2),
             }
             
             return Response({
@@ -7714,8 +7685,6 @@ class AdminVouchers(viewsets.ViewSet):
                 if end_date:
                     date_filter['added_at__lte'] = end_date
             
-            print(f"Date filter for vouchers_list: {date_filter}")
-            
             # Start with all vouchers with date filter
             vouchers_qs = Voucher.objects.select_related(
                 'shop', 'created_by'
@@ -7745,6 +7714,8 @@ class AdminVouchers(viewsets.ViewSet):
                     vouchers_qs = vouchers_qs.filter(
                         start_date__gt=now
                     )
+                elif status_filter == 'inactive':
+                    vouchers_qs = vouchers_qs.filter(is_active=False)
             
             # Apply discount type filter
             if discount_type:
@@ -7825,9 +7796,7 @@ class AdminVouchers(viewsets.ViewSet):
             # Get filter options for frontend
             filter_options = {
                 'discount_types': list(Voucher.objects.values_list('discount_type', flat=True).distinct()),
-                'shops': list(Shop.objects.filter(
-                    id__in=Voucher.objects.filter(shop__isnull=False).values_list('shop_id', flat=True).distinct()
-                ).values_list('name', flat=True)),
+                'shops': list(Voucher.objects.filter(shop__isnull=False).values_list('shop__name', flat=True).distinct()),
                 'statuses': ['active', 'expired', 'scheduled', 'inactive']
             }
             
@@ -7852,6 +7821,107 @@ class AdminVouchers(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['get'])
+    def voucher(self, request, pk=None):
+        """
+        Get voucher details with usage history
+        """
+        try:
+            # Get voucher by UUID
+            try:
+                voucher = Voucher.objects.select_related('shop', 'created_by').get(id=pk)
+            except Voucher.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Voucher not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            now = timezone.now().date()
+            
+            # Get shop data
+            shop_data = None
+            if voucher.shop:
+                shop_data = {
+                    'id': str(voucher.shop.id),
+                    'name': voucher.shop.name
+                }
+            
+            # Get created_by data
+            created_by_data = None
+            if voucher.created_by:
+                created_by_data = {
+                    'id': str(voucher.created_by.id),
+                    'username': voucher.created_by.username,
+                    'first_name': voucher.created_by.first_name,
+                    'last_name': voucher.created_by.last_name
+                }
+            
+            # Determine status
+            if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
+                status_value = 'active'
+            elif voucher.end_date and voucher.end_date < now:
+                status_value = 'expired'
+            elif not voucher.is_active and voucher.start_date > now:
+                status_value = 'scheduled'
+            else:
+                status_value = 'inactive'
+            
+            # Calculate usage count
+            usage_count = Checkout.objects.filter(voucher=voucher).count()
+            
+            voucher_data = {
+                'id': str(voucher.id),
+                'name': voucher.name,
+                'code': voucher.code,
+                'description': getattr(voucher, 'description', None),
+                'shop': shop_data,
+                'discount_type': voucher.discount_type,
+                'value': float(voucher.value),
+                'minimum_spend': float(voucher.minimum_spend),
+                'maximum_usage': voucher.maximum_usage,
+                'start_date': voucher.start_date.isoformat() if voucher.start_date else None,
+                'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
+                'added_at': voucher.added_at.isoformat(),
+                'created_by': created_by_data,
+                'is_active': voucher.is_active,
+                'status': status_value,
+                'usage_count': usage_count,
+            }
+            
+            # Get usage history
+            checkouts = Checkout.objects.filter(
+                voucher=voucher
+            ).select_related('order__user').order_by('-created_at')
+            
+            usages = []
+            for checkout in checkouts:
+                user = checkout.order.user if checkout.order else None
+                usages.append({
+                    'id': str(checkout.id),
+                    'order_id': str(checkout.order.order) if checkout.order else None,
+                    'user_id': str(user.id) if user else None,
+                    'user_name': f"{user.first_name} {user.last_name}".strip() or user.username if user else 'Unknown User',
+                    'discount_amount': float(checkout.voucher.value) if checkout.voucher else 0,
+                    'used_at': checkout.created_at.isoformat(),
+                    'order_total': float(checkout.total_amount) if checkout.total_amount else 0,
+                    'final_total': float(checkout.total_amount) - (float(checkout.voucher.value) if checkout.voucher else 0)
+                })
+            
+            return Response({
+                'success': True,
+                'voucher': voucher_data,
+                'usages': usages
+            })
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in voucher: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['put', 'patch'])
     def update_voucher(self, request, pk=None):
         """
@@ -7870,8 +7940,8 @@ class AdminVouchers(viewsets.ViewSet):
             data = request.data.copy()
             
             # Check if code is being changed and if it already exists
-            if 'code' in data and data['code'] != voucher.code:
-                if Voucher.objects.filter(code=data['code']).exists():
+            if 'code' in data and data['code'] and data['code'] != voucher.code:
+                if Voucher.objects.filter(code=data['code'].upper()).exclude(id=pk).exists():
                     return Response({
                         'success': False,
                         'error': 'Voucher code already exists'
@@ -7885,6 +7955,10 @@ class AdminVouchers(viewsets.ViewSet):
             if 'end_date' in data and data['end_date']:
                 if isinstance(data['end_date'], str):
                     data['end_date'] = parse_date(data['end_date'])
+            
+            # Handle shop field
+            if 'shop' in data and data['shop'] in ['', 'null', None, 'global']:
+                data['shop'] = None
             
             # Update voucher
             serializer = VoucherSerializer(voucher, data=data, partial=True)
@@ -7902,7 +7976,13 @@ class AdminVouchers(viewsets.ViewSet):
                         'value': float(updated_voucher.value),
                         'start_date': updated_voucher.start_date.isoformat() if updated_voucher.start_date else None,
                         'end_date': updated_voucher.end_date.isoformat() if updated_voucher.end_date else None,
-                        'is_active': updated_voucher.is_active
+                        'is_active': updated_voucher.is_active,
+                        'minimum_spend': float(updated_voucher.minimum_spend),
+                        'maximum_usage': updated_voucher.maximum_usage,
+                        'shop': {
+                            'id': str(updated_voucher.shop.id) if updated_voucher.shop else None,
+                            'name': updated_voucher.shop.name if updated_voucher.shop else None
+                        } if updated_voucher.shop else None
                     }
                 })
             else:
@@ -7961,8 +8041,8 @@ class AdminVouchers(viewsets.ViewSet):
             return Response({
                 'success': False,
                 'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
-
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 class AdminRefunds(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'])
@@ -39762,7 +39842,6 @@ class SellerBoosts(viewsets.ViewSet):
             media = product.productmedia_set.first()
             if media and media.file_data:
                 s3_url = media.file_data.url
-                # Convert S3 URL to public URL using the utility
                 public_url = convert_s3_to_public_url(s3_url)
                 
                 request = self.request if hasattr(self, 'request') else None
@@ -39887,12 +39966,8 @@ class SellerBoosts(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'], url_path='user/(?P<user_id>[^/.]+)')
     def user_boosts(self, request, user_id=None):
-        """
-        Get all boosts for a user filtered by status
-        Query params: ?status=active|pending|expired|cancelled|all
-        """
+        """Get all boosts for a user filtered by status"""
         try:
-            # Get status filter from query params, default to 'all'
             status_filter = request.query_params.get('status', 'all')
             
             if not user_id:
@@ -39902,7 +39977,6 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'user_id is required'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get the user
             try:
                 user = User.objects.get(id=user_id)
             except User.DoesNotExist:
@@ -39912,13 +39986,11 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'User not found'
                 }, status=status.HTTP_404_NOT_FOUND)
             
-            # Get customer record if exists
             try:
                 customer = Customer.objects.get(customer=user)
             except Customer.DoesNotExist:
                 customer = None
             
-            # Base queryset - filter by user through customer or directly
             boosts_query = Boost.objects.filter(
                 Q(customer__customer=user) | Q(customer_id=user_id)
             ).select_related(
@@ -39928,7 +40000,6 @@ class SellerBoosts(viewsets.ViewSet):
                 'customer__customer'
             ).order_by('-created_at')
             
-            # Apply status filter
             now = timezone.now()
             if status_filter != 'all':
                 if status_filter == 'active':
@@ -39946,20 +40017,16 @@ class SellerBoosts(viewsets.ViewSet):
                 elif status_filter == 'cancelled':
                     boosts_query = boosts_query.filter(status='cancelled')
                 else:
-                    # If invalid status, return error
                     return Response({
                         'success': False,
                         'boosts': [],
                         'message': f"Invalid status filter. Use: active, pending, expired, cancelled, or all"
                     }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Build response data
             boosts_data = []
             for boost in boosts_query:
-                # Get product details
                 product_data = None
                 if boost.product:
-                    # Get stock from variants
                     total_stock = self._get_product_total_stock(boost.product)
                     min_price = self._get_product_min_price(boost.product)
                     max_price = self._get_product_max_price(boost.product)
@@ -39979,7 +40046,6 @@ class SellerBoosts(viewsets.ViewSet):
                         'upload_status': boost.product.upload_status
                     }
                 
-                # Get shop details
                 shop_data = None
                 if boost.shop:
                     shop_data = {
@@ -39996,7 +40062,6 @@ class SellerBoosts(viewsets.ViewSet):
                         'province': boost.product.shop.province
                     }
                 
-                # Get plan details
                 plan_data = None
                 if boost.boost_plan:
                     plan_data = {
@@ -40007,12 +40072,10 @@ class SellerBoosts(viewsets.ViewSet):
                         'time_unit': boost.boost_plan.time_unit
                     }
                 
-                # Calculate days remaining for active boosts
                 days_remaining = None
                 if boost.status == 'active' and boost.end_date:
                     days_remaining = (boost.end_date - now).days
                 
-                # Get receipt URL if exists
                 receipt_url = None
                 if boost.receipt_image:
                     request = self.request if hasattr(self, 'request') else None
@@ -40042,7 +40105,6 @@ class SellerBoosts(viewsets.ViewSet):
                     } if boost.payment_verified else None
                 })
             
-            # Get counts by status
             counts = {
                 'total': boosts_query.count(),
                 'active': Boost.objects.filter(
@@ -40079,23 +40141,6 @@ class SellerBoosts(viewsets.ViewSet):
                 'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    def _get_product_primary_image(self, product):
-        """Helper method to get primary product image and convert to public URL"""
-        try:
-            media = product.productmedia_set.first()
-            if media and media.file_data:
-                s3_url = media.file_data.url
-                # Convert S3 URL to public URL using the utility
-                public_url = convert_s3_to_public_url(s3_url)
-                
-                request = self.request if hasattr(self, 'request') else None
-                if request and public_url and not public_url.startswith('http'):
-                    return request.build_absolute_uri(public_url)
-                return public_url
-        except Exception as e:
-            print(f"Error getting product image: {e}")
-        return None
-    
     @action(detail=False, methods=['get'])
     def active(self, request):
         """Get active boosts for seller's products"""
@@ -40110,7 +40155,6 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'customer_id is required'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get active boosts for this customer
             active_boosts = Boost.objects.filter(
                 Q(customer_id=customer_id) | Q(shop_id=shop_id),
                 status='active',
@@ -40158,7 +40202,6 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'customer_id is required'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get products for this customer/shop
             products_query = Product.objects.filter(
                 customer_id=customer_id,
                 is_removed=False,
@@ -40168,37 +40211,28 @@ class SellerBoosts(viewsets.ViewSet):
             if shop_id:
                 products_query = products_query.filter(shop_id=shop_id)
             
-            # Annotate each product with boost status
             now = timezone.now()
             
-            # Create subquery to check for active boosts
             active_boost_subquery = Boost.objects.filter(
                 product_id=OuterRef('id'),
                 status='active',
                 end_date__gt=now
             )
             
-            # Annotate products with boost information
             products = products_query.annotate(
                 is_boosted=Exists(active_boost_subquery)
             ).prefetch_related('variants', 'productmedia_set').order_by('-created_at')
             
             products_data = []
             for product in products:
-                # Get stock from variants
                 total_stock = self._get_product_total_stock(product)
-                
-                # Get price range from variants
                 min_price = self._get_product_min_price(product)
                 max_price = self._get_product_max_price(product)
-                
-                # Get product image
                 product_image = self._get_product_primary_image(product)
                 
                 boost_info = None
                 
                 if product.is_boosted:
-                    # Get the active boost details
                     boost = Boost.objects.filter(
                         product_id=product.id,
                         status='active',
@@ -40224,9 +40258,9 @@ class SellerBoosts(viewsets.ViewSet):
                         'min': min_price,
                         'max': max_price
                     },
-                    'price': min_price,  # For backward compatibility
-                    'quantity': total_stock,  # FIXED: Now using variants quantity
-                    'total_stock': total_stock,  # Added for clarity
+                    'price': min_price,
+                    'quantity': total_stock,
+                    'total_stock': total_stock,
                     'has_variants': product.variants.filter(is_active=True).count() > 0,
                     'status': product.status,
                     'upload_status': product.upload_status,
@@ -40235,17 +40269,15 @@ class SellerBoosts(viewsets.ViewSet):
                     'category': str(product.category.name) if product.category else None,
                     'created_at': product.created_at.isoformat(),
                     'can_be_boosted': self._can_product_be_boosted(product),
-                    'image': product_image  # Add product image
+                    'image': product_image
                 }
                 
-                # Add shop info if available
                 if product.shop:
                     product_data['shop_id'] = str(product.shop.id)
                     product_data['shop_name'] = product.shop.name
                 
                 products_data.append(product_data)
             
-            # Get boost eligibility stats
             eligible_products = [p for p in products_data if p['can_be_boosted']]
             already_boosted = [p for p in products_data if p['is_boosted']]
             
@@ -40280,7 +40312,6 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'customer_id is required'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get the product
             try:
                 product = Product.objects.get(
                     id=pk,
@@ -40292,7 +40323,6 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'Product not found or unauthorized'
                 }, status=status.HTTP_404_NOT_FOUND)
             
-            # Check for active boosts
             now = timezone.now()
             active_boost = Boost.objects.filter(
                 product_id=pk,
@@ -40317,18 +40347,12 @@ class SellerBoosts(viewsets.ViewSet):
                     }
                 }
             
-            # Get stock from variants
             total_stock = self._get_product_total_stock(product)
             min_price = self._get_product_min_price(product)
             max_price = self._get_product_max_price(product)
-            
-            # Get product image
             product_image = self._get_product_primary_image(product)
-            
-            # Check eligibility
             eligibility = self._check_product_eligibility(product)
             
-            # Get product's boost history
             boost_history = Boost.objects.filter(
                 product_id=pk
             ).select_related('boost_plan').order_by('-created_at')[:10]
@@ -40353,7 +40377,7 @@ class SellerBoosts(viewsets.ViewSet):
                     'boost_info': boost_info,
                     'eligibility': eligibility,
                     'product_details': {
-                        'total_stock': total_stock,  # FIXED: Now using variants quantity
+                        'total_stock': total_stock,
                         'price_range': {
                             'min': min_price,
                             'max': max_price
@@ -40362,7 +40386,7 @@ class SellerBoosts(viewsets.ViewSet):
                         'upload_status': product.upload_status,
                         'status': product.status,
                         'is_removed': product.is_removed,
-                        'image': product_image  # Add product image
+                        'image': product_image
                     },
                     'boost_history': history_data,
                     'can_be_boosted': self._can_product_be_boosted(product)
@@ -40378,7 +40402,6 @@ class SellerBoosts(viewsets.ViewSet):
     
     def _can_product_be_boosted(self, product):
         """Check if a product can be boosted"""
-        # Get total stock from variants
         total_stock = self._get_product_total_stock(product)
         
         if total_stock <= 0:
@@ -40390,7 +40413,6 @@ class SellerBoosts(viewsets.ViewSet):
         if product.is_removed:
             return False
         
-        # Check if already has active boost
         now = timezone.now()
         has_active_boost = Boost.objects.filter(
             product_id=product.id,
@@ -40425,7 +40447,6 @@ class SellerBoosts(viewsets.ViewSet):
             eligibility['is_eligible'] = False
             eligibility['issues'].append("Product has been removed")
         
-        # Check for active boosts
         now = timezone.now()
         existing_boost = Boost.objects.filter(
             product_id=product.id,
@@ -40452,7 +40473,6 @@ class SellerBoosts(viewsets.ViewSet):
             shop_id = data.get('shop_id')
             boost_plan_id = data.get('boost_plan_id')
             
-            # Check if single product or multiple products
             product_ids = data.get('product_ids', [])
             single_product_id = data.get('product_id')
             
@@ -40465,7 +40485,6 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'No products selected'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Validate required fields
             required_fields = ['customer_id', 'boost_plan_id']
             for field in required_fields:
                 if not data.get(field):
@@ -40474,7 +40493,6 @@ class SellerBoosts(viewsets.ViewSet):
                         'message': f'{field} is required'
                     }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Check if boost plan exists and is active
             try:
                 boost_plan = BoostPlan.objects.get(id=boost_plan_id, status='active')
             except BoostPlan.DoesNotExist:
@@ -40483,7 +40501,6 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'Boost plan not found or inactive'
                 }, status=status.HTTP_404_NOT_FOUND)
             
-            # Get customer
             try:
                 customer = Customer.objects.get(customer_id=customer_id)
             except Customer.DoesNotExist:
@@ -40492,27 +40509,24 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'Customer not found'
                 }, status=status.HTTP_404_NOT_FOUND)
             
-            # VALIDATION: Get plan product limit
             product_limit_feature = BoostPlanFeature.objects.filter(
                 boost_plan=boost_plan,
                 feature__name__icontains='product'
             ).first()
             
-            plan_limit = 1  # Default limit
+            plan_limit = 1
             
             if product_limit_feature and product_limit_feature.value:
                 match = re.search(r'\d+', product_limit_feature.value)
                 if match:
                     plan_limit = int(match.group())
             
-            # Check if we're selecting more products than the plan allows
             if len(product_ids) > plan_limit:
                 return Response({
                     'success': False,
                     'message': f'You selected {len(product_ids)} products but this plan only allows {plan_limit} product{"s" if plan_limit != 1 else ""}.'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Count active boosts with this plan for this customer
             active_boosts_count = Boost.objects.filter(
                 customer=customer,
                 boost_plan=boost_plan,
@@ -40520,21 +40534,18 @@ class SellerBoosts(viewsets.ViewSet):
                 end_date__gt=timezone.now()
             ).count()
             
-            # Count pending boosts with this plan for this customer
             pending_boosts_count = Boost.objects.filter(
                 customer=customer,
                 boost_plan=boost_plan,
                 status='pending'
             ).count()
             
-            # Check if adding new boosts would exceed the limit
             if active_boosts_count + pending_boosts_count + len(product_ids) > plan_limit:
                 return Response({
                     'success': False,
                     'message': f'You already have {active_boosts_count} active and {pending_boosts_count} pending boosts. Adding {len(product_ids)} more would exceed the limit of {plan_limit} product{"s" if plan_limit != 1 else ""} for this boost plan.'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get shop (optional)
             shop = None
             if shop_id:
                 try:
@@ -40542,7 +40553,6 @@ class SellerBoosts(viewsets.ViewSet):
                 except Shop.DoesNotExist:
                     pass
             
-            # Validate and collect products
             valid_products = []
             validation_errors = []
             
@@ -40550,7 +40560,6 @@ class SellerBoosts(viewsets.ViewSet):
                 try:
                     product = Product.objects.get(id=product_id, customer_id=customer_id)
                     
-                    # Check if product can be boosted
                     eligibility = self._check_product_eligibility(product)
                     
                     if not eligibility['is_eligible']:
@@ -40570,7 +40579,6 @@ class SellerBoosts(viewsets.ViewSet):
                         'errors': ['Product not found or unauthorized']
                     })
             
-            # If there are validation errors for any products, return them
             if validation_errors:
                 return Response({
                     'success': False,
@@ -40580,7 +40588,6 @@ class SellerBoosts(viewsets.ViewSet):
                     'total_selected': len(product_ids)
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Create boosts for all valid products with status 'pending'
             created_boosts = []
             for product in valid_products:
                 boost = Boost.objects.create(
@@ -40588,8 +40595,7 @@ class SellerBoosts(viewsets.ViewSet):
                     boost_plan=boost_plan,
                     shop=shop,
                     customer=customer,
-                    status='pending',  # Changed from 'active' to 'pending'
-                    # Don't set start_date and end_date yet - they'll be set when approved
+                    status='pending',
                 )
                 created_boosts.append({
                     'id': str(boost.id),
@@ -40623,7 +40629,7 @@ class SellerBoosts(viewsets.ViewSet):
             product_ids = [pid.strip() for pid in product_ids if pid.strip()]
             receipt_image = request.FILES.get('receipt_image')
             payment_method = data.get('payment_method', 'GCash')
-            customer_id = data.get('customer_id')  # This is the User UUID
+            customer_id = data.get('customer_id')
 
             if not plan_id:
                 return Response({'success': False, 'error': 'plan_id is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -40637,22 +40643,18 @@ class SellerBoosts(viewsets.ViewSet):
             if not customer_id:
                 return Response({'success': False, 'error': 'customer_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Validate file type
             valid_types = ['image/jpeg', 'image/png', 'image/jpg']
             if receipt_image.content_type not in valid_types:
                 return Response({'success': False, 'error': 'Invalid file type. Please upload JPEG or PNG images.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Validate file size (max 5MB)
             if receipt_image.size > 5 * 1024 * 1024:
                 return Response({'success': False, 'error': 'File size too large. Maximum size is 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Get boost plan
             try:
                 boost_plan = BoostPlan.objects.get(id=plan_id)
             except BoostPlan.DoesNotExist:
                 return Response({'success': False, 'error': 'Boost plan not found'}, status=status.HTTP_404_NOT_FOUND)
 
-            # Get Customer using the User UUID (customer_id is the User's PK)
             try:
                 customer = Customer.objects.get(customer__id=customer_id)
             except Customer.DoesNotExist:
@@ -40663,13 +40665,11 @@ class SellerBoosts(viewsets.ViewSet):
 
             for product_id in product_ids:
                 try:
-                    # Product.customer is FK to Customer, so filter by customer object
                     product = Product.objects.get(id=product_id, customer=customer)
                 except Product.DoesNotExist:
                     skipped_products.append({'product_id': product_id, 'reason': 'Product not found or unauthorized'})
                     continue
 
-                # Look for existing pending boost for this product + plan + customer
                 boost = Boost.objects.filter(
                     product=product,
                     boost_plan=boost_plan,
@@ -40678,7 +40678,6 @@ class SellerBoosts(viewsets.ViewSet):
                 ).first()
 
                 if not boost:
-                    # Create new pending boost
                     boost = Boost.objects.create(
                         product=product,
                         boost_plan=boost_plan,
@@ -40688,7 +40687,6 @@ class SellerBoosts(viewsets.ViewSet):
                         payment_method=payment_method,
                     )
 
-                # Assign the receipt image and payment method
                 boost.receipt_image = receipt_image
                 boost.payment_method = payment_method
                 boost.save()
@@ -40736,39 +40734,32 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'customer_id is required'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get all boosts for this customer
             boosts = Boost.objects.filter(
                 Q(customer_id=customer_id) | Q(shop_id=shop_id)
             ).select_related('boost_plan', 'product')
             
-            # Count active boosts
             active_boosts = boosts.filter(
                 status='active',
                 end_date__gt=timezone.now()
             ).count()
             
-            # Count expired boosts
             expired_boosts = boosts.filter(
                 status='expired'
             ).count()
             
-            # Count pending boosts
             pending_boosts = boosts.filter(
                 status='pending'
             ).count()
             
-            # Get total spent on boosts (only active/expired, not pending)
             total_spent = sum(
                 float(boost.boost_plan.price) 
                 for boost in boosts 
                 if boost.boost_plan and boost.status in ['active', 'expired']
             )
             
-            # Get active boost details
             active_boost_details = []
             for boost in boosts.filter(status='active', end_date__gt=timezone.now()):
                 if boost.product:
-                    # Get stock from variants
                     total_stock = self._get_product_total_stock(boost.product)
                     
                     active_boost_details.append({
@@ -40781,7 +40772,6 @@ class SellerBoosts(viewsets.ViewSet):
                         'days_remaining': (boost.end_date - timezone.now()).days
                     })
             
-            # Get pending boost details
             pending_boost_details = []
             for boost in boosts.filter(status='pending'):
                 if boost.product:
@@ -40793,7 +40783,6 @@ class SellerBoosts(viewsets.ViewSet):
                         'has_receipt': bool(boost.receipt_image)
                     })
             
-            # Get product statistics
             products = Product.objects.filter(
                 customer_id=customer_id,
                 is_removed=False
@@ -40807,7 +40796,6 @@ class SellerBoosts(viewsets.ViewSet):
             already_boosted = 0
             pending_boost_count = 0
             
-            # Track total stock across all products
             total_inventory_stock = 0
             
             for product in products:
@@ -40817,7 +40805,6 @@ class SellerBoosts(viewsets.ViewSet):
                 if self._can_product_be_boosted(product):
                     eligible_products += 1
                 
-                # Check if already boosted
                 if Boost.objects.filter(
                     product_id=product.id,
                     status='active',
@@ -40825,7 +40812,6 @@ class SellerBoosts(viewsets.ViewSet):
                 ).exists():
                     already_boosted += 1
                 
-                # Check if has pending boost
                 if Boost.objects.filter(
                     product_id=product.id,
                     status='pending'
@@ -40872,7 +40858,6 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'customer_id is required'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get the boost
             try:
                 boost = Boost.objects.get(
                     id=pk,
@@ -40885,7 +40870,6 @@ class SellerBoosts(viewsets.ViewSet):
                     'message': 'Boost not found or unauthorized'
                 }, status=status.HTTP_404_NOT_FOUND)
             
-            # Cancel the boost
             boost.status = 'cancelled'
             boost.save()
             
@@ -40929,25 +40913,19 @@ class SellerBoosts(viewsets.ViewSet):
                         customer_id=customer_id
                     )
                     
-                    # Check for active boost
                     active_boost = Boost.objects.filter(
                         product_id=product_id,
                         status='active',
                         end_date__gt=now
                     ).select_related('boost_plan').first()
                     
-                    # Check for pending boost
                     pending_boost = Boost.objects.filter(
                         product_id=product_id,
                         status='pending'
                     ).first()
                     
-                    # Get stock from variants
                     total_stock = self._get_product_total_stock(product)
-                    
-                    # Get product image
                     product_image = self._get_product_primary_image(product)
-                    
                     eligibility = self._check_product_eligibility(product)
                     
                     results.append({
@@ -40970,7 +40948,7 @@ class SellerBoosts(viewsets.ViewSet):
                         } if pending_boost else None,
                         'eligibility': eligibility,
                         'can_be_boosted': self._can_product_be_boosted(product) and not pending_boost,
-                        'image': product_image  # Add product image to response
+                        'image': product_image
                     })
                     
                 except Product.DoesNotExist:
@@ -41008,54 +40986,21 @@ class SellerBoosts(viewsets.ViewSet):
                 'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @action(detail=False, methods=['get'])
-    def debug_features(self, request):
-        """Debug endpoint to check feature structure"""
-        try:
-            plan_id = request.query_params.get('plan_id')
-            if not plan_id:
-                return Response({'error': 'plan_id required'}, status=400)
-            
-            features = BoostPlanFeature.objects.filter(
-                boost_plan_id=plan_id
-            ).select_related('feature')
-            
-            data = []
-            for f in features:
-                data.append({
-                    'id': str(f.id),
-                    'feature_id': str(f.feature.id),
-                    'feature_name': f.feature.name,
-                    'value': f.value,
-                    'is_product_feature': 'product' in f.feature.name.lower(),
-                    'extracted_number': re.search(r'\d+', f.value).group() if f.value and re.search(r'\d+', f.value) else None
-                })
-            
-            return Response({
-                'success': True,
-                'features': data,
-                'plan_id': plan_id
-            })
-            
-        except Exception as e:
-            return Response({'error': str(e)}, status=500)
-    
     @action(detail=False, methods=['post'])
     def initiate_maya_payment(self, request):
         """
         Initiate Maya PWM (Pay with Maya Wallet) payment for boost plans.
         POST /seller-boosts/initiate_maya_payment/
-        Body: { plan_id, product_ids (comma-separated string), user_id }
+        Body: { plan_id, product_ids (comma-separated string), user_id, shop_id }
+        For mobile: platform=mobile
         """
         try:
-            import base64
-            import requests as http_requests
-            from datetime import datetime as dt
-            from django.utils import timezone
-            
             plan_id = request.data.get('plan_id')
             product_ids_raw = request.data.get('product_ids', '')
             user_id = request.data.get('user_id')
+            shop_id = request.data.get('shop_id')
+            platform = request.data.get('platform', 'web')
+            is_mobile = platform == 'mobile'
             
             if not plan_id:
                 return Response({'success': False, 'error': 'plan_id is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -41064,18 +41009,15 @@ class SellerBoosts(viewsets.ViewSet):
             if not user_id:
                 return Response({'success': False, 'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
             
-            # Parse product IDs
             product_ids = [pid.strip() for pid in product_ids_raw.split(',') if pid.strip()]
             if not product_ids:
                 return Response({'success': False, 'error': 'No valid product IDs provided'}, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get the boost plan
             try:
                 boost_plan = BoostPlan.objects.get(id=plan_id, status='active')
             except BoostPlan.DoesNotExist:
                 return Response({'success': False, 'error': 'Boost plan not found or inactive'}, status=status.HTTP_404_NOT_FOUND)
             
-            # Get the customer
             try:
                 customer = Customer.objects.get(customer__id=user_id)
             except Customer.DoesNotExist:
@@ -41083,17 +41025,26 @@ class SellerBoosts(viewsets.ViewSet):
             
             total_amount = float(boost_plan.price) * len(product_ids)
             
-            # Maya PWM settings
             maya_config = settings.MAYA_SANDBOX
             base_url = maya_config['BASE_URL']
             public_key = maya_config['PUBLIC_KEY']
-            frontend_url = settings.FRONTEND_URL
             
-            # Build Basic Auth with public key (PWM uses public key)
             credentials = base64.b64encode(f"{public_key}:".encode()).decode()
             
-            # Reference number — encode plan + products for use in callback
             reference_number = f"BOOST-{plan_id[:8].upper()}-{user_id[:8].upper()}-{dt.now().strftime('%H%M%S')}"
+            
+            # Use backend API URLs for callbacks (not frontend)
+            base_api_url = request.build_absolute_uri('/api/').rstrip('/api/')
+            
+            if is_mobile:
+                success_url = f"{base_api_url}/api/seller-boosts/maya-callback/success?plan_id={plan_id}&product_ids={product_ids_raw}&user_id={user_id}"
+                failure_url = f"{base_api_url}/api/seller-boosts/maya-callback/failure?plan_id={plan_id}&product_ids={product_ids_raw}&user_id={user_id}"
+                cancel_url = f"{base_api_url}/api/seller-boosts/maya-callback/cancel?plan_id={plan_id}&product_ids={product_ids_raw}&user_id={user_id}"
+            else:
+                frontend_url = settings.FRONTEND_URL
+                success_url = f"{frontend_url}/seller/seller-boosts?boost_status=success&plan_id={plan_id}&product_ids={product_ids_raw}&user_id={user_id}"
+                failure_url = f"{frontend_url}/pay-boosting/{plan_id}?product_ids={product_ids_raw}&status=failed"
+                cancel_url = f"{frontend_url}/pay-boosting/{plan_id}?product_ids={product_ids_raw}&status=cancelled"
             
             payload = {
                 "totalAmount": {
@@ -41118,9 +41069,9 @@ class SellerBoosts(viewsets.ViewSet):
                     }
                 ],
                 "redirectUrl": {
-                    "success": f"{frontend_url}/seller/seller-boosts?boost_status=success&plan_id={plan_id}&product_ids={product_ids_raw}&user_id={user_id}",
-                    "failure": f"{frontend_url}/pay-boosting/{plan_id}?product_ids={product_ids_raw}&status=failed",
-                    "cancel": f"{frontend_url}/pay-boosting/{plan_id}?product_ids={product_ids_raw}&status=cancelled"
+                    "success": success_url,
+                    "failure": failure_url,
+                    "cancel": cancel_url,
                 }
             }
             
@@ -41148,67 +41099,6 @@ class SellerBoosts(viewsets.ViewSet):
             if not redirect_url:
                 return Response({'success': False, 'error': 'No redirect URL from Maya'}, status=status.HTTP_502_BAD_GATEWAY)
             
-            # Create active boost records immediately
-            created_boosts = []
-            skipped_products = []
-            
-            for product_id in product_ids:
-                try:
-                    product = Product.objects.get(id=product_id, customer=customer)
-                    
-                    # Check if product already has an active boost
-                    existing_active = Boost.objects.filter(
-                        product=product,
-                        status='active',
-                        end_date__gt=timezone.now()
-                    ).first()
-                    
-                    if existing_active:
-                        skipped_products.append({
-                            'product_id': product_id,
-                            'product_name': product.name,
-                            'reason': 'Product already has an active boost'
-                        })
-                        continue
-                    
-                    # Create new active boost
-                    boost = Boost(
-                        product=product,
-                        boost_plan=boost_plan,
-                        customer=customer,
-                        shop=product.shop,
-                        payment_method='Maya',
-                        status='active',
-                        start_date=timezone.now(),
-                        # end_date will be set automatically by the model's save method
-                    )
-                    boost.save()  # This will trigger the save() method which sets end_date
-                    
-                    created_boosts.append({
-                        'id': str(boost.id),
-                        'product_id': str(product.id),
-                        'product_name': product.name,
-                        'status': boost.status,
-                        'start_date': boost.start_date.isoformat() if boost.start_date else None,
-                        'end_date': boost.end_date.isoformat() if boost.end_date else None,
-                    })
-                    
-                except Product.DoesNotExist:
-                    skipped_products.append({
-                        'product_id': product_id,
-                        'reason': 'Product not found or unauthorized'
-                    })
-                    continue
-                except Exception as e:
-                    skipped_products.append({
-                        'product_id': product_id,
-                        'reason': str(e)
-                    })
-                    continue
-            
-            # Log the created boosts for debugging
-            print(f"Created {len(created_boosts)} boost instances: {created_boosts}")
-            
             return Response({
                 'success': True,
                 'redirect_url': redirect_url,
@@ -41216,9 +41106,9 @@ class SellerBoosts(viewsets.ViewSet):
                 'reference_number': reference_number,
                 'total_amount': total_amount,
                 'sandbox_mode': settings.ENABLE_SANDBOX,
-                'boosts_created': created_boosts,
-                'skipped_products': skipped_products,
-                'message': f'Successfully created {len(created_boosts)} boost(s)'
+                'platform': platform,
+                'is_mobile': is_mobile,
+                'message': 'Payment initiated successfully'
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -41226,6 +41116,164 @@ class SellerBoosts(viewsets.ViewSet):
             print(f"Error in initiate_maya_payment: {str(e)}")
             print(traceback.format_exc())
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'], url_path='maya-callback/(?P<status>[^/.]+)')
+    def maya_callback(self, request, status=None):
+        """
+        Handle Maya payment callback - returns HTML that closes WebView and redirects to app
+        """
+        plan_id = request.GET.get('plan_id')
+        product_ids = request.GET.get('product_ids')
+        user_id = request.GET.get('user_id')
+        
+        if status == 'success':
+            # Create boosts after successful payment
+            try:
+                product_ids_list = [pid.strip() for pid in product_ids.split(',') if pid.strip()]
+                
+                try:
+                    boost_plan = BoostPlan.objects.get(id=plan_id, status='active')
+                except BoostPlan.DoesNotExist:
+                    redirect_url = f"crimsotechreactnative://boost-success?error=Boost%20plan%20not%20found"
+                    html_content = self._get_redirect_html(redirect_url, "Error", "Boost plan not found")
+                    return HttpResponse(html_content, content_type='text/html')
+                
+                try:
+                    customer = Customer.objects.get(customer__id=user_id)
+                except Customer.DoesNotExist:
+                    redirect_url = f"crimsotechreactnative://boost-success?error=Customer%20not%20found"
+                    html_content = self._get_redirect_html(redirect_url, "Error", "Customer not found")
+                    return HttpResponse(html_content, content_type='text/html')
+                
+                created_count = 0
+                for product_id in product_ids_list:
+                    try:
+                        product = Product.objects.get(id=product_id, customer=customer)
+                        
+                        # Check if already boosted
+                        existing_active = Boost.objects.filter(
+                            product=product,
+                            status='active',
+                            end_date__gt=timezone.now()
+                        ).first()
+                        
+                        if not existing_active:
+                            boost = Boost(
+                                product=product,
+                                boost_plan=boost_plan,
+                                customer=customer,
+                                shop=product.shop,
+                                payment_method='Maya',
+                                status='active',
+                                start_date=timezone.now(),
+                            )
+                            boost.save()
+                            created_count += 1
+                            
+                    except Product.DoesNotExist:
+                        continue
+                
+                redirect_url = f"crimsotechreactnative://boost-success?count={created_count}"
+                html_content = self._get_redirect_html(redirect_url, "Payment Successful", f"{created_count} product(s) boosted successfully!")
+                
+            except Exception as e:
+                redirect_url = f"crimsotechreactnative://boost-success?error={str(e)}"
+                html_content = self._get_redirect_html(redirect_url, "Error", str(e))
+        
+        elif status == 'failure':
+            redirect_url = f"crimsotechreactnative://boost-success?status=failed"
+            html_content = self._get_redirect_html(redirect_url, "Payment Failed", "Your payment could not be processed. Please try again.")
+        
+        elif status == 'cancel':
+            redirect_url = f"crimsotechreactnative://boost-success?status=cancelled"
+            html_content = self._get_redirect_html(redirect_url, "Payment Cancelled", "You cancelled the payment process.")
+        
+        else:
+            redirect_url = f"crimsotechreactnative://boost-success?status=unknown"
+            html_content = self._get_redirect_html(redirect_url, "Unknown Status", "Payment status unknown.")
+        
+        return HttpResponse(html_content, content_type='text/html')
+
+    def _get_redirect_html(self, redirect_url, title, message):
+        """Generate HTML that automatically redirects to the app and closes WebView"""
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>{title}</title>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                }}
+                .container {{
+                    text-align: center;
+                    padding: 20px;
+                }}
+                .spinner {{
+                    border: 4px solid rgba(255, 255, 255, 0.3);
+                    border-radius: 50%;
+                    border-top: 4px solid white;
+                    width: 40px;
+                    height: 40px;
+                    animation: spin 1s linear infinite;
+                    margin: 20px auto;
+                }}
+                @keyframes spin {{
+                    0% {{ transform: rotate(0deg); }}
+                    100% {{ transform: rotate(360deg); }}
+                }}
+                .message {{
+                    font-size: 18px;
+                    margin-top: 20px;
+                }}
+                .button {{
+                    display: inline-block;
+                    margin-top: 20px;
+                    padding: 12px 24px;
+                    background-color: white;
+                    color: #667eea;
+                    text-decoration: none;
+                    border-radius: 8px;
+                    font-weight: bold;
+                    cursor: pointer;
+                    border: none;
+                    font-size: 16px;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="spinner"></div>
+                <div class="message">{message}</div>
+                <button class="button" onclick="redirectToApp()">Return to App</button>
+            </div>
+            <script>
+                function redirectToApp() {{
+                    window.location.href = '{redirect_url}';
+                }}
+                // Auto redirect after 1 second
+                setTimeout(function() {{
+                    redirectToApp();
+                }}, 1000);
+                
+                // For React Native WebView
+                if (window.ReactNativeWebView) {{
+                    window.ReactNativeWebView.postMessage('redirect:{redirect_url}');
+                }}
+            </script>
+        </body>
+        </html>
+        """
+
 
 class HomeBoosts(viewsets.ViewSet):
     """ViewSet for showing boosted products on home page"""
