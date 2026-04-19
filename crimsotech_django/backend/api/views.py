@@ -32221,16 +32221,12 @@ class RefundViewSet(viewsets.ViewSet):
             else:
                 return_request.tracking_number = None  # Set to null for walk-in
 
-            # FIX: Always set status to 'shipped' for ALL submissions (including walk-in)
-            # This ensures the buyer's return submission is properly recorded
-            return_request.status = 'shipped'
-            
-            # For walk-in, we don't set shipped_by, but we still record submission time
+            # Set status to 'shipped' for ALL submissions (including walk-in)
             if logistic_service == 'Walk-in':
-                # Record when the buyer submitted the return info
-                return_request.shipped_at = timezone.now()
-                # Don't set shipped_by for walk-in
+                return_request.status = 'pending'
+                # For walk-in, leave shipped_at as null and don't set shipped_by
             else:
+                return_request.status = 'shipped'
                 shipped_at = request.data.get('shipped_at')
                 if shipped_at:
                     try:
@@ -32347,7 +32343,6 @@ class RefundViewSet(viewsets.ViewSet):
             import traceback
             traceback.print_exc()
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def add_proof(self, request, pk=None):
         """

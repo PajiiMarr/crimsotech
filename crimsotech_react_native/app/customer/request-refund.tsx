@@ -599,14 +599,16 @@ export default function RequestRefundPage() {
     } else if (selectedRefundType && (selectedRefundType.id === 'return_item' || selectedRefundType.id === 'replacement')) {
       baseAmount = selectedTotal;
     }
-
+  
     let fee = 0;
     const methodType = selectedRefundMethod?.type;
     if (selectedRefundMethod?.id === 'cash_on_hand') fee = 0;
     else if (methodType === 'moneyback') fee = 50;
     else if (methodType === 'bank') fee = 50;
-    else if (methodType === 'wallet') fee = 10;
-
+    // REMOVED: else if (methodType === 'wallet') fee = 10;
+    else if (methodType === 'wallet') fee = 0;  // ← CHANGE THIS - wallet fee is now 0
+    else if (methodType === 'replace') fee = 0;  // Replacement has no fee
+  
     const finalAmount = Math.max(0, baseAmount - fee);
     return { baseAmount, fee, finalAmount };
   };
@@ -1447,22 +1449,22 @@ export default function RequestRefundPage() {
             </View>
             
             {breakdown.fee > 0 && (
-              <View style={styles.breakdownRow}>
-                <View>
-                  <Text style={styles.breakdownLabel}>
-                    Fee ({selectedRefundMethod.type === 'moneyback' ? 'Remittance' : 
-                          selectedRefundMethod.type === 'wallet' ? 'E-Wallet' : 
-                          selectedRefundMethod.type === 'bank' ? 'Bank Transfer' : 'Processing'})
-                  </Text>
-                  <Text style={styles.breakdownSubLabel}>
-                    {selectedRefundMethod.type === 'moneyback' ? 'Remittance service charge' :
-                     selectedRefundMethod.type === 'bank' ? 'Bank transfer processing fee' :
-                     selectedRefundMethod.type === 'wallet' ? 'E-wallet processing fee' : 'Processing fee'}
-                  </Text>
-                </View>
-                <Text style={styles.breakdownFee}>- {formatCurrency(breakdown.fee)}</Text>
+            <View style={styles.breakdownRow}>
+              <View>
+                <Text style={styles.breakdownLabel}>
+                  Fee ({selectedRefundMethod.type === 'moneyback' ? 'Remittance' : 
+                        selectedRefundMethod.type === 'wallet' ? 'E-Wallet' : 
+                        selectedRefundMethod.type === 'bank' ? 'Bank Transfer' : 'Processing'})
+                </Text>
+                <Text style={styles.breakdownSubLabel}>
+                  {selectedRefundMethod.type === 'moneyback' ? 'Remittance service charge' :
+                  selectedRefundMethod.type === 'bank' ? 'Bank transfer processing fee' :
+                  selectedRefundMethod.type === 'wallet' ? 'E-wallet processing fee' : 'Processing fee'}
+                </Text>
               </View>
-            )}
+              <Text style={styles.breakdownFee}>- {formatCurrency(breakdown.fee)}</Text>
+            </View>
+          )}
             
             <View style={styles.separator} />
             

@@ -8,6 +8,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  KeyboardAvoidingView,
   ActivityIndicator,
   TextInput,
   Modal,
@@ -219,6 +220,12 @@ export default function ViewRefundDetails() {
   const [rejectFilePreviews, setRejectFilePreviews] = useState<string[]>([]);
   const [showReasonPicker, setShowReasonPicker] = useState(false);
 
+  // Add these new state variables
+const [showConfirmReturnModal, setShowConfirmReturnModal] = useState(false);
+const [confirmProofFiles, setConfirmProofFiles] = useState<any[]>([]);
+const [confirmProofPreviews, setConfirmProofPreviews] = useState<string[]>([]);
+const [confirmNotes, setConfirmNotes] = useState('');
+const [uploadingConfirmProof, setUploadingConfirmProof] = useState(false);
   // Accept/Decline modal for item inspection
   const [showAcceptDeclineModal, setShowAcceptDeclineModal] = useState(false);
   const [acceptDeclineAction, setAcceptDeclineAction] = useState<'accept' | 'decline'>('accept');
@@ -649,6 +656,66 @@ const handleUploadProofs = async () => {
   }
 };
 
+const handleConfirmWalkInReturn = async () => {
+  try {
+    setUploadingConfirmProof(true);
+    
+    // First, upload any proof files to RefundProof (using add_proof endpoint)
+    if (confirmProofFiles.length > 0) {
+      const formData = new FormData();
+      for (const file of confirmProofFiles) {
+        formData.append('file_data', file);
+      }
+      if (confirmNotes) {
+        formData.append('notes', confirmNotes);
+      }
+      
+      await AxiosInstance.post(
+        `/return-refund/${refundId}/add_proof/`,
+        formData,
+        {
+          headers: {
+            'X-User-Id': userId || '',
+            'X-Shop-Id': effectiveShopId || '',
+            'Content-Type': 'multipart/form-data'
+          }
+        }
+      );
+    }
+    
+    // Update return_request status to 'completed'
+    await AxiosInstance.post(`/return-refund/${refundId}/update_return_status/`, {
+      action: 'mark_completed',
+      notes: confirmNotes || 'Walk-in return confirmed by seller'
+    }, {
+      headers: { 'X-User-Id': userId || '', 'X-Shop-Id': effectiveShopId || '' }
+    });
+    
+    // Process the refund payment to completed status
+    const paymentFormData = new FormData();
+    paymentFormData.append('set_status', 'completed');
+    
+    await AxiosInstance.post(`/return-refund/${refundId}/process_refund/`, paymentFormData, {
+      headers: { 
+        'X-User-Id': userId || '', 
+        'X-Shop-Id': effectiveShopId || '', 
+        'Content-Type': 'multipart/form-data' 
+      },
+    });
+    
+    Alert.alert('Success', 'Return confirmed and refund completed successfully');
+    setShowConfirmReturnModal(false);
+    setConfirmProofFiles([]);
+    setConfirmProofPreviews([]);
+    setConfirmNotes('');
+    fetchDetail();
+  } catch (err: any) {
+    console.error('Confirm walk-in return error:', err);
+    Alert.alert('Error', err?.response?.data?.error || 'Failed to confirm return');
+  } finally {
+    setUploadingConfirmProof(false);
+  }
+};
   // ========== UI HELPERS ==========
   const pickImage = async (setter: Function) => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -799,142 +866,157 @@ const getStatusDescription = () => {
 
   // ========== ACTION BUTTONS ==========
 
-const renderActionButtons = () => {
-  if (!refund) return null;
-  const status = refund.status?.toLowerCase();
-  const returnStatus = refund.return_request?.status?.toLowerCase();
-  // UPDATE THIS - Include both 'return' and 'replace' types
-  const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
-  const refundType = refund.refund_type; // 'keep', 'return', or 'replace'
-
-  let buttons: React.ReactNode[] = [];
-
-  if (status === 'pending') {
-    buttons = [
-      <TouchableOpacity key="approve" style={[styles.actionBtn, styles.approveBtn]} onPress={() => setShowApproveConfirm(true)} disabled={actionLoading}>
-        <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
-        <Text style={styles.actionBtnText}>Approve</Text>
-      </TouchableOpacity>,
-      <TouchableOpacity key="reject" style={[styles.actionBtn, styles.rejectBtn]} onPress={() => setShowRejectModal(true)} disabled={actionLoading}>
-        <Ionicons name="close-circle-outline" size={16} color="#fff" />
-        <Text style={styles.actionBtnText}>Reject</Text>
-      </TouchableOpacity>,
-      <TouchableOpacity key="negotiate" style={[styles.actionBtn, styles.negotiateBtn]} onPress={() => {
-        if (refundType === 'keep') {
-          setCounterType('return');
-        } else if (refundType === 'return') {
-          setCounterType('replace');
-        } else if (refundType === 'replace') {
-          setCounterType('return');
-        }
-        setCounterAmount(computeReturnAmount(refund));
-        setShowNegotiateModal(true);
-      }} disabled={actionLoading}>
-        <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
-        <Text style={styles.actionBtnText}>Negotiate</Text>
-      </TouchableOpacity>
-    ];
-  } 
-  // UPDATE THIS - Use isReturnOrReplace instead of isReturn
-  else if (isReturnOrReplace && status === 'approved') {
-    // Show "Provide Tracking" button ONLY when return status is 'pending' (not yet shipped)
-    if (returnStatus === 'pending') {
-      buttons.push(
-        // <TouchableOpacity key="tracking" style={[styles.actionBtn, styles.trackingBtn]} onPress={() => setShowTrackingModal(true)} disabled={actionLoading}>
-        //   <Ionicons name="send-outline" size={16} color="#fff" />
-        //   <Text style={styles.actionBtnText}>Provide Tracking</Text>
-        // </TouchableOpacity>
-      );
-    }
-    
-    // Show "Mark as Received" button when return status is 'shipped'
-    if (returnStatus === 'shipped') {
-      buttons.push(
-        <TouchableOpacity 
-          key="markReceived" 
-          style={[styles.actionBtn, { backgroundColor: '#10B981' }]} 
-          onPress={() => {
-            setReturnAction('mark_received');
-            setShowMarkReceivedConfirm(true);
-          }} 
-          disabled={actionLoading}
-        >
+  const renderActionButtons = () => {
+    if (!refund) return null;
+    const status = refund.status?.toLowerCase();
+    const returnStatus = refund.return_request?.status?.toLowerCase();
+    const logisticService = refund.return_request?.logistic_service;
+    const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
+    const refundType = refund.refund_type;
+    const paymentStatus = refund.refund_payment_status?.toLowerCase();
+  
+    let buttons: React.ReactNode[] = [];
+  
+    // NEW: Handle walk-in return confirmation (pending status with Walk-in logistic service)
+    // NEW: Handle walk-in return confirmation (pending status with Walk-in logistic service)
+if (isReturnOrReplace && status === 'approved' && returnStatus === 'pending' && logisticService === 'Walk-in') {
+  buttons = [
+    <TouchableOpacity 
+      key="confirmReturn" 
+      style={[styles.actionBtn, { backgroundColor: '#10B981' }]} 
+      onPress={() => setShowConfirmReturnModal(true)}  // Open modal instead of direct alert
+      disabled={actionLoading}
+    >
+      <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
+      <Text style={styles.actionBtnText}>Confirm Return & Refund</Text>
+    </TouchableOpacity>
+  ];
+}
+    else if (status === 'pending') {
+      buttons = [
+        <TouchableOpacity key="approve" style={[styles.actionBtn, styles.approveBtn]} onPress={() => setShowApproveConfirm(true)} disabled={actionLoading}>
           <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
-          <Text style={styles.actionBtnText}>Mark as Received</Text>
+          <Text style={styles.actionBtnText}>Approve</Text>
+        </TouchableOpacity>,
+        <TouchableOpacity key="reject" style={[styles.actionBtn, styles.rejectBtn]} onPress={() => setShowRejectModal(true)} disabled={actionLoading}>
+          <Ionicons name="close-circle-outline" size={16} color="#fff" />
+          <Text style={styles.actionBtnText}>Reject</Text>
+        </TouchableOpacity>,
+        <TouchableOpacity key="negotiate" style={[styles.actionBtn, styles.negotiateBtn]} onPress={() => {
+          if (refundType === 'keep') {
+            setCounterType('return');
+          } else if (refundType === 'return') {
+            setCounterType('replace');
+          } else if (refundType === 'replace') {
+            setCounterType('return');
+          }
+          setCounterAmount(computeReturnAmount(refund));
+          setShowNegotiateModal(true);
+        }} disabled={actionLoading}>
+          <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
+          <Text style={styles.actionBtnText}>Negotiate</Text>
         </TouchableOpacity>
-      );
-    }
-    
-    // Show Accept/Decline buttons when return status is 'received' (inspecting)
-    if (returnStatus === 'received') {
-      buttons.push(
-        <View key="acceptDecline" style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
+      ];
+    } 
+    else if (isReturnOrReplace && status === 'approved') {
+      // Show "Provide Tracking" button ONLY when return status is 'pending' (not yet shipped)
+      if (returnStatus === 'pending') {
+        buttons.push(
+          // <TouchableOpacity key="tracking" style={[styles.actionBtn, styles.trackingBtn]} onPress={() => setShowTrackingModal(true)} disabled={actionLoading}>
+          //   <Ionicons name="send-outline" size={16} color="#fff" />
+          //   <Text style={styles.actionBtnText}>Provide Tracking</Text>
+          // </TouchableOpacity>
+        );
+      }
+      
+      // Show "Mark as Received" button when return status is 'shipped'
+      if (returnStatus === 'shipped') {
+        buttons.push(
           <TouchableOpacity 
-            style={[styles.actionBtn, { flex: 1, backgroundColor: '#10B981' }]} 
+            key="markReceived" 
+            style={[styles.actionBtn, { backgroundColor: '#10B981' }]} 
             onPress={() => {
-              setAcceptDeclineAction('accept');
-              setShowAcceptDeclineModal(true);
+              setReturnAction('mark_received');
+              setShowMarkReceivedConfirm(true);
             }} 
             disabled={actionLoading}
           >
             <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
-            <Text style={styles.actionBtnText}>Accept Return</Text>
+            <Text style={styles.actionBtnText}>Mark as Received</Text>
           </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.actionBtn, { flex: 1, backgroundColor: '#EF4444' }]} 
-            onPress={() => {
-              setAcceptDeclineAction('decline');
-              setShowAcceptDeclineModal(true);
-            }} 
-            disabled={actionLoading}
-          >
-            <Ionicons name="close-circle-outline" size={16} color="#fff" />
-            <Text style={styles.actionBtnText}>Decline Return</Text>
-          </TouchableOpacity>
-        </View>
+        );
+      }
+      
+      // Show Accept/Decline buttons when return status is 'received' (inspecting)
+      if (returnStatus === 'received') {
+        buttons.push(
+          <View key="acceptDecline" style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
+            <TouchableOpacity 
+              style={[styles.actionBtn, { flex: 1, backgroundColor: '#10B981' }]} 
+              onPress={() => {
+                setAcceptDeclineAction('accept');
+                setShowAcceptDeclineModal(true);
+              }} 
+              disabled={actionLoading}
+            >
+              <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
+              <Text style={styles.actionBtnText}>Accept Return</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.actionBtn, { flex: 1, backgroundColor: '#EF4444' }]} 
+              onPress={() => {
+                setAcceptDeclineAction('decline');
+                setShowAcceptDeclineModal(true);
+              }} 
+              disabled={actionLoading}
+            >
+              <Ionicons name="close-circle-outline" size={16} color="#fff" />
+              <Text style={styles.actionBtnText}>Decline Return</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      }
+    } else if (status === 'rejected') {
+      // For rejected status, show "Add More Proof" button to upload additional evidence
+      buttons.push(
+        <TouchableOpacity 
+          key="addMoreProof" 
+          style={[styles.actionBtn, { backgroundColor: '#6B7280' }]} 
+          onPress={() => {
+            setShowProofModal(true);
+          }} 
+          disabled={uploadingProofs}
+        >
+          <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
+          <Text style={styles.actionBtnText}>Add More Proof</Text>
+        </TouchableOpacity>
       );
     }
-  } else if (status === 'rejected') {
-    // For rejected status, show "Add More Proof" button to upload additional evidence
-    buttons.push(
-      <TouchableOpacity 
-        key="addMoreProof" 
-        style={[styles.actionBtn, { backgroundColor: '#6B7280' }]} 
-        onPress={() => {
-          setShowProofModal(true);
-        }} 
-        disabled={uploadingProofs}
-      >
-        <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
-        <Text style={styles.actionBtnText}>Add More Proof</Text>
-      </TouchableOpacity>
+  
+    // REMOVED: Only show Upload Proofs for other statuses - now all use Add More Proof
+    // Only show Add More Proof for any status that needs evidence upload
+    const shouldShowAddProof = status !== 'pending' && status !== 'approved' && status !== 'rejected';
+    if (shouldShowAddProof) {
+      buttons.push(
+        <TouchableOpacity key="addMoreProof" style={[styles.actionBtn, { backgroundColor: '#6B7280' }]} onPress={() => setShowProofModal(true)} disabled={uploadingProofs}>
+          <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
+          <Text style={styles.actionBtnText}>Add More Proof</Text>
+        </TouchableOpacity>
+      );
+    }
+  
+    if (buttons.length === 0) return null;
+  
+    return (
+      <View style={styles.actionsContainer}>
+        {buttons.map((btn, idx) => (
+          <View key={idx} style={styles.actionItem}>
+            {btn}
+          </View>
+        ))}
+      </View>
     );
-  }
-
-  // REMOVED: Only show Upload Proofs for other statuses - now all use Add More Proof
-  // Only show Add More Proof for any status that needs evidence upload
-  const shouldShowAddProof = status !== 'pending' && status !== 'approved' && status !== 'rejected';
-  if (shouldShowAddProof) {
-    buttons.push(
-      <TouchableOpacity key="addMoreProof" style={[styles.actionBtn, { backgroundColor: '#6B7280' }]} onPress={() => setShowProofModal(true)} disabled={uploadingProofs}>
-        <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
-        <Text style={styles.actionBtnText}>Add More Proof</Text>
-      </TouchableOpacity>
-    );
-  }
-
-  if (buttons.length === 0) return null;
-
-  return (
-    <View style={styles.actionsContainer}>
-      {buttons.map((btn, idx) => (
-        <View key={idx} style={styles.actionItem}>
-          {btn}
-        </View>
-      ))}
-    </View>
-  );
-};
+  };
 
   // ========== MODAL RENDERING ==========
   const renderModals = () => (
@@ -1337,6 +1419,72 @@ const renderActionButtons = () => {
           </View>
         </View>
       </Modal>
+
+      {/* Confirm Walk-in Return Modal */}
+<Modal visible={showConfirmReturnModal} transparent={true} animationType="none" onRequestClose={() => setShowConfirmReturnModal(false)}>
+  <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.centeredModalOverlay}>
+    <View style={styles.centeredModalBox}>
+      <Text style={styles.modalTitle}>Confirm Return & Refund</Text>
+      <Text style={styles.modalSubtitle}>
+        Please upload proof that the item has been returned and confirm to process the refund.
+      </Text>
+      
+      <Text style={styles.label}>Proof Media (required, up to 4 files)</Text>
+      <TouchableOpacity style={styles.uploadBtn} onPress={() => pickDocument(setConfirmProofFiles, setConfirmProofPreviews)}>
+        <Ionicons name="cloud-upload-outline" size={20} color="#EE4D2D" />
+        <Text style={styles.uploadText}>Select files</Text>
+      </TouchableOpacity>
+      
+      {confirmProofFiles.length > 0 && (
+        <ScrollView horizontal style={styles.previewScroll}>
+          {confirmProofPreviews.map((uri, idx) => (
+            <View key={idx} style={styles.previewItem}>
+              <Image source={{ uri }} style={styles.previewImage} />
+              <TouchableOpacity onPress={() => {
+                const newFiles = confirmProofFiles.filter((_, i) => i !== idx);
+                setConfirmProofFiles(newFiles);
+                setConfirmProofPreviews(newFiles.map(f => f.uri));
+              }} style={styles.removePreview}>
+                <Ionicons name="close-circle" size={20} color="#EF4444" />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+      
+      <TextInput
+        style={styles.textArea}
+        placeholder="Notes (optional)"
+        multiline
+        numberOfLines={3}
+        value={confirmNotes}
+        onChangeText={setConfirmNotes}
+      />
+      
+      <View style={styles.modalBtns}>
+        <TouchableOpacity style={styles.modalCancel} onPress={() => {
+          setShowConfirmReturnModal(false);
+          setConfirmProofFiles([]);
+          setConfirmProofPreviews([]);
+          setConfirmNotes('');
+        }}>
+          <Text style={styles.modalCancelText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.modalConfirm, { backgroundColor: '#10B981' }]} 
+          onPress={handleConfirmWalkInReturn} 
+          disabled={uploadingConfirmProof || confirmProofFiles.length === 0}
+        >
+          {uploadingConfirmProof ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.modalConfirmText}>Confirm & Complete</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  </KeyboardAvoidingView>
+</Modal>
 
       {/* Provide Tracking Modal */}
       <Modal visible={showTrackingModal} transparent={true} animationType="none" onRequestClose={() => setShowTrackingModal(false)}>
