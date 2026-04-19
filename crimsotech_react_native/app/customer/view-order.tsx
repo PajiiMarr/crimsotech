@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   SafeAreaView,
   View,
@@ -10,6 +10,7 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Animated,
   Modal,
   RefreshControl
 } from 'react-native';
@@ -188,12 +189,16 @@ export default function ViewTrackOrderPage() {
   const [proofs, setProofs] = useState<any[]>([]);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [centerToastVisible, setCenterToastVisible] = useState(false);
+  const [centerToastMessage, setCenterToastMessage] = useState("");
+  const [cancelModalVisible, setCancelModalVisible] = useState(false);
 
   useEffect(() => {
     if (user?.id && orderId) {
       fetchOrderData();
     }
   }, [user?.id, orderId]);
+  
 
   const fetchOrderData = async () => {
     if (!user?.id || !orderId) {
@@ -301,6 +306,121 @@ export default function ViewTrackOrderPage() {
     fetchOrderData();
   };
 
+  // ─── Custom Cancel Confirmation Modal ───────────────────────────────────
+const CancelConfirmationModal = ({
+  visible,
+  onClose,
+  onConfirm,
+  orderId,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  orderId: string;
+}) => {
+  const scale = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(scale, {
+          toValue: 1,
+          useNativeDriver: true,
+          tension: 65,
+          friction: 8,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.spring(scale, {
+          toValue: 0,
+          useNativeDriver: true,
+          tension: 65,
+          friction: 8,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <View style={styles.cancelModalOverlay}>
+        <Animated.View
+          style={[
+            styles.cancelModalContainer,
+            {
+              transform: [{ scale }],
+              opacity,
+            },
+          ]}
+        >
+          {/* Icon */}
+          <View style={styles.cancelIconContainer}>
+            <View style={styles.cancelIconCircle}>
+              <MaterialIcons name="warning" size={40} color="#EA580C" />
+            </View>
+          </View>
+
+          {/* Title */}
+          <Text style={styles.cancelModalTitle}>Cancel Order</Text>
+
+          {/* Message */}
+          <Text style={styles.cancelModalMessage}>
+            Are you sure you want to cancel this order?
+          </Text>
+
+          {/* Order ID (optional) */}
+          <Text style={styles.cancelOrderIdText}>Order #{orderId.slice(0, 8)}...</Text>
+
+          {/* Warning text */}
+          <View style={styles.cancelWarningContainer}>
+            <Ionicons name="information-circle-outline" size={16} color="#F59E0B" />
+            <Text style={styles.cancelWarningText}>
+              This action cannot be undone
+            </Text>
+          </View>
+
+          {/* Buttons */}
+          <View style={styles.cancelButtonsContainer}>
+            <TouchableOpacity
+              style={styles.cancelNoButton}
+              onPress={onClose}
+            >
+              <Text style={styles.cancelNoButtonText}>No, Keep It</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cancelYesButton}
+              onPress={onConfirm}
+            >
+              <MaterialIcons name="delete-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.cancelYesButtonText}>Yes, Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+};
+
   const getStatusText = (orderObj: any) => {
     const s = String(orderObj?.status || '').toLowerCase();
     
@@ -343,37 +463,37 @@ export default function ViewTrackOrderPage() {
 
   const handleCancelOrder = () => {
     if (!orderId || !user?.id) return;
+    setCancelModalVisible(true);
+  };
+  
+  const confirmCancelOrder = async () => {
+    if (!orderId || !user?.id) return;
     
-    Alert.alert(
-      'Cancel Order',
-      'Are you sure you want to cancel this order?',
-      [
-        { text: 'No', style: 'cancel' },
+    setCancelModalVisible(false);
+    
+    try {
+      const response = await AxiosInstance.post(
+        `/purchases-buyer/${orderId}/cancel/`,
+        null,
         {
-          text: 'Yes',
-          onPress: async () => {
-            try {
-              const response = await AxiosInstance.post(
-                `/purchases-buyer/${orderId}/cancel/`,
-                null,
-                {
-                  headers: {
-                    'X-User-Id': user.id,
-                  },
-                }
-              );
-              
-              if (response.data.success) {
-                Alert.alert('Success', 'Order cancelled successfully');
-                fetchOrderData();
-              }
-            } catch (error: any) {
-              Alert.alert('Error', error.response?.data?.error || 'Failed to cancel order');
-            }
-          }
+          headers: {
+            'X-User-Id': user.id,
+          },
         }
-      ]
-    );
+      );
+      
+      if (response.data.success) {
+        setCenterToastMessage("Order cancelled successfully");
+        setCenterToastVisible(true);
+        
+        setTimeout(() => {
+          fetchOrderData();
+        }, 500);
+      }
+    } catch (error: any) {
+      setCenterToastMessage(error.response?.data?.error || 'Failed to cancel order');
+      setCenterToastVisible(true);
+    }
   };
 
   const handleOrderReceived = async () => {
@@ -465,6 +585,102 @@ export default function ViewTrackOrderPage() {
     );
   };
 
+  // ─── Center Toast Notification ───────────────────────────────────
+const CenterToast = ({
+  visible,
+  message,
+  iconName = "checkmark-circle",
+  onHide,
+}: {
+  visible: boolean;
+  message: string;
+  iconName?: string;
+  onHide: () => void;
+}) => {
+  const scale = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(scale, {
+          toValue: 1,
+          useNativeDriver: true,
+          tension: 100,
+          friction: 8,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      const timer = setTimeout(() => {
+        Animated.parallel([
+          Animated.spring(scale, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 100,
+            friction: 8,
+          }),
+          Animated.timing(opacity, {
+            toValue: 0,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+        ]).start(() => onHide());
+      }, 1500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        justifyContent: "center",
+        alignItems: "center",
+        zIndex: 10000,
+      }}
+    >
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          backgroundColor: "transparent",
+          paddingHorizontal: 24,
+          paddingVertical: 12,
+          alignItems: "center",
+          justifyContent: "center",
+          transform: [{ scale }],
+          opacity,
+        }}
+      >
+        <Ionicons name={iconName as any} size={48} color="#EA580C" />
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "600",
+            color: "#EA580C",
+            marginTop: 8,
+            textAlign: "center",
+          }}
+        >
+          {message}
+        </Text>
+      </Animated.View>
+    </View>
+  );
+};
+
   const handleReviewProduct = (productId: string) => {
     router.push(`/customer/order-review?productId=${productId}&orderId=${orderId}`);
   };
@@ -538,6 +754,20 @@ export default function ViewTrackOrderPage() {
 
   return (
     <View style={styles.container}>
+       {/* Center Toast */}
+      <CenterToast
+        visible={centerToastVisible}
+        message={centerToastMessage}
+        iconName="checkmark-circle"
+        onHide={() => setCenterToastVisible(false)}
+      />
+      {/* Cancel Confirmation Modal */}
+      <CancelConfirmationModal
+        visible={cancelModalVisible}
+        onClose={() => setCancelModalVisible(false)}
+        onConfirm={confirmCancelOrder}
+        orderId={orderId as string}
+      />
       {/* Header */}
       <SafeAreaView style={styles.headerSafeArea}>
         <View style={styles.header}>
@@ -1066,7 +1296,7 @@ export default function ViewTrackOrderPage() {
             {(actions.can_cancel || (orderStatusLower === 'rider_assigned' && order?.delivery_status?.toLowerCase() === 'pending')) && (
               <TouchableOpacity
                 style={styles.cancelOrderButton}
-                onPress={handleCancelOrder}
+                onPress={() => setCancelModalVisible(true)} 
               >
                 <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
               </TouchableOpacity>
@@ -1116,7 +1346,7 @@ export default function ViewTrackOrderPage() {
       <Modal
         visible={previewVisible}
         transparent={true}
-        animationType="fade"
+        animationType="none"
         onRequestClose={() => setPreviewVisible(false)}
       >
         <View style={styles.modalOverlay}>
@@ -1782,4 +2012,103 @@ const styles = StyleSheet.create({
     color: '#D97706',
     letterSpacing: 1,
   },
+  // Cancel Modal Styles
+cancelModalOverlay: {
+  flex: 1,
+  backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+cancelModalContainer: {
+  backgroundColor: '#FFFFFF',
+  borderRadius: 24,
+  width: '85%',
+  padding: 24,
+  alignItems: 'center',
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.25,
+  shadowRadius: 8,
+  elevation: 8,
+},
+cancelIconContainer: {
+  marginBottom: 16,
+},
+cancelIconCircle: {
+  width: 80,
+  height: 80,
+  borderRadius: 40,
+  backgroundColor: '#FFF7ED',
+  justifyContent: 'center',
+  alignItems: 'center',
+  borderWidth: 1,
+  borderColor: '#FED7AA',
+},
+cancelModalTitle: {
+  fontSize: 20,
+  fontWeight: '700',
+  color: '#111827',
+  marginBottom: 8,
+  textAlign: 'center',
+},
+cancelModalMessage: {
+  fontSize: 14,
+  color: '#6B7280',
+  textAlign: 'center',
+  lineHeight: 20,
+  marginBottom: 12,
+},
+cancelOrderIdText: {
+  fontSize: 12,
+  color: '#9CA3AF',
+  fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  marginBottom: 16,
+},
+cancelWarningContainer: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#FFFBEB',
+  paddingHorizontal: 12,
+  paddingVertical: 8,
+  borderRadius: 8,
+  marginBottom: 24,
+  gap: 6,
+},
+cancelWarningText: {
+  fontSize: 12,
+  color: '#D97706',
+  fontWeight: '500',
+},
+cancelButtonsContainer: {
+  flexDirection: 'row',
+  gap: 12,
+  width: '100%',
+},
+cancelNoButton: {
+  flex: 1,
+  backgroundColor: '#F3F4F6',
+  paddingVertical: 12,
+  borderRadius: 10,
+  alignItems: 'center',
+},
+cancelNoButtonText: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#6B7280',
+},
+cancelYesButton: {
+  flex: 1,
+  backgroundColor: '#EA580C',
+  paddingVertical: 12,
+  borderRadius: 10,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 6,
+},
+cancelYesButtonText: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#FFFFFF',
+},
 });

@@ -365,18 +365,23 @@ export default function PurchasesPage() {
       returns: 0,
       all: items.length
     };
-
+  
     items.forEach((item) => {
       const status = item.status;
       const paymentMethod = (item.order.payment_method || '').toString().toLowerCase();
       const deliveryMethod = (item.order.delivery_method || '').toString().toLowerCase();
-
       const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
-
+  
+      // Count pending - ONLY orders with status 'pending'
       if (status === 'pending') counts.pending++;
+      
+      // Count processing - only 'in_progress' status (not pending)
       if (status === 'in_progress') counts.processing++;
-      if (status === 'ready_for_pickup' || (isPickupCash && status === 'pending')) counts.to_pickup++;
-
+  
+      // Count to_pickup - ONLY 'ready_for_pickup' status
+      // Pending orders should NOT be in to_pickup
+      if (status === 'ready_for_pickup') counts.to_pickup++;
+  
       const rawOrderStatus = (item.order?.status || '').toString().trim().toLowerCase();
       if (
         status === 'to_ship' ||
@@ -388,20 +393,20 @@ export default function PurchasesPage() {
       ) {
         counts.shipped++;
       }
-
+  
       if (status === 'picked_up' || status === 'completed') {
         counts.completed++;
       }
-
+  
       if ((status === 'picked_up' || status === 'completed') && item.can_review) {
         counts.rate++;
       }
-
+  
       if (status === 'cancelled' || status === 'return_refund') {
         counts.returns++;
       }
     });
-
+  
     setOrderCounts(counts);
   };
 
@@ -418,7 +423,7 @@ export default function PurchasesPage() {
 
   const getFilteredItems = () => {
     let filtered = purchaseItems;
-
+  
     if (activeTab !== 'all') {
       switch (activeTab) {
         case 'pending':
@@ -426,22 +431,15 @@ export default function PurchasesPage() {
           break;
         case 'processing':
           filtered = filtered.filter(item => {
-            const paymentMethod = (item.order.payment_method || '').toString().toLowerCase();
-            const deliveryMethod = (item.order.delivery_method || '').toString().toLowerCase();
-            const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
-
-            if (isPickupCash) {
-              return item.status === 'in_progress' || item.status === 'pending';
-            }
+            // Only show 'in_progress' status, not pending
             return item.status === 'in_progress';
           });
           break;
         case 'to_pickup':
           filtered = filtered.filter(item => {
-            const paymentMethod = (item.order.payment_method || '').toString().toLowerCase();
-            const deliveryMethod = (item.order.delivery_method || '').toString().toLowerCase();
-            const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
-            return item.status === 'ready_for_pickup' || (isPickupCash && item.status === 'pending');
+            // ONLY show 'ready_for_pickup' status
+            // Do NOT show pending orders here
+            return item.status === 'ready_for_pickup';
           });
           break;
         case 'shipped':
@@ -474,7 +472,7 @@ export default function PurchasesPage() {
           break;
       }
     }
-
+  
     return filtered;
   };
 

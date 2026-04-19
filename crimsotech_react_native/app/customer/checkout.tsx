@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef} from "react";
 import {
   SafeAreaView,
   View,
@@ -14,6 +14,7 @@ import {
   RefreshControl,
   Platform,
 } from "react-native";
+import { Animated } from "react-native";  // Add this with the other imports
 import { router, useLocalSearchParams } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
 import AxiosInstance from "../../contexts/axios";
@@ -21,6 +22,7 @@ import {
   MaterialIcons,
   FontAwesome5,
   FontAwesome,
+  Ionicons, 
 } from "@expo/vector-icons";
 
 // Types
@@ -222,6 +224,8 @@ export default function CheckoutPage() {
   const [activeVoucherCategory, setActiveVoucherCategory] = useState("all");
   const [isVoucherModalVisible, setIsVoucherModalVisible] = useState(false);
   const [isShippingMethodDropdownOpen, setIsShippingMethodDropdownOpen] = useState(false);
+  const [centerToastVisible, setCenterToastVisible] = useState(false);
+  const [centerToastMessage, setCenterToastMessage] = useState("");
 
   // Form state
   const [formData, setFormData] = useState({
@@ -588,6 +592,7 @@ export default function CheckoutPage() {
     }));
   };
 
+
   // Place order
   const handlePlaceOrder = async () => {
     if (!userId || !checkoutData) {
@@ -635,14 +640,11 @@ export default function CheckoutPage() {
             params: { order_id: orderId },
           });
         } else {
-          router.replace("/customer/purchases");
-          setTimeout(() => {
-            Alert.alert(
-              "Order Placed Successfully",
-              "Your order has been placed and is pending seller confirmation.",
-              [{ text: "OK" }]
-            );
-          }, 100);
+          // Navigate directly to order-successful page with orderId
+          router.replace({
+            pathname: "/customer/order-successful",
+            params: { orderId: orderId },
+          });
         }
       } else {
         throw new Error(response.data.error || "Failed to create order");
@@ -694,6 +696,44 @@ export default function CheckoutPage() {
     );
     return category ? category.vouchers : [];
   };
+
+  // ─── Pickup Disclaimer ───────────────────────────────────
+const PickupDisclaimer = () => {
+  if (formData.shippingMethod !== "Pickup from Store") return null;
+  
+  return (
+    <View style={styles.pickupDisclaimerContainer}>
+      <View style={styles.pickupDisclaimerHeader}>
+        <MaterialIcons name="info-outline" size={16} color="#EA580C" />
+        <Text style={styles.pickupDisclaimerTitle}>Pickup Order Information</Text>
+      </View>
+      
+      <View style={styles.pickupDisclaimerList}>
+        <View style={styles.pickupDisclaimerItem}>
+          <MaterialIcons name="check-circle" size={14} color="#EA580C" />
+          <Text style={styles.pickupDisclaimerText}>
+            Refunds are not processed automatically for pickup orders
+          </Text>
+        </View>
+        
+        <View style={styles.pickupDisclaimerItem}>
+          <MaterialIcons name="check-circle" size={14} color="#EA580C" />
+          <Text style={styles.pickupDisclaimerText}>
+            Buyers must coordinate directly with the seller
+          </Text>
+        </View>
+        
+        <View style={styles.pickupDisclaimerItem}>
+          <MaterialIcons name="check-circle" size={14} color="#EA580C" />
+          <Text style={styles.pickupDisclaimerText}>
+            Platform may assist in dispute resolution
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+};
+  
 
   // Get tier badge component
   const renderTierBadge = (tier: string) => {
@@ -783,6 +823,101 @@ export default function CheckoutPage() {
     if (checkoutData?.summary?.delivery) return `₱${checkoutData.summary.delivery.toFixed(2)}`;
     return "₱50.00";
   };
+  // ─── Center Toast Notification ───────────────────────────────────
+  const CenterToast = ({
+    visible,
+    message,
+    iconName = "checkmark-circle",
+    onHide,
+  }: {
+    visible: boolean;
+    message: string;
+    iconName?: string;
+    onHide: () => void;
+  }) => {
+    const scale = useRef(new Animated.Value(0)).current;
+    const opacity = useRef(new Animated.Value(0)).current;
+  
+    useEffect(() => {
+      if (visible) {
+        Animated.parallel([
+          Animated.spring(scale, {
+            toValue: 1,
+            useNativeDriver: true,
+            tension: 100,
+            friction: 8,
+          }),
+          Animated.timing(opacity, {
+            toValue: 1,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+        ]).start();
+  
+        const timer = setTimeout(() => {
+          Animated.parallel([
+            Animated.spring(scale, {
+              toValue: 0,
+              useNativeDriver: true,
+              tension: 100,
+              friction: 8,
+            }),
+            Animated.timing(opacity, {
+              toValue: 0,
+              duration: 200,
+              useNativeDriver: true,
+            }),
+          ]).start(() => onHide());
+        }, 1500);
+  
+        return () => clearTimeout(timer);
+      }
+    }, [visible]);
+  
+    if (!visible) return null;
+  
+    return (
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 10000,
+        }}
+      >
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            backgroundColor: "transparent",
+            paddingHorizontal: 24,
+            paddingVertical: 12,
+            alignItems: "center",
+            justifyContent: "center",
+            transform: [{ scale }],
+            opacity,
+          }}
+        >
+          <Ionicons name={iconName as any} size={48} color="#EA580C" />
+          <Text
+            style={{
+              fontSize: 16,
+              fontWeight: "600",
+              color: "#EA580C",
+              marginTop: 8,
+              textAlign: "center",
+            }}
+          >
+            {message}
+          </Text>
+        </Animated.View>
+      </View>
+    );
+  };
 
   const getCurrentPaymentMethodName = () => {
     const method = paymentMethods.find(m => {
@@ -797,6 +932,12 @@ export default function CheckoutPage() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <CenterToast
+      visible={centerToastVisible}
+      message={centerToastMessage}
+      iconName="checkmark-circle"
+      onHide={() => setCenterToastVisible(false)}
+    />
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
@@ -892,7 +1033,9 @@ export default function CheckoutPage() {
                 <Text style={styles.addressPhoneCompact}>Contact: {mainShopAddress.shop_contact_number}</Text>
               )}
             </View>
+            <PickupDisclaimer />
           </View>
+          
         )}
 
         {/* Shipping Method - Dropdown */}
@@ -913,8 +1056,8 @@ export default function CheckoutPage() {
                 color="#6B7280" 
               />
             </View>
+            
           </TouchableOpacity>
-          
           {isShippingMethodDropdownOpen && (
             <View style={styles.dropdownMenuCompact}>
               {shippingMethods.map((method) => {
@@ -989,6 +1132,7 @@ export default function CheckoutPage() {
                 </TouchableOpacity>
               );
             })}
+
           </View>
         </View>
 
@@ -1468,4 +1612,38 @@ const styles = StyleSheet.create({
   noVouchersContainer: { alignItems: "center", paddingVertical: 30 },
   noVouchersTitle: { fontSize: 14, fontWeight: "600", color: "#374151", marginTop: 12, marginBottom: 4 },
   noVouchersText: { fontSize: 12, color: "#6B7280", textAlign: "center", paddingHorizontal: 16 },
+  // Pickup Disclaimer Styles
+pickupDisclaimerContainer: {
+  backgroundColor: '#FFF7ED',
+  marginHorizontal: 0,
+  marginBottom: 6,
+  padding: 12,
+  borderWidth: 0.5,
+  borderColor: '#FED7AA',
+},
+pickupDisclaimerHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 8,
+  marginBottom: 10,
+},
+pickupDisclaimerTitle: {
+  fontSize: 13,
+  fontWeight: '600',
+  color: '#EA580C',
+},
+pickupDisclaimerList: {
+  gap: 8,
+},
+pickupDisclaimerItem: {
+  flexDirection: 'row',
+  alignItems: 'flex-start',
+  gap: 8,
+},
+pickupDisclaimerText: {
+  fontSize: 11,
+  color: '#92400E',
+  flex: 1,
+  lineHeight: 16,
+},
 });
