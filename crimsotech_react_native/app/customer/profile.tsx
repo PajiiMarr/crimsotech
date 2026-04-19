@@ -127,6 +127,11 @@ interface WithdrawalRequest {
   amount: number;
   status: "pending" | "approved" | "rejected" | "processing" | "completed";
   requested_at: string;
+  approved_at?: string;
+  completed_at?: string;
+  admin_proof?: string;
+  admin_proof_url?: string;
+  rejection_reason?: string;
 }
 
 interface PaymentMethod {
@@ -193,6 +198,18 @@ const getInitials = (name?: string, email?: string, username?: string) => {
   if (email) return email.charAt(0).toUpperCase();
   if (username) return username.charAt(0).toUpperCase();
   return "U";
+};
+
+// Helper to get full image URL (handles relative paths)
+const getFullImageUrl = (url: string | null | undefined) => {
+  if (!url) return null;
+  // If it's already a full URL, return it
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  // Otherwise, prepend the base URL
+  const baseUrl = AxiosInstance.defaults.baseURL || 'http://127.0.0.1:8000';
+  return `${baseUrl}${url.startsWith('/') ? url : `/${url}`}`;
 };
 
 // ─── Simple Bar Graph ─────────────────────────────────────────────────────────
@@ -380,6 +397,10 @@ export default function ProfileScreen() {
     WithdrawalRequest[]
   >([]);
   const [submittingWithdraw, setSubmittingWithdraw] = useState(false);
+  
+  // ── Withdrawal detail modal state
+  const [selectedWithdrawal, setSelectedWithdrawal] = useState<WithdrawalRequest | null>(null);
+  const [showWithdrawalDetailModal, setShowWithdrawalDetailModal] = useState(false);
 
   // ── Payment methods
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
@@ -536,7 +557,16 @@ export default function ProfileScreen() {
       const res = await AxiosInstance.get("/wallet/withdrawal_history/", {
         headers: { "X-User-Id": userId },
       });
-      if (res.data.success) setWithdrawalRequests(res.data.withdrawals || []);
+      if (res.data.success) {
+        // The API already provides admin_proof_url (public URL)
+        // Just use it directly
+        const withdrawals = (res.data.withdrawals || []).map((w: any) => ({
+          ...w,
+          // Use admin_proof_url if available, otherwise fallback to converted admin_proof
+          admin_proof_url: w.admin_proof_url || (w.admin_proof ? getFullImageUrl(w.admin_proof) : null)
+        }));
+        setWithdrawalRequests(withdrawals);
+      }
     } catch (err) {
       console.error("Error fetching withdrawals:", err);
     }
@@ -858,7 +888,7 @@ export default function ProfileScreen() {
                   </View>
                 ) : profile?.user?.profile_picture_url ? (
                   <Image
-                    source={{ uri: profile.user.profile_picture_url }}
+                    source={{ uri: getFullImageUrl(profile.user.profile_picture_url) }}
                     style={styles.avatarImage}
                   />
                 ) : (
@@ -1080,10 +1110,7 @@ export default function ProfileScreen() {
           {/* ══════════════════════════════════════════
               ADDRESSES TAB
           ══════════════════════════════════════════ */}
-          {/* ══════════════════════════════════════════
-    ADDRESSES TAB
-══════════════════════════════════════════ */}
-{activeTab === "addresses" && (
+          {activeTab === "addresses" && (
   <View style={styles.tabContent}>
     <View style={styles.card}>
       <View style={styles.cardHeaderRow}>
@@ -1193,10 +1220,7 @@ export default function ProfileScreen() {
           {/* ══════════════════════════════════════════
               PAYMENTS TAB
           ══════════════════════════════════════════ */}
-         {/* ══════════════════════════════════════════
-    PAYMENTS TAB
-══════════════════════════════════════════ */}
-{activeTab === "payments" && (
+         {activeTab === "payments" && (
   <View style={styles.tabContent}>
     <View style={styles.card}>
       <View style={styles.cardHeaderRow}>
@@ -1356,10 +1380,7 @@ export default function ProfileScreen() {
           {/* ══════════════════════════════════════════
               FINANCE TAB
           ══════════════════════════════════════════ */}
-          {/* ══════════════════════════════════════════
-    FINANCE TAB
-══════════════════════════════════════════ */}
-{activeTab === "finance" && (
+          {activeTab === "finance" && (
   <View style={styles.tabContent}>
     {/* ── Filter chips ── */}
     <ScrollView
@@ -1525,16 +1546,24 @@ export default function ProfileScreen() {
       )}
     </View>
 
-    {/* ── Withdrawal history ── */}
+    {/* ── Withdrawal history (clickable) ── */}
     {withdrawalRequests.length > 0 && (
       <View style={styles.financeCard}>
         <Text style={styles.cardTitle}>Withdrawal History</Text>
         <Text style={[styles.cardSubtitle, { marginBottom: 12 }]}>
-          Recent requests
+          Recent requests - tap to view details
         </Text>
         <View style={styles.txList}>
           {withdrawalRequests.slice(0, 5).map((req) => (
-            <View key={req.withdrawal_id} style={styles.txItemStyled}>
+            <TouchableOpacity
+              key={req.withdrawal_id}
+              style={styles.withdrawalItem}
+              onPress={() => {
+                setSelectedWithdrawal(req);
+                setShowWithdrawalDetailModal(true);
+              }}
+              activeOpacity={0.7}
+            >
               <View>
                 <Text style={styles.txAmount}>
                   {formatCurrency(req.amount)}
@@ -1544,7 +1573,8 @@ export default function ProfileScreen() {
                 </Text>
               </View>
               <StatusBadge status={req.status} />
-            </View>
+              <MaterialIcons name="chevron-right" size={20} color="#9CA3AF" />
+            </TouchableOpacity>
           ))}
         </View>
       </View>
@@ -1816,12 +1846,160 @@ export default function ProfileScreen() {
             </View>
           </View>
         </Modal>
+
+        {/* ══════════════════════════════════════════
+            WITHDRAWAL DETAIL MODAL (with image preview)
+        ══════════════════════════════════════════ */}
+        <Modal
+          visible={showWithdrawalDetailModal}
+          animationType="slide"
+          transparent
+          onRequestClose={() => {
+            setShowWithdrawalDetailModal(false);
+            setSelectedWithdrawal(null);
+          }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              
+              <View style={styles.detailHeader}>
+                <Text style={styles.modalTitle}>Withdrawal Details</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowWithdrawalDetailModal(false);
+                    setSelectedWithdrawal(null);
+                  }}
+                >
+                  <MaterialIcons name="close" size={24} color="#6B7280" />
+                </TouchableOpacity>
+              </View>
+
+              {selectedWithdrawal && (
+                <ScrollView style={styles.detailContent} showsVerticalScrollIndicator={false}>
+                  {/* Amount */}
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Amount</Text>
+                    <Text style={styles.detailAmount}>
+                      {formatCurrency(selectedWithdrawal.amount)}
+                    </Text>
+                  </View>
+
+                  {/* Status */}
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Status</Text>
+                    <StatusBadge status={selectedWithdrawal.status} />
+                  </View>
+
+                  {/* Requested Date */}
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Requested</Text>
+                    <Text style={styles.detailValue}>
+                      {formatDateTime(selectedWithdrawal.requested_at)}
+                    </Text>
+                  </View>
+
+                  {/* Approved Date (if approved) */}
+                  {selectedWithdrawal.approved_at && (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Approved</Text>
+                      <Text style={styles.detailValue}>
+                        {formatDateTime(selectedWithdrawal.approved_at)}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Completed Date (if completed) */}
+                  {selectedWithdrawal.completed_at && (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Completed</Text>
+                      <Text style={styles.detailValue}>
+                        {formatDateTime(selectedWithdrawal.completed_at)}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Rejection Reason (if rejected) */}
+                  {selectedWithdrawal.status === "rejected" && selectedWithdrawal.rejection_reason && (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Rejection Reason</Text>
+                      <Text style={[styles.detailValue, { color: "#DC2626", flex: 1, textAlign: "right" }]}>
+                        {selectedWithdrawal.rejection_reason}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Admin Proof Image - Now using admin_proof_url directly from API */}
+                  {(selectedWithdrawal.status === "approved" || selectedWithdrawal.status === "completed") && selectedWithdrawal.admin_proof_url && (
+                    <View style={styles.proofSection}>
+                      <Text style={styles.detailLabel}>Payment Proof</Text>
+                      <View style={styles.proofImageContainer}>
+                        <Image 
+                          source={{ uri: selectedWithdrawal.admin_proof_url }}
+                          style={styles.proofImage}
+                          resizeMode="contain"
+                          onError={(e) => console.log('Image load error:', e.nativeEvent.error)}
+                        />
+                        <Text style={styles.proofNote}>
+                          Official payment receipt from admin
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Status Timeline */}
+                  <View style={styles.timelineSection}>
+                    <Text style={styles.timelineTitle}>Status Timeline</Text>
+                    <View style={styles.timelineItem}>
+                      <View style={[styles.timelineDot, { backgroundColor: "#059669" }]} />
+                      <View style={styles.timelineContent}>
+                        <Text style={styles.timelineStatus}>Request Submitted</Text>
+                        <Text style={styles.timelineDate}>
+                          {formatDateTime(selectedWithdrawal.requested_at)}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {selectedWithdrawal.status !== "pending" && (
+                      <View style={styles.timelineItem}>
+                        <View style={[styles.timelineDot, { backgroundColor: selectedWithdrawal.status === "rejected" ? "#DC2626" : "#F97316" }]} />
+                        <View style={styles.timelineContent}>
+                          <Text style={styles.timelineStatus}>
+                            {selectedWithdrawal.status === "approved" ? "Approved" :
+                             selectedWithdrawal.status === "rejected" ? "Rejected" :
+                             selectedWithdrawal.status === "processing" ? "Processing" :
+                             selectedWithdrawal.status === "completed" ? "Completed" : "Updated"}
+                          </Text>
+                          <Text style={styles.timelineDate}>
+                            {formatDateTime(selectedWithdrawal.approved_at || selectedWithdrawal.completed_at || "")}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+
+                    {selectedWithdrawal.status === "completed" && (
+                      <View style={styles.timelineItem}>
+                        <View style={[styles.timelineDot, { backgroundColor: "#059669" }]} />
+                        <View style={styles.timelineContent}>
+                          <Text style={styles.timelineStatus}>Funds Transferred</Text>
+                          <Text style={styles.timelineDate}>
+                            {formatDateTime(selectedWithdrawal.completed_at || "")}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                </ScrollView>
+              )}
+            </View>
+          </View>
+        </Modal>
       </CustomerLayout>
     </SafeAreaView>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Styles (same as before, keep all styles) ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F9FAFB" },
@@ -2061,16 +2239,15 @@ const styles = StyleSheet.create({
   shopCardSubtitle: { fontSize: 12, color: "#6B7280", marginTop: 2 },
 
   // Account grid
-  // Account grid — centers items regardless of count
   accountGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    justifyContent: "center", // ← centers 2 items instead of left-aligning
+    justifyContent: "center",
     marginTop: 4,
     gap: 8,
   },
   accountGridItem: {
-    width: 90, // ← fixed width instead of "25%" so 2 items look balanced
+    width: 90,
     alignItems: "center",
     paddingVertical: 14,
     gap: 8,
@@ -2095,7 +2272,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     textAlign: "center",
   },
-  // Small button
   smallButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -2109,7 +2285,6 @@ const styles = StyleSheet.create({
   },
   smallButtonText: { fontSize: 12, fontWeight: "600", color: "#374151" },
 
-  // Empty state
   emptyState: { alignItems: "center", paddingVertical: 24, gap: 8 },
   emptyStateText: {
     fontSize: 13,
@@ -2120,7 +2295,6 @@ const styles = StyleSheet.create({
   linkBtn: { marginTop: 4 },
   linkBtnText: { fontSize: 13, color: "#F97316", fontWeight: "600" },
 
-  // Payment methods
   paymentList: { gap: 10 },
   paymentItem: {
     flexDirection: "row",
@@ -2329,6 +2503,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     padding: 20,
     paddingBottom: 32,
+    maxHeight: "90%",
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -2531,8 +2706,7 @@ addressActionText: {
 deleteAction: {
   marginLeft: "auto",
 },
-// Payment Method List Styles (edge-to-edge like addresses)
-// Payment Method List Styles (matching address item style)
+// Payment Method List Styles
 paymentMethodList: {
   gap: 12,
   marginTop: 4,
@@ -2630,7 +2804,7 @@ paymentsCard: {
   paddingHorizontal: 0,
   gap: 0,
 },
-// Finance Card with shadow, border, and padding (matching address/payment style)
+// Finance Card
 financeCard: {
   backgroundColor: "#FFFFFF",
   borderWidth: 1,
@@ -2693,4 +2867,108 @@ txRowStyled: {
   paymentPickerName: { fontSize: 13, fontWeight: "600", color: "#374151" },
   paymentPickerDetail: { fontSize: 11, color: "#6B7280", marginTop: 2 },
   modalActions: { flexDirection: "row", gap: 10, marginTop: 20 },
+  
+  // Withdrawal history item (clickable)
+  withdrawalItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  
+  // Withdrawal Detail Modal Styles
+  detailHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 20,
+  },
+  detailContent: {
+    maxHeight: "80%",
+  },
+  detailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  detailLabel: {
+    fontSize: 13,
+    color: "#6B7280",
+    fontWeight: "500",
+  },
+  detailValue: {
+    fontSize: 13,
+    color: "#374151",
+    fontWeight: "500",
+  },
+  detailAmount: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#374151",
+  },
+  proofSection: {
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+  },
+  proofImageContainer: {
+    marginTop: 12,
+    alignItems: "center",
+  },
+  proofImage: {
+    width: "100%",
+    height: 200,
+    borderRadius: 12,
+    backgroundColor: "#F9FAFB",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  proofNote: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    textAlign: "center",
+    marginTop: 8,
+  },
+  timelineSection: {
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+  },
+  timelineTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 12,
+  },
+  timelineItem: {
+    flexDirection: "row",
+    marginBottom: 12,
+  },
+  timelineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 4,
+    marginRight: 12,
+  },
+  timelineContent: {
+    flex: 1,
+  },
+  timelineStatus: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: "#374151",
+    marginBottom: 2,
+  },
+  timelineDate: {
+    fontSize: 11,
+    color: "#9CA3AF",
+  },
 });

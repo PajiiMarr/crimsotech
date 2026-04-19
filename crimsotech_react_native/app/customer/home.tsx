@@ -61,8 +61,8 @@ interface Product {
   seller_id?: string;
   seller_name?: string;
   seller_avatar?: string | null;
-  primary_image_url?: string | null;
   is_favorite?: boolean;
+  primary_image_url?: string | null;
   primary_image?: { url: string } | null;
   media_files?: Array<{ file_data?: string; file_url?: string }>;
   price_display?: string;
@@ -611,7 +611,11 @@ export default function CustomerHome() {
                         key={index}
                         style={styles.hotItemCard}
                         onPress={() => {
-                          router.push({ pathname: '/customer/view-product', params: { id: item.product_id } });
+                          // Navigate to view-product with the product ID
+                          router.push({ 
+                            pathname: '/customer/view-product', 
+                            params: { id: item.product_id } 
+                          });
                           setShowHotItemsModal(false);
                         }}
                       >

@@ -46050,7 +46050,6 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         # Monthly data (last 6 months)
         six_months_ago = timezone.now() - timedelta(days=180)
 
-        from django.db.models.functions import TruncMonth
         monthly_query = transactions_qs.filter(
             created_at__gte=six_months_ago,
             status='completed'
@@ -46270,7 +46269,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def withdrawal_history(self, request):
         """
-        Get withdrawal request history.
+        Get withdrawal request history with converted admin_proof URLs.
         Query params: status (pending|approved|rejected|processing|completed|all)
         """
         user, error_response = self.get_user_from_header(request)
@@ -46291,6 +46290,10 @@ class UserWalletViewSet(viewsets.ModelViewSet):
 
         data = []
         for w in withdrawals:
+            admin_proof_url = None
+            if w.admin_proof and w.admin_proof.url:
+                admin_proof_url = convert_s3_to_public_url(w.admin_proof.url)
+            
             data.append({
                 'withdrawal_id': str(w.withdrawal_id),
                 'amount': float(w.amount),
@@ -46299,6 +46302,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                 'approved_at': w.approved_at.isoformat() if w.approved_at else None,
                 'completed_at': w.completed_at.isoformat() if w.completed_at else None,
                 'admin_proof': w.admin_proof.url if w.admin_proof else None,
+                'admin_proof_url': admin_proof_url,
+                'rejection_reason': getattr(w, 'rejection_reason', None),
             })
 
         summary = {
@@ -46462,7 +46467,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             },
             'transaction': serializer.data
         })
-    
+
+
 class WithdrawalRequestViewSet(viewsets.ModelViewSet):
     """
     ViewSet for WithdrawalRequest operations.
@@ -46779,6 +46785,15 @@ class WithdrawalRequestSerializer(serializers.ModelSerializer):
 
 class AdminWithdrawalViewSet(viewsets.ViewSet):
     
+    def _convert_to_public_url(self, file_url):
+        """Helper method to convert S3 URL to public URL"""
+        if not file_url:
+            return None
+        try:
+            return convert_s3_to_public_url(file_url)
+        except Exception:
+            return file_url
+    
     def list(self, request):
         try:
             withdrawals = WithdrawalRequest.objects.select_related(
@@ -46818,10 +46833,16 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
             }
 
             serializer = WithdrawalRequestSerializer(withdrawals, many=True)
+            
+            # Convert admin_proof URLs in the response
+            serialized_data = serializer.data
+            for item in serialized_data:
+                if item.get('admin_proof'):
+                    item['admin_proof'] = self._convert_to_public_url(item['admin_proof'])
 
             return Response({
                 "success": True,
-                "data": serializer.data,
+                "data": serialized_data,
                 "stats": metrics,
                 "total_count": total_count
             })
@@ -46865,6 +46886,11 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
                     address_parts.append(withdrawal.user.province)
                 user_address = ", ".join(address_parts)
 
+            # Convert admin_proof URL to public URL
+            admin_proof_url = None
+            if withdrawal.admin_proof:
+                admin_proof_url = self._convert_to_public_url(withdrawal.admin_proof.url)
+
             # Build withdrawal data
             withdrawal_data = {
                 "id": str(withdrawal.withdrawal_id),
@@ -46874,7 +46900,7 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
                 "requested_at": withdrawal.requested_at.isoformat(),
                 "approved_at": withdrawal.approved_at.isoformat() if withdrawal.approved_at else None,
                 "completed_at": withdrawal.completed_at.isoformat() if withdrawal.completed_at else None,
-                "admin_proof": withdrawal.admin_proof.url if withdrawal.admin_proof else None,
+                "admin_proof": admin_proof_url,
                 
                 # User info
                 "user": {
@@ -47080,6 +47106,11 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
             withdrawal.admin_proof = admin_proof
             withdrawal.save()
             
+            # Convert the saved admin_proof URL to public URL
+            admin_proof_url = None
+            if withdrawal.admin_proof:
+                admin_proof_url = self._convert_to_public_url(withdrawal.admin_proof.url)
+            
             return Response({
                 "success": True,
                 "message": "Withdrawal completed successfully",
@@ -47087,7 +47118,7 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
                     "id": str(withdrawal.withdrawal_id),
                     "status": withdrawal.status,
                     "completed_at": withdrawal.completed_at.isoformat(),
-                    "admin_proof": withdrawal.admin_proof.url if withdrawal.admin_proof else None
+                    "admin_proof": admin_proof_url
                 }
             })
             
@@ -47101,7 +47132,7 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
                 "success": False,
                 "error": str(e)
             }, status=500)
-                    
+
 class RiderWalletView(APIView):
     """
     Unified view for rider wallet operations:
