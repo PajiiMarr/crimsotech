@@ -53,16 +53,8 @@ interface PaymentResponse {
   redirect_url: string;
   reference_number: string;
   total_amount: number;
-  sandbox_mode: boolean;
   platform: string;
   is_mobile: boolean;
-  test_card?: {
-    message: string;
-    card_number: string;
-    expiry: string;
-    cvv: string;
-    otp: string;
-  };
 }
 
 export default function PayOrderPage() {
@@ -139,14 +131,6 @@ export default function PayOrderPage() {
         setShowWebView(true);
         setPaymentInitiated(true);
         setHasShownSuccess(false);
-
-        if (response.data.sandbox_mode && response.data.test_card) {
-          Alert.alert(
-            "Sandbox Mode",
-            `Use these test card details:\n\nCard: ${response.data.test_card.card_number}\nExpiry: ${response.data.test_card.expiry}\nCVV: ${response.data.test_card.cvv}\nOTP: ${response.data.test_card.otp}`,
-            [{ text: "OK" }],
-          );
-        }
       } else {
         Alert.alert(
           "Error",
@@ -192,7 +176,6 @@ export default function PayOrderPage() {
   };
 
   const navigateToOrderSuccessful = (orderIdParam: string) => {
-    // ✅ Already correct - keep this format
     router.replace({
       pathname: "/customer/order-successful",
       params: { orderId: orderIdParam },
@@ -203,17 +186,13 @@ export default function PayOrderPage() {
     const { url } = navState;
     console.log("WebView URL:", url);
 
-    // Only process if we haven't already shown success
     if (hasShownSuccess) return;
 
-    // Check for success URL - but verify with backend
     if (url.includes("/maya-success") || url.includes("/payment-success")) {
       console.log("Success URL detected, verifying payment...");
 
-      // Show processing message
       setWebViewLoading(true);
 
-      // Verify payment status with backend
       const isPaid = await verifyPaymentStatus();
 
       if (isPaid) {
@@ -233,7 +212,6 @@ export default function PayOrderPage() {
           ],
         );
       } else {
-        // Payment not confirmed yet, maybe still processing
         console.log("Payment not confirmed yet, waiting...");
         setWebViewLoading(false);
 
@@ -254,7 +232,6 @@ export default function PayOrderPage() {
       return;
     }
 
-    // Check for failure URL
     if (url.includes("/maya-failure") || url.includes("/payment-failed")) {
       console.log("Failure URL detected");
       setHasShownSuccess(true);
@@ -284,7 +261,6 @@ export default function PayOrderPage() {
       return;
     }
 
-    // Check for cancel URL
     if (url.includes("/maya-cancel") || url.includes("/payment-cancel")) {
       console.log("Cancel URL detected");
       setHasShownSuccess(true);
@@ -305,7 +281,6 @@ export default function PayOrderPage() {
       return;
     }
 
-    // Check for custom scheme (fallback)
     if (url.startsWith("crimsotechreactnative://")) {
       console.log("Custom scheme detected:", url);
       setHasShownSuccess(true);
