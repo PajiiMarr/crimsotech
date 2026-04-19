@@ -8973,6 +8973,94 @@ class AdminUsers(viewsets.ViewSet):
         except Exception:
             return None
     
+    def _get_user_wallet_info(self, user):
+        """Helper method to get wallet information for a user"""
+        try:
+            # Get user's wallet
+            wallet = UserWallet.objects.filter(user=user).first()
+            
+            if wallet:
+                # Calculate total earnings from all transactions
+                total_earnings = WalletTransaction.objects.filter(
+                    wallet=wallet,
+                    transaction_type='credit',
+                    status='completed'
+                ).aggregate(total=Sum('amount'))['total'] or 0
+                
+                # Calculate total withdrawals
+                total_withdrawn = WalletTransaction.objects.filter(
+                    wallet=wallet,
+                    transaction_type='debit',
+                    source_type='withdrawal',
+                    status='completed'
+                ).aggregate(total=Sum('amount'))['total'] or 0
+                
+                # Calculate pending withdrawals
+                pending_withdrawals = WithdrawalRequest.objects.filter(
+                    wallet=wallet,
+                    status='pending'
+                ).aggregate(total=Sum('amount'))['total'] or 0
+                
+                return {
+                    'has_wallet': True,
+                    'wallet_id': str(wallet.wallet_id),
+                    'available_balance': float(wallet.available_balance),
+                    'pending_balance': float(wallet.pending_balance),
+                    'total_earnings': float(total_earnings),
+                    'total_withdrawn': float(total_withdrawn),
+                    'pending_withdrawals': float(pending_withdrawals),
+                    'created_at': wallet.created_at.isoformat(),
+                    'updated_at': wallet.updated_at.isoformat(),
+                }
+            else:
+                return {
+                    'has_wallet': False,
+                    'available_balance': 0,
+                    'pending_balance': 0,
+                    'total_earnings': 0,
+                    'total_withdrawn': 0,
+                    'pending_withdrawals': 0,
+                }
+        except Exception as e:
+            print(f"Error getting wallet info for user {user.id}: {e}")
+            return {
+                'has_wallet': False,
+                'available_balance': 0,
+                'pending_balance': 0,
+                'total_earnings': 0,
+                'total_withdrawn': 0,
+                'pending_withdrawals': 0,
+                'error': str(e)
+            }
+    
+    def _get_user_shop_earnings(self, user):
+        """Helper method to get earnings from user's shops"""
+        try:
+            shop_earnings = {
+                'total_sales': 0,
+                'shop_count': 0,
+                'shops': []
+            }
+            
+            if hasattr(user, 'customer') and user.customer:
+                shops = Shop.objects.filter(customer=user.customer)
+                shop_earnings['shop_count'] = shops.count()
+                
+                for shop in shops:
+                    shop_earnings['total_sales'] += float(shop.total_sales)
+                    shop_earnings['shops'].append({
+                        'id': str(shop.id),
+                        'name': shop.name,
+                        'total_sales': float(shop.total_sales),
+                        'verified': shop.verified,
+                        'status': shop.status
+                    })
+            
+            return shop_earnings
+        except Exception as e:
+            print(f"Error getting shop earnings for user {user.id}: {e}")
+            return {'total_sales': 0, 'shop_count': 0, 'shops': []}
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """Get user metrics for admin dashboard"""
@@ -9020,6 +9108,17 @@ class AdminUsers(viewsets.ViewSet):
             
             most_common_city = most_common_city_data['city'] if most_common_city_data else "No data"
             
+            # Wallet metrics
+            total_wallet_balance = UserWallet.objects.aggregate(
+                total=Sum('available_balance')
+            )['total'] or 0
+            
+            total_pending_balance = UserWallet.objects.aggregate(
+                total=Sum('pending_balance')
+            )['total'] or 0
+            
+            total_users_with_wallet = UserWallet.objects.count()
+            
             metrics = {
                 'total_users': total_users,
                 'total_customers': total_customers,
@@ -9031,6 +9130,11 @@ class AdminUsers(viewsets.ViewSet):
                 'users_with_incomplete_profile': users_with_incomplete_profile,
                 'avg_registration_stage': round(float(avg_registration_stage), 1),
                 'most_common_city': most_common_city,
+                'wallet_metrics': {
+                    'total_available_balance': float(total_wallet_balance),
+                    'total_pending_balance': float(total_pending_balance),
+                    'total_users_with_wallet': total_users_with_wallet,
+                }
             }
             
             return Response(metrics, status=status.HTTP_200_OK)
@@ -9165,7 +9269,7 @@ class AdminUsers(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'])
     def users_list(self, request):
-        """Get paginated list of users with related data"""
+        """Get paginated list of users with related data including wallet info"""
         try:
             
             # Get query parameters
@@ -9221,11 +9325,17 @@ class AdminUsers(viewsets.ViewSet):
             total_count = users_queryset.count()
             users_page = users_queryset[start_index:end_index]
             
-            # Serialize data with all model fields
+            # Serialize data with all model fields including wallet info
             users_data = []
             for user in users_page:
                 # Get profile picture URL using helper
                 profile_picture_url = self._convert_to_public_url(user.profile_picture.url if user.profile_picture else None)
+                
+                # Get wallet info
+                wallet_info = self._get_user_wallet_info(user)
+                
+                # Get shop earnings
+                shop_earnings = self._get_user_shop_earnings(user)
                 
                 user_data = {
                     # Core User model fields
@@ -9255,6 +9365,15 @@ class AdminUsers(viewsets.ViewSet):
                     'created_at': user.created_at.isoformat(),
                     'updated_at': user.updated_at.isoformat(),
                     'profile_picture_url': profile_picture_url,
+                    'is_suspended': user.is_suspended,
+                    'suspension_reason': user.suspension_reason,
+                    'suspended_until': user.suspended_until.isoformat() if user.suspended_until else None,
+                    
+                    # Wallet information
+                    'wallet': wallet_info,
+                    
+                    # Shop earnings
+                    'shop_earnings': shop_earnings,
                     
                     # Related model data
                     'customer_data': None,
@@ -9327,12 +9446,18 @@ class AdminUsers(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='user/(?P<user_id>[^/.]+)')
     def get_user(self, request, user_id=None):
-        """Get single user by ID with shops and personal listings"""
+        """Get single user by ID with shops, personal listings, and wallet info"""
         try:
             user = User.objects.select_related().get(id=user_id)
             
             # Get profile picture URL using helper
             profile_picture_url = self._convert_to_public_url(user.profile_picture.url if user.profile_picture else None)
+            
+            # Get wallet info
+            wallet_info = self._get_user_wallet_info(user)
+            
+            # Get shop earnings
+            shop_earnings = self._get_user_shop_earnings(user)
             
             # Get shops owned by user (if user is a customer)
             shops_data = []
@@ -9443,10 +9568,20 @@ class AdminUsers(viewsets.ViewSet):
                 'suspension_reason': user.suspension_reason,
                 'suspended_until': user.suspended_until.isoformat() if user.suspended_until else None,
                 'profile_picture_url': profile_picture_url,
+                
+                # Wallet information
+                'wallet': wallet_info,
+                
+                # Shop earnings
+                'shop_earnings': shop_earnings,
+                
+                # Customer data
                 'customer_data': customer_data,
                 'rider_data': rider_data,
                 'moderator_data': {},
                 'admin_data': {},
+                
+                # Shops and listings
                 'shops': shops_data,
                 'personal_listings': personal_listings_data,
             }
@@ -9458,7 +9593,7 @@ class AdminUsers(viewsets.ViewSet):
         except Exception as e:
             print(f"Error in get_user: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
 class AdminTeam(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_team_metrics(self, request):
@@ -45199,8 +45334,8 @@ class PersonalRefundViewSet(viewsets.ViewSet):
 class UserWalletViewSet(viewsets.ModelViewSet):
     """
     ViewSet for UserWallet operations.
-    Credits go immediately to available_balance — no 30-day hold.
-    Withdrawals are allowed as soon as available_balance > 0.
+    Credits go to pending_balance with 3-day hold for refund eligibility.
+    Withdrawals allowed after 3 days with no refund.
     """
     queryset = UserWallet.objects.all()
     serializer_class = UserWalletSerializer
@@ -45263,11 +45398,13 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         transactions_qs = WalletTransaction.objects.filter(wallet=wallet)
 
         total_credits = transactions_qs.filter(
-            transaction_type='credit'
+            transaction_type='credit',
+            status='completed'
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
         total_debits = transactions_qs.filter(
-            transaction_type='debit'
+            transaction_type='debit',
+            status='completed'
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
         pending_withdrawals = WithdrawalRequest.objects.filter(
@@ -45287,13 +45424,14 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         })
 
     # ================================================================
-    # CREDIT
+    # CREDIT - Goes to pending_balance with 3-day hold
     # ================================================================
 
     @action(detail=False, methods=['post'])
     def credit(self, request):
         """
-        Credit amount to wallet — goes directly to available_balance.
+        Credit amount to wallet - goes to pending_balance.
+        Available for withdrawal only after 3 days with no refund.
         Expected data:
             - amount: decimal
             - source_type: 'personal_sale' | 'shop_sale' | 'refund' | 'dispute' | 'release'
@@ -45349,8 +45487,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             wallet, _ = UserWallet.objects.get_or_create(user=user)
 
-            # Credit goes directly to available_balance — no hold period
-            wallet.available_balance += amount
+            # Credit goes to pending_balance with 3-day hold
+            wallet.pending_balance += amount
             wallet.save()
 
             wallet_transaction = WalletTransaction.objects.create(
@@ -45359,18 +45497,19 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                 amount=amount,
                 transaction_type='credit',
                 source_type=source_type,
-                status='completed',
+                status='pending',  # Pending until 3-day hold period expires
                 shop=shop,
                 order=order,
+                created_at=timezone.now()  # Track when the hold period starts
             )
 
-            logger.info(f"Credit of {amount} to user {user.id} for {source_type} (completed immediately)")
+            logger.info(f"Credit of {amount} to user {user.id} for {source_type} (pending, 3-day hold)")
 
         serializer = WalletTransactionSerializer(wallet_transaction)
 
         return Response({
             'success': True,
-            'message': 'Amount credited to available balance successfully.',
+            'message': 'Amount credited to pending balance. It will be available for withdrawal after 3 days with no refund.',
             'wallet': {
                 'available_balance': float(wallet.available_balance),
                 'pending_balance': float(wallet.pending_balance),
@@ -45378,6 +45517,50 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             },
             'transaction': serializer.data
         })
+
+    # ================================================================
+    # RELEASE PENDING AFTER HOLD PERIOD
+    # ================================================================
+
+    def _release_expired_pending_transactions(self, user_wallet):
+        """
+        Release pending transactions that are older than 3 days and have no refunds.
+        Called before withdrawal request to check available balance.
+        """
+        three_days_ago = timezone.now() - timedelta(days=3)
+        
+        expired_pending = WalletTransaction.objects.filter(
+            wallet=user_wallet,
+            status='pending',
+            transaction_type='credit',
+            source_type__in=['personal_sale', 'shop_sale'],
+            created_at__lte=three_days_ago
+        )
+        
+        released_amount = Decimal('0')
+        
+        for pending_tx in expired_pending:
+            # Check if there's a refund for this transaction
+            has_refund = Checkout.objects.filter(
+                voucher__isnull=False,
+                order__user=user_wallet.user,
+                created_at__gt=pending_tx.created_at
+            ).exists()
+            
+            if not has_refund:
+                pending_tx.status = 'completed'
+                pending_tx.save()
+                
+                user_wallet.pending_balance -= pending_tx.amount
+                user_wallet.available_balance += pending_tx.amount
+                released_amount += pending_tx.amount
+                
+                logger.info(f"Released pending transaction {pending_tx.transaction_id} after 3-day hold")
+        
+        if released_amount > 0:
+            user_wallet.save()
+            
+        return released_amount
 
     # ================================================================
     # DEBIT
@@ -45425,6 +45608,9 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             wallet = UserWallet.objects.get(user=user)
         except UserWallet.DoesNotExist:
             return Response({'error': 'Wallet not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # First release any expired pending transactions
+        self._release_expired_pending_transactions(wallet)
 
         if amount > wallet.available_balance:
             return Response(
@@ -45557,7 +45743,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         transactions_qs = WalletTransaction.objects.filter(wallet=wallet)
 
         total_credits = transactions_qs.filter(
-            transaction_type='credit'
+            transaction_type='credit',
+            status='completed'
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
         total_debits = transactions_qs.filter(
@@ -45568,7 +45755,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         source_totals = {}
         for source_type, _ in WalletTransaction.SOURCE_TYPES:
             amount = transactions_qs.filter(
-                source_type=source_type
+                source_type=source_type,
+                status='completed'
             ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
             if amount > 0:
                 source_totals[source_type] = float(amount)
@@ -45578,7 +45766,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
 
         from django.db.models.functions import TruncMonth
         monthly_query = transactions_qs.filter(
-            created_at__gte=six_months_ago
+            created_at__gte=six_months_ago,
+            status='completed'
         ).annotate(
             month=TruncMonth('created_at')
         ).values('month').annotate(
@@ -45620,7 +45809,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
     def request_withdrawal(self, request):
         """
         Request a withdrawal from available balance.
-        Allowed as soon as available_balance >= minimum (₱100).
+        Only available balance (released after 3-day hold with no refund) can be withdrawn.
 
         Body:
             - amount: decimal
@@ -45659,7 +45848,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ── Get wallet ───────────────────────────────────────────────────────
+        # ── Get wallet and release expired pending transactions ──────────────
         try:
             wallet = UserWallet.objects.get(user=user)
         except UserWallet.DoesNotExist:
@@ -45668,6 +45857,9 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        # Release any expired pending transactions (older than 3 days with no refund)
+        self._release_expired_pending_transactions(wallet)
+
         # ── Check available balance ──────────────────────────────────────────
         if amount > wallet.available_balance:
             return Response(
@@ -45675,6 +45867,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                     'error': 'Insufficient available balance.',
                     'available_balance': float(wallet.available_balance),
                     'pending_balance': float(wallet.pending_balance),
+                    'note': 'Only released balance (older than 3 days with no refund) is available for withdrawal.'
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
@@ -45914,15 +46107,27 @@ class UserWalletViewSet(viewsets.ModelViewSet):
     def release_pending(self, request):
         """
         Manually release a specific pending balance to available.
-        Admin use only — in normal flow credits are immediate.
+        Admin use only — normally auto-released after 3 days.
         Body: { "amount": decimal (optional, releases all if omitted) }
         """
         user, error_response = self.get_user_from_header(request)
         if error_response:
             return error_response
 
+        if not user.is_admin:
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+
+        target_user_id = request.data.get('user_id')
+        if not target_user_id:
+            return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            wallet = UserWallet.objects.get(user=user)
+            target_user = User.objects.get(id=target_user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            wallet = UserWallet.objects.get(user=target_user)
         except UserWallet.DoesNotExist:
             return Response({'error': 'Wallet not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -45950,14 +46155,14 @@ class UserWalletViewSet(viewsets.ModelViewSet):
 
             wallet_transaction = WalletTransaction.objects.create(
                 wallet=wallet,
-                user=user,
+                user=target_user,
                 amount=amount,
                 transaction_type='credit',
                 source_type='release',
                 status='completed',
             )
 
-            logger.info(f"Released {amount} from pending to available for user {user.id}")
+            logger.info(f"Admin released {amount} from pending to available for user {target_user.id}")
 
         serializer = WalletTransactionSerializer(wallet_transaction)
 
@@ -45971,131 +46176,6 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             },
             'transaction': serializer.data
         })
-
-    @action(detail=False, methods=['post'])
-    def auto_release_all(self, request):
-        """
-        Admin endpoint — release all pending balances older than 30 days.
-        Can be called by a scheduled task.
-        """
-        user, error_response = self.get_user_from_header(request)
-        if error_response:
-            return error_response
-
-        if not user.is_admin:
-            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
-
-        thirty_days_ago = timezone.now() - timedelta(days=30)
-
-        old_pending = WalletTransaction.objects.filter(
-            status='pending',
-            transaction_type='credit',
-            source_type__in=['personal_sale', 'shop_sale'],
-            created_at__lte=thirty_days_ago
-        ).select_related('wallet', 'user', 'shop', 'order')
-
-        total_found = old_pending.count()
-        total_amount = old_pending.aggregate(
-            total=Sum('amount')
-        )['total'] or Decimal('0')
-
-        if total_found == 0:
-            return Response({
-                'success': True,
-                'message': 'No pending transactions to release.',
-                'released_count': 0,
-                'released_amount': 0
-            })
-
-        released_count = 0
-        released_amount = Decimal('0')
-        errors = []
-        users_affected = set()
-
-        with transaction.atomic():
-            for pending_tx in old_pending:
-                try:
-                    wallet = pending_tx.wallet
-                    users_affected.add(str(pending_tx.user.id))
-
-                    WalletTransaction.objects.create(
-                        wallet=wallet,
-                        user=pending_tx.user,
-                        amount=pending_tx.amount,
-                        transaction_type='credit',
-                        source_type='release',
-                        status='completed',
-                        shop=pending_tx.shop,
-                        order=pending_tx.order,
-                    )
-
-                    pending_tx.status = 'completed'
-                    pending_tx.save(update_fields=['status'])
-
-                    wallet.pending_balance -= pending_tx.amount
-                    wallet.available_balance += pending_tx.amount
-                    wallet.save()
-
-                    released_count += 1
-                    released_amount += pending_tx.amount
-
-                except Exception as e:
-                    errors.append({
-                        'transaction_id': str(pending_tx.transaction_id),
-                        'error': str(e)
-                    })
-                    logger.error(f"Error releasing transaction {pending_tx.transaction_id}: {e}")
-
-        return Response({
-            'success': True,
-            'message': f'Released {released_count} transactions totalling ₱{float(released_amount):.2f}.',
-            'released_count': released_count,
-            'released_amount': float(released_amount),
-            'total_found': total_found,
-            'total_amount': float(total_amount),
-            'users_affected': len(users_affected),
-            'errors': errors,
-        })
-
-    @action(detail=False, methods=['get'])
-    def pending_stats(self, request):
-        """Admin endpoint — statistics about pending transactions."""
-        user, error_response = self.get_user_from_header(request)
-        if error_response:
-            return error_response
-
-        if not user.is_admin:
-            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
-
-        thirty_days_ago = timezone.now() - timedelta(days=30)
-
-        all_pending = WalletTransaction.objects.filter(
-            status='pending',
-            transaction_type='credit',
-            source_type__in=['personal_sale', 'shop_sale']
-        )
-        old_pending = all_pending.filter(created_at__lte=thirty_days_ago)
-        recent_pending = all_pending.filter(created_at__gt=thirty_days_ago)
-
-        return Response({
-            'success': True,
-            'stats': {
-                'all_pending': {
-                    'count': all_pending.count(),
-                    'amount': float(all_pending.aggregate(total=Sum('amount'))['total'] or 0)
-                },
-                'old_pending': {
-                    'count': old_pending.count(),
-                    'amount': float(old_pending.aggregate(total=Sum('amount'))['total'] or 0)
-                },
-                'recent_pending': {
-                    'count': recent_pending.count(),
-                    'amount': float(recent_pending.aggregate(total=Sum('amount'))['total'] or 0)
-                },
-                'release_cutoff_date': thirty_days_ago.isoformat()
-            }
-        })
-
 
 class WithdrawalRequestViewSet(viewsets.ModelViewSet):
     """

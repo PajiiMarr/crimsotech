@@ -170,8 +170,6 @@ const formatDate = (dateString: string) => {
   });
 };
 
-
-
 const formatDateTime = (dateString: string) => {
   if (!dateString) return "N/A";
   const d = new Date(dateString);
@@ -267,90 +265,90 @@ export default function ProfileScreen() {
 
   // ─── Fetch shipping addresses ────────────────────────────────────────────────
 
-const fetchShippingAddresses = async () => {
-  if (!userId) return;
-  try {
-    setLoadingAddresses(true);
-    const response = await AxiosInstance.get(
-      `/shipping-address/get_shipping_addresses/?user_id=${userId}`,
-      {
-        headers: { "X-User-Id": userId, "Content-Type": "application/json" },
+  const fetchShippingAddresses = async () => {
+    if (!userId) return;
+    try {
+      setLoadingAddresses(true);
+      const response = await AxiosInstance.get(
+        `/shipping-address/get_shipping_addresses/?user_id=${userId}`,
+        {
+          headers: { "X-User-Id": userId, "Content-Type": "application/json" },
+        }
+      );
+      if (response.data.success) {
+        setAddresses(response.data.shipping_addresses || []);
       }
-    );
-    if (response.data.success) {
-      setAddresses(response.data.shipping_addresses || []);
+    } catch (error: any) {
+      console.error("Error fetching addresses:", error);
+    } finally {
+      setLoadingAddresses(false);
     }
-  } catch (error: any) {
-    console.error("Error fetching addresses:", error);
-  } finally {
-    setLoadingAddresses(false);
-  }
-};
+  };
 
-// ─── Address actions ─────────────────────────────────────────────────────────
+  // ─── Address actions ─────────────────────────────────────────────────────────
 
-const handleSetDefaultAddress = async (addressId: string) => {
-  if (!userId) return;
-  
-  try {
-    const response = await AxiosInstance.post(
-      "/shipping-address/set_default_address/",
-      {
-        address_id: addressId,
-        user_id: userId,
-      },
-      {
-        headers: { "X-User-Id": userId, "Content-Type": "application/json" },
-      }
-    );
+  const handleSetDefaultAddress = async (addressId: string) => {
+    if (!userId) return;
     
-    if (response.data.success) {
-      showSuccess("Default address updated!");
-      fetchShippingAddresses(); // Refresh the list
-    }
-  } catch (error: any) {
-    console.error("Error setting default address:", error);
-    showError(error.response?.data?.error || "Failed to set default address");
-  }
-};
-
-const handleDeleteAddress = async (addressId: string) => {
-  Alert.alert(
-    "Delete Address",
-    "Are you sure you want to delete this address?",
-    [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          if (!userId) return;
-          
-          try {
-            const response = await AxiosInstance.delete(
-              "/shipping-address/delete_shipping_address/",
-              {
-                data: {
-                  address_id: addressId,
-                  user_id: userId,
-                },
-                headers: { "X-User-Id": userId, "Content-Type": "application/json" },
-              }
-            );
-            
-            if (response.data.success) {
-              showSuccess("Address deleted successfully!");
-              fetchShippingAddresses(); // Refresh the list
-            }
-          } catch (error: any) {
-            console.error("Error deleting address:", error);
-            showError(error.response?.data?.error || "Failed to delete address");
-          }
+    try {
+      const response = await AxiosInstance.post(
+        "/shipping-address/set_default_address/",
+        {
+          address_id: addressId,
+          user_id: userId,
         },
-      },
-    ]
-  );
-};
+        {
+          headers: { "X-User-Id": userId, "Content-Type": "application/json" },
+        }
+      );
+      
+      if (response.data.success) {
+        showSuccess("Default address updated!");
+        fetchShippingAddresses(); // Refresh the list
+      }
+    } catch (error: any) {
+      console.error("Error setting default address:", error);
+      showError(error.response?.data?.error || "Failed to set default address");
+    }
+  };
+
+  const handleDeleteAddress = async (addressId: string) => {
+    Alert.alert(
+      "Delete Address",
+      "Are you sure you want to delete this address?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            if (!userId) return;
+            
+            try {
+              const response = await AxiosInstance.delete(
+                "/shipping-address/delete_shipping_address/",
+                {
+                  data: {
+                    address_id: addressId,
+                    user_id: userId,
+                  },
+                  headers: { "X-User-Id": userId, "Content-Type": "application/json" },
+                }
+              );
+              
+              if (response.data.success) {
+                showSuccess("Address deleted successfully!");
+                fetchShippingAddresses(); // Refresh the list
+              }
+            } catch (error: any) {
+              console.error("Error deleting address:", error);
+              showError(error.response?.data?.error || "Failed to delete address");
+            }
+          },
+        },
+      ]
+    );
+  };
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
