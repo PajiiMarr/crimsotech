@@ -14,7 +14,7 @@ import {
   RefreshControl,
   Platform,
 } from "react-native";
-import { Animated } from "react-native";  // Add this with the other imports
+import { Animated } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAuth } from "../../contexts/AuthContext";
 import AxiosInstance from "../../contexts/axios";
@@ -24,6 +24,15 @@ import {
   FontAwesome,
   Ionicons, 
 } from "@expo/vector-icons";
+
+// Helper function for number formatting
+const formatNumber = (value: number): string => {
+  if (isNaN(value)) return "0.00";
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
 
 // Types
 interface CartItem {
@@ -324,10 +333,16 @@ export default function CheckoutPage() {
             variant: item.variant,
           })
         );
+        
+        // Ensure available_vouchers is properly set
+        const availableVouchers = response.data.available_vouchers || [];
+        
         setCheckoutData({
           ...response.data,
           checkout_items: normalizedItems,
+          available_vouchers: availableVouchers,
         });
+        
         if (response.data.summary) {
           setSummary({
             subtotal: response.data.summary.subtotal,
@@ -378,22 +393,8 @@ export default function CheckoutPage() {
     fetchCheckoutData();
   }, [authLoading, userId, hasValidEntry]);
 
-  // Fetch vouchers when subtotal changes
-  useEffect(() => {
-    if (summary.subtotal > 0 && userId && checkoutData) {
-      const timer = setTimeout(() => {
-        fetchVouchersByAmount(summary.subtotal);
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [summary.subtotal, userId]);
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchCheckoutData();
-  };
-
-  const fetchVouchersByAmount = async (amount: number) => {
+  // Fetch vouchers when subtotal changes - FIXED
+  const fetchVouchersByAmount = useCallback(async (amount: number) => {
     if (!userId) return;
     setLoadingVouchers(true);
     try {
@@ -406,23 +407,35 @@ export default function CheckoutPage() {
           },
         }
       );
-      if (response.data.success) {
+      if (response.data.success && response.data.available_vouchers) {
         setCheckoutData((prev) => {
           if (!prev) return prev;
           return {
             ...prev,
-            available_vouchers: response.data.available_vouchers || [],
+            available_vouchers: response.data.available_vouchers,
           };
         });
       }
     } catch (err: any) {
-      console.error(
-        "Error fetching vouchers by amount:",
-        err.response?.data || err
-      );
+      console.error("Error fetching vouchers by amount:", err.response?.data || err);
     } finally {
       setLoadingVouchers(false);
     }
+  }, [userId]);
+
+  // Fetch vouchers when subtotal changes
+  useEffect(() => {
+    if (summary.subtotal > 0 && userId) {
+      const timer = setTimeout(() => {
+        fetchVouchersByAmount(summary.subtotal);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [summary.subtotal, userId, fetchVouchersByAmount]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchCheckoutData();
   };
 
   // Handle shipping method selection
@@ -490,7 +503,7 @@ export default function CheckoutPage() {
 
   const getVoucherInapplicableReason = (voucher: Voucher) => {
     if (voucher.minimum_spend > summary.subtotal) {
-      return `Min: ₱${voucher.minimum_spend.toFixed(2)}`;
+      return `Min: ₱${formatNumber(voucher.minimum_spend)}`;
     }
     if (!voucher.is_general && voucher.shop_name !== "All Shops") {
       const hasShop = checkoutData?.checkout_items.some(
@@ -640,7 +653,6 @@ export default function CheckoutPage() {
             params: { order_id: orderId },
           });
         } else {
-          // Navigate directly to order-successful page with orderId
           router.replace({
             pathname: "/customer/order-successful",
             params: { orderId: orderId },
@@ -681,7 +693,7 @@ export default function CheckoutPage() {
 
   // Get all vouchers
   const getAllVouchers = () => {
-    if (!checkoutData) return [];
+    if (!checkoutData || !checkoutData.available_vouchers) return [];
     return checkoutData.available_vouchers.flatMap(
       (category) => category?.vouchers ?? []
     );
@@ -689,7 +701,7 @@ export default function CheckoutPage() {
 
   // Get filtered vouchers
   const getFilteredVouchers = () => {
-    if (!checkoutData) return [];
+    if (!checkoutData || !checkoutData.available_vouchers) return [];
     if (activeVoucherCategory === "all") return getAllVouchers();
     const category = checkoutData.available_vouchers.find((cat: any) =>
       cat.category.includes(activeVoucherCategory.replace("_", " "))
@@ -757,9 +769,9 @@ const PickupDisclaimer = () => {
     if (processingOrder) return "Processing Order...";
     const isEWalletPayment = ["Maya"].includes(formData.paymentMethod);
     if (isEWalletPayment) {
-      return `Pay with ${formData.paymentMethod} • ₱${summary.total.toFixed(2)}`;
+      return `Pay with ${formData.paymentMethod} • ₱${formatNumber(summary.total)}`;
     }
-    return `Place Order • ₱${summary.total.toFixed(2)}`;
+    return `Place Order • ₱${formatNumber(summary.total)}`;
   };
 
   // Loading state
@@ -820,9 +832,10 @@ const PickupDisclaimer = () => {
   
   const getDeliveryFeeDisplay = () => {
     if (formData.shippingMethod === "Pickup from Store") return "FREE";
-    if (checkoutData?.summary?.delivery) return `₱${checkoutData.summary.delivery.toFixed(2)}`;
+    if (checkoutData?.summary?.delivery) return `₱${formatNumber(checkoutData.summary.delivery)}`;
     return "₱50.00";
   };
+  
   // ─── Center Toast Notification ───────────────────────────────────
   const CenterToast = ({
     visible,
@@ -994,7 +1007,7 @@ const PickupDisclaimer = () => {
                   <Text style={styles.itemShopCompact}>{item.shop_name}</Text>
                   <View style={styles.itemBottomRowCompact}>
                     <Text style={styles.itemTotalPriceCompact}>
-                      ₱{(item.price * item.quantity).toFixed(2)}
+                      ₱{formatNumber(item.price * item.quantity)}
                     </Text>
                     <Text style={styles.quantityTextCompact}>x{item.quantity}</Text>
                   </View>
@@ -1064,7 +1077,7 @@ const PickupDisclaimer = () => {
                 const costDisplay = method.name === "Pickup from Store" 
                   ? "FREE" 
                   : checkoutData?.summary?.delivery 
-                    ? `₱${checkoutData.summary.delivery.toFixed(2)}` 
+                    ? `₱${formatNumber(checkoutData.summary.delivery)}` 
                     : "₱50.00";
                 const isSelected = formData.shippingMethod === method.name;
                 return (
@@ -1160,7 +1173,7 @@ const PickupDisclaimer = () => {
                 <MaterialIcons name="check-circle" size={14} color="#059669" />
                 <Text style={styles.appliedVoucherCodeCompact}>{appliedVoucher.code}</Text>
                 <Text style={styles.appliedVoucherDiscountCompact}>
-                  -₱{summary.discount.toFixed(2)}
+                  -₱{formatNumber(summary.discount)}
                 </Text>
               </View>
               <TouchableOpacity onPress={handleRemoveVoucher}>
@@ -1191,12 +1204,12 @@ const PickupDisclaimer = () => {
           <View style={styles.orderSummaryCompact}>
             <View style={styles.summaryRowCompact}>
               <Text style={styles.summaryLabelCompact}>Subtotal ({checkoutData.checkout_items.length})</Text>
-              <Text style={styles.summaryValueCompact}>₱{summary.subtotal.toFixed(2)}</Text>
+              <Text style={styles.summaryValueCompact}>₱{formatNumber(summary.subtotal)}</Text>
             </View>
             {appliedVoucher && (
               <View style={styles.discountRowCompact}>
                 <Text style={styles.discountLabelCompact}>Discount {appliedVoucher.code}</Text>
-                <Text style={styles.discountValueCompact}>-₱{summary.discount.toFixed(2)}</Text>
+                <Text style={styles.discountValueCompact}>-₱{formatNumber(summary.discount)}</Text>
               </View>
             )}
             <View style={styles.summaryRowCompact}>
@@ -1206,7 +1219,7 @@ const PickupDisclaimer = () => {
             <View style={styles.totalRowCompact}>
               <Text style={styles.totalLabelCompact}>Total</Text>
               <View style={styles.totalRightCompact}>
-                <Text style={styles.totalValueCompact}>₱{summary.total.toFixed(2)}</Text>
+                <Text style={styles.totalValueCompact}>₱{formatNumber(summary.total)}</Text>
                 <Text style={styles.totalVatCompact}>Incl. VAT</Text>
               </View>
             </View>
@@ -1232,7 +1245,7 @@ const PickupDisclaimer = () => {
         <View style={styles.orderSummaryFooterCompact}>
           <View style={styles.summaryRowCompact}>
             <Text style={styles.summaryLabelCompact}>Total</Text>
-            <Text style={styles.summaryValueCompact}>₱{summary.total.toFixed(2)}</Text>
+            <Text style={styles.summaryValueCompact}>₱{formatNumber(summary.total)}</Text>
           </View>
           <Text style={styles.totalVatCompact}>Incl. VAT</Text>
         </View>
@@ -1278,7 +1291,7 @@ const PickupDisclaimer = () => {
               </TouchableOpacity>
             </View>
             <ScrollView style={styles.modalContent}>
-              {checkoutData.available_vouchers.length > 1 && (
+              {checkoutData.available_vouchers && checkoutData.available_vouchers.length > 1 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.voucherCategoryScroll}>
                   <TouchableOpacity
                     style={[styles.voucherCategoryButton, activeVoucherCategory === "all" && styles.voucherCategoryButtonActive]}
@@ -1348,7 +1361,7 @@ const PickupDisclaimer = () => {
                                 <Text style={styles.modalVoucherDetailText}>{voucher.shop_name}</Text>
                               </View>
                               <View style={styles.modalVoucherDetail}>
-                                <Text style={styles.modalVoucherDetailText}>Min: ₱{voucher.minimum_spend.toFixed(2)}</Text>
+                                <Text style={styles.modalVoucherDetailText}>Min: ₱{formatNumber(voucher.minimum_spend)}</Text>
                               </View>
                             </View>
                             {!applicable && reason && (
@@ -1362,11 +1375,11 @@ const PickupDisclaimer = () => {
                         <View style={styles.modalVoucherRight}>
                           <View style={styles.modalVoucherDiscount}>
                             <Text style={styles.modalVoucherDiscountValue}>
-                              {voucher.discount_type === "percentage" ? `${voucher.value}%` : `₱${voucher.value}`}
+                              {voucher.discount_type === "percentage" ? `${voucher.value}%` : `₱${formatNumber(voucher.value)}`}
                             </Text>
                             <Text style={styles.modalVoucherDiscountLabel}>OFF</Text>
                           </View>
-                          {applicable && <Text style={styles.modalVoucherSavings}>Save ₱{savings.toFixed(2)}</Text>}
+                          {applicable && <Text style={styles.modalVoucherSavings}>Save ₱{formatNumber(savings)}</Text>}
                           <View style={[styles.modalApplyButton, !applicable && styles.modalApplyButtonDisabled]}>
                             <Text style={styles.modalApplyButtonText}>{applicable ? "Apply" : "Not Eligible"}</Text>
                           </View>

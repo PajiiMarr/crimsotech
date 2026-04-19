@@ -24003,12 +24003,14 @@ class CheckoutOrder(viewsets.ViewSet):
             return "new"
 
     def _get_simple_available_vouchers(self, shop_ids, user_id, current_subtotal, user_purchase_history):
+        """Get available vouchers with proper checks for validity, minimum spend, and usage limits"""
         if not shop_ids:
             return []
 
         current_date = timezone.now().date()
 
         try:
+            # Base query: active, within date range, meets minimum spend
             vouchers = Voucher.objects.filter(
                 shop_id__in=shop_ids,
                 is_active=True,
@@ -24017,12 +24019,43 @@ class CheckoutOrder(viewsets.ViewSet):
                 minimum_spend__lte=current_subtotal
             ).select_related('shop').only(
                 'id', 'name', 'code', 'discount_type', 'value',
-                'minimum_spend', 'shop__name', 'shop__id', 'voucher_type'
+                'minimum_spend', 'maximum_usage', 'shop__name', 'shop__id', 'voucher_type'
             ).order_by('-value')[:10]
 
+            # Also get general vouchers (no shop)
+            general_vouchers = Voucher.objects.filter(
+                shop__isnull=True,
+                is_active=True,
+                start_date__lte=current_date,
+                end_date__gte=current_date,
+                minimum_spend__lte=current_subtotal
+            ).select_related('shop').only(
+                'id', 'name', 'code', 'discount_type', 'value',
+                'minimum_spend', 'maximum_usage', 'shop__name', 'shop__id', 'voucher_type'
+            ).order_by('-value')[:5]
+
+            # Combine and deduplicate by id
+            all_vouchers = list(vouchers) + list(general_vouchers)
+            unique_vouchers = {v.id: v for v in all_vouchers}.values()
+
             voucher_list = []
-            for voucher in vouchers:
+            for voucher in unique_vouchers:
+                # Check usage count - only include if maximum_usage is not reached
+                usage_count = Checkout.objects.filter(
+                    voucher=voucher,
+                    order__status__in=['delivered', 'completed', 'processing', 'shipped']
+                ).count()
+                
+                # Skip if maximum usage reached (0 means unlimited)
+                if voucher.maximum_usage > 0 and usage_count >= voucher.maximum_usage:
+                    continue
+                
                 potential_savings = self._calculate_discount(voucher, current_subtotal)
+                
+                # Get remaining usage
+                remaining_usage = None
+                if voucher.maximum_usage > 0:
+                    remaining_usage = voucher.maximum_usage - usage_count
 
                 voucher_data = {
                     "id": str(voucher.id),
@@ -24031,18 +24064,35 @@ class CheckoutOrder(viewsets.ViewSet):
                     "discount_type": voucher.discount_type,
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
-                    "shop_name": voucher.shop.name if voucher.shop else "Unknown Shop",
+                    "maximum_usage": voucher.maximum_usage,
+                    "usage_count": usage_count,
+                    "remaining_usage": remaining_usage,
+                    "shop_name": voucher.shop.name if voucher.shop else "All Shops",
                     "shop_id": str(voucher.shop.id) if voucher.shop else None,
                     "description": self._get_voucher_description(voucher),
                     "potential_savings": float(potential_savings),
                     "customer_tier": "all",
                     "voucher_type": voucher.voucher_type,
-                    "is_general": False
+                    "is_general": voucher.shop is None
                 }
                 voucher_list.append(voucher_data)
 
             if voucher_list:
-                return [{"category": "Available Vouchers", "vouchers": voucher_list}]
+                # Group by shop for better organization
+                grouped = {}
+                for v in voucher_list:
+                    shop_key = v['shop_name']
+                    if shop_key not in grouped:
+                        grouped[shop_key] = []
+                    grouped[shop_key].append(v)
+                
+                result = []
+                for shop_name, vouchers_in_shop in grouped.items():
+                    result.append({
+                        "category": shop_name,
+                        "vouchers": vouchers_in_shop
+                    })
+                return result
             return []
 
         except Exception as e:
@@ -24057,6 +24107,9 @@ class CheckoutOrder(viewsets.ViewSet):
 
         if voucher.minimum_spend > 0:
             desc += f" on orders over ₱{voucher.minimum_spend}"
+        
+        if voucher.maximum_usage > 0:
+            desc += f" • {voucher.maximum_usage} uses available"
 
         return desc
 
@@ -24144,40 +24197,6 @@ class CheckoutOrder(viewsets.ViewSet):
                 user_purchase_history
             )
 
-            current_date = timezone.now().date()
-
-            general_vouchers = Voucher.objects.filter(
-                shop__isnull=True,
-                is_active=True,
-                start_date__lte=current_date,
-                end_date__gte=current_date,
-                minimum_spend__lte=amount
-            ).order_by('-value')[:5]
-
-            general_list = []
-            for voucher in general_vouchers:
-                potential_savings = self._calculate_discount(voucher, amount)
-                general_list.append({
-                    "id": str(voucher.id),
-                    "code": voucher.code,
-                    "name": voucher.name,
-                    "discount_type": voucher.discount_type,
-                    "value": float(voucher.value),
-                    "minimum_spend": float(voucher.minimum_spend),
-                    "shop_name": "All Shops",
-                    "shop_id": None,
-                    "description": self._get_voucher_description(voucher),
-                    "potential_savings": float(potential_savings),
-                    "is_general": True,
-                    "customer_tier": "all"
-                })
-
-            if general_list:
-                available_vouchers.append({
-                    "category": "General Vouchers",
-                    "vouchers": general_list
-                })
-
             return Response({
                 "success": True,
                 "available_vouchers": available_vouchers,
@@ -24241,7 +24260,23 @@ class CheckoutOrder(viewsets.ViewSet):
                         "error": "Invalid voucher code or voucher not applicable"
                     }, status=status.HTTP_404_NOT_FOUND)
 
+            # Check usage count
+            usage_count = Checkout.objects.filter(
+                voucher=voucher,
+                order__status__in=['delivered', 'completed', 'processing', 'shipped']
+            ).count()
+            
+            if voucher.maximum_usage > 0 and usage_count >= voucher.maximum_usage:
+                return Response({
+                    "valid": False,
+                    "error": f"This voucher has reached its maximum usage limit ({voucher.maximum_usage} uses)"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             discount_amount = self._calculate_discount(voucher, subtotal)
+            
+            remaining_usage = None
+            if voucher.maximum_usage > 0:
+                remaining_usage = voucher.maximum_usage - usage_count
 
             return Response({
                 "valid": True,
@@ -24252,6 +24287,9 @@ class CheckoutOrder(viewsets.ViewSet):
                     "discount_type": voucher.discount_type,
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
+                    "maximum_usage": voucher.maximum_usage,
+                    "usage_count": usage_count,
+                    "remaining_usage": remaining_usage,
                     "shop_name": voucher.shop.name if voucher.shop else "All Shops",
                     "discount_amount": float(discount_amount),
                     "customer_tier": "all",
@@ -24455,6 +24493,19 @@ class CheckoutOrder(viewsets.ViewSet):
                         end_date__gte=current_date,
                         minimum_spend__lte=subtotal
                     )
+                    
+                    # Check usage count before applying
+                    usage_count = Checkout.objects.filter(
+                        voucher=voucher,
+                        order__status__in=['delivered', 'completed', 'processing', 'shipped']
+                    ).count()
+                    
+                    if voucher.maximum_usage > 0 and usage_count >= voucher.maximum_usage:
+                        return Response(
+                            {"error": "This voucher has reached its maximum usage limit"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
                     discount_amount = self._calculate_discount(voucher, subtotal)
                 except Voucher.DoesNotExist:
                     return Response(
@@ -24580,6 +24631,9 @@ class CheckoutOrder(viewsets.ViewSet):
                     status='pending'
                 )
 
+            # Decrease stock for the order items
+            self._decrease_stock_for_order(order)
+
             return Response({
                 "success": True,
                 "message": "Order created successfully. Waiting for seller confirmation.",
@@ -24606,7 +24660,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @action(detail=False, methods=['get'], url_path='get_order_details/(?P<order_id>[^/.]+)')
+    @action(detail=False, methods=['GET'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
         try:
             order = get_object_or_404(Order, order=order_id)
@@ -25353,8 +25407,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     product.save()
 
         return stock_errors
-
-
+    
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
     def get_shipping_addresses(self, request):
