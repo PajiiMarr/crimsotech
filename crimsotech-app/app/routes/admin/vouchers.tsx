@@ -302,7 +302,7 @@ const EmptyTable = ({ onAddClick }: { onAddClick: () => void }) => (
       <Tag className="w-12 h-12 mx-auto mb-4 text-gray-400" />
       <h3 className="text-lg font-semibold mb-2">No vouchers found</h3>
       <p className="text-sm mb-4">Get started by creating your first voucher code.</p>
-      <Button onClick={onAddClick} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700">
+      <Button onClick={onAddClick} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700">
         <Plus className="w-4 h-4" />
         Create Voucher
       </Button>
@@ -773,14 +773,14 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
               Create a new voucher code for your customers. Fill in the details below.
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="max-h-[60vh] px-6">
+          <ScrollArea className="max-h-[60vh] p-6">
             {formContent}
           </ScrollArea>
           <DialogFooter className="px-6 pb-6 pt-2">
             <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700">
+            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-orange-600 hover:bg-orange-700">
               {isSubmitting ? 'Creating...' : 'Create Voucher'}
             </Button>
           </DialogFooter>
@@ -799,13 +799,13 @@ const AddVoucherModal = ({ open, onOpenChange, onSuccess, shops, userId }: AddVo
           </DrawerDescription>
         </DrawerHeader>
 
-        <div className="overflow-y-auto flex-1 px-4 py-2">
+        <div className="overflow-y-auto flex-1 px-4 p-2">
           {formContent}
         </div>
 
         <DrawerFooter className="border-t pt-3 pb-4 px-4 flex-shrink-0">
           <div className="flex flex-col gap-2">
-            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 w-full">
+            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-orange-600 hover:bg-orange-700 w-full">
               {isSubmitting ? 'Creating...' : 'Create Voucher'}
             </Button>
             <DrawerClose asChild>
@@ -1255,14 +1255,14 @@ const EditVoucherModal = ({ open, onOpenChange, onSuccess, voucher, shops, userI
               Update the voucher details below.
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="max-h-[60vh] px-6">
+          <ScrollArea className="max-h-[60vh] p-6">
             {formContent}
           </ScrollArea>
           <DialogFooter className="px-6 pb-6 pt-2">
             <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700">
+            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-orange-600 hover:bg-orange-700">
               {isSubmitting ? 'Updating...' : 'Update Voucher'}
             </Button>
           </DialogFooter>
@@ -1281,13 +1281,13 @@ const EditVoucherModal = ({ open, onOpenChange, onSuccess, voucher, shops, userI
           </DrawerDescription>
         </DrawerHeader>
 
-        <div className="overflow-y-auto flex-1 px-4 py-2">
+        <div className="overflow-y-auto flex-1 px-4 p-2">
           {formContent}
         </div>
 
         <DrawerFooter className="border-t pt-3 pb-4 px-4 flex-shrink-0">
           <div className="flex flex-col gap-2">
-            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 w-full">
+            <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-orange-600 hover:bg-orange-700 w-full">
               {isSubmitting ? 'Updating...' : 'Update Voucher'}
             </Button>
             <DrawerClose asChild>
@@ -1354,7 +1354,7 @@ const DeleteVoucherDialog = ({ open, onOpenChange, onSuccess, voucher, userId }:
             This action cannot be undone. This will permanently delete the voucher
             "{voucher?.name}" (Code: {voucher?.code}).
             {voucher?.usage_count && voucher.usage_count > 0 && (
-              <span className="block mt-2 text-yellow-600">
+              <span className="block mt-2 text-orange-600">
                 Note: This voucher has been used {voucher.usage_count} times. It will be deactivated instead of deleted.
               </span>
             )}
@@ -1470,11 +1470,11 @@ const ViewVoucherDialog = ({ open, onOpenChange, voucher }: ViewVoucherDialogPro
                 variant="secondary"
                 className="capitalize"
                 style={{ 
-                  backgroundColor: voucher.status === 'active' ? '#10b98120' : 
-                                 voucher.status === 'scheduled' ? '#3b82f620' : 
+                  backgroundColor: voucher.status === 'active' ? '#f9731620' : 
+                                 voucher.status === 'scheduled' ? '#f9731620' : 
                                  voucher.status === 'expired' ? '#ef444420' : '#6b728020',
-                  color: voucher.status === 'active' ? '#10b981' : 
-                        voucher.status === 'scheduled' ? '#3b82f6' : 
+                  color: voucher.status === 'active' ? '#f97316' : 
+                        voucher.status === 'scheduled' ? '#f97316' : 
                         voucher.status === 'expired' ? '#ef4444' : '#6b7280'
                 }}
               >
@@ -1657,7 +1657,7 @@ export default function Vouchers() {
             </div>
             <Button 
               onClick={() => setIsAddVoucherOpen(true)}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700"
+              className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700"
             >
               <Plus className="w-4 h-4" />
               Add Voucher
@@ -1712,8 +1712,8 @@ export default function Vouchers() {
                     <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_vouchers}</p>
                     <p className="text-xs text-muted-foreground mt-2">{safeMetrics.active_vouchers} active</p>
                   </div>
-                  <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
-                    <Tag className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
+                  <div className="p-2 sm:p-3 bg-orange-100 rounded-full">
+                    <Tag className="w-4 h-4 sm:w-6 sm:h-6 text-orange-600" />
                   </div>
                 </div>
               </CardContent>
@@ -1727,8 +1727,8 @@ export default function Vouchers() {
                     <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_usage}</p>
                     <p className="text-xs text-muted-foreground mt-2">Times used</p>
                   </div>
-                  <div className="p-2 sm:p-3 bg-green-100 rounded-full">
-                    <PhilippinePeso className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
+                  <div className="p-2 sm:p-3 bg-orange-100 rounded-full">
+                    <PhilippinePeso className="w-4 h-4 sm:w-6 sm:h-6 text-orange-600" />
                   </div>
                 </div>
               </CardContent>
@@ -1742,8 +1742,8 @@ export default function Vouchers() {
                     <p className="text-xl sm:text-2xl font-bold mt-1">₱{safeMetrics.total_discount.toLocaleString()}</p>
                     <p className="text-xs text-muted-foreground mt-2">Amount saved</p>
                   </div>
-                  <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
-                    <Percent className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
+                  <div className="p-2 sm:p-3 bg-orange-100 rounded-full">
+                    <Percent className="w-4 h-4 sm:w-6 sm:h-6 text-orange-600" />
                   </div>
                 </div>
               </CardContent>
@@ -1757,8 +1757,8 @@ export default function Vouchers() {
                     <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.expired_vouchers}</p>
                     <p className="text-xs text-muted-foreground mt-2">No longer valid</p>
                   </div>
-                  <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
-                    <Calendar className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
+                  <div className="p-2 sm:p-3 bg-orange-100 rounded-full">
+                    <Calendar className="w-4 h-4 sm:w-6 sm:h-6 text-orange-600" />
                   </div>
                 </div>
               </CardContent>
@@ -1777,7 +1777,7 @@ export default function Vouchers() {
               <Button 
                 variant="outline" 
                 size="sm"
-                className="flex items-center gap-2"
+                className="flex items-center gap-2 border-orange-200 text-orange-600 hover:bg-orange-50"
                 onClick={() => {
                   // Handle export
                   const params = new URLSearchParams(searchParams);
@@ -1962,8 +1962,8 @@ const columns = (
       const status = row.getValue("status") as string;
       const getColor = (status: string) => {
         switch(status?.toLowerCase()) {
-          case 'active': return '#10b981';
-          case 'scheduled': return '#3b82f6';
+          case 'active': return '#f97316';
+          case 'scheduled': return '#f97316';
           case 'expired': return '#ef4444';
           default: return '#6b7280';
         }
@@ -1992,7 +1992,7 @@ const columns = (
           <Button 
             variant="ghost" 
             size="sm" 
-            className="h-8 w-8 p-0"
+            className="h-8 w-8 p-0 hover:bg-orange-50 hover:text-orange-600"
             onClick={() => onView(voucher)}
           >
             <Eye className="w-3 h-3" />
@@ -2000,7 +2000,7 @@ const columns = (
           <Button 
             variant="ghost" 
             size="sm" 
-            className="h-8 w-8 p-0"
+            className="h-8 w-8 p-0 hover:bg-orange-50 hover:text-orange-600"
             onClick={() => onEdit(voucher)}
           >
             <Edit className="w-3 h-3" />
@@ -2008,7 +2008,7 @@ const columns = (
           <Button 
             variant="ghost" 
             size="sm" 
-            className="h-8 w-8 p-0 text-red-600 hover:text-red-700"
+            className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
             onClick={() => onDelete(voucher)}
           >
             <Trash2 className="w-3 h-3" />
