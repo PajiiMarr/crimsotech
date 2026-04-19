@@ -21818,8 +21818,8 @@ class CustomerFavoritesView(APIView):
         """Remove a product from favorites"""
         try:
             # Get user ID from various sources
+            product_id = request.query_params.get("product") or request.data.get("product")
             user_id = self.get_user_from_request(request)
-            product_id = pk or request.data.get("product")
             
             # Normalize product ID if it's an object
             if isinstance(product_id, dict):
@@ -21848,10 +21848,9 @@ class CustomerFavoritesView(APIView):
                     "message": "User not found"
                 }, status=status.HTTP_404_NOT_FOUND)
 
-            # Get customer profile
-            try:
-                customer = user.customer
-            except Customer.DoesNotExist:
+            # Get or create customer profile (MATCH POST METHOD)
+            customer = self.get_customer_from_user(user)
+            if not customer:
                 return Response({
                     "success": False, 
                     "message": "Favorite not found"
@@ -21888,7 +21887,6 @@ class CustomerFavoritesView(APIView):
                 "message": "An error occurred while removing from favorites",
                 "error": str(e) if settings.DEBUG else None
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
     def get_product_details(self, product):
         """Helper method to get detailed product information including variants"""
         if not product:

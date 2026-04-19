@@ -330,6 +330,101 @@ const ToastNotification = ({
   );
 };
 
+// ─── Center Toast Notification for Favorites ───────────────────────────────────
+// ─── Center Toast Notification for Favorites ───────────────────────────────────
+const CenterToast = ({
+  visible,
+  message,
+  onHide,
+}: {
+  visible: boolean;
+  message: string;
+  onHide: () => void;
+}) => {
+  const scale = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(scale, {
+          toValue: 1,
+          useNativeDriver: true,
+          tension: 100,
+          friction: 8,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      const timer = setTimeout(() => {
+        Animated.parallel([
+          Animated.spring(scale, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 100,
+            friction: 8,
+          }),
+          Animated.timing(opacity, {
+            toValue: 0,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+        ]).start(() => onHide());
+      }, 1500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        justifyContent: "center",
+        alignItems: "center",
+        zIndex: 10000,
+      }}
+    >
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          backgroundColor: "transparent",
+          paddingHorizontal: 24,
+          paddingVertical: 12,
+          alignItems: "center",
+          justifyContent: "center",
+          transform: [{ scale }],
+          opacity,
+        }}
+      >
+        <Ionicons name="heart" size={32} color="#EA580C" />
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "600",
+            color: "#EA580C",
+            marginTop: 8,
+            textAlign: "center",
+          }}
+        >
+          {message}
+        </Text>
+      </Animated.View>
+    </View>
+  );
+};
+// ─── Added to Cart Overlay ─────────────────────────────────────────────────────
 // ─── Added to Cart Overlay ─────────────────────────────────────────────────────
 const AddedToCartOverlay = ({
   visible,
@@ -360,14 +455,14 @@ const AddedToCartOverlay = ({
       const timer = setTimeout(() => {
         Animated.parallel([
           Animated.spring(scale, {
-            toValue: 0.8,
+            toValue: 0,
             useNativeDriver: true,
             tension: 100,
             friction: 8,
           }),
           Animated.timing(opacity, {
             toValue: 0,
-            duration: 300,
+            duration: 200,
             useNativeDriver: true,
           }),
         ]).start(() => onHide());
@@ -396,14 +491,15 @@ const AddedToCartOverlay = ({
       <Animated.View
         pointerEvents="none"
         style={{
+          backgroundColor: "transparent",
           alignItems: "center",
           gap: 8,
           transform: [{ scale }],
           opacity,
         }}
       >
-        <Ionicons name="checkmark-circle" size={60} color="#EA580C" />
-        <Text style={{ fontSize: 16, fontWeight: "600", color: "#111827" }}>
+        <Ionicons name="cart-outline" size={48} color="#EA580C" />
+        <Text style={{ fontSize: 16, fontWeight: "600", color: "#EA580C" }}>
           Added to Cart
         </Text>
       </Animated.View>
@@ -1207,6 +1303,8 @@ export default function CustomerViewProductScreen() {
   const [addingToCart, setAddingToCart] = useState(false);
   const [proofGalleryVisible, setProofGalleryVisible] = useState(false);
   const [proofGalleryImages, setProofGalleryImages] = useState<string[]>([]);
+  const [centerToastVisible, setCenterToastVisible] = useState(false);
+  const [centerToastMessage, setCenterToastMessage] = useState("");
   // Add this state with your other useState declarations
 const [shopInfo, setShopInfo] = useState<{
   followers?: number;
@@ -1450,7 +1548,8 @@ const productImageRef = useRef<View>(null);
     try {
       if (product?.is_favorite) {
         // Remove from favorites - DELETE request
-        const response = await AxiosInstance.delete(`/customer-favorites/${productId}/`, {
+        const response = await AxiosInstance.delete('/customer-favorites/', {
+          data: { product: productId, customer: userId },
           headers: { 
             'X-User-Id': userId
           }
@@ -1458,14 +1557,16 @@ const productImageRef = useRef<View>(null);
         
         if (response.data.success) {
           setProduct(prev => prev ? { ...prev, is_favorite: false } : null);
-          showToast("Removed from favorites", "success");
+          setCenterToastMessage("Removed from favorites");
+          setCenterToastVisible(true);
         }
       } else {
         // Add to favorites - POST request
         const response = await AxiosInstance.post(
           '/customer-favorites/',
           { 
-            product: productId
+            product: productId,
+            customer: userId
           },
           { 
             headers: { 
@@ -1476,7 +1577,8 @@ const productImageRef = useRef<View>(null);
         
         if (response.data.success) {
           setProduct(prev => prev ? { ...prev, is_favorite: true } : null);
-          showToast("Added to favorites", "success");
+          setCenterToastMessage("Added to favorites");
+          setCenterToastVisible(true);
         }
       }
     } catch (error: any) {
@@ -1484,11 +1586,12 @@ const productImageRef = useRef<View>(null);
       
       // Handle case where product is already in favorites
       if (error.response?.status === 400 && error.response?.data?.message === "Product is already in favorites") {
-        // Refresh the product to get correct favorite status
         fetchProduct();
-        showToast("Product is already in your favorites", "info");
+        setCenterToastMessage("Product already in favorites");
+        setCenterToastVisible(true);
       } else {
-        showToast(error.response?.data?.message || "Failed to update favorites", "error");
+        setCenterToastMessage(error.response?.data?.message || "Failed to update favorites");
+        setCenterToastVisible(true);
       }
     }
   };
@@ -1643,6 +1746,12 @@ const productImageRef = useRef<View>(null);
         type={toastType}
         onHide={() => setToastVisible(false)}
       />
+
+    <CenterToast
+            visible={centerToastVisible}
+            message={centerToastMessage}
+            onHide={() => setCenterToastVisible(false)}
+          />
       
       {/* Added to Cart Overlay */}
       <AddedToCartOverlay
