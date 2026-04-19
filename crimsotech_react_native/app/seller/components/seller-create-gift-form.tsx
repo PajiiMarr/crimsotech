@@ -209,6 +209,11 @@ export default function CreateGiftForm({
   const [error, setError] = useState<string | null>(null);
   const [apiResponseError, setApiResponseError] = useState<string | null>(null);
 
+  // Validation errors for each step
+  const [step1Errors, setStep1Errors] = useState<{ name?: string; description?: string; condition?: string }>({});
+  const [step2Errors, setStep2Errors] = useState<{ media?: string }>({});
+  const [step3Errors, setStep3Errors] = useState<{ variants?: string }>({});
+
   // Modal state
   const [conditionModalVisible, setConditionModalVisible] = useState(false);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
@@ -235,6 +240,70 @@ export default function CreateGiftForm({
       ),
     );
   }, [giftName]);
+
+  // --- VALIDATION FUNCTIONS ---
+  const validateStep1 = (): boolean => {
+    const errors: { name?: string; description?: string; condition?: string } = {};
+    
+    if (!giftName.trim()) {
+      errors.name = "Gift name is required";
+    } else if (giftName.trim().length < 2) {
+      errors.name = "Gift name must be at least 2 characters";
+    } else if (giftName.trim().length > 100) {
+      errors.name = "Gift name cannot exceed 100 characters";
+    }
+    
+    if (!giftDescription.trim()) {
+      errors.description = "Description is required";
+    } else if (giftDescription.trim().length < 10) {
+      errors.description = "Description must be at least 10 characters";
+    } else if (giftDescription.trim().length > 1000) {
+      errors.description = "Description cannot exceed 1000 characters";
+    }
+    
+    if (!giftCondition) {
+      errors.condition = "Condition rating is required";
+    }
+    
+    setStep1Errors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const validateStep2 = (): boolean => {
+    const errors: { media?: string } = {};
+    
+    if (mainMedia.length < 3) {
+      errors.media = "Please upload at least 3 product images (minimum 3 required)";
+    } else if (mainMedia.length > 9) {
+      errors.media = "Maximum 9 images allowed";
+    }
+    
+    setStep2Errors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const validateStep3 = (): boolean => {
+    const errors: { variants?: string } = {};
+    
+    if (variants.length === 0) {
+      errors.variants = "At least one variant is required";
+    }
+    
+    for (let i = 0; i < variants.length; i++) {
+      const v = variants[i];
+      if (!v.title || !v.title.trim()) {
+        errors.variants = `Variant ${i + 1} title is required`;
+        break;
+      }
+      if (!v.quantity || Number(v.quantity) <= 0) {
+        errors.variants = `Variant ${i + 1} quantity must be greater than 0`;
+        break;
+      }
+    }
+    
+    setStep3Errors(errors);
+    return Object.keys(errors).length === 0;
+  };
 
   // --- MEDIA ---
   const pickMedia = async () => {
@@ -270,6 +339,8 @@ export default function CreateGiftForm({
       };
 
       setMainMedia((prev) => [...prev, newMedia]);
+      // Clear step2 error when media is added
+      setStep2Errors({});
       analyzeImages([
         {
           uri: asset.uri,
@@ -519,54 +590,42 @@ export default function CreateGiftForm({
     setExpandedVariants((prev) => ({ ...prev, [variantId]: !prev[variantId] }));
   };
 
-  // --- VALIDATION & SUBMIT ---
-  const validateForm = () => {
-    if (!giftName.trim()) {
-      Alert.alert("Validation Error", "Gift name is required");
-      return false;
+  // --- STEP NAVIGATION ---
+  const goToNextStep = () => {
+    if (currentStep === 1 && validateStep1()) {
+      setCurrentStep(2);
+    } else if (currentStep === 2 && validateStep2()) {
+      setCurrentStep(3);
+    } else if (currentStep === 3 && validateStep3()) {
+      setCurrentStep(4);
     }
-    if (!giftDescription.trim()) {
-      Alert.alert("Validation Error", "Description is required");
-      return false;
-    }
-    if (!giftCondition) {
-      Alert.alert("Validation Error", "Condition rating is required");
-      return false;
-    }
-    if (variants.length === 0) {
-      Alert.alert("Validation Error", "At least one variant is required");
-      return false;
-    }
-    for (let i = 0; i < variants.length; i++) {
-      const v = variants[i];
-      if (!v.title) {
-        Alert.alert("Validation Error", `Variant ${i + 1} title is required`);
-        return false;
-      }
-      if (!v.quantity || Number(v.quantity) <= 0) {
-        Alert.alert(
-          "Validation Error",
-          `Variant ${i + 1} quantity must be greater than 0`,
-        );
-        return false;
-      }
-    }
-    return true;
   };
 
+  const goToPreviousStep = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
+
+  // --- SUBMIT ---
   const handleSubmit = async () => {
-    if (!validateForm()) return;
+    // Final validation before submit
+    if (!validateStep1() || !validateStep2() || !validateStep3()) {
+      Alert.alert("Validation Error", "Please complete all steps correctly before submitting");
+      return;
+    }
+    
     if (!userId) {
       Alert.alert("Error", "User not authenticated");
       return;
     }
-
+  
     setSubmitting(true);
     setApiResponseError(null);
-
+  
     try {
       const formData = new FormData();
-
+  
       // Basic fields
       formData.append("name", giftName.trim());
       formData.append("description", giftDescription.trim());
@@ -575,13 +634,13 @@ export default function CreateGiftForm({
       formData.append("status", "active");
       formData.append("customer_id", userId);
       formData.append("is_gift", "true");
-
+  
       // Price is forced to 0 for gifts
       formData.append("price", "0");
       formData.append("is_refundable", "false");
       formData.append("refundable", "false");
       formData.append("refund_days", "0");
-
+  
       // Category handling
       if (selectedCategoryName?.trim()) {
         let match = globalCategories.find(
@@ -593,7 +652,7 @@ export default function CreateGiftForm({
             match = best.category;
           }
         }
-
+  
         if (match) {
           formData.append("category_admin_id", match.id);
         } else {
@@ -604,23 +663,31 @@ export default function CreateGiftForm({
           formData.append("category_admin_name", nameToSend);
         }
       }
-
-      // Add media files
-      mainMedia.forEach((file) => {
-        if (file.file.size > 0) {
-          formData.append("media_files", {
-            uri: file.file.uri,
-            name: file.file.name,
-            type: file.file.type,
-          } as any);
-        }
+  
+      // ========== FIXED: Add media files correctly for React Native ==========
+      console.log(`Uploading ${mainMedia.length} media files`);
+      
+      if (mainMedia.length < 3) {
+        throw new Error(`Please upload at least 3 product images. Currently: ${mainMedia.length}`);
+      }
+      
+      mainMedia.forEach((mediaItem, index) => {
+        // Create the file object in the format React Native expects for FormData
+        const fileObject = {
+          uri: mediaItem.file.uri,
+          name: mediaItem.file.name || `gift_image_${Date.now()}_${index}.jpg`,
+          type: mediaItem.file.type || 'image/jpeg',
+        };
+        
+        console.log(`Appending file ${index + 1}:`, fileObject.name);
+        formData.append('media_files', fileObject as any);
       });
-
-      // Add variants payload - NO PRICE FIELDS
+  
+      // Add variants payload
       const variantsPayload = variants.map((v) => ({
         id: v.id,
         title: v.title,
-        price: 0, // Gifts are free
+        price: 0,
         quantity: v.quantity,
         length: v.length !== undefined && v.length !== "" ? Number(v.length) : null,
         width: v.width !== undefined && v.width !== "" ? Number(v.width) : null,
@@ -633,33 +700,43 @@ export default function CreateGiftForm({
         is_refundable: false,
         is_active: v.is_active ?? true,
       }));
-
+  
       formData.append("variants", JSON.stringify(variantsPayload));
-
+  
       // Add variant images
       variants.forEach((v) => {
         if (v.image) {
-          formData.append(`variant_image_${v.id}`, {
+          const imageObject = {
             uri: v.image.uri,
-            name: v.image.name,
-            type: v.image.type,
-          } as any);
+            name: v.image.name || `variant_${v.id}.jpg`,
+            type: v.image.type || 'image/jpeg',
+          };
+          formData.append(`variant_image_${v.id}`, imageObject as any);
         }
         if (v.proofImage) {
-          formData.append(`proof_image_${v.id}`, {
+          const proofObject = {
             uri: v.proofImage.uri,
-            name: v.proofImage.name,
-            type: v.proofImage.type,
-          } as any);
+            name: v.proofImage.name || `proof_${v.id}.jpg`,
+            type: v.proofImage.type || 'image/jpeg',
+          };
+          formData.append(`proof_image_${v.id}`, proofObject as any);
         }
       });
-
+  
+      // Debug: Log FormData contents
+      console.log("FormData keys being sent:");
+      // @ts-ignore - FormData doesn't have entries in React Native typings
+      for (let pair of formData._parts) {
+        console.log(`  ${pair[0]}: ${typeof pair[1] === 'object' ? 'File' : pair[1]}`);
+      }
+  
       const response = await AxiosInstance.post("/seller-products/", formData, {
         headers: {
           "Content-Type": "multipart/form-data",
         },
+        timeout: 60000, // 60 second timeout for file uploads
       });
-
+  
       if (response.data.success) {
         Alert.alert("Success", "Gift created successfully!", [
           {
@@ -673,7 +750,7 @@ export default function CreateGiftForm({
       }
     } catch (err: any) {
       console.error("Gift creation failed:", err.response?.data || err.message);
-
+  
       if (err.response?.data) {
         const apiErrors = err.response.data;
         if (typeof apiErrors === "object") {
@@ -705,8 +782,15 @@ export default function CreateGiftForm({
         { n: 4, label: "4. Review" },
       ].map(({ n, label }, i, arr) => (
         <React.Fragment key={n}>
-          <View
+          <TouchableOpacity
             style={[styles.stepBadge, currentStep >= n && styles.stepActive]}
+            onPress={() => {
+              // Allow navigation to completed steps
+              if (n < currentStep) {
+                setCurrentStep(n);
+              }
+            }}
+            disabled={n > currentStep}
           >
             <Text
               style={[
@@ -716,7 +800,7 @@ export default function CreateGiftForm({
             >
               {label}
             </Text>
-          </View>
+          </TouchableOpacity>
           {i < arr.length - 1 && (
             <View
               style={[
@@ -775,13 +859,17 @@ export default function CreateGiftForm({
               Gift Name <Text style={styles.required}>*</Text>
             </Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, step1Errors.name && styles.inputError]}
               value={giftName}
-              onChangeText={setGiftName}
+              onChangeText={(text) => {
+                setGiftName(text);
+                if (step1Errors.name) setStep1Errors({ ...step1Errors, name: undefined });
+              }}
               placeholder="Enter gift name"
               placeholderTextColor="#9CA3AF"
               maxLength={100}
             />
+            {step1Errors.name && <Text style={styles.errorText}>{step1Errors.name}</Text>}
           </View>
 
           <View style={styles.formGroup}>
@@ -789,7 +877,7 @@ export default function CreateGiftForm({
               Condition Rating <Text style={styles.required}>*</Text>
             </Text>
             <TouchableOpacity
-              style={styles.selectButton}
+              style={[styles.selectButton, step1Errors.condition && styles.inputError]}
               onPress={() => setConditionModalVisible(true)}
             >
               {giftCondition ? (
@@ -813,6 +901,7 @@ export default function CreateGiftForm({
               )}
               <Ionicons name="chevron-down" size={20} color="#9CA3AF" />
             </TouchableOpacity>
+            {step1Errors.condition && <Text style={styles.errorText}>{step1Errors.condition}</Text>}
             {giftCondition ? (
               <View
                 style={[
@@ -841,9 +930,12 @@ export default function CreateGiftForm({
               Description <Text style={styles.required}>*</Text>
             </Text>
             <TextInput
-              style={[styles.input, styles.textArea]}
+              style={[styles.input, styles.textArea, step1Errors.description && styles.inputError]}
               value={giftDescription}
-              onChangeText={setGiftDescription}
+              onChangeText={(text) => {
+                setGiftDescription(text);
+                if (step1Errors.description) setStep1Errors({ ...step1Errors, description: undefined });
+              }}
               placeholder="Describe your gift in detail..."
               placeholderTextColor="#9CA3AF"
               multiline
@@ -851,11 +943,13 @@ export default function CreateGiftForm({
               maxLength={1000}
               textAlignVertical="top"
             />
+            <Text style={styles.charCount}>{giftDescription.length}/1000</Text>
+            {step1Errors.description && <Text style={styles.errorText}>{step1Errors.description}</Text>}
           </View>
 
           <TouchableOpacity
             style={styles.nextButton}
-            onPress={() => setCurrentStep(2)}
+            onPress={goToNextStep}
           >
             <Text style={styles.nextButtonText}>Next: Media</Text>
             <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
@@ -876,12 +970,19 @@ export default function CreateGiftForm({
                 Take photos with your camera (max 9). First photo is the cover.
               </Text>
             </View>
-            <View style={styles.mediaCountBadge}>
-              <Text style={styles.mediaCountBadgeText}>
+            <View style={[styles.mediaCountBadge, mainMedia.length >= 3 && styles.mediaCountBadgeValid]}>
+              <Text style={[styles.mediaCountBadgeText, mainMedia.length >= 3 && styles.mediaCountBadgeTextValid]}>
                 {mainMedia.length}/9
               </Text>
             </View>
           </View>
+
+          {step2Errors.media && (
+            <View style={styles.errorCard}>
+              <Ionicons name="alert-circle" size={16} color="#EF4444" />
+              <Text style={styles.errorCardText}>{step2Errors.media}</Text>
+            </View>
+          )}
 
           <TouchableOpacity style={styles.cameraArea} onPress={pickMedia}>
             <Ionicons name="camera" size={40} color="#9CA3AF" />
@@ -1021,14 +1122,14 @@ export default function CreateGiftForm({
           <View style={styles.navigationButtons}>
             <TouchableOpacity
               style={styles.backButton}
-              onPress={() => setCurrentStep(1)}
+              onPress={goToPreviousStep}
             >
               <Ionicons name="arrow-back" size={20} color="#6B7280" />
               <Text style={styles.backButtonText}>Back</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.nextButton}
-              onPress={() => setCurrentStep(3)}
+              onPress={goToNextStep}
             >
               <Text style={styles.nextButtonText}>Next: Variants</Text>
               <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
@@ -1054,6 +1155,13 @@ export default function CreateGiftForm({
               <Text style={styles.requiredBadgeText}>Required</Text>
             </View>
           </View>
+
+          {step3Errors.variants && (
+            <View style={styles.errorCard}>
+              <Ionicons name="alert-circle" size={16} color="#EF4444" />
+              <Text style={styles.errorCardText}>{step3Errors.variants}</Text>
+            </View>
+          )}
 
           {variants.map((variant, index) => (
             <View key={variant.id} style={styles.variantCard}>
@@ -1149,9 +1257,10 @@ export default function CreateGiftForm({
                     <TextInput
                       style={styles.input}
                       value={variant.title}
-                      onChangeText={(text) =>
-                        updateVariantField(variant.id, "title", text)
-                      }
+                      onChangeText={(text) => {
+                        updateVariantField(variant.id, "title", text);
+                        if (step3Errors.variants) setStep3Errors({});
+                      }}
                       placeholder="e.g., Small, Red, etc."
                       placeholderTextColor="#9CA3AF"
                     />
@@ -1165,13 +1274,14 @@ export default function CreateGiftForm({
                       <TextInput
                         style={styles.input}
                         value={variant.quantity?.toString() || ""}
-                        onChangeText={(text) =>
+                        onChangeText={(text) => {
                           updateVariantField(
                             variant.id,
                             "quantity",
                             parseInt(text) || "",
-                          )
-                        }
+                          );
+                          if (step3Errors.variants) setStep3Errors({});
+                        }}
                         keyboardType="numeric"
                         placeholder="0"
                         placeholderTextColor="#9CA3AF"
@@ -1447,14 +1557,14 @@ export default function CreateGiftForm({
           <View style={styles.navigationButtons}>
             <TouchableOpacity
               style={styles.backButton}
-              onPress={() => setCurrentStep(2)}
+              onPress={goToPreviousStep}
             >
               <Ionicons name="arrow-back" size={20} color="#6B7280" />
               <Text style={styles.backButtonText}>Back</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.nextButton}
-              onPress={() => setCurrentStep(4)}
+              onPress={goToNextStep}
             >
               <Text style={styles.nextButtonText}>Next: Review</Text>
               <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
@@ -1482,7 +1592,7 @@ export default function CreateGiftForm({
             <Text style={styles.reviewCardTitle}>Gift Summary</Text>
             {[
               { label: "Shop", value: selectedShop?.name || "No shop" },
-              { label: "Name", value: giftName },
+              { label: "Name", value: giftName || "Not set" },
               {
                 label: "Condition",
                 value: giftCondition
@@ -1493,7 +1603,7 @@ export default function CreateGiftForm({
                 label: "Category",
                 value: selectedCategoryName || "Not selected",
               },
-              { label: "Media", value: `${mainMedia.length} files` },
+              { label: "Media", value: `${mainMedia.length} / 3+ files` },
               { label: "Variants", value: String(variants.length) },
               {
                 label: "Total Stock",
@@ -1518,7 +1628,7 @@ export default function CreateGiftForm({
           <View style={styles.submitContainer}>
             <TouchableOpacity
               style={styles.cancelButton}
-              onPress={() => setCurrentStep(3)}
+              onPress={goToPreviousStep}
             >
               <Text style={styles.cancelButtonText}>Back</Text>
             </TouchableOpacity>
@@ -1584,6 +1694,7 @@ export default function CreateGiftForm({
                     onPress={() => {
                       setGiftCondition(val);
                       setConditionModalVisible(false);
+                      if (step1Errors.condition) setStep1Errors({ ...step1Errors, condition: undefined });
                     }}
                   >
                     <View style={{ flex: 1 }}>
@@ -1873,8 +1984,10 @@ const styles = StyleSheet.create({
     color: "#111827",
     backgroundColor: "#FFFFFF",
   },
+  inputError: { borderColor: "#EF4444", borderWidth: 2 },
   textArea: { minHeight: 100, textAlignVertical: "top" },
   errorText: { fontSize: 12, color: "#EF4444", marginTop: 4 },
+  charCount: { fontSize: 10, color: "#9CA3AF", textAlign: "right", marginTop: 4 },
 
   conditionBadge: {
     flexDirection: "row",
@@ -1939,7 +2052,9 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 12,
   },
+  mediaCountBadgeValid: { backgroundColor: "#DCFCE7" },
   mediaCountBadgeText: { fontSize: 12, color: "#6B7280" },
+  mediaCountBadgeTextValid: { color: "#059669", fontWeight: "600" },
   cameraArea: {
     borderWidth: 2,
     borderColor: "#D1D5DB",
@@ -2068,12 +2183,15 @@ const styles = StyleSheet.create({
   predictionConfidence: { fontSize: 12, color: "#9333EA" },
   alternativeText: { fontSize: 11, color: "#9333EA", marginTop: 4 },
   errorCard: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "#FEF2F2",
     borderRadius: 8,
     padding: 12,
-    marginTop: 8,
+    marginBottom: 16,
+    gap: 8,
   },
-  errorCardText: { fontSize: 12, color: "#991B1B" },
+  errorCardText: { fontSize: 12, color: "#991B1B", flex: 1 },
 
   requiredBadge: {
     backgroundColor: "#FAF5FF",

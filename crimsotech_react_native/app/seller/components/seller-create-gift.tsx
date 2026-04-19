@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   SafeAreaView,
+  StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -92,6 +93,7 @@ export default function CreateGift() {
   if (!shopId) {
     return (
       <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
         <View style={styles.centerContent}>
           <Ionicons name="gift-outline" size={64} color="#E2E8F0" />
           <Text style={styles.noShopTitle}>No Shop Selected</Text>
@@ -110,6 +112,7 @@ export default function CreateGift() {
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
         <View style={styles.centerContent}>
           <ActivityIndicator size="large" color="#9333EA" />
         </View>
@@ -119,7 +122,9 @@ export default function CreateGift() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {/* Back button with increased padding from the top */}
         <TouchableOpacity 
           style={styles.backButton}
           onPress={() => router.back()}
@@ -160,7 +165,9 @@ const styles = StyleSheet.create({
   backButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
+    paddingTop: 20,        // Increased from 16 to 20 to lower the button
+    paddingBottom: 12,
+    paddingHorizontal: 16,
     gap: 8,
   },
   backButtonText: {
