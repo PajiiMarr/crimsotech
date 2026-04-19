@@ -109,11 +109,13 @@ export default [
 
         route('riders', 'routes/admin/riders.tsx'),
         route('vouchers', 'routes/admin/vouchers.tsx'),
+        route('voucher/:voucher_id', 'routes/admin/view_voucher/view_voucher.tsx'),
         route('refunds', 'routes/admin/refunds.tsx'),
         route('withdrawals', 'routes/admin/withdrawals.tsx'),
         route('admin-view-withdrawal-details/:id', 'routes/admin/admin-view-withdrawal-details.tsx'),
         route('view-refund-details/:refundId', 'routes/admin/view_refund/view-refund-details.tsx'),
         route('users', 'routes/admin/users.tsx'),
+        
         route('users/:user_id', 'routes/admin/view_user/view_user.tsx'),
         route('team', 'routes/admin/team.tsx'), 
         route('reports', 'routes/admin/reports.tsx'),

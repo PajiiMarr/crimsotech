@@ -28,8 +28,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "~/components/ui/dialog"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "~/components/ui/drawer"
 import { Input } from "~/components/ui/input"
 import { Label } from "~/components/ui/label"
+import { Progress } from "~/components/ui/progress"
+import { useIsMobile } from "~/hooks/use-mobile"
 import { 
   Users,
   TrendingUp,
@@ -122,8 +132,6 @@ interface LoaderData {
 }
 
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
-
-
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
 
@@ -292,6 +300,169 @@ const MetricCardSkeleton = () => (
   </Card>
 );
 
+// Interactive Number Card Component
+interface InteractiveNumberCardProps {
+  title: string;
+  value: number;
+  icon: React.ReactNode;
+  color: string;
+  breakdown: {
+    label: string;
+    value: number;
+    percentage?: number;
+    color?: string;
+  }[];
+  totalLabel?: string;
+  onViewDetails?: () => void;
+  suffix?: string;
+}
+
+function InteractiveNumberCard({
+  title,
+  value,
+  icon,
+  color,
+  breakdown,
+  totalLabel = "Total",
+  onViewDetails,
+  suffix = "",
+}: InteractiveNumberCardProps) {
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  const handleClick = () => {
+    setIsDialogOpen(true);
+    if (onViewDetails) onViewDetails();
+  };
+
+  const totalBreakdownValue = breakdown.reduce((sum, item) => sum + (item.value || 0), 0);
+
+  const formatValue = (val: number) => {
+    if (val === undefined || val === null) return "0";
+    return val.toLocaleString();
+  };
+
+  return (
+    <>
+      <Card
+        className="cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95"
+        onClick={handleClick}
+      >
+        <CardContent className="p-4 sm:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">{title}</p>
+              <p className="text-xl sm:text-2xl font-bold mt-1">
+                {formatValue(value)}{suffix}
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">Click for breakdown</p>
+            </div>
+            <div className={`p-2 sm:p-3 ${color} rounded-full`}>
+              {icon}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="sm:max-w-2xl max-w-[95vw] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <div className={`p-2 ${color} rounded-full`}>
+                {icon}
+              </div>
+              {title} Breakdown
+            </DialogTitle>
+            <DialogDescription>
+              Detailed breakdown of {title.toLowerCase()} - Total: {formatValue(value)}{suffix}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-4 space-y-6">
+            {/* Summary Card */}
+            <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg p-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Overall {title}</p>
+                  <p className="text-3xl font-bold">{formatValue(value)}{suffix}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-muted-foreground">{totalLabel}</p>
+                  <p className="text-sm font-medium">{formatValue(totalBreakdownValue)} accounted</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Breakdown List */}
+            <div className="space-y-3">
+              <h4 className="font-semibold text-lg">Breakdown</h4>
+              {breakdown.filter(item => item.value > 0 || item.label.includes("──")).map((item, index) => (
+                <div key={index} className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      {item.color && item.color !== "bg-transparent" && (
+                        <div className={`w-3 h-3 rounded-full ${item.color}`} />
+                      )}
+                      <span className="text-sm font-medium">{item.label}</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm font-semibold">{formatValue(item.value)}</span>
+                      {item.percentage !== undefined && (
+                        <span className="text-xs text-muted-foreground w-12 text-right">
+                          {item.percentage.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {item.percentage !== undefined && item.value > 0 && (
+                    <Progress value={item.percentage} className="h-2" />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Chart Visualization */}
+            <div className="pt-4 border-t">
+              <h4 className="font-semibold text-lg mb-3">Distribution</h4>
+              <div className="flex flex-wrap gap-2">
+                {breakdown.filter(item => item.value > 0 && !item.label.includes("──")).map((item, index) => {
+                  const percentage = item.percentage || (totalBreakdownValue > 0 ? (item.value / totalBreakdownValue) * 100 : 0);
+                  return (
+                    <div
+                      key={index}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50"
+                    >
+                      {item.color && item.color !== "bg-transparent" && (
+                        <div className={`w-2 h-2 rounded-full ${item.color}`} />
+                      )}
+                      <span className="text-xs">{item.label}</span>
+                      <span className="text-xs font-medium">{percentage.toFixed(1)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+                Close
+              </Button>
+              {onViewDetails && (
+                <Button onClick={() => {
+                  setIsDialogOpen(false);
+                  onViewDetails();
+                }}>
+                  View All {title}
+                </Button>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 // Empty table component
 const EmptyTable = () => (
   <div className="flex items-center justify-center h-32">
@@ -301,8 +472,8 @@ const EmptyTable = () => (
   </div>
 );
 
-// Action Dialog Component
-function ActionDialog({ 
+// Responsive Action Dialog Component (Dialog for desktop, Drawer for mobile)
+function ResponsiveActionDialog({ 
   open, 
   onOpenChange, 
   onConfirm, 
@@ -322,6 +493,7 @@ function ActionDialog({
   const [reason, setReason] = useState('');
   const [days, setDays] = useState('7');
   const [isLoading, setIsLoading] = useState(false);
+  const isMobile = useIsMobile();
 
   const handleConfirm = async () => {
     setIsLoading(true);
@@ -334,441 +506,128 @@ function ActionDialog({
         await onConfirm();
       }
       onOpenChange(false);
+      // Reset form
+      setReason('');
+      setDays('7');
     } finally {
       setIsLoading(false);
     }
   };
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        
-        <div className="space-y-4 py-4">
-          <div className="text-sm">
-            <span className="font-medium">Rider: </span>
-            {riderName}
-          </div>
-          
-          {(actionType === 'suspend' || actionType === 'reject') && (
-            <div className="space-y-2">
-              <Label htmlFor="reason">Reason</Label>
-              <Input
-                id="reason"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder={`Enter reason for ${actionType}`}
-                required={actionType === 'reject'}
-              />
-            </div>
-          )}
-          
-          {actionType === 'suspend' && (
-            <div className="space-y-2">
-              <Label htmlFor="days">Suspension Duration (days)</Label>
-              <Input
-                id="days"
-                type="number"
-                min="1"
-                value={days}
-                onChange={(e) => setDays(e.target.value)}
-              />
-            </div>
-          )}
+  const handleCancel = () => {
+    setReason('');
+    setDays('7');
+    onOpenChange(false);
+  };
+
+  const ActionForm = () => (
+    <>
+      <div className="space-y-4 py-4">
+        <div className="text-sm">
+          <span className="font-medium">Rider: </span>
+          <span className="text-foreground">{riderName || 'Unknown Rider'}</span>
         </div>
         
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleConfirm} 
-            disabled={isLoading || (actionType === 'reject' && !reason.trim())}
-            variant={actionType === 'suspend' || actionType === 'reject' ? 'destructive' : 'default'}
-          >
-            {isLoading ? (
-              <>
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                Processing...
-              </>
-            ) : (
-              'Confirm'
-            )}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
+        {(actionType === 'suspend' || actionType === 'reject') && (
+          <div className="space-y-2">
+            <Label htmlFor="reason">Reason {actionType === 'reject' && <span className="text-red-500">*</span>}</Label>
+            <Input
+              id="reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={`Enter reason for ${actionType}...`}
+              required={actionType === 'reject'}
+            />
+          </div>
+        )}
+        
+        {actionType === 'suspend' && (
+          <div className="space-y-2">
+            <Label htmlFor="days">Suspension Duration (days)</Label>
+            <Input
+              id="days"
+              type="number"
+              min="1"
+              max="365"
+              value={days}
+              onChange={(e) => setDays(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Rider will be automatically unsuspended after {days} days.
+            </p>
+          </div>
+        )}
 
-export default function Riders() {
-  const loaderData = useLoaderData<typeof loader>();
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const { user, riderMetrics, riders, dateRange } = loaderData;
-
-  // State management for date range
-  const [currentDateRange, setCurrentDateRange] = useState({
-    start: new Date(dateRange.start),
-    end: new Date(dateRange.end),
-    rangeType: dateRange.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
-  });
-
-  console.log('User from loader:', user);
-  console.log('User ID from loader:', user?.id);
-
-  const [isLoading, setIsLoading] = useState(false);
-  const [actionDialog, setActionDialog] = useState<{
-    open: boolean;
-    riderId: string;
-    riderName: string;
-    actionType: string;
-  }>({
-    open: false,
-    riderId: '',
-    riderName: '',
-    actionType: ''
-  });
-
-  // Handle date range change - update URL search params
-  const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
-    setIsLoading(true);
-    
-    // Update URL search params
-    const newSearchParams = new URLSearchParams(searchParams);
-    newSearchParams.set('start', range.start.toISOString());
-    newSearchParams.set('end', range.end.toISOString());
-    newSearchParams.set('rangeType', range.rangeType);
-    
-    // Navigate to update the URL, which will trigger a new loader call
-    navigate(`?${newSearchParams.toString()}`, { replace: true });
-    
-    setCurrentDateRange({
-      start: range.start,
-      end: range.end,
-      rangeType: range.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
-    });
-  };
-
-  // Handle rider actions
-  const handleRiderAction = async (riderId: string, actionType: string, reason?: string, days?: number) => {
-    setIsLoading(true);
-    try {
-      const payload: any = {
-        rider_id: riderId,
-        action: actionType,
-      };
-
-      if (reason) payload.reason = reason;
-      if (days) payload.suspension_days = days;
-
-      // Log the user object and user_id to verify
-      console.log('User object:', user);
-      console.log('User ID being sent:', user?.user_id);  // Changed from user?.id
-      console.log('Payload being sent:', payload);
-      console.log('Headers being sent:', {
-        "X-User-Id": user?.user_id  // Changed from user?.id
-      });
-
-      const response = await AxiosInstance.post('/admin-riders/update_rider_status/', payload, {
-        headers: {
-          "X-User-Id": user?.user_id  // Changed from user?.id
-        }
-      });
-
-      if (response.data.success) {
-        toast.success(response.data.message || `Rider ${actionType}ed successfully`);
-        // Refresh the page to show updated data
-        window.location.reload();
-      } else {
-        toast.error(response.data.error || `Failed to ${actionType} rider`);
-      }
-    } catch (error: any) {
-      console.error(`Error ${actionType}ing rider:`, error);
-      console.log('Error response:', error.response);
-      toast.error(error.response?.data?.error || `Failed to ${actionType} rider`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Reset loading state when loader data changes
-  useEffect(() => {
-    setIsLoading(false);
-  }, [loaderData]);
-
-  if (!loaderData) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div>Loading riders...</div>
+        {(actionType === 'suspend' || actionType === 'reject' || actionType === 'delete') && (
+          <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 mt-4">
+            <p className="text-sm font-medium text-destructive flex items-center gap-1">
+              <AlertCircle className="w-4 h-4" />
+              Warning: This action will affect the rider's account
+            </p>
+          </div>
+        )}
       </div>
+      
+      <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+        <Button variant="outline" onClick={handleCancel} disabled={isLoading}>
+          Cancel
+        </Button>
+        <Button 
+          onClick={handleConfirm} 
+          disabled={isLoading || (actionType === 'reject' && !reason.trim())}
+          variant={actionType === 'suspend' || actionType === 'reject' ? 'destructive' : 'default'}
+        >
+          {isLoading ? (
+            <>
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              Processing...
+            </>
+          ) : (
+            'Confirm'
+          )}
+        </Button>
+      </div>
+    </>
+  );
+
+  if (!isMobile) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>{description}</DialogDescription>
+          </DialogHeader>
+          <ActionForm />
+        </DialogContent>
+      </Dialog>
     );
   }
 
-  // Use only the fetched data
-  const safeRiders = riders || [];
-  const safeMetrics = riderMetrics || {
-    total_riders: 0,
-    pending_riders: 0,
-    approved_riders: 0,
-    active_riders: 0,
-    total_deliveries: 0,
-    completed_deliveries: 0,
-    success_rate: 0,
-    average_rating: 0,
-    total_earnings: 0,
-  };
-
-  const hasRiders = safeRiders.length > 0;
-
-  // Add computed status to riders for filtering
-  const ridersWithComputedStatus = safeRiders.map(rider => ({
-    ...rider,
-    rider_status: getRiderStatus(rider),
-    riderName: `${rider.rider.first_name} ${rider.rider.last_name}`.trim() || rider.rider.username
-  }));
-
-  const riderFilterConfig = {
-    rider_status: {
-      options: [...new Set(ridersWithComputedStatus.map(rider => rider.rider_status))].filter(Boolean),
-      placeholder: 'Status'
-    },
-    vehicle_type: {
-      options: [...new Set(ridersWithComputedStatus.map(rider => rider.vehicle_type))].filter(Boolean),
-      placeholder: 'Vehicle Type'
-    }
-  };
-
   return (
-    <UserProvider user={user}>
-      <SidebarLayout>
-        <div className="space-y-6">
-          {/* Header */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold">Riders Management</h1>
-            </div>            
-          </div>
-
-          {/* Date Range Filter */}
-          <DateRangeFilter 
-            onDateRangeChange={handleDateRangeChange}
-            isLoading={isLoading}
-          />
-
-          {/* Key Metrics */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {isLoading ? (
-              <>
-                <MetricCardSkeleton />
-                <MetricCardSkeleton />
-                <MetricCardSkeleton />
-                <MetricCardSkeleton />
-              </>
-            ) : (
-              <>
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Total Riders</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_riders}</p>
-                        <p className="text-xs text-muted-foreground mt-2">{safeMetrics.active_riders} active</p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-blue-100 rounded-full">
-                        <Users className="w-4 h-4 sm:w-6 sm:h-6 text-blue-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Total Deliveries</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.total_deliveries.toLocaleString()}</p>
-                        <p className="text-xs text-muted-foreground mt-2">{safeMetrics.completed_deliveries} completed</p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-green-100 rounded-full">
-                        <Package className="w-4 h-4 sm:w-6 sm:h-6 text-green-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Success Rate</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.success_rate}%</p>
-                        <p className="text-xs text-muted-foreground mt-2">Delivery completion</p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-purple-100 rounded-full">
-                        <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-purple-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Avg. Rating</p>
-                        <p className="text-xl sm:text-2xl font-bold mt-1">{safeMetrics.average_rating}</p>
-                        <p className="text-xs text-muted-foreground mt-2">From all deliveries</p>
-                      </div>
-                      <div className="p-2 sm:p-3 bg-yellow-100 rounded-full">
-                        <Star className="w-4 h-4 sm:w-6 sm:h-6 text-yellow-600" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </>
-            )}
-          </div>
-
-          {/* Status Overview Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {isLoading ? (
-              <>
-                <Card>
-                  <CardContent className="p-4">
-                    <Skeleton className="h-12 w-full" />
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <Skeleton className="h-12 w-full" />
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <Skeleton className="h-12 w-full" />
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <Skeleton className="h-12 w-full" />
-                  </CardContent>
-                </Card>
-              </>
-            ) : (
-              <>
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Approved</p>
-                        <p className="text-lg font-bold mt-1 text-green-600">{safeMetrics.approved_riders}</p>
-                      </div>
-                      <CheckCircle className="w-4 h-4 text-green-600" />
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Pending</p>
-                        <p className="text-lg font-bold mt-1 text-yellow-600">{safeMetrics.pending_riders}</p>
-                      </div>
-                      <Clock className="w-4 h-4 text-yellow-600" />
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Active</p>
-                        <p className="text-lg font-bold mt-1 text-blue-600">{safeMetrics.active_riders}</p>
-                      </div>
-                      <User className="w-4 h-4 text-blue-600" />
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Total Earnings</p>
-                        <p className="text-lg font-bold mt-1 text-purple-600">₱{safeMetrics.total_earnings.toLocaleString()}</p>
-                      </div>
-                      <TrendingUp className="w-4 h-4 text-purple-600" />
-                    </div>
-                  </CardContent>
-                </Card>
-              </>
-            )}
-          </div>
-
-          {/* Riders Table */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg sm:text-xl">All Riders</CardTitle>
-              <CardDescription>
-                {isLoading ? 'Loading riders...' : `Showing ${ridersWithComputedStatus.length} riders`}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-10 w-full" />
-                  {[1, 2, 3, 4, 5].map((i) => (
-                    <Skeleton key={i} className="h-12 w-full" />
-                  ))}
-                </div>
-              ) : hasRiders ? (
-                <div className="rounded-md">
-                  <DataTable 
-                    columns={columns({
-                      onAction: (riderId, riderName, actionType) => 
-                        setActionDialog({ open: true, riderId, riderName, actionType })
-                    })} 
-                    data={ridersWithComputedStatus}
-                    filterConfig={riderFilterConfig}
-                    searchConfig={{
-                      column: "riderName",
-                      placeholder: "Search by rider name..."
-                    }}
-                    isLoading={isLoading}
-                  />
-                </div>
-              ) : (
-                <EmptyTable />
-              )}
-            </CardContent>
-          </Card>
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      <DrawerContent>
+        <DrawerHeader>
+          <DrawerTitle>{title}</DrawerTitle>
+          <DrawerDescription>{description}</DrawerDescription>
+        </DrawerHeader>
+        <div className="px-4">
+          <ActionForm />
         </div>
-
-        {/* Action Dialog */}
-        <ActionDialog
-          open={actionDialog.open}
-          onOpenChange={(open) => setActionDialog(prev => ({ ...prev, open }))}
-          onConfirm={(reason, days) => handleRiderAction(
-            actionDialog.riderId, 
-            actionDialog.actionType, 
-            reason, 
-            days
-          )}
-          title={`${actionDialog.actionType?.charAt(0).toUpperCase() + actionDialog.actionType?.slice(1)} Rider`}
-          description={`Are you sure you want to ${actionDialog.actionType} this rider?`}
-          actionType={actionDialog.actionType}
-          riderName={actionDialog.riderName}
-        />
-      </SidebarLayout>
-    </UserProvider>
+        <DrawerFooter />
+      </DrawerContent>
+    </Drawer>
   );
 }
 
-// Columns factory function to pass onAction callback
-const columns = ({ onAction }: { onAction: (riderId: string, riderName: string, actionType: string) => void }): ColumnDef<any>[] => [
+// Columns factory function to pass onAction and navigate callbacks
+const columns = ({ 
+  onAction, 
+  navigate 
+}: { 
+  onAction: (riderId: string, riderName: string, actionType: string) => void;
+  navigate: (path: string) => void;
+}): ColumnDef<any>[] => [
   {
     accessorKey: "riderName",
     header: ({ column }) => {
@@ -818,7 +677,7 @@ const columns = ({ onAction }: { onAction: (riderId: string, riderName: string, 
           </div>
           <div className="flex items-center gap-1 mt-1">
             <Mail className="w-3 h-3 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground truncate">{rider.email}</span>
+            <span className="text-xs text-muted-foreground truncate max-w-[150px]">{rider.email}</span>
           </div>
         </div>
       );
@@ -956,8 +815,7 @@ const columns = ({ onAction }: { onAction: (riderId: string, riderName: string, 
           );
         } else if (status === 'suspended') {
           actions.push(
-            { label: 'Unsuspend', action: 'unsuspend', variant: 'default' as const },
-            { label: 'Reject', action: 'reject', variant: 'destructive' as const }
+            { label: 'Unsuspend', action: 'unsuspend', variant: 'default' as const }
           );
         } else if (status === 'rejected') {
           actions.push(
@@ -1000,3 +858,499 @@ const columns = ({ onAction }: { onAction: (riderId: string, riderName: string, 
     },
   },
 ];
+
+export default function Riders() {
+  const loaderData = useLoaderData<typeof loader>();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { user, riderMetrics, riders, dateRange } = loaderData;
+
+  // State management for date range
+  const [currentDateRange, setCurrentDateRange] = useState({
+    start: new Date(dateRange.start),
+    end: new Date(dateRange.end),
+    rangeType: dateRange.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+  });
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [actionDialog, setActionDialog] = useState<{
+    open: boolean;
+    riderId: string;
+    riderName: string;
+    actionType: string;
+  }>({
+    open: false,
+    riderId: '',
+    riderName: '',
+    actionType: ''
+  });
+
+  // Handle date range change - update URL search params
+  const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
+    setIsLoading(true);
+    
+    // Update URL search params
+    const newSearchParams = new URLSearchParams(searchParams);
+    newSearchParams.set('start', range.start.toISOString());
+    newSearchParams.set('end', range.end.toISOString());
+    newSearchParams.set('rangeType', range.rangeType);
+    
+    // Navigate to update the URL, which will trigger a new loader call
+    navigate(`?${newSearchParams.toString()}`, { replace: true });
+    
+    setCurrentDateRange({
+      start: range.start,
+      end: range.end,
+      rangeType: range.rangeType as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+    });
+  };
+
+  // Handle rider actions
+  const handleRiderAction = async (riderId: string, actionType: string, reason?: string, days?: number) => {
+    setIsLoading(true);
+    try {
+      const payload: any = {
+        rider_id: riderId,
+        action: actionType,
+      };
+
+      if (reason) payload.reason = reason;
+      if (days) payload.suspension_days = days;
+
+      console.log('Sending payload:', payload);
+      console.log('User ID:', user?.user_id);
+
+      const response = await AxiosInstance.post('/admin-riders/update_rider_status/', payload, {
+        headers: {
+          "X-User-Id": user?.user_id
+        }
+      });
+
+      if (response.data.success) {
+        toast.success(response.data.message || `Rider ${actionType}ed successfully`);
+        window.location.reload();
+      } else {
+        toast.error(response.data.error || `Failed to ${actionType} rider`);
+      }
+    } catch (error: any) {
+      console.error(`Error ${actionType}ing rider:`, error);
+      toast.error(error.response?.data?.error || error.response?.data?.message || `Failed to ${actionType} rider`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Reset loading state when loader data changes
+  useEffect(() => {
+    setIsLoading(false);
+  }, [loaderData]);
+
+  if (!loaderData) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div>Loading riders...</div>
+      </div>
+    );
+  }
+
+  // Use only the fetched data
+  const safeRiders = riders || [];
+  const safeMetrics = riderMetrics || {
+    total_riders: 0,
+    pending_riders: 0,
+    approved_riders: 0,
+    active_riders: 0,
+    total_deliveries: 0,
+    completed_deliveries: 0,
+    success_rate: 0,
+    average_rating: 0,
+    total_earnings: 0,
+  };
+
+  const hasRiders = safeRiders.length > 0;
+
+  // Add computed status to riders for filtering
+  const ridersWithComputedStatus = safeRiders.map(rider => ({
+    ...rider,
+    rider_status: getRiderStatus(rider),
+    riderName: `${rider.rider.first_name} ${rider.rider.last_name}`.trim() || rider.rider.username
+  }));
+
+  // Calculate breakdowns for metrics
+  const calculateTotalRidersBreakdown = () => {
+    const statusBreakdown: Record<string, number> = {
+      'Approved': 0,
+      'Pending': 0,
+      'Rejected': 0,
+      'Suspended': 0,
+    };
+
+    ridersWithComputedStatus.forEach((rider) => {
+      const status = rider.rider_status;
+      if (status === 'approved') statusBreakdown['Approved']++;
+      else if (status === 'pending') statusBreakdown['Pending']++;
+      else if (status === 'rejected') statusBreakdown['Rejected']++;
+      else if (status === 'suspended') statusBreakdown['Suspended']++;
+    });
+
+    const totalRiders = safeMetrics.total_riders || 0;
+    
+    return {
+      byStatus: Object.entries(statusBreakdown).map(([label, value]) => ({
+        label,
+        value,
+        percentage: totalRiders > 0 ? (value / totalRiders) * 100 : 0,
+        color: 
+          label === "Approved" ? "bg-green-500" :
+          label === "Pending" ? "bg-yellow-500" :
+          label === "Rejected" ? "bg-red-500" :
+          label === "Suspended" ? "bg-gray-500" : "bg-gray-500",
+      })),
+    };
+  };
+
+  const calculateVehicleBreakdown = () => {
+    const vehicleTypes: Record<string, number> = {};
+    
+    ridersWithComputedStatus.forEach((rider) => {
+      const vehicle = rider.vehicle_type || 'Unknown';
+      vehicleTypes[vehicle] = (vehicleTypes[vehicle] || 0) + 1;
+    });
+
+    const totalRiders = safeRiders.length || 1;
+    
+    return {
+      byVehicle: Object.entries(vehicleTypes).map(([label, value]) => ({
+        label: label.charAt(0).toUpperCase() + label.slice(1),
+        value,
+        percentage: (value / totalRiders) * 100,
+        color: "bg-blue-500",
+      })),
+    };
+  };
+
+  const calculateRatingBreakdown = () => {
+    const ratingRanges = {
+      "4.5-5★": 0,
+      "4-4.4★": 0,
+      "3-3.9★": 0,
+      "2-2.9★": 0,
+      "1-1.9★": 0,
+      "No Rating": 0,
+    };
+
+    ridersWithComputedStatus.forEach((rider) => {
+      const rating = rider.average_rating || 0;
+      if (rating >= 4.5) ratingRanges["4.5-5★"]++;
+      else if (rating >= 4) ratingRanges["4-4.4★"]++;
+      else if (rating >= 3) ratingRanges["3-3.9★"]++;
+      else if (rating >= 2) ratingRanges["2-2.9★"]++;
+      else if (rating >= 1) ratingRanges["1-1.9★"]++;
+      else ratingRanges["No Rating"]++;
+    });
+
+    const totalRiders = safeRiders.length || 1;
+    
+    return {
+      byRating: Object.entries(ratingRanges).map(([label, value]) => ({
+        label,
+        value,
+        percentage: (value / totalRiders) * 100,
+        color:
+          label === "4.5-5★" ? "bg-yellow-500" :
+          label === "4-4.4★" ? "bg-lime-500" :
+          label === "3-3.9★" ? "bg-blue-500" :
+          label === "2-2.9★" ? "bg-orange-500" :
+          label === "1-1.9★" ? "bg-red-500" : "bg-gray-500",
+      })),
+    };
+  };
+
+  const calculateDeliveryBreakdown = () => {
+    const deliveryRanges = {
+      "0-50": 0,
+      "51-100": 0,
+      "101-200": 0,
+      "201-500": 0,
+      "500+": 0,
+    };
+
+    ridersWithComputedStatus.forEach((rider) => {
+      const deliveries = rider.total_deliveries || 0;
+      if (deliveries <= 50) deliveryRanges["0-50"]++;
+      else if (deliveries <= 100) deliveryRanges["51-100"]++;
+      else if (deliveries <= 200) deliveryRanges["101-200"]++;
+      else if (deliveries <= 500) deliveryRanges["201-500"]++;
+      else deliveryRanges["500+"]++;
+    });
+
+    const totalRiders = safeRiders.length || 1;
+    
+    return {
+      byRange: Object.entries(deliveryRanges).map(([label, value]) => ({
+        label: `${label} deliveries`,
+        value,
+        percentage: (value / totalRiders) * 100,
+        color:
+          label === "500+" ? "bg-purple-500" :
+          label === "201-500" ? "bg-blue-500" :
+          label === "101-200" ? "bg-green-500" :
+          label === "51-100" ? "bg-yellow-500" : "bg-gray-500",
+      })),
+    };
+  };
+
+  const totalRidersBreakdown = calculateTotalRidersBreakdown();
+  const vehicleBreakdown = calculateVehicleBreakdown();
+  const ratingBreakdown = calculateRatingBreakdown();
+  const deliveryBreakdown = calculateDeliveryBreakdown();
+
+  const riderFilterConfig = {
+    rider_status: {
+      options: [...new Set(ridersWithComputedStatus.map(rider => rider.rider_status))].filter(Boolean),
+      placeholder: 'Status'
+    },
+    vehicle_type: {
+      options: [...new Set(ridersWithComputedStatus.map(rider => rider.vehicle_type))].filter(Boolean),
+      placeholder: 'Vehicle Type'
+    }
+  };
+
+  return (
+    <UserProvider user={user}>
+      <SidebarLayout>
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold">Riders Management</h1>
+            </div>            
+          </div>
+
+          {/* Date Range Filter */}
+          <DateRangeFilter 
+            onDateRangeChange={handleDateRangeChange}
+            isLoading={isLoading}
+          />
+
+          {/* Interactive Number Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {isLoading ? (
+              <>
+                <MetricCardSkeleton />
+                <MetricCardSkeleton />
+                <MetricCardSkeleton />
+                <MetricCardSkeleton />
+              </>
+            ) : (
+              <>
+                <InteractiveNumberCard
+                  title="Total Riders"
+                  value={safeMetrics.total_riders || 0}
+                  icon={<Users className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-blue-600"
+                  breakdown={[
+                    { label: "By Status", value: safeMetrics.total_riders || 0, color: "bg-blue-500" },
+                    ...totalRidersBreakdown.byStatus,
+                  ]}
+                  totalLabel="Total Riders"
+                />
+
+                <InteractiveNumberCard
+                  title="Total Deliveries"
+                  value={safeMetrics.total_deliveries || 0}
+                  icon={<Package className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-green-600"
+                  breakdown={[
+                    { label: "By Rider Performance", value: safeRiders.length || 0, color: "bg-green-500" },
+                    ...deliveryBreakdown.byRange,
+                  ]}
+                  totalLabel="Active Riders"
+                />
+
+                <InteractiveNumberCard
+                  title="Success Rate"
+                  value={safeMetrics.success_rate || 0}
+                  icon={<TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-purple-600"
+                  suffix="%"
+                  breakdown={[
+                    { label: "Success Rate Breakdown", value: 100, color: "bg-purple-500" },
+                    { label: "Completed Deliveries", value: safeMetrics.completed_deliveries || 0, percentage: safeMetrics.success_rate || 0, color: "bg-green-500" },
+                    { label: "Failed Deliveries", value: (safeMetrics.total_deliveries || 0) - (safeMetrics.completed_deliveries || 0), percentage: 100 - (safeMetrics.success_rate || 0), color: "bg-red-500" },
+                  ]}
+                  totalLabel="Total Deliveries"
+                />
+
+                <InteractiveNumberCard
+                  title="Avg Rating"
+                  value={safeMetrics.average_rating > 0 ? parseFloat(safeMetrics.average_rating.toFixed(1)) : 0}
+                  icon={<Star className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
+                  color="bg-yellow-500"
+                  suffix="★"
+                  breakdown={[
+                    { label: "Rating Distribution", value: safeRiders.length || 0, color: "bg-yellow-500" },
+                    ...ratingBreakdown.byRating,
+                  ]}
+                  totalLabel="Total Riders"
+                />
+              </>
+            )}
+          </div>
+
+          {/* Status Overview Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {isLoading ? (
+              <>
+                <Card>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-12 w-full" />
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-12 w-full" />
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-12 w-full" />
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <Skeleton className="h-12 w-full" />
+                  </CardContent>
+                </Card>
+              </>
+            ) : (
+              <>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Approved</p>
+                        <p className="text-lg font-bold mt-1 text-green-600">{safeMetrics.approved_riders}</p>
+                      </div>
+                      <CheckCircle className="w-4 h-4 text-green-600" />
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Pending</p>
+                        <p className="text-lg font-bold mt-1 text-yellow-600">{safeMetrics.pending_riders}</p>
+                      </div>
+                      <Clock className="w-4 h-4 text-yellow-600" />
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Active</p>
+                        <p className="text-lg font-bold mt-1 text-blue-600">{safeMetrics.active_riders}</p>
+                      </div>
+                      <User className="w-4 h-4 text-blue-600" />
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Total Earnings</p>
+                        <p className="text-lg font-bold mt-1 text-purple-600">₱{safeMetrics.total_earnings.toLocaleString()}</p>
+                      </div>
+                      <TrendingUp className="w-4 h-4 text-purple-600" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            )}
+          </div>
+
+          {/* Vehicle Type Distribution */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg sm:text-xl">Vehicle Type Distribution</CardTitle>
+              <CardDescription>
+                Breakdown of riders by vehicle type
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-4">
+                {vehicleBreakdown.byVehicle.map((item, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <div className={`w-3 h-3 rounded-full ${item.color}`} />
+                    <span className="text-sm">{item.label}</span>
+                    <span className="text-sm font-semibold">{item.value}</span>
+                    <span className="text-xs text-muted-foreground">({item.percentage.toFixed(1)}%)</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Riders Table */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg sm:text-xl">All Riders</CardTitle>
+              <CardDescription>
+                {isLoading ? 'Loading riders...' : `Showing ${ridersWithComputedStatus.length} riders`}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-10 w-full" />
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
+              ) : hasRiders ? (
+                <div className="rounded-md">
+                  <DataTable 
+                    columns={columns({
+                      onAction: (riderId, riderName, actionType) => 
+                        setActionDialog({ open: true, riderId, riderName, actionType }),
+                      navigate: navigate
+                    })} 
+                    data={ridersWithComputedStatus}
+                    filterConfig={riderFilterConfig}
+                    searchConfig={{
+                      column: "riderName",
+                      placeholder: "Search by rider name..."
+                    }}
+                    isLoading={isLoading}
+                  />
+                </div>
+              ) : (
+                <EmptyTable />
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Responsive Action Dialog (Desktop) / Drawer (Mobile) */}
+        <ResponsiveActionDialog
+          open={actionDialog.open}
+          onOpenChange={(open) => setActionDialog(prev => ({ ...prev, open }))}
+          onConfirm={(reason, days) => handleRiderAction(
+            actionDialog.riderId, 
+            actionDialog.actionType, 
+            reason, 
+            days
+          )}
+          title={`${actionDialog.actionType?.charAt(0).toUpperCase() + actionDialog.actionType?.slice(1)} Rider`}
+          description={`Are you sure you want to ${actionDialog.actionType} this rider?`}
+          actionType={actionDialog.actionType}
+          riderName={actionDialog.riderName}
+        />
+      </SidebarLayout>
+    </UserProvider>
+  );
+}
