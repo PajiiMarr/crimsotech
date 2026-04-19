@@ -402,49 +402,103 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
       )}
       
       {/* Shipped Info Section - Show when status is shipped */}
-      {isReturnOrReplace && rrStatus === 'shipped' && (
-        <View style={styles.shippedInfo}>
-          <Text style={styles.shippedTitle}>Item has been shipped</Text>
-          <Text style={styles.shippedSubtitle}>Waiting for the seller to receive the item.</Text>
-          <View style={styles.shippingDetails}>
-            {rr.tracking_number && (
-              <View style={styles.shippingDetail}>
-                <Text style={styles.shippingLabel}>Tracking Number:</Text>
-                <Text style={styles.shippingValue}>{rr.tracking_number}</Text>
-              </View>
-            )}
-            {rr.logistic_service && (
-              <View style={styles.shippingDetail}>
-                <Text style={styles.shippingLabel}>Shipping Service:</Text>
-                <Text style={styles.shippingValue}>{rr.logistic_service}</Text>
-              </View>
-            )}
-            {rr.shipped_at && (
-              <View style={styles.shippingDetail}>
-                <Text style={styles.shippingLabel}>Shipped At:</Text>
-                <Text style={styles.shippingValue}>{formatDate(rr.shipped_at)}</Text>
-              </View>
-            )}
+{isReturnOrReplace && rrStatus === 'shipped' && (
+  // Check if this is a walk-in return
+  rr.logistic_service === 'Walk-in' ? (
+    // For walk-in returns, show return deadline instead of shipping info
+    // For walk-in returns, show return deadline and shop address
+<View style={[styles.shippedInfo, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}>
+  <Text style={[styles.shippedTitle, { color: '#92400E' }]}>Return the Item</Text>
+  <Text style={[styles.shippedSubtitle, { color: '#B45309' }]}>
+    Please return the item to the store before the deadline:
+  </Text>
+  
+  {/* Return Deadline */}
+  <View style={styles.shippingDetail}>
+    <Text style={[styles.shippingLabel, { color: '#92400E' }]}>Return Deadline:</Text>
+    <Text style={[styles.shippingValue, { color: '#B45309', fontWeight: '600' }]}>
+      {rr.return_deadline ? formatDate(rr.return_deadline) : (refund.return_request?.return_deadline ? formatDate(refund.return_request.return_deadline) : '7 days from approval')}
+    </Text>
+  </View>
+  
+  {/* Shop Return Address */}
+  {returnAddress && (
+    <View style={styles.returnAddressContainer}>
+      <View style={styles.returnAddressHeaderInline}>
+        <MapPin size={14} color="#92400E" />
+        <Text style={[styles.returnAddressTitleInline, { color: '#92400E' }]}>Store Address:</Text>
+      </View>
+      <Text style={[styles.returnAddressTextInline, { color: '#B45309' }]}>
+        {returnAddress.recipient_name && `${returnAddress.recipient_name}, `}
+        {returnAddress.contact_number && `${returnAddress.contact_number}, `}
+        {returnAddress.street && `${returnAddress.street}, `}
+        {returnAddress.barangay && `${returnAddress.barangay}, `}
+        {returnAddress.city && `${returnAddress.city}, `}
+        {returnAddress.province && `${returnAddress.province}`}
+      </Text>
+    </View>
+  )}
+  
+  {rr.notes && (
+    <View style={styles.shippingDetail}>
+      <Text style={[styles.shippingLabel, { color: '#92400E' }]}>Instructions:</Text>
+      <Text style={[styles.shippingValue, { color: '#B45309' }]}>{rr.notes}</Text>
+    </View>
+  )}
+  
+  {shippingProofUrls.length > 0 && (
+    <View style={{ marginTop: 12 }}>
+      <Text style={{ fontSize: 14, color: '#92400E', marginBottom: 8, fontWeight: '600' }}>Return Proofs</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+        {shippingProofUrls.map((u, idx) => (
+          <TouchableOpacity key={`${u}-${idx}`} onPress={() => onOpenProofViewer && onOpenProofViewer(shippingProofUrls, idx)} style={{ marginRight: 8 }}>
+            <Image source={{ uri: u }} style={{ width: 90, height: 90, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  )}
+</View>
+  ) : (
+    // Regular courier shipping info
+    <View style={styles.shippedInfo}>
+      <Text style={styles.shippedTitle}>Item has been shipped</Text>
+      <Text style={styles.shippedSubtitle}>Waiting for the seller to receive the item.</Text>
+      <View style={styles.shippingDetails}>
+        {rr.tracking_number && (
+          <View style={styles.shippingDetail}>
+            <Text style={styles.shippingLabel}>Tracking Number:</Text>
+            <Text style={styles.shippingValue}>{rr.tracking_number}</Text>
           </View>
-          {shippingProofUrls.length > 0 && (
-            <View style={{ marginTop: 12 }}>
-              <Text style={{ fontSize: 14, color: '#374151', marginBottom: 8, fontWeight: '600' }}>Shipping Proofs</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
-                {shippingProofUrls.map((u, idx) => (
-                  <TouchableOpacity key={`${u}-${idx}`} onPress={() => onOpenProofViewer && onOpenProofViewer(shippingProofUrls, idx)} style={{ marginRight: 8 }}>
-                    <Image source={{ uri: u }} style={{ width: 90, height: 90, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          )}
-          {onOpenTrackingDialog && !isReturnAcceptedWaitingModeration && (
-            <TouchableOpacity style={styles.updateShippingBtn} onPress={onOpenTrackingDialog}>
-              <Text style={styles.updateShippingText}>Update shipping info</Text>
-            </TouchableOpacity>
-          )}
+        )}
+        {rr.logistic_service && (
+          <View style={styles.shippingDetail}>
+            <Text style={styles.shippingLabel}>Shipping Service:</Text>
+            <Text style={styles.shippingValue}>{rr.logistic_service}</Text>
+          </View>
+        )}
+        {rr.shipped_at && (
+          <View style={styles.shippingDetail}>
+            <Text style={styles.shippingLabel}>Shipped At:</Text>
+            <Text style={styles.shippingValue}>{formatDate(rr.shipped_at)}</Text>
+          </View>
+        )}
+      </View>
+      {shippingProofUrls.length > 0 && (
+        <View style={{ marginTop: 12 }}>
+          <Text style={{ fontSize: 14, color: '#374151', marginBottom: 8, fontWeight: '600' }}>Shipping Proofs</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+            {shippingProofUrls.map((u, idx) => (
+              <TouchableOpacity key={`${u}-${idx}`} onPress={() => onOpenProofViewer && onOpenProofViewer(shippingProofUrls, idx)} style={{ marginRight: 8 }}>
+                <Image source={{ uri: u }} style={{ width: 90, height: 90, borderRadius: 8, backgroundColor: '#F3F4F6' }} />
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
       )}
+    </View>
+  )
+)}
     </View>
   );
 };
@@ -1649,7 +1703,7 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
     if (isWalkIn && statusUpper === 'APPROVED' && rrStatus !== 'received' && rrStatus !== 'inspected') {
       return (
         <View style={styles.stickyButtonContainer}>
-          <TouchableOpacity 
+          {/* <TouchableOpacity 
             style={[styles.primaryButton, { backgroundColor: '#10B981', marginBottom: 0 }]} 
             onPress={() => setShowReturnMediaModal(true)}  // ← Change this line
             disabled={actionLoading}
@@ -1662,7 +1716,7 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
                 <Text style={styles.primaryButtonText}>Mark as Returned</Text>
               </>
             )}
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </View>
       );
     }
@@ -2518,5 +2572,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6B7280',
     marginBottom: 16,
+  },
+  returnAddressContainer: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#FDE68A',
+  },
+  returnAddressHeaderInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  returnAddressTitleInline: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  returnAddressTextInline: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginLeft: 20,
   },
 });
