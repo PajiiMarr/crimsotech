@@ -22703,10 +22703,44 @@ class SellerOrderList(viewsets.ViewSet):
                 message = "Order picked up"
                 
             elif action_type == 'cancel':
-                order.status = 'cancelled'
-                message = "Order cancelled"
-            else:
-                return Response({"success": False, "message": f"Invalid action_type: {action_type}"}, status=status.HTTP_400_BAD_REQUEST)
+                # Check if this is a cancel shipment (rider_assigned status) or cancel order
+                latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
+                is_rider_assigned = order.status == 'rider_assigned' or (latest_delivery and latest_delivery.status in ['pending', 'pending_offer'])
+                
+                if is_rider_assigned:
+                    # Cancel Shipment - cancel the delivery, revert order to processing
+                    order.status = 'processing'
+                    
+                    # Cancel all pending deliveries
+                    deliveries = Delivery.objects.filter(order=order)
+                    for delivery in deliveries:
+                        if delivery.status in ['pending', 'pending_offer', 'accepted']:
+                            delivery.status = 'cancelled'
+                            delivery.save()
+                            # Update rider availability if they had no other active deliveries
+                            if delivery.rider:
+                                other_active = Delivery.objects.filter(
+                                    rider=delivery.rider,
+                                    status__in=['pending', 'pending_offer', 'accepted']
+                                ).exclude(id=delivery.id).exists()
+                                if not other_active:
+                                    delivery.rider.availability_status = 'available'
+                                    delivery.rider.is_accepting_deliveries = True
+                                    delivery.rider.save()
+                    
+                    message = "Shipment cancelled. Order reverted to processing."
+                else:
+                    # Cancel Order - cancel the entire order
+                    order.status = 'cancelled'
+                    
+                    # Cancel any active deliveries
+                    deliveries = Delivery.objects.filter(order=order)
+                    for delivery in deliveries:
+                        if delivery.status in ['pending', 'pending_offer', 'accepted']:
+                            delivery.status = 'cancelled'
+                            delivery.save()
+                    
+                    message = "Order cancelled"
 
             order.updated_at = timezone.now()
             order.save()
@@ -25709,29 +25743,40 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
 class PurchasesBuyer(viewsets.ViewSet):
     # Add this helper method at the beginning of the class
     def _auto_complete_if_needed(self, order):
-        """Auto-complete order if delivered for 7+ days"""
+        """Auto-complete order if picked_up or delivered for 24+ hours"""
         from django.utils import timezone
         from datetime import timedelta
         
-        # Only process delivered orders that aren't completed
-        if order.status != 'delivered' or order.completed_at:
+        # Only process orders that are picked_up or delivered and aren't completed yet
+        if order.status not in ['picked_up', 'delivered'] or order.completed_at:
             return False
         
-        # Get delivery record
-        delivery = Delivery.objects.filter(order=order).first()
-        if not delivery or not delivery.delivered_at:
+        # Get the relevant date based on status
+        if order.status == 'picked_up' and order.pickup_date:
+            event_date = order.pickup_date
+        elif order.status == 'delivered':
+            # Try to get delivery date from Delivery model
+            delivery = Delivery.objects.filter(order=order).first()
+            if delivery and delivery.delivered_at:
+                event_date = delivery.delivered_at
+            elif delivery and delivery.delivery_date:
+                event_date = delivery.delivery_date
+            else:
+                event_date = order.updated_at
+        else:
             return False
         
-        # Check if 7 days have passed
-        seven_days_ago = timezone.now() - timedelta(days=7)
-        if delivery.delivered_at <= seven_days_ago:
+        # Check if 24 hours have passed
+        twenty_four_hours_ago = timezone.now() - timedelta(hours=24)
+        if event_date and event_date <= twenty_four_hours_ago:
             order.status = 'completed'
             order.completed_at = timezone.now()
-            order.save(update_fields=['status', 'completed_at'])
+            # Set refund_expire_date to 3 days after completed_at
+            order.refund_expire_date = order.completed_at + timedelta(days=3)
+            order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
             return True
         
         return False
-
     
     @action(detail=False, methods=['get'], url_path='user-purchases')
     def user_purchases(self, request):
@@ -26595,6 +26640,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'status_color': self._get_status_color(order.status),
                     'created_at': order.created_at.isoformat(),
                     'updated_at': order.updated_at.isoformat() if order.updated_at else None,
+                    'completed_at': order.completed_at.isoformat() if order.completed_at else None,
+                    'refund_expire_date': order.refund_expire_date.isoformat() if order.refund_expire_date else None,   
                     'payment_method': order.payment_method,
                     'payment_status': payment.status if payment else None,
                     'delivery_status': delivery.status if delivery else None,
@@ -26782,7 +26829,11 @@ class PurchasesBuyer(viewsets.ViewSet):
             # Update order status to completed
             order.status = 'completed'
             order.completed_at = timezone.now()
-            order.save(update_fields=['status', 'completed_at'])
+            
+            # Set refund_expire_date to 3 days after completed_at
+            order.refund_expire_date = order.completed_at + timedelta(days=3)
+            
+            order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
 
             # Update delivery status to delivered if it exists
             delivery = Delivery.objects.filter(order=order).first()
@@ -42701,7 +42752,7 @@ class CustomerOrderList(viewsets.ViewSet):
                 message = "Order marked as delivered"
                 
             elif action_type == 'cancel':
-                order.status = 'cancelled'
+                order.status = 'processing'
                 message = "Order cancelled"
                 
             else:

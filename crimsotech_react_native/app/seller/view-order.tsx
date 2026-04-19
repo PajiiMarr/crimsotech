@@ -324,29 +324,29 @@ const fetchAvailableActions = async () => {
   }
 };
 
-  const handleUpdateStatus = async (actionType: string) => {
-    setProcessing(true);
-    try {
-      const response = await AxiosInstance.patch(
-        `/seller-order-list/${orderId}/update_status/`,
-        { action_type: actionType },
-        { params: { shop_id: shopId } },
-      );
-      if (response.data.success) {
-        Alert.alert('Success', response.data.message || 'Order status updated successfully');
-        await fetchOrderDetails();
-        await fetchAvailableActions();
-        setShowConfirmation(false);
-      } else {
-        Alert.alert('Error', response.data.message || 'Failed to update order');
-      }
-    } catch (error: any) {
-      console.error('Error updating order:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to update order');
-    } finally {
-      setProcessing(false);
+const handleUpdateStatus = async (actionType: string) => {
+  setProcessing(true);
+  try {
+    const response = await AxiosInstance.patch(
+      `/seller-order-list/${orderId}/update_status/`,
+      { action_type: actionType },
+      { params: { shop_id: shopId } },
+    );
+    if (response.data.success) {
+      // Remove the Alert.alert - just close modal and refresh
+      await fetchOrderDetails();
+      await fetchAvailableActions();
+      setShowConfirmation(false);
+    } else {
+      Alert.alert('Error', response.data.message || 'Failed to update order');
     }
-  };
+  } catch (error: any) {
+    console.error('Error updating order:', error);
+    Alert.alert('Error', error.response?.data?.message || 'Failed to update order');
+  } finally {
+    setProcessing(false);
+  }
+};
 
   const showActionConfirmation = (actionType: string, title: string, description: string) => {
     setSelectedAction({ type: actionType, title, description });
@@ -841,18 +841,28 @@ const renderActionButtons = () => {
         )} */}
 
         {/* Cancel Order Button */}
-        {showCancel && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.cancelButton]}
-            onPress={() => showActionConfirmation(
-              'cancel', 'Cancel Order',
-              'Are you sure you want to cancel this order? This cannot be undone.'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Cancel Order</Text>
-          </TouchableOpacity>
-        )}
+        {/* Cancel Order Button */}
+{showCancel && (
+  <TouchableOpacity
+    style={[styles.actionButton, styles.cancelButton]}
+    onPress={() => {
+      // Determine if this is a shipment cancellation or order cancellation
+      const isShipmentCancel = order?.status === 'rider_assigned' || 
+                               order?.status === 'waiting_for_rider' ||
+                               (order?.delivery_info?.status === 'pending');
+      
+      const title = isShipmentCancel ? 'Cancel Shipment' : 'Cancel Order';
+      const description = isShipmentCancel 
+        ? 'Are you sure you want to cancel this shipment? The order will be reverted to processing.'
+        : 'Are you sure you want to cancel this order? This cannot be undone.';
+      
+      showActionConfirmation('cancel', title, description);
+    }}
+    disabled={processing}
+  >
+    <Text style={styles.actionButtonText}>Cancel Order</Text>
+  </TouchableOpacity>
+)}
       </View>
     </View>
   );

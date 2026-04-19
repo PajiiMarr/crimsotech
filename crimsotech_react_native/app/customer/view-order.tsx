@@ -102,6 +102,7 @@ interface OrderData {
     created_at: string;
     updated_at: string | null;
     completed_at: string | null;
+    refund_expire_date?: string | null; 
     payment_method: string;
     payment_status: string | null;
     delivery_status: string | null;
@@ -1097,31 +1098,52 @@ const CenterToast = ({
           );
         })()}
 
-        {/* Completed Information */}
-        {orderStatusLower === 'completed' && (
-          <View style={styles.infoCard}>
-            <View style={styles.cardHeader}>
-              <MaterialIcons name="check-circle" size={20} color="#10B981" />
-              <Text style={styles.cardTitle}>Order Completed</Text>
+{/* Completed Information */}
+{orderStatusLower === 'completed' && (
+  <View style={styles.infoCard}>
+    <View style={styles.cardHeader}>
+      <MaterialIcons name="check-circle" size={20} color="#10B981" />
+      <Text style={styles.cardTitle}>Order Completed</Text>
+    </View>
+    <View style={styles.cardContent}>
+      <View style={styles.completedRow}>
+        <Ionicons name="calendar-outline" size={16} color="#6B7280" />
+        <Text style={styles.completedLabel}>Completed on:</Text>
+        <Text style={styles.completedValue}>
+          {order.completed_at ? formatDateTime(order.completed_at) : formatDateTime(order.updated_at)}
+        </Text>
+      </View>
+      
+      {/* Refund Expiration Date */}
+      {order.refund_expire_date !== null && order.refund_expire_date !== undefined && order.refund_expire_date !== '' && (
+        (() => {
+          const refundDate = order.refund_expire_date!;
+          const isExpired = new Date(refundDate) < new Date();
+          return (
+            <View style={styles.refundExpireRow}>
+              <MaterialIcons name="receipt" size={16} color="#6B7280" />
+              <Text style={styles.refundExpireLabel}>Refundable until:</Text>
+              <Text style={[
+                styles.refundExpireValue,
+                isExpired && styles.refundExpiredValue
+              ]}>
+                {formatDateTime(refundDate)}
+                {isExpired && " (Expired)"}
+              </Text>
             </View>
-            <View style={styles.cardContent}>
-              <View style={styles.completedRow}>
-                <Ionicons name="calendar-outline" size={16} color="#6B7280" />
-                <Text style={styles.completedLabel}>Completed on:</Text>
-                <Text style={styles.completedValue}>
-                  {order.completed_at ? formatDateTime(order.completed_at) : formatDateTime(order.updated_at)}
-                </Text>
-              </View>
-              <View style={styles.completedMessageContainer}>
-                <Ionicons name="happy-outline" size={20} color="#10B981" />
-                <Text style={styles.completedMessage}>
-                  Your order has been successfully completed! Thank you for shopping with us.
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
-
+          );
+        })()
+      )}
+      
+      <View style={styles.completedMessageContainer}>
+        <Ionicons name="happy-outline" size={20} color="#10B981" />
+        <Text style={styles.completedMessage}>
+          Your order has been successfully completed! Thank you for shopping with us.
+        </Text>
+      </View>
+    </View>
+  </View>
+)}
         {/* Order Timeline */}
         {timeline.length > 0 && (
           <View style={styles.infoCard}>
@@ -1311,14 +1333,38 @@ const CenterToast = ({
               </TouchableOpacity>
             )}
 
-            {orderStatusLower === 'completed' && (
-              <TouchableOpacity
-                style={styles.requestRefundButton}
-                onPress={() => router.push(`/customer/request-refund?orderId=${order.id}`)}
-              >
-                <Text style={styles.requestRefundButtonText}>Request Refund</Text>
-              </TouchableOpacity>
-            )}
+{orderStatusLower === 'completed' && (
+  (() => {
+    // Check if refund_expire_date exists and is expired
+    const refundDate = order.refund_expire_date;
+    const hasRefundDate = refundDate !== null && refundDate !== undefined && refundDate !== '';
+    const isRefundExpired = hasRefundDate && new Date(refundDate) < new Date();
+    
+    return (
+      <TouchableOpacity
+        style={[
+          styles.requestRefundButton,
+          isRefundExpired && styles.requestRefundButtonDisabled
+        ]}
+        onPress={() => {
+          if (isRefundExpired) {
+            Alert.alert('Refund Period Expired', 'The refund period for this order has expired. You can no longer request a refund for this order.');
+          } else {
+            router.push(`/customer/request-refund?orderId=${order.id}`);
+          }
+        }}
+        disabled={isRefundExpired}
+      >
+        <Text style={[
+          styles.requestRefundButtonText,
+          isRefundExpired && styles.requestRefundButtonTextDisabled
+        ]}>
+          Request Refund {isRefundExpired ? '(Expired)' : ''}
+        </Text>
+      </TouchableOpacity>
+    );
+  })()
+)}
 
             {orderStatusLower === 'completed' && items.length > 0 && (
               <TouchableOpacity
@@ -2057,6 +2103,37 @@ cancelModalMessage: {
   textAlign: 'center',
   lineHeight: 20,
   marginBottom: 12,
+},
+refundExpireRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  marginBottom: 12,
+  flexWrap: 'wrap',
+  backgroundColor: '#FFF7ED',
+  padding: 10,
+  borderRadius: 8,
+  marginTop: 4,
+},
+refundExpireLabel: {
+  fontSize: 13,
+  color: '#6B7280',
+  marginLeft: 8,
+  marginRight: 4,
+},
+refundExpireValue: {
+  fontSize: 13,
+  color: '#D97706',
+  fontWeight: '600',
+},
+refundExpiredValue: {
+  color: '#DC2626',
+},
+requestRefundButtonDisabled: {
+  backgroundColor: '#D1D5DB',
+  borderColor: '#D1D5DB',
+},
+requestRefundButtonTextDisabled: {
+  color: '#9CA3AF',
 },
 cancelOrderIdText: {
   fontSize: 12,
