@@ -1740,68 +1740,71 @@ export default function AdminViewRefundDetails() {
                   </CardHeader>
                   <CardContent className="p-3 pt-0 space-y-2">
 
-                    {effectiveSt !== 'completed' && effectiveSt !== 'under_review' && effectiveSt !== 'rejected' && effectiveSt !== 'cancelled' && (
-                      <Button
-                        size="sm"
-                        className="w-full text-xs h-8"
-                        disabled={processing}
-                        onClick={async () => {
-                          if (effectiveSt === 'negotiation') { setShowConfirmModal(true); return; }
+                  {effectiveSt !== 'completed' && effectiveSt !== 'under_review' && effectiveSt !== 'rejected' && effectiveSt !== 'cancelled' && (
+  <Button
+    size="sm"
+    className="w-full text-xs h-8"
+    disabled={processing || (refund.refund_type === 'replace')}
+    onClick={async () => {
+      if (effectiveSt === 'negotiation') { setShowConfirmModal(true); return; }
 
-                          if (effectiveSt === 'dispute') {
-                            try {
-                              setProcessing(true);
-                              const refundId = refund?.refund_id;
-                              
-                              if (!refundId) {
-                                toast({ title: 'Error', description: 'Cannot find refund ID', variant: 'destructive' });
-                                setProcessing(false);
-                                return;
-                              }
-                              
-                              const listRes = await AxiosInstance.get('/disputes/', { 
-                                params: { refund_id: String(refundId) }, 
-                                headers: { 'X-User-Id': String(user?.id || '') } 
-                              });
-                              
-                              const disputes = Array.isArray(listRes?.data) ? listRes.data : 
-                                               Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
-                              const first = disputes[0];
-                              
-                              if (!first?.id) { 
-                                toast({ title: 'No dispute found', description: 'Cannot start review without an existing dispute.', variant: 'destructive' });
-                                return;
-                              }
-                              
-                              const response = await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, { 
-                                headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' } 
-                              });
-                              
-                              if (response.data) {
-                                toast({ title: 'Review started', description: 'Dispute marked under review.' });
-                                setRefund(prev => ({ ...prev, status: 'under_review', dispute_details: { ...prev.dispute_details, status: 'under_review' } }));
-                              }
-                            } catch (err: any) {
-                              toast({ title: 'Failed to start review', description: err.response?.data?.error || err.message || 'Unknown error occurred', variant: 'destructive' });
-                            } finally { setProcessing(false); }
-                            return;
-                          }
+      if (effectiveSt === 'dispute') {
+        try {
+          setProcessing(true);
+          const refundId = refund?.refund_id;
+          
+          if (!refundId) {
+            toast({ title: 'Error', description: 'Cannot find refund ID', variant: 'destructive' });
+            setProcessing(false);
+            return;
+          }
+          
+          const listRes = await AxiosInstance.get('/disputes/', { 
+            params: { refund_id: String(refundId) }, 
+            headers: { 'X-User-Id': String(user?.id || '') } 
+          });
+          
+          const disputes = Array.isArray(listRes?.data) ? listRes.data : 
+                           Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
+          const first = disputes[0];
+          
+          if (!first?.id) { 
+            toast({ title: 'No dispute found', description: 'Cannot start review without an existing dispute.', variant: 'destructive' });
+            return;
+          }
+          
+          const response = await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, { 
+            headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' } 
+          });
+          
+          if (response.data) {
+            toast({ title: 'Review started', description: 'Dispute marked under review.' });
+            setRefund(prev => ({ ...prev, status: 'under_review', dispute_details: { ...prev.dispute_details, status: 'under_review' } }));
+          }
+        } catch (err: any) {
+          toast({ title: 'Failed to start review', description: err.response?.data?.error || err.message || 'Unknown error occurred', variant: 'destructive' });
+        } finally { setProcessing(false); }
+        return;
+      }
 
-                          if (effectiveSt === 'approved') {
-                            await handleProcessRefund();
-                            return;
-                          }
-                        }}
-                      >
-                        {effectiveSt === 'dispute' ? (
-                          <><ShieldAlert className="w-3 h-3 mr-1" /> Start Review</>
-                        ) : effectiveSt === 'approved' ? (
-                          <><RefreshCw className="w-3 h-3 mr-1" /> Process Refund</>
-                        ) : (
-                          <><CheckCircle className="w-3 h-3 mr-1" /> Proceed</>
-                        )}
-                      </Button>
-                    )}
+      if (effectiveSt === 'approved') {
+        await handleProcessRefund();
+        return;
+      }
+    }}
+  >
+    {effectiveSt === 'dispute' ? (
+      <><ShieldAlert className="w-3 h-3 mr-1" /> Start Review</>
+    ) : effectiveSt === 'approved' ? (
+      <>
+        <RefreshCw className="w-3 h-3 mr-1" /> 
+        {refund.refund_type === 'replace' ? 'Replacement - No Refund Needed' : 'Process Refund'}
+      </>
+    ) : (
+      <><CheckCircle className="w-3 h-3 mr-1" /> Proceed</>
+    )}
+  </Button>
+)}
 
                     {effectiveSt === 'under_review' && (
                       <>

@@ -830,9 +830,12 @@ const getStatusDescription = () => {
   const refundType = refund.refund_type;
   
   // IMPORTANT: Check for approved return/replace FIRST before checking completed
-  if (status === 'approved' && (refundType === 'return' || refundType === 'replace') && returnStatus === 'approved') {
-    const typeLabel = refundType === 'replace' ? 'Replacement' : 'Return';
-    return `${typeLabel} accepted. The ${typeLabel.toLowerCase()} will be processed by the admin team. You don't need to take any further action.`;
+  if (status === 'approved' && refundType === 'return' && returnStatus === 'approved') {
+    return `Return accepted. The return will be processed by the admin team. You don't need to take any further action.`;
+  }
+  
+  if (status === 'approved' && refundType === 'replace' && returnStatus === 'approved') {
+    return `Replacement approved. A replacement order is now being processed.`;
   }
   
   switch (status) {
@@ -874,12 +877,11 @@ const getStatusDescription = () => {
     const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
     const refundType = refund.refund_type;
     const paymentStatus = refund.refund_payment_status?.toLowerCase();
-  
     let buttons: React.ReactNode[] = [];
   
     // NEW: Handle walk-in return confirmation (pending status with Walk-in logistic service)
     // NEW: Handle walk-in return confirmation (pending status with Walk-in logistic service)
-if (isReturnOrReplace && status === 'approved' && returnStatus === 'pending' && logisticService === 'Walk-in') {
+    if (isReturnOrReplace && status === 'approved' && returnStatus === 'pending' && logisticService === 'Walk-in') {
   buttons = [
     <TouchableOpacity 
       key="confirmReturn" 
