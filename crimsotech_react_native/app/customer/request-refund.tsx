@@ -121,13 +121,13 @@ const refundTypes: RefundType[] = [
     icon: 'refresh',
     refundAmount: 'full'
   },
-  {
-    id: 'keep_item',
-    label: 'Keep Item',
-    description: 'Keep the item and request partial refund',
-    icon: 'package-variant-closed',
-    refundAmount: 'partial'
-  },
+  // {
+  //   id: 'keep_item',
+  //   label: 'Keep Item',
+  //   description: 'Keep the item and request partial refund',
+  //   icon: 'package-variant-closed',
+  //   refundAmount: 'partial'
+  // },
   {
     id: 'replacement',
     label: 'Replacement',

@@ -317,12 +317,13 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
             <Text style={styles.statusSubtitle}>Your refund will be processed soon</Text>
           ) : (
             isReturnAcceptedWaitingModeration ? (
+              
               <View style={styles.moderationCard}>
                 <Text style={styles.moderationTitle}>{isReturnItem ? 'Return Accepted' : 'Replacement Accepted'}</Text>
                 <Text style={styles.moderationText}>
                   {isReturnItem 
                     ? 'Seller accepted your return request. Waiting for the moderation team to process the refund.'
-                    : 'Seller accepted your replacement request. Waiting for the moderation team to process the replacement.'}
+                    : 'Seller accepted your replacement request. Order is processing.'}
                 </Text>
                 {refund.return_request?.return_deadline && <Text style={styles.moderationDeadline}>Return Deadline: {formatDate(refund.return_request.return_deadline)}</Text>}
               </View>
@@ -1688,7 +1689,8 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
     const payStatus = String(refund.refund_payment_status || '').toLowerCase();
     const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
     const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
-    
+    const isReturnApproved = rrStatus === 'approved';
+
     // UPDATE THIS CONDITION - Include both 'return' and 'replace' types
     const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
     
@@ -1722,6 +1724,7 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
     }
     
     const showAddTrackingAction = (
+      !isReturnApproved &&
       (statusUpper === 'APPROVED' && 
        isReturnOrReplace && 
        !['shipped', 'received', 'inspected'].includes(rrStatus) && 
