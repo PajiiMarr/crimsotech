@@ -332,20 +332,14 @@ export default function RequestRefundPage() {
   }, [selectedItems, order]);
 
   // Fetch saved payment methods when wallet method is selected
-  // Auto-select wallet method when return_item or keep_item is selected
   useEffect(() => {
-    if (selectedRefundType && (selectedRefundType.id === 'return_item' || selectedRefundType.id === 'keep_item')) {
-      const walletMethod = refundMethods.find(m => m.id === 'wallet');
-      if (walletMethod && !selectedRefundMethod) {
-        setSelectedRefundMethod(walletMethod);
-      }
-    } else if (selectedRefundType && selectedRefundType.id === 'replacement') {
-      const replaceMethod = refundMethods.find(m => m.id === 'replace');
-      if (replaceMethod && !selectedRefundMethod) {
-        setSelectedRefundMethod(replaceMethod);
-      }
+    if (selectedRefundMethod?.type === 'wallet') {
+      fetchSavedEwallets();
+    } else {
+      setSelectedWalletId(null);
+      setEWalletDetails({ provider: '', accountName: '', accountNumber: '', contactNumber: '' });
     }
-  }, [selectedRefundType]);
+  }, [selectedRefundMethod]);
 
   // Fetch saved banks when bank method is selected
   useEffect(() => {
