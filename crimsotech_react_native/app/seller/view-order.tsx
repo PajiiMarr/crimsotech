@@ -359,31 +359,36 @@ const handleUpdateStatus = async (actionType: string) => {
   };
 
   // Purely driven by availableActions from backend
-  const getActionButtons = () => {
-    if (!order) return {
-      showConfirm: false,
-      showCancel: false,
-      showReadyToShip: false,
-      showArrangeShipment: false,
-      showReadyForPickup: false,
-      showPickedUp: false,
-      showToDeliver: false,
-      showDelivered: false,
-      showComplete: false,
-    };
-
-    return {
-      showConfirm:          availableActions.includes('confirm'),
-      showCancel:           availableActions.includes('cancel'),
-      showReadyToShip:      availableActions.includes('ready_to_ship'),
-      showArrangeShipment:  availableActions.includes('arrange_shipment'),
-      showReadyForPickup:   availableActions.includes('ready_for_pickup'),
-      showPickedUp:         availableActions.includes('picked_up'),
-      showToDeliver:        availableActions.includes('to_deliver'),
-      showDelivered:        availableActions.includes('delivered'),
-      showComplete:         availableActions.includes('complete'),
-    };
+  // Purely driven by availableActions from backend
+const getActionButtons = () => {
+  if (!order) return {
+    showConfirm: false,
+    showCancel: false,
+    showReadyToShip: false,
+    showArrangeShipment: false,
+    showReadyForPickup: false,
+    showPickedUp: false,
+    showToDeliver: false,
+    showDelivered: false,
+    showComplete: false,
   };
+
+  // Check if cancel should be hidden (when rider has accepted)
+  const isRiderAccepted = order?.delivery_info?.status === 'accepted';
+  const shouldHideCancel = isRiderAccepted;
+
+  return {
+    showConfirm:          availableActions.includes('confirm'),
+    showCancel:           availableActions.includes('cancel') && !shouldHideCancel,
+    showReadyToShip:      availableActions.includes('ready_to_ship'),
+    showArrangeShipment:  availableActions.includes('arrange_shipment'),
+    showReadyForPickup:   availableActions.includes('ready_for_pickup'),
+    showPickedUp:         availableActions.includes('picked_up'),
+    showToDeliver:        availableActions.includes('to_deliver'),
+    showDelivered:        availableActions.includes('delivered'),
+    showComplete:         availableActions.includes('complete'),
+  };
+};
 
   const formatCurrency = (amount: number) =>
     `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;

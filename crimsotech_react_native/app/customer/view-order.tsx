@@ -1339,27 +1339,31 @@ const CenterToast = ({
     const refundDate = order.refund_expire_date;
     const hasRefundDate = refundDate !== null && refundDate !== undefined && refundDate !== '';
     const isRefundExpired = hasRefundDate && new Date(refundDate) < new Date();
+    const isPickupMethod = String(shipping_info?.delivery_method || '').toLowerCase().includes('pickup');
+    const isDisabled = isRefundExpired || isPickupMethod;
     
     return (
       <TouchableOpacity
         style={[
           styles.requestRefundButton,
-          isRefundExpired && styles.requestRefundButtonDisabled
+          isDisabled && styles.requestRefundButtonDisabled
         ]}
         onPress={() => {
           if (isRefundExpired) {
             Alert.alert('Refund Period Expired', 'The refund period for this order has expired. You can no longer request a refund for this order.');
+          } else if (isPickupMethod) {
+            Alert.alert('Pickup Orders', 'Refunds are not available for pickup orders. Please contact the seller directly.');
           } else {
             router.push(`/customer/request-refund?orderId=${order.id}`);
           }
         }}
-        disabled={isRefundExpired}
+        disabled={isDisabled}
       >
         <Text style={[
           styles.requestRefundButtonText,
-          isRefundExpired && styles.requestRefundButtonTextDisabled
+          isDisabled && styles.requestRefundButtonTextDisabled
         ]}>
-          Request Refund {isRefundExpired ? '(Expired)' : ''}
+          Request Refund {isPickupMethod ? '(Not Available)' : isRefundExpired ? '(Expired)' : ''}
         </Text>
       </TouchableOpacity>
     );
