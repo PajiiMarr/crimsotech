@@ -155,14 +155,14 @@ const refundMethods: RefundMethod[] = [
   //   type: 'bank',
   //   allowedRefundTypes: ['return_item', 'keep_item']
   // },
-  {
-    id: 'voucher',
-    label: 'Store Voucher',
-    description: 'Receive a store voucher',
-    icon: 'tag-outline',
-    type: 'voucher',
-    allowedRefundTypes: ['return_item', 'keep_item']
-  },
+  // {
+  //   id: 'voucher',
+  //   label: 'Store Voucher',
+  //   description: 'Receive a store voucher',
+  //   icon: 'tag-outline',
+  //   type: 'voucher',
+  //   allowedRefundTypes: ['return_item', 'keep_item']
+  // },
   {
     id: 'replace',
     label: 'Replacement',
@@ -332,14 +332,20 @@ export default function RequestRefundPage() {
   }, [selectedItems, order]);
 
   // Fetch saved payment methods when wallet method is selected
+  // Auto-select wallet method when return_item or keep_item is selected
   useEffect(() => {
-    if (selectedRefundMethod?.type === 'wallet') {
-      fetchSavedEwallets();
-    } else {
-      setSelectedWalletId(null);
-      setEWalletDetails({ provider: '', accountName: '', accountNumber: '', contactNumber: '' });
+    if (selectedRefundType && (selectedRefundType.id === 'return_item' || selectedRefundType.id === 'keep_item')) {
+      const walletMethod = refundMethods.find(m => m.id === 'wallet');
+      if (walletMethod && !selectedRefundMethod) {
+        setSelectedRefundMethod(walletMethod);
+      }
+    } else if (selectedRefundType && selectedRefundType.id === 'replacement') {
+      const replaceMethod = refundMethods.find(m => m.id === 'replace');
+      if (replaceMethod && !selectedRefundMethod) {
+        setSelectedRefundMethod(replaceMethod);
+      }
     }
-  }, [selectedRefundMethod]);
+  }, [selectedRefundType]);
 
   // Fetch saved banks when bank method is selected
   useEffect(() => {
@@ -615,6 +621,9 @@ export default function RequestRefundPage() {
 
   const getAvailableMethods = () => {
     if (!selectedRefundType) return refundMethods;
+    // Only show methods that are allowed for the selected refund type
+    // This will automatically filter to only 'wallet' for return_item/keep_item
+    // and 'replace' for replacement
     return refundMethods.filter(method => method.allowedRefundTypes.includes(selectedRefundType.id));
   };
 
