@@ -5052,7 +5052,7 @@ class AdminBoosting(viewsets.ViewSet):
         except (ValueError, TypeError) as e:
             print(f"Date parsing error for '{date_str}': {e}")
             return None
-    
+
     def get_date_range_filter(self, start_date_str, end_date_str):
         """Get date range filter or return default (last 30 days)"""
         # Default to last 30 days if no date range provided

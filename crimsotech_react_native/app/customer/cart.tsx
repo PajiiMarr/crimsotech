@@ -122,6 +122,14 @@ const FALLBACK_IMAGE =
   "https://images.unsplash.com/photo-1557821552-17105176677c?w=400&q=80";
 
 // ------------------ HELPER FUNCTIONS ------------------
+const formatNumber = (value: number): string => {
+  if (isNaN(value)) return "0.00";
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
+
 const formatImageUrl = (url: string | null | undefined): string | null => {
   if (!url || url.trim() === "") return null;
 
@@ -217,7 +225,6 @@ const VoucherModal = ({
   availableVouchers: Voucher[];
   cartSubtotal: number;
 }) => {
-  // Check if voucher is qualified based on minimum spend
   const isVoucherQualified = (voucher: Voucher) => {
     return cartSubtotal >= voucher.minimum_spend;
   };
@@ -226,7 +233,7 @@ const VoucherModal = ({
     if (isVoucherQualified(voucher)) {
       return "✓ Qualified";
     }
-    return `Need ₱${(voucher.minimum_spend - cartSubtotal).toFixed(2)} more`;
+    return `Need ₱${formatNumber(voucher.minimum_spend - cartSubtotal)} more`;
   };
 
   return (
@@ -295,13 +302,13 @@ const VoucherModal = ({
                         ]}>
                           {voucher.discount_type === 'percentage' 
                             ? `${voucher.value}% off` 
-                            : `₱${voucher.value} off`}
+                            : `₱${formatNumber(voucher.value)} off`}
                         </Text>
                         <Text style={[
                           styles.voucherMinimumModal,
                           !qualified && styles.textDimmed
                         ]}>
-                          Min. spend: ₱{voucher.minimum_spend.toFixed(2)}
+                          Min. spend: ₱{formatNumber(voucher.minimum_spend)}
                         </Text>
                         <Text style={[
                           styles.voucherShopModal,
@@ -385,7 +392,7 @@ const ShopHeader = ({
           </Text>
           <Text style={styles.shopSummary}>
             {itemCount} {itemCount === 1 ? "item" : "items"} • ₱
-            {shopTotal.toFixed(2)}
+            {formatNumber(shopTotal)}
           </Text>
         </View>
         <MaterialIcons
@@ -414,7 +421,6 @@ const CartItemComponent = ({
 }) => {
   const [imageError, setImageError] = useState(false);
   
-  // Check if item is out of stock
   const isOutOfStock = item.max_available === 0 || (item.max_available !== undefined && item.max_available <= 0);
 
   const handleIncrement = () => {
@@ -493,7 +499,7 @@ const CartItemComponent = ({
             </Text>
           </TouchableOpacity>
           <Text style={[styles.itemPrice, isOutOfStock && styles.textDimmed]}>
-            ₱{(item.price * item.quantity).toFixed(2)}
+            ₱{formatNumber(item.price * item.quantity)}
           </Text>
         </View>
 
@@ -505,7 +511,7 @@ const CartItemComponent = ({
 
         <View style={styles.itemDetails}>
           <Text style={[styles.itemPriceEach, isOutOfStock && styles.textDimmed]}>
-            ₱{item.price.toFixed(2)} each
+            ₱{formatNumber(item.price)} each
           </Text>
 
           {isOutOfStock ? (
@@ -622,7 +628,7 @@ const ShopSection = ({
             <View style={styles.shopSummaryRow}>
               <Text style={styles.shopSummaryLabel}>Subtotal:</Text>
               <Text style={styles.shopSummaryTotal}>
-                ₱{selectedTotal.toFixed(2)}
+                ₱{formatNumber(selectedTotal)}
               </Text>
             </View>
           </View>
@@ -659,7 +665,7 @@ const OrderSummary = ({
           <Text style={styles.summaryLabelCompact}>
             Subtotal ({itemCount} items)
           </Text>
-          <Text style={styles.summaryValueCompact}>₱{subtotal.toFixed(2)}</Text>
+          <Text style={styles.summaryValueCompact}>₱{formatNumber(subtotal)}</Text>
         </View>
 
         {discount > 0 && (
@@ -668,7 +674,7 @@ const OrderSummary = ({
               Discount
             </Text>
             <Text style={[styles.summaryValueCompact, { color: "#059669" }]}>
-              -₱{discount.toFixed(2)}
+              -₱{formatNumber(discount)}
             </Text>
           </View>
         )}
@@ -678,7 +684,7 @@ const OrderSummary = ({
             <View style={styles.appliedVoucherBadge}>
               <MaterialIcons name="local-offer" size={14} color="#059669" />
               <Text style={styles.appliedVoucherText} numberOfLines={1}>
-                {appliedVoucher.code} • -₱{appliedVoucher.discount_amount.toFixed(2)}
+                {appliedVoucher.code} • -₱{formatNumber(appliedVoucher.discount_amount)}
               </Text>
               <TouchableOpacity
                 onPress={onRemoveVoucher}
@@ -698,11 +704,11 @@ const OrderSummary = ({
           <Text style={styles.totalLabel}>Total</Text>
           <View style={styles.totalValueRow}>
             <Text style={styles.totalCurrency}>₱</Text>
-            <Text style={styles.totalValue}>{total.toFixed(2)}</Text>
+            <Text style={styles.totalValue}>{formatNumber(total)}</Text>
           </View>
           {discount > 0 && (
             <Text style={styles.savedText}>
-              You saved ₱{discount.toFixed(2)}
+              You saved ₱{formatNumber(discount)}
             </Text>
           )}
         </View>
@@ -800,17 +806,14 @@ export default function CartPage() {
             {},
           );
 
-          // In fetchCartData, after setting cart stores, initialize all items as selected
-const storesArray: CartStore[] = Object.values(groupedItems);
-// Mark all items as selected by default
-storesArray.forEach(store => {
-  store.items.forEach(item => {
-    item.selected = true;
-  });
-});
-setCartStores(storesArray);
-// Then update totals with the applied voucher from response
-updateTotalsFromStores(storesArray, response.data.totals.applied_voucher);
+          const storesArray: CartStore[] = Object.values(groupedItems);
+          storesArray.forEach(store => {
+            store.items.forEach(item => {
+              item.selected = true;
+            });
+          });
+          setCartStores(storesArray);
+          updateTotalsFromStores(storesArray, response.data.totals.applied_voucher);
         } else {
           setCartStores([]);
           setCartTotals({
@@ -1015,11 +1018,9 @@ updateTotalsFromStores(storesArray, response.data.totals.applied_voucher);
   const handleApplyVoucher = async (code: string) => {
     setIsApplyingVoucher(true);
     try {
-      // Find the voucher from availableVouchers
       const voucher = availableVouchers.find(v => v.code === code);
       
       if (voucher && cartTotals.subtotal >= voucher.minimum_spend) {
-        // Apply voucher locally
         let discountAmount = 0;
         if (voucher.discount_type === 'percentage') {
           discountAmount = (cartTotals.subtotal * voucher.value) / 100;
