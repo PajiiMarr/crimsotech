@@ -43,6 +43,9 @@ import {
   CreditCard,
   LogOut,
   Store,
+  Wallet,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -123,6 +126,30 @@ interface PersonalListing {
   favorites_count: number;
 }
 
+interface WalletInfo {
+  has_wallet: boolean;
+  wallet_id?: string;
+  available_balance: number;
+  pending_balance: number;
+  total_earnings: number;
+  total_withdrawn: number;
+  pending_withdrawals: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface ShopEarnings {
+  total_sales: number;
+  shop_count: number;
+  shops: {
+    id: string;
+    name: string;
+    total_sales: number;
+    verified: boolean;
+    status: string;
+  }[];
+}
+
 interface UserData {
   id: string;
   username: string | null;
@@ -158,6 +185,8 @@ interface UserData {
   admin_data: any | null;
   shops: ShopData[];
   personal_listings: PersonalListing[];
+  wallet: WalletInfo;
+  shop_earnings: ShopEarnings;
 }
 
 interface LoaderData {
@@ -439,6 +468,10 @@ export default function ViewUser({ loaderData }: { loaderData: LoaderData }) {
     return (first + last).toUpperCase() || "U";
   };
 
+  const formatCurrency = (amount: number) => {
+    return `₱${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
   return (
     <UserProvider user={authUser}>
       <div className="container mx-auto p-4 md:p-6 space-y-6">
@@ -535,6 +568,101 @@ export default function ViewUser({ loaderData }: { loaderData: LoaderData }) {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Wallet Info Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Wallet className="w-5 h-5" />
+                  Wallet Balance
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {user.wallet?.has_wallet ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="text-center p-3 bg-green-50 rounded-lg">
+                        <p className="text-xs text-muted-foreground">Available</p>
+                        <p className="text-xl font-bold text-green-600">
+                          {formatCurrency(user.wallet.available_balance)}
+                        </p>
+                      </div>
+                      <div className="text-center p-3 bg-yellow-50 rounded-lg">
+                        <p className="text-xs text-muted-foreground">Pending</p>
+                        <p className="text-xl font-bold text-yellow-600">
+                          {formatCurrency(user.wallet.pending_balance)}
+                        </p>
+                      </div>
+                    </div>
+                    <Separator />
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Total Earnings</span>
+                        <span className="font-medium text-green-600">
+                          {formatCurrency(user.wallet.total_earnings)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Total Withdrawn</span>
+                        <span className="font-medium text-red-600">
+                          {formatCurrency(user.wallet.total_withdrawn)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Pending Withdrawals</span>
+                        <span className="font-medium text-orange-600">
+                          {formatCurrency(user.wallet.pending_withdrawals)}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-4 text-muted-foreground">
+                    <Wallet className="h-10 w-10 mx-auto mb-2 text-gray-300" />
+                    <p>No wallet found for this user</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Shop Earnings Card */}
+            {user.shop_earnings && user.shop_earnings.shop_count > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <TrendingUp className="w-5 h-5" />
+                    Shop Earnings
+                  </CardTitle>
+                  <CardDescription>
+                    {user.shop_earnings.shop_count} shop{user.shop_earnings.shop_count !== 1 ? 's' : ''} owned
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="text-center p-3 bg-blue-50 rounded-lg">
+                    <p className="text-xs text-muted-foreground">Total Sales from Shops</p>
+                    <p className="text-xl font-bold text-blue-600">
+                      {formatCurrency(user.shop_earnings.total_sales)}
+                    </p>
+                  </div>
+                  {user.shop_earnings.shops.length > 0 && (
+                    <div className="space-y-2 mt-2">
+                      <p className="text-xs font-medium text-muted-foreground">Shop Breakdown:</p>
+                      {user.shop_earnings.shops.slice(0, 3).map((shop) => (
+                        <div key={shop.id} className="flex justify-between text-sm">
+                          <span className="truncate max-w-[150px]">{shop.name}</span>
+                          <span className="font-medium">{formatCurrency(shop.total_sales)}</span>
+                        </div>
+                      ))}
+                      {user.shop_earnings.shops.length > 3 && (
+                        <p className="text-xs text-muted-foreground text-center">
+                          +{user.shop_earnings.shops.length - 3} more shops
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {user.is_customer && user.customer_data && (
               <Card>
