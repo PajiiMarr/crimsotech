@@ -24,7 +24,6 @@ import {
   FontAwesome,
   Ionicons, 
 } from "@expo/vector-icons";
-
 // Helper function for number formatting
 const formatNumber = (value: number): string => {
   if (isNaN(value)) return "0.00";
@@ -33,7 +32,6 @@ const formatNumber = (value: number): string => {
     maximumFractionDigits: 2,
   });
 };
-
 // Types
 interface CartItem {
   id: string;
@@ -53,7 +51,6 @@ interface CartItem {
     price?: number;
   };
 }
-
 interface Voucher {
   id: string;
   code: string;
@@ -71,12 +68,10 @@ interface Voucher {
   discount_amount?: number;
   voucher_type?: "shop" | "product";
 }
-
 interface VoucherCategory {
   category: string;
   vouchers: Voucher[];
 }
-
 interface ShippingAddress {
   id: string;
   recipient_name: string;
@@ -99,7 +94,6 @@ interface ShippingAddress {
   latitude?: number;
   longitude?: number;
 }
-
 interface ShopAddress {
   shop_id: string;
   shop_name: string;
@@ -113,14 +107,12 @@ interface ShopAddress {
   distance_text?: string;
   address_type?: string;
 }
-
 interface UserPurchaseStats {
   total_spent: number;
   recent_orders_count: number;
   average_order_value: number;
   customer_tier: string;
 }
-
 interface CheckoutSummary {
   subtotal: number;
   delivery: number;
@@ -128,7 +120,6 @@ interface CheckoutSummary {
   item_count: number;
   shop_count: number;
 }
-
 interface CheckoutData {
   success: boolean;
   checkout_items: CartItem[];
@@ -139,7 +130,6 @@ interface CheckoutData {
   default_shipping_address: ShippingAddress | null;
   seller_addresses: ShopAddress[];
 }
-
 // Payment methods with icons
 const paymentMethods = [
   {
@@ -160,14 +150,13 @@ const paymentMethods = [
   {
     id: "maya",
     name: "Maya",
-    description: "Pay using Maya wallet",
+    description: "Pay using Maya wallet (5% fee, max ₱50)",
     icon: "wallet",  
     iconSet: "FontAwesome5" as const,  
     iconColor: "#EA580C",
     imageUrl: null,  
   },
 ];
-
 // Shipping methods
 const shippingMethods = [
   {
@@ -189,15 +178,12 @@ const shippingMethods = [
     cost: 0,
   },
 ];
-
 export default function CheckoutPage() {
   const { userId, userRole, loading: authLoading } = useAuth();
   const params = useLocalSearchParams();
-
   // Optional direct params: cartId and productId
   const cartId = params?.cartId ? String(params.cartId).trim() : null;
   const productId = params?.productId ? String(params.productId).trim() : null;
-
   // Normalize selected ids from query params
   const getSelectedIds = () => {
     const raw = (params?.selected ??
@@ -215,13 +201,10 @@ export default function CheckoutPage() {
       .map((s) => s.trim())
       .filter(Boolean);
   };
-
   const selectedIds = getSelectedIds();
-
   // Determine if we have a valid entry point
   const hasValidEntry =
     selectedIds.length > 0 || cartId !== null || productId !== null;
-
   const [checkoutData, setCheckoutData] = useState<CheckoutData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -235,7 +218,6 @@ export default function CheckoutPage() {
   const [isShippingMethodDropdownOpen, setIsShippingMethodDropdownOpen] = useState(false);
   const [centerToastVisible, setCenterToastVisible] = useState(false);
   const [centerToastMessage, setCenterToastMessage] = useState("");
-
   // Form state
   const [formData, setFormData] = useState({
     agreeTerms: false,
@@ -254,10 +236,34 @@ export default function CheckoutPage() {
     discount: 0,
   });
 
+  // Calculate transaction fee based on payment method
+  const calculateTransactionFee = useCallback((baseTotal: number, paymentMethod: string) => {
+    const eWalletMethods = ["Maya", "GCash"];
+    if (eWalletMethods.includes(paymentMethod)) {
+      const fee = baseTotal * 0.05;
+      return Math.min(fee, 50);
+    }
+    return 0;
+  }, []);
+
+  // Recalculate total whenever subtotal, delivery, discount, or payment method changes
+  useEffect(() => {
+    const baseTotal = summary.subtotal + summary.delivery - summary.discount;
+    const fee = calculateTransactionFee(baseTotal, formData.paymentMethod);
+    setSummary(prev => ({
+      ...prev,
+      total: baseTotal + fee,
+    }));
+  }, [summary.subtotal, summary.delivery, summary.discount, formData.paymentMethod]);
+
+  const getTransactionFee = useCallback(() => {
+    const baseTotal = summary.subtotal + summary.delivery - summary.discount;
+    return calculateTransactionFee(baseTotal, formData.paymentMethod);
+  }, [summary.subtotal, summary.delivery, summary.discount, formData.paymentMethod, calculateTransactionFee]);
+
   // Build API params depending on which entry point was used
   const buildCheckoutApiParams = () => {
     const base: Record<string, any> = { user_id: userId };
-
     if (cartId) {
       base.cart_id = cartId;
     } else if (productId) {
@@ -265,14 +271,11 @@ export default function CheckoutPage() {
     } else {
       base.selected = selectedIds.join(",");
     }
-
     if (formData.selectedAddressId) {
       base.selected_address_id = formData.selectedAddressId;
     }
-
     return base;
   };
-
   // Build order request body
   const buildOrderRequestBody = (checkoutItems: CartItem[]) => {
     const base: Record<string, any> = {
@@ -283,7 +286,6 @@ export default function CheckoutPage() {
       voucher_id: appliedVoucher?.id || null,
       remarks: formData.remarks.substring(0, 500) || null,
     };
-
     if (cartId) {
       base.cart_id = cartId;
     } else if (productId) {
@@ -295,10 +297,8 @@ export default function CheckoutPage() {
     } else {
       base.selected_ids = checkoutItems.map((p) => p.cartItemId || p.id);
     }
-
     return base;
   };
-
   // Fetch checkout data
   const fetchCheckoutData = useCallback(async () => {
     if (!userId || !hasValidEntry) {
@@ -377,7 +377,6 @@ export default function CheckoutPage() {
       setRefreshing(false);
     }
   }, [userId, selectedIds, cartId, productId, formData.selectedAddressId]);
-
   useEffect(() => {
     if (authLoading) return;
     if (!userId) {
@@ -392,8 +391,7 @@ export default function CheckoutPage() {
     }
     fetchCheckoutData();
   }, [authLoading, userId, hasValidEntry]);
-
-  // Fetch vouchers when subtotal changes - FIXED
+  // Fetch vouchers when subtotal changes
   const fetchVouchersByAmount = useCallback(async (amount: number) => {
     if (!userId) return;
     setLoadingVouchers(true);
@@ -422,7 +420,6 @@ export default function CheckoutPage() {
       setLoadingVouchers(false);
     }
   }, [userId]);
-
   // Fetch vouchers when subtotal changes
   useEffect(() => {
     if (summary.subtotal > 0 && userId) {
@@ -432,12 +429,10 @@ export default function CheckoutPage() {
       return () => clearTimeout(timer);
     }
   }, [summary.subtotal, userId, fetchVouchersByAmount]);
-
   const onRefresh = () => {
     setRefreshing(true);
     fetchCheckoutData();
   };
-
   // Handle shipping method selection
   const handleShippingMethodSelect = (method: "Pickup from Store" | "Standard Delivery") => {
     setFormData((prev) => ({ ...prev, shippingMethod: method }));
@@ -457,15 +452,12 @@ export default function CheckoutPage() {
     }
     
     const deliveryCost = method === "Pickup from Store" ? 0 : (checkoutData?.summary?.delivery || 50);
-    const newTotal = summary.subtotal + deliveryCost - summary.discount;
     setSummary((prev) => ({
       ...prev,
       delivery: deliveryCost,
-      total: newTotal,
     }));
     setIsShippingMethodDropdownOpen(false);
   };
-
   // Handle payment method change - Radio button style
   const handlePaymentMethodSelect = (methodId: string) => {
     const method = paymentMethods.find((m) => m.id === methodId);
@@ -480,7 +472,6 @@ export default function CheckoutPage() {
       }));
     }
   };
-
   useEffect(() => {
     if (checkoutData?.default_shipping_address && !formData.selectedAddressId) {
       setFormData(prev => ({
@@ -489,7 +480,6 @@ export default function CheckoutPage() {
       }));
     }
   }, [checkoutData?.default_shipping_address]);
-
   // Check if voucher is applicable
   const isVoucherApplicable = (voucher: Voucher) => {
     if (voucher.minimum_spend > summary.subtotal) return false;
@@ -500,7 +490,6 @@ export default function CheckoutPage() {
     }
     return true;
   };
-
   const getVoucherInapplicableReason = (voucher: Voucher) => {
     if (voucher.minimum_spend > summary.subtotal) {
       return `Min: ₱${formatNumber(voucher.minimum_spend)}`;
@@ -513,7 +502,6 @@ export default function CheckoutPage() {
     }
     return null;
   };
-
   // Apply voucher
   const handleApplyVoucher = async (voucher: Voucher) => {
     if (!checkoutData || !userId) {
@@ -564,13 +552,9 @@ export default function CheckoutPage() {
         setAppliedVoucher(voucherWithDiscount);
         setVoucherError(null);
         setIsVoucherModalVisible(false);
-        const deliveryCost =
-          formData.shippingMethod === "Pickup from Store" ? 0 : summary.delivery;
-        const newTotal = summary.subtotal + deliveryCost - discountAmount;
         setSummary((prev) => ({
           ...prev,
           discount: discountAmount,
-          total: newTotal,
         }));
         Alert.alert("Success", `Voucher ${voucher.code} applied!`);
       } else {
@@ -590,22 +574,15 @@ export default function CheckoutPage() {
       setVoucherLoading(false);
     }
   };
-
   // Remove voucher
   const handleRemoveVoucher = () => {
     setAppliedVoucher(null);
     setVoucherError(null);
-    const deliveryCost =
-      formData.shippingMethod === "Pickup from Store" ? 0 : summary.delivery;
-    const newTotal = summary.subtotal + deliveryCost;
     setSummary((prev) => ({
       ...prev,
       discount: 0,
-      total: newTotal,
     }));
   };
-
-
   // Place order
   const handlePlaceOrder = async () => {
     if (!userId || !checkoutData) {
@@ -673,24 +650,20 @@ export default function CheckoutPage() {
       setProcessingOrder(false);
     }
   };
-
   // Get selected address (default)
   const getSelectedAddress = () => {
     return checkoutData?.default_shipping_address || null;
   };
-
   // Get shop addresses
   const getShopAddressesForProducts = () => {
     if (!checkoutData || !checkoutData.seller_addresses) return [];
     return checkoutData.seller_addresses;
   };
-
   // Get main shop address
   const getMainShopAddress = () => {
     const shopAddresses = getShopAddressesForProducts();
     return shopAddresses.length > 0 ? shopAddresses[0] : null;
   };
-
   // Get all vouchers
   const getAllVouchers = () => {
     if (!checkoutData || !checkoutData.available_vouchers) return [];
@@ -698,7 +671,6 @@ export default function CheckoutPage() {
       (category) => category?.vouchers ?? []
     );
   };
-
   // Get filtered vouchers
   const getFilteredVouchers = () => {
     if (!checkoutData || !checkoutData.available_vouchers) return [];
@@ -708,45 +680,39 @@ export default function CheckoutPage() {
     );
     return category ? category.vouchers : [];
   };
-
   // ─── Pickup Disclaimer ───────────────────────────────────
-const PickupDisclaimer = () => {
-  if (formData.shippingMethod !== "Pickup from Store") return null;
-  
-  return (
-    <View style={styles.pickupDisclaimerContainer}>
-      <View style={styles.pickupDisclaimerHeader}>
-        <MaterialIcons name="info-outline" size={16} color="#EA580C" />
-        <Text style={styles.pickupDisclaimerTitle}>Pickup Order Information</Text>
-      </View>
-      
-      <View style={styles.pickupDisclaimerList}>
-        <View style={styles.pickupDisclaimerItem}>
-          <MaterialIcons name="check-circle" size={14} color="#EA580C" />
-          <Text style={styles.pickupDisclaimerText}>
-            Refunds are not processed automatically for pickup orders
-          </Text>
+  const PickupDisclaimer = () => {
+    if (formData.shippingMethod !== "Pickup from Store") return null;
+    return (
+      <View style={styles.pickupDisclaimerContainer}>
+        <View style={styles.pickupDisclaimerHeader}>
+          <MaterialIcons name="info-outline" size={16} color="#EA580C" />
+          <Text style={styles.pickupDisclaimerTitle}>Pickup Order Information</Text>
         </View>
-        
-        <View style={styles.pickupDisclaimerItem}>
-          <MaterialIcons name="check-circle" size={14} color="#EA580C" />
-          <Text style={styles.pickupDisclaimerText}>
-            Buyers must coordinate directly with the seller
-          </Text>
-        </View>
-        
-        <View style={styles.pickupDisclaimerItem}>
-          <MaterialIcons name="check-circle" size={14} color="#EA580C" />
-          <Text style={styles.pickupDisclaimerText}>
-            Platform may assist in dispute resolution
-          </Text>
+        <View style={styles.pickupDisclaimerList}>
+          <View style={styles.pickupDisclaimerItem}>
+            <MaterialIcons name="check-circle" size={14} color="#EA580C" />
+            <Text style={styles.pickupDisclaimerText}>
+              Refunds are not processed automatically for pickup orders
+            </Text>
+          </View>
+          <View style={styles.pickupDisclaimerItem}>
+            <MaterialIcons name="check-circle" size={14} color="#EA580C" />
+            <Text style={styles.pickupDisclaimerText}>
+              Buyers must coordinate directly with the seller
+            </Text>
+          </View>
+          <View style={styles.pickupDisclaimerItem}>
+            <MaterialIcons name="check-circle" size={14} color="#EA580C" />
+            <Text style={styles.pickupDisclaimerText}>
+              Platform may assist in dispute resolution
+            </Text>
+          </View>
         </View>
       </View>
-    </View>
-  );
-};
+    );
+  };
   
-
   // Get tier badge component
   const renderTierBadge = (tier: string) => {
     const tierConfig = {
@@ -762,9 +728,7 @@ const PickupDisclaimer = () => {
       </View>
     );
   };
-
   const isShippingAddressRequired = () => formData.shippingMethod === "Standard Delivery";
-
   const getPlaceOrderButtonText = () => {
     if (processingOrder) return "Processing Order...";
     const isEWalletPayment = ["Maya"].includes(formData.paymentMethod);
@@ -773,7 +737,8 @@ const PickupDisclaimer = () => {
     }
     return `Place Order • ₱${formatNumber(summary.total)}`;
   };
-
+  const transactionFee = getTransactionFee();
+  const baseTotalDisplay = summary.subtotal + summary.delivery - summary.discount;
   // Loading state
   if (authLoading || loading) {
     return (
@@ -785,7 +750,6 @@ const PickupDisclaimer = () => {
       </SafeAreaView>
     );
   }
-
   // Role guard
   if (userRole && userRole !== "customer") {
     return (
@@ -798,7 +762,6 @@ const PickupDisclaimer = () => {
       </SafeAreaView>
     );
   }
-
   // Error or no data state
   if (
     error ||
@@ -824,7 +787,6 @@ const PickupDisclaimer = () => {
       </SafeAreaView>
     );
   }
-
   const selectedAddress = getSelectedAddress();
   const allVouchers = getAllVouchers();
   const filteredVouchers = getFilteredVouchers();
@@ -850,7 +812,6 @@ const PickupDisclaimer = () => {
   }) => {
     const scale = useRef(new Animated.Value(0)).current;
     const opacity = useRef(new Animated.Value(0)).current;
-  
     useEffect(() => {
       if (visible) {
         Animated.parallel([
@@ -866,7 +827,6 @@ const PickupDisclaimer = () => {
             useNativeDriver: true,
           }),
         ]).start();
-  
         const timer = setTimeout(() => {
           Animated.parallel([
             Animated.spring(scale, {
@@ -882,13 +842,10 @@ const PickupDisclaimer = () => {
             }),
           ]).start(() => onHide());
         }, 1500);
-  
         return () => clearTimeout(timer);
       }
     }, [visible]);
-  
     if (!visible) return null;
-  
     return (
       <View
         pointerEvents="none"
@@ -931,7 +888,6 @@ const PickupDisclaimer = () => {
       </View>
     );
   };
-
   const getCurrentPaymentMethodName = () => {
     const method = paymentMethods.find(m => {
       const methodName = typeof m.name === "function" ? m.name(formData.shippingMethod) : m.name;
@@ -942,15 +898,14 @@ const PickupDisclaimer = () => {
     }
     return formData.paymentMethod;
   };
-
   return (
     <SafeAreaView style={styles.container}>
       <CenterToast
-      visible={centerToastVisible}
-      message={centerToastMessage}
-      iconName="checkmark-circle"
-      onHide={() => setCenterToastVisible(false)}
-    />
+        visible={centerToastVisible}
+        message={centerToastMessage}
+        iconName="checkmark-circle"
+        onHide={() => setCenterToastVisible(false)}
+      />
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
@@ -976,14 +931,12 @@ const PickupDisclaimer = () => {
             <View style={{ width: 40 }} />
           </View>
         </SafeAreaView>
-
         {error && (
           <View style={styles.errorCard}>
             <MaterialIcons name="error-outline" size={20} color="#DC2626" />
             <Text style={styles.errorText}>{error}</Text>
           </View>
         )}
-
         {/* Order Summary */}
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeaderCompact}>
@@ -1016,7 +969,6 @@ const PickupDisclaimer = () => {
             ))}
           </View>
         </View>
-
         {/* Delivery Address */}
         {selectedAddress && (
           <View style={styles.sectionCard}>
@@ -1031,7 +983,6 @@ const PickupDisclaimer = () => {
             </View>
           </View>
         )}
-
         {/* Shop Address */}
         {mainShopAddress && (
           <View style={styles.sectionCard}>
@@ -1048,9 +999,7 @@ const PickupDisclaimer = () => {
             </View>
             <PickupDisclaimer />
           </View>
-          
         )}
-
         {/* Shipping Method - Dropdown */}
         <View style={styles.sectionCard}>
           <TouchableOpacity 
@@ -1069,7 +1018,6 @@ const PickupDisclaimer = () => {
                 color="#6B7280" 
               />
             </View>
-            
           </TouchableOpacity>
           {isShippingMethodDropdownOpen && (
             <View style={styles.dropdownMenuCompact}>
@@ -1104,7 +1052,6 @@ const PickupDisclaimer = () => {
             </View>
           )}
         </View>
-
         {/* Payment Method - Radio buttons */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitleCompact}>Payment Method</Text>
@@ -1115,7 +1062,6 @@ const PickupDisclaimer = () => {
                 : method.name;
               const isSelected = formData.paymentMethod === methodName;
               const IconComponent = method.iconSet === "FontAwesome5" ? FontAwesome5 : FontAwesome;
-              
               return (
                 <TouchableOpacity
                   key={method.id}
@@ -1145,10 +1091,8 @@ const PickupDisclaimer = () => {
                 </TouchableOpacity>
               );
             })}
-
           </View>
         </View>
-
         {/* Vouchers */}
         <View style={styles.sectionCard}>
           <TouchableOpacity 
@@ -1166,7 +1110,6 @@ const PickupDisclaimer = () => {
               <MaterialIcons name="chevron-right" size={20} color="#6B7280" />
             </View>
           </TouchableOpacity>
-          
           {appliedVoucher && (
             <View style={styles.appliedVoucherCompact}>
               <View style={styles.appliedVoucherInfoCompact}>
@@ -1182,7 +1125,6 @@ const PickupDisclaimer = () => {
             </View>
           )}
         </View>
-
         {/* Order Remarks */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitleCompact}>Order Remarks (Optional)</Text>
@@ -1197,35 +1139,48 @@ const PickupDisclaimer = () => {
           />
           <Text style={styles.remarksCounterCompact}>{formData.remarks.length}/500</Text>
         </View>
-
-        {/* Order Summary Totals */}
+        {/* Price Details */}
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitleCompact}>Order Summary</Text>
+          <Text style={styles.sectionTitleCompact}>Price Details</Text>
           <View style={styles.orderSummaryCompact}>
             <View style={styles.summaryRowCompact}>
-              <Text style={styles.summaryLabelCompact}>Subtotal ({checkoutData.checkout_items.length})</Text>
+              <Text style={styles.summaryLabelCompact}>Subtotal ({checkoutData.checkout_items.length} items)</Text>
               <Text style={styles.summaryValueCompact}>₱{formatNumber(summary.subtotal)}</Text>
+            </View>
+            <View style={styles.summaryRowCompact}>
+              <Text style={styles.summaryLabelCompact}>Delivery Fee</Text>
+              <Text style={styles.summaryValueCompact}>{getDeliveryFeeDisplay()}</Text>
             </View>
             {appliedVoucher && (
               <View style={styles.discountRowCompact}>
-                <Text style={styles.discountLabelCompact}>Discount {appliedVoucher.code}</Text>
+                <Text style={styles.discountLabelCompact}>Discount ({appliedVoucher.code})</Text>
                 <Text style={styles.discountValueCompact}>-₱{formatNumber(summary.discount)}</Text>
               </View>
             )}
-            <View style={styles.summaryRowCompact}>
-              <Text style={styles.summaryLabelCompact}>Shipping</Text>
-              <Text style={styles.summaryValueCompact}>{getDeliveryFeeDisplay()}</Text>
-            </View>
+            {/* Transaction Fee - Only show for e-wallet payments */}
+            {formData.paymentMethod === "Maya" && transactionFee > 0 && (
+              <View style={styles.transactionFeeRowCompact}>
+                <View>
+                  <Text style={styles.transactionFeeLabelCompact}>Transaction Fee</Text>
+                  <Text style={styles.transactionFeeNoteCompact}>5% capped at ₱50</Text>
+                </View>
+                <Text style={styles.transactionFeeValueCompact}>₱{formatNumber(transactionFee)}</Text>
+              </View>
+            )}
+            <View style={styles.dividerCompact} />
             <View style={styles.totalRowCompact}>
-              <Text style={styles.totalLabelCompact}>Total</Text>
+              <Text style={styles.totalLabelCompact}>Total Payment</Text>
               <View style={styles.totalRightCompact}>
                 <Text style={styles.totalValueCompact}>₱{formatNumber(summary.total)}</Text>
-                <Text style={styles.totalVatCompact}>Incl. VAT</Text>
               </View>
             </View>
+            {formData.paymentMethod === "Maya" && transactionFee > 0 && (
+              <Text style={styles.transactionFeeInfoCompact}>
+                * Includes ₱{formatNumber(transactionFee)} transaction fee (5% of ₱{formatNumber(baseTotalDisplay)}, capped at ₱50)
+              </Text>
+            )}
           </View>
         </View>
-
         {/* Terms and Conditions */}
         <View style={styles.sectionCard}>
           <TouchableOpacity
@@ -1239,7 +1194,6 @@ const PickupDisclaimer = () => {
           </TouchableOpacity>
         </View>
       </ScrollView>
-
       {/* Footer */}
       <View style={styles.footer}>
         <View style={styles.orderSummaryFooterCompact}>
@@ -1247,6 +1201,9 @@ const PickupDisclaimer = () => {
             <Text style={styles.summaryLabelCompact}>Total</Text>
             <Text style={styles.summaryValueCompact}>₱{formatNumber(summary.total)}</Text>
           </View>
+          {formData.paymentMethod === "Maya" && transactionFee > 0 && (
+            <Text style={styles.footerTransactionFeeNote}>Includes ₱{formatNumber(transactionFee)} transaction fee</Text>
+          )}
           <Text style={styles.totalVatCompact}>Incl. VAT</Text>
         </View>
         <TouchableOpacity
@@ -1274,7 +1231,6 @@ const PickupDisclaimer = () => {
           <Text style={styles.footerNoteTextCompact}>Secure checkout • Encrypted payment</Text>
         </View>
       </View>
-
       {/* Voucher Selection Modal */}
       <Modal
         visible={isVoucherModalVisible}
@@ -1402,11 +1358,8 @@ const PickupDisclaimer = () => {
     </SafeAreaView>
   );
 }
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F8F9FA" },
-  
-  // Compact Section Card
   sectionCard: {
     backgroundColor: "#FFFFFF",
     marginBottom: 6,
@@ -1416,8 +1369,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 0.5,
     borderColor: "#F0F0F0",
   },
-  
-  // Compact Section Header
   sectionHeaderCompact: {
     flexDirection: "row",
     alignItems: "center",
@@ -1429,8 +1380,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
   },
-  
-  // Compact Items List
   itemsListCompact: { gap: 8 },
   itemCardCompact: {
     flexDirection: "row",
@@ -1446,15 +1395,11 @@ const styles = StyleSheet.create({
   itemBottomRowCompact: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   itemTotalPriceCompact: { fontSize: 13, fontWeight: "600", color: "#EA580C" },
   quantityTextCompact: { fontSize: 11, color: "#6B7280" },
-  
-  // Compact Address Display
   addressHeaderCompact: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   addressDisplayCompact: { backgroundColor: "#F9FAFB", padding: 8, borderRadius: 6 },
   addressNameCompact: { fontSize: 13, fontWeight: "500", color: "#111827", marginBottom: 2 },
   addressPhoneCompact: { fontSize: 11, color: "#6B7280", marginBottom: 2 },
   addressFullCompact: { fontSize: 11, color: "#374151", lineHeight: 15 },
-  
-  // Compact Dropdown
   dropdownRowCompact: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 6 },
   dropdownLeftCompact: { flexDirection: "row", alignItems: "center", gap: 10 },
   dropdownLabelCompact: { fontSize: 14, fontWeight: "500", color: "#111827" },
@@ -1469,8 +1414,6 @@ const styles = StyleSheet.create({
   dropdownItemSubtitleCompact: { fontSize: 11, color: "#6B7280", marginTop: 1 },
   dropdownItemPriceCompact: { fontSize: 13, fontWeight: "600", color: "#111827" },
   dropdownItemPriceSelectedCompact: { color: "#EA580C" },
-  
-  // Compact Payment Methods
   paymentMethodsContainerCompact: { gap: 8, marginTop: 4 },
   paymentMethodCardCompact: {
     flexDirection: "row",
@@ -1492,8 +1435,6 @@ const styles = StyleSheet.create({
   paymentMethodDescriptionCompact: { fontSize: 10, color: "#6B7280", marginTop: 1 },
   radioButtonCompact: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: "#D1D5DB", backgroundColor: "#FFFFFF" },
   radioButtonSelectedCompact: { borderColor: "#EA580C", backgroundColor: "#EA580C" },
-  
-  // Compact Applied Voucher
   appliedVoucherCompact: {
     flexDirection: "row",
     alignItems: "center",
@@ -1507,8 +1448,49 @@ const styles = StyleSheet.create({
   appliedVoucherInfoCompact: { flexDirection: "row", alignItems: "center", gap: 6 },
   appliedVoucherCodeCompact: { fontSize: 12, fontWeight: "600", color: "#065F46" },
   appliedVoucherDiscountCompact: { fontSize: 11, color: "#059669", fontWeight: "500" },
-  
-  // Compact Order Summary
+  transactionFeeRowCompact: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#FFF7ED",
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 4,
+    marginTop: 2,
+  },
+  transactionFeeLabelCompact: {
+    fontSize: 12,
+    color: "#EA580C",
+    fontWeight: "500",
+  },
+  transactionFeeNoteCompact: {
+    fontSize: 9,
+    color: "#9CA3AF",
+    marginTop: 1,
+  },
+  transactionFeeValueCompact: {
+    fontSize: 12,
+    color: "#EA580C",
+    fontWeight: "600",
+  },
+  transactionFeeInfoCompact: {
+    fontSize: 9,
+    color: "#9CA3AF",
+    textAlign: "center",
+    marginTop: 6,
+    fontStyle: "italic",
+  },
+  footerTransactionFeeNote: {
+    fontSize: 9,
+    color: "#EA580C",
+    textAlign: "right",
+    marginTop: 2,
+  },
+  dividerCompact: {
+    height: 0.5,
+    backgroundColor: "#E5E7EB",
+    marginVertical: 6,
+  },
   orderSummaryCompact: { gap: 6, marginTop: 4 },
   summaryRowCompact: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   summaryLabelCompact: { fontSize: 12, color: "#6B7280" },
@@ -1516,13 +1498,11 @@ const styles = StyleSheet.create({
   discountRowCompact: { flexDirection: "row", justifyContent: "space-between", backgroundColor: "#F0FDF4", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
   discountLabelCompact: { fontSize: 12, color: "#059669" },
   discountValueCompact: { fontSize: 12, color: "#059669", fontWeight: "600" },
-  totalRowCompact: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 0.5, borderTopColor: "#E5E7EB", paddingTop: 6, marginTop: 2 },
+  totalRowCompact: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   totalLabelCompact: { fontSize: 14, fontWeight: "600", color: "#111827" },
   totalRightCompact: { alignItems: "flex-end" },
   totalValueCompact: { fontSize: 16, fontWeight: "700", color: "#111827" },
   totalVatCompact: { fontSize: 9, color: "#6B7280" },
-  
-  // Compact Remarks
   remarksInputCompact: {
     borderWidth: 0.5,
     borderColor: "#D1D5DB",
@@ -1536,14 +1516,10 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   remarksCounterCompact: { fontSize: 10, color: "#6B7280", textAlign: "right", marginTop: 2 },
-  
-  // Compact Terms
   termsRowCompact: { flexDirection: "row", alignItems: "center" },
   checkboxCompact: { width: 16, height: 16, borderRadius: 3, borderWidth: 1.5, borderColor: "#D1D5DB", justifyContent: "center", alignItems: "center", marginRight: 8 },
   checkboxCheckedCompact: { backgroundColor: "#EA580C", borderColor: "#EA580C" },
   termsTextCompact: { fontSize: 12, color: "#374151", flex: 1 },
-  
-  // Footer
   footer: {
     backgroundColor: "#FFFFFF",
     paddingVertical: 12,
@@ -1561,8 +1537,6 @@ const styles = StyleSheet.create({
   checkoutButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "600" },
   footerNotesCompact: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 8 },
   footerNoteTextCompact: { fontSize: 10, color: "#6B7280" },
-  
-  // Keep existing styles from original that are still used
   center: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 },
   loadingText: { marginTop: 12, fontSize: 14, color: "#6B7280" },
   message: { fontSize: 18, fontWeight: "600", color: "#374151", marginTop: 16, marginBottom: 8 },
@@ -1580,8 +1554,6 @@ const styles = StyleSheet.create({
   headerSubtitle: { fontSize: 11, color: "#6B7280", marginTop: 1 },
   errorCard: { flexDirection: "row", alignItems: "center", backgroundColor: "#FEF2F2", borderWidth: 0.5, borderColor: "#FECACA", marginHorizontal: 12, marginTop: 8, padding: 10, borderRadius: 6, gap: 6 },
   errorText: { flex: 1, fontSize: 11, color: "#DC2626" },
-  
-  // Modal Styles
   modalOverlay: { flex: 1, backgroundColor: "rgba(0, 0, 0, 0.5)", justifyContent: "flex-end" },
   modalContainer: { backgroundColor: "#FFFFFF", borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "80%" },
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: "#F0F0F0" },
@@ -1625,38 +1597,37 @@ const styles = StyleSheet.create({
   noVouchersContainer: { alignItems: "center", paddingVertical: 30 },
   noVouchersTitle: { fontSize: 14, fontWeight: "600", color: "#374151", marginTop: 12, marginBottom: 4 },
   noVouchersText: { fontSize: 12, color: "#6B7280", textAlign: "center", paddingHorizontal: 16 },
-  // Pickup Disclaimer Styles
-pickupDisclaimerContainer: {
-  backgroundColor: '#FFF7ED',
-  marginHorizontal: 0,
-  marginBottom: 6,
-  padding: 12,
-  borderWidth: 0.5,
-  borderColor: '#FED7AA',
-},
-pickupDisclaimerHeader: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  gap: 8,
-  marginBottom: 10,
-},
-pickupDisclaimerTitle: {
-  fontSize: 13,
-  fontWeight: '600',
-  color: '#EA580C',
-},
-pickupDisclaimerList: {
-  gap: 8,
-},
-pickupDisclaimerItem: {
-  flexDirection: 'row',
-  alignItems: 'flex-start',
-  gap: 8,
-},
-pickupDisclaimerText: {
-  fontSize: 11,
-  color: '#92400E',
-  flex: 1,
-  lineHeight: 16,
-},
+  pickupDisclaimerContainer: {
+    backgroundColor: '#FFF7ED',
+    marginHorizontal: 0,
+    marginBottom: 6,
+    padding: 12,
+    borderWidth: 0.5,
+    borderColor: '#FED7AA',
+  },
+  pickupDisclaimerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  pickupDisclaimerTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#EA580C',
+  },
+  pickupDisclaimerList: {
+    gap: 8,
+  },
+  pickupDisclaimerItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  pickupDisclaimerText: {
+    fontSize: 11,
+    color: '#92400E',
+    flex: 1,
+    lineHeight: 16,
+  },
 });

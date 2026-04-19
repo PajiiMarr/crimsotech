@@ -40,11 +40,12 @@ import {
   Upload,
   FileText,
   Wallet,
+  MoreHorizontal,
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '~/components/ui/data-table';
 import AxiosInstance from '~/components/axios/Axios';
-import { Link, useNavigate, Form, useLoaderData, useNavigation, useActionData } from 'react-router';
+import { Link, useNavigate, useLoaderData, useNavigation } from 'react-router';
 import { useState, useEffect } from 'react';
 import {
   Dialog,
@@ -54,6 +55,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '~/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "~/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
 import { Input } from '~/components/ui/input';
 import { Label } from '~/components/ui/label';
 import { Textarea } from '~/components/ui/textarea';
@@ -100,6 +119,7 @@ interface Withdrawal {
 
 interface LoaderData {
   user: any;
+  userId: string | null;
   withdrawalMetrics: {
     total_pending: number;
     total_processing: number;
@@ -116,12 +136,6 @@ interface LoaderData {
   total_count: number;
 }
 
-interface ActionData {
-  success?: boolean;
-  error?: string;
-  message?: string;
-}
-
 export async function loader({ request, context }: Route.LoaderArgs): Promise<LoaderData> {
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
@@ -135,7 +149,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
-  const userId = session.get("userId");
+  const userId = session.get("userId") || null;
   const url = new URL(request.url);
   
   const status = url.searchParams.get('status');
@@ -190,153 +204,28 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
         };
       }
     }
-
-    try {
-      const statsParams = new URLSearchParams();
-      if (startDate) statsParams.append('start_date', startDate);
-      if (endDate) statsParams.append('end_date', endDate);
-      
-      const statsQueryString = statsParams.toString() ? `?${statsParams.toString()}` : '';
-      
-      const statsResponse = await AxiosInstance.get(`/admin-withdrawals/stats/${statsQueryString}`, {
-        headers: { "X-User-Id": userId }
-      });
-
-      if (statsResponse.data?.success && statsResponse.data.stats) {
-        metrics = {
-          total_pending: Number(statsResponse.data.stats.total_pending) || 0,
-          total_processing: Number(statsResponse.data.stats.total_processing) || 0,
-          total_approved: Number(statsResponse.data.stats.total_approved) || 0,
-          total_completed: Number(statsResponse.data.stats.total_completed) || 0,
-          total_rejected: Number(statsResponse.data.stats.total_rejected) || 0,
-          total_amount_pending: Number(statsResponse.data.stats.total_amount_pending) || 0,
-          total_amount_processing: Number(statsResponse.data.stats.total_amount_processing) || 0,
-          total_amount_approved: Number(statsResponse.data.stats.total_amount_approved) || 0,
-          total_amount_completed: Number(statsResponse.data.stats.total_amount_completed) || 0,
-          total_amount_rejected: Number(statsResponse.data.stats.total_amount_rejected) || 0,
-        };
-      }
-    } catch (statsError) {
-      console.error('Error fetching withdrawal stats:', statsError);
-    }
-
   } catch (error) {
     console.error('Error fetching withdrawal data:', error);
   }
 
   return { 
     user, 
+    userId,
     withdrawalMetrics: metrics,
     withdrawals: withdrawalsList,
     total_count: totalCount
   };
 }
 
-export async function action({ request, context }: Route.ActionArgs): Promise<ActionData> {
-  const { requireRole } = await import("~/middleware/role-require.server");
-  const { fetchUserRole } = await import("~/middleware/role.server");
-
-  let user = (context as any).user;
-  if (!user) {
-    user = await fetchUserRole({ request, context });
-  }
-
-  await requireRole(request, context, ["isAdmin"]);
-
-  const { getSession } = await import('~/sessions.server');
-  const session = await getSession(request.headers.get("Cookie"));
-  const userId = session.get("userId");
-  
-  const formData = await request.formData();
-  const intent = formData.get("intent");
-  const withdrawalId = formData.get("withdrawalId");
-
-  try {
-    if (intent === "approve") {
-      const response = await AxiosInstance.post(`/admin-withdrawals/${withdrawalId}/approve/`, {}, {
-        headers: { "X-User-Id": userId }
-      });
-      
-      if (response.data?.success) {
-        return { success: true, message: "Withdrawal approved successfully" };
-      } else {
-        return { error: response.data?.error || "Failed to approve withdrawal" };
-      }
-    }
-
-    if (intent === "reject") {
-      const reason = formData.get("reason");
-      
-      if (!reason) {
-        return { error: "Rejection reason is required" };
-      }
-      
-      const response = await AxiosInstance.post(`/admin-withdrawals/${withdrawalId}/reject/`, 
-        { reason },
-        { headers: { "X-User-Id": userId } }
-      );
-      
-      if (response.data?.success) {
-        return { success: true, message: "Withdrawal rejected successfully" };
-      } else {
-        return { error: response.data?.error || "Failed to reject withdrawal" };
-      }
-    }
-
-    if (intent === "process") {
-      const response = await AxiosInstance.post(`/admin-withdrawals/${withdrawalId}/process/`, {}, {
-        headers: { "X-User-Id": userId }
-      });
-      
-      if (response.data?.success) {
-        return { success: true, message: "Withdrawal marked as processing" };
-      } else {
-        return { error: response.data?.error || "Failed to process withdrawal" };
-      }
-    }
-
-    if (intent === "complete") {
-      const proofFile = formData.get("admin_proof") as File;
-      
-      if (!proofFile) {
-        return { error: "Proof of payment is required" };
-      }
-      
-      const uploadFormData = new FormData();
-      uploadFormData.append('admin_proof', proofFile);
-      
-      const response = await AxiosInstance.post(`/admin-withdrawals/${withdrawalId}/complete/`, uploadFormData, {
-        headers: { 
-          "X-User-Id": userId,
-          "Content-Type": "multipart/form-data"
-        }
-      });
-      
-      if (response.data?.success) {
-        return { success: true, message: "Withdrawal completed successfully" };
-      } else {
-        return { error: response.data?.error || "Failed to complete withdrawal" };
-      }
-    }
-
-    return { error: "Invalid action" };
-  } catch (error: any) {
-    console.error('Error processing withdrawal:', error);
-    return { error: error.response?.data?.error || "An unexpected error occurred" };
-  }
-}
-
-const COLORS = ['#f59e0b', '#8b5cf6', '#3b82f6', '#10b981', '#ef4444'];
-
 const StatusBadge = ({ status }: { status: string }) => {
   const getStatusConfig = (s: string) => {
-    const statusMap: Record<string, { color: string; icon: any; label: string }> = {
-      pending: { color: '#f59e0b', icon: Clock, label: 'Pending' },
-      approved: { color: '#3b82f6', icon: CheckCircle, label: 'Approved' },
-      processing: { color: '#8b5cf6', icon: RefreshCw, label: 'Processing' },
-      completed: { color: '#10b981', icon: CheckCircle, label: 'Completed' },
-      rejected: { color: '#ef4444', icon: XCircle, label: 'Rejected' },
-      cancelled: { color: '#6b7280', icon: XCircle, label: 'Cancelled' }
+    const statusMap: Record<string, { color: string; icon: any; label: string; bgColor: string }> = {
+      pending: { color: '#f59e0b', icon: Clock, label: 'Pending', bgColor: 'bg-yellow-50' },
+      approved: { color: '#3b82f6', icon: CheckCircle, label: 'Approved', bgColor: 'bg-blue-50' },
+      processing: { color: '#8b5cf6', icon: RefreshCw, label: 'Processing', bgColor: 'bg-purple-50' },
+      completed: { color: '#10b981', icon: CheckCircle, label: 'Completed', bgColor: 'bg-green-50' },
+      rejected: { color: '#ef4444', icon: XCircle, label: 'Rejected', bgColor: 'bg-red-50' },
+      cancelled: { color: '#6b7280', icon: XCircle, label: 'Cancelled', bgColor: 'bg-gray-50' }
     };
     return statusMap[s.toLowerCase()] || statusMap.pending;
   };
@@ -347,8 +236,8 @@ const StatusBadge = ({ status }: { status: string }) => {
   return (
     <Badge 
       variant="secondary"
-      className="text-xs capitalize flex items-center gap-1 w-fit"
-      style={{ backgroundColor: `${config.color}20`, color: config.color }}
+      className={`flex items-center gap-1.5 text-xs ${config.bgColor}`}
+      style={{ color: config.color }}
     >
       <IconComponent className="w-3 h-3" />
       {config.label}
@@ -371,148 +260,56 @@ const MetricCardSkeleton = () => (
   </Card>
 );
 
-interface ActionDialogProps {
-  withdrawal: Withdrawal;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  intent: string;
-}
-
-const ApproveDialog = ({ withdrawal, open, onOpenChange, intent }: ActionDialogProps) => {
-  const navigation = useNavigation();
-  const isSubmitting = navigation.state === "submitting";
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Approve Withdrawal</DialogTitle>
-          <DialogDescription>
-            Are you sure you want to approve this withdrawal request?
-          </DialogDescription>
-        </DialogHeader>
-        <Form method="post" className="space-y-4">
-          <input type="hidden" name="intent" value={intent} />
-          <input type="hidden" name="withdrawalId" value={withdrawal.id} />
-          
-          <div className="py-4">
-            <div className="space-y-2">
-              <p><strong>Withdrawal ID:</strong> {withdrawal.withdrawal_id}</p>
-              <p><strong>User:</strong> {withdrawal.user?.username || 'Unknown'} ({withdrawal.user?.email || 'N/A'})</p>
-              <p><strong>Amount:</strong> ₱{parseFloat(withdrawal.amount).toLocaleString() || 0}</p>
-            </div>
-          </div>
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting} type="button">
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Approving..." : "Approve"}
-            </Button>
-          </DialogFooter>
-        </Form>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
-const RejectDialog = ({ withdrawal, open, onOpenChange, intent }: ActionDialogProps) => {
-  const navigation = useNavigation();
-  const isSubmitting = navigation.state === "submitting";
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Reject Withdrawal</DialogTitle>
-          <DialogDescription>
-            Please provide a reason for rejecting this withdrawal request.
-          </DialogDescription>
-        </DialogHeader>
-        <Form method="post" className="space-y-4">
-          <input type="hidden" name="intent" value={intent} />
-          <input type="hidden" name="withdrawalId" value={withdrawal.id} />
-          
-          <div className="py-4 space-y-4">
-            <div className="space-y-2">
-              <p><strong>Withdrawal ID:</strong> {withdrawal.withdrawal_id}</p>
-              <p><strong>Amount:</strong> ₱{parseFloat(withdrawal.amount).toLocaleString() || 0}</p>
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="reason">Rejection Reason</Label>
-              <Textarea
-                id="reason"
-                name="reason"
-                placeholder="Enter reason for rejection..."
-                rows={3}
-                required
-              />
-            </div>
-          </div>
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting} type="button">
-              Cancel
-            </Button>
-            <Button variant="destructive" type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Rejecting..." : "Reject"}
-            </Button>
-          </DialogFooter>
-        </Form>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
-const ProcessDialog = ({ withdrawal, open, onOpenChange, intent }: ActionDialogProps) => {
-  const navigation = useNavigation();
-  const isSubmitting = navigation.state === "submitting";
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Process Withdrawal</DialogTitle>
-          <DialogDescription>
-            Mark this withdrawal request as processing.
-          </DialogDescription>
-        </DialogHeader>
-        <Form method="post" className="space-y-4">
-          <input type="hidden" name="intent" value={intent} />
-          <input type="hidden" name="withdrawalId" value={withdrawal.id} />
-          
-          <div className="py-4">
-            <p>Are you sure you want to mark this withdrawal as processing?</p>
-            <div className="mt-4 space-y-2">
-              <p><strong>Withdrawal ID:</strong> {withdrawal.withdrawal_id}</p>
-              <p><strong>Amount:</strong> ₱{parseFloat(withdrawal.amount).toLocaleString() || 0}</p>
-            </div>
-          </div>
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting} type="button">
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Processing..." : "Mark as Processing"}
-            </Button>
-          </DialogFooter>
-        </Form>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
-const CompleteDialog = ({ withdrawal, open, onOpenChange, intent }: ActionDialogProps) => {
-  const navigation = useNavigation();
-  const isSubmitting = navigation.state === "submitting";
+// Action Dialog Component
+function ActionDialog({ 
+  open, 
+  onOpenChange, 
+  onConfirm, 
+  title, 
+  description,
+  actionType,
+  withdrawalId,
+  withdrawalAmount,
+  withdrawalCode
+}: { 
+  open: boolean; 
+  onOpenChange: (open: boolean) => void; 
+  onConfirm: (reason?: string, proofFile?: File) => Promise<void>;
+  title: string;
+  description: string;
+  actionType: string;
+  withdrawalId: string;
+  withdrawalAmount: number;
+  withdrawalCode: string;
+}) {
+  const [reason, setReason] = useState('');
+  const [proofFile, setProofFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleConfirm = async () => {
+    setIsLoading(true);
+    try {
+      if (actionType === 'reject') {
+        await onConfirm(reason);
+      } else if (actionType === 'complete') {
+        await onConfirm(undefined, proofFile || undefined);
+      } else {
+        await onConfirm();
+      }
+      onOpenChange(false);
+      setReason('');
+      setProofFile(null);
+      setPreview(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setProofFile(file);
       if (file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onloadend = () => {
@@ -525,30 +322,57 @@ const CompleteDialog = ({ withdrawal, open, onOpenChange, intent }: ActionDialog
     }
   };
 
+  const handleCancel = () => {
+    setReason('');
+    setProofFile(null);
+    setPreview(null);
+    onOpenChange(false);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Complete Withdrawal</DialogTitle>
-          <DialogDescription>
-            Upload proof of payment to complete this withdrawal.
-          </DialogDescription>
-        </DialogHeader>
-        <Form method="post" encType="multipart/form-data" className="space-y-4">
-          <input type="hidden" name="intent" value={intent} />
-          <input type="hidden" name="withdrawalId" value={withdrawal.id} />
-          
-          <div className="py-4 space-y-4">
-            <div className="space-y-2">
-              <p><strong>Withdrawal ID:</strong> {withdrawal.withdrawal_id}</p>
-              <p><strong>Amount:</strong> ₱{parseFloat(withdrawal.amount).toLocaleString() || 0}</p>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent className="sm:max-w-[500px] max-w-[95vw]">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <div className="space-y-4">
+          <div className="bg-muted/50 rounded-lg p-3">
+            <p className="text-sm font-medium">Withdrawal: {withdrawalCode}</p>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <Badge variant="secondary" className="text-xs">
+                Amount: ₱{withdrawalAmount.toLocaleString()}
+              </Badge>
             </div>
-            
+          </div>
+
+          {actionType === 'reject' && (
             <div className="space-y-2">
-              <Label htmlFor="admin_proof">Proof of Payment</Label>
+              <Label htmlFor="reason" className="text-sm font-medium">
+                Rejection Reason <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                id="reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Enter reason for rejecting this withdrawal..."
+                rows={3}
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                This reason will be shared with the user.
+              </p>
+            </div>
+          )}
+
+          {actionType === 'complete' && (
+            <div className="space-y-2">
+              <Label htmlFor="proof" className="text-sm font-medium">
+                Proof of Payment <span className="text-red-500">*</span>
+              </Label>
               <Input
-                id="admin_proof"
-                name="admin_proof"
+                id="proof"
                 type="file"
                 accept=".jpg,.jpeg,.png,.gif,.pdf"
                 onChange={handleFileChange}
@@ -557,43 +381,86 @@ const CompleteDialog = ({ withdrawal, open, onOpenChange, intent }: ActionDialog
               <p className="text-xs text-muted-foreground">
                 Allowed: JPEG, PNG, GIF, PDF (Max 5MB)
               </p>
+              {preview && (
+                <div className="mt-2">
+                  <p className="text-xs font-medium mb-1">Preview:</p>
+                  <img src={preview} alt="Preview" className="max-h-32 rounded-md border" />
+                </div>
+              )}
             </div>
+          )}
 
-            {preview && (
-              <div className="mt-2">
-                <p className="text-sm font-medium mb-2">Preview:</p>
-                <img src={preview} alt="Preview" className="max-h-40 rounded-md border" />
-              </div>
+          {actionType === 'reject' && (
+            <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3">
+              <p className="text-sm font-medium text-destructive flex items-center gap-1">
+                <AlertTriangle className="w-4 h-4" />
+                Warning: This action cannot be undone
+              </p>
+              <p className="text-xs text-destructive mt-1">
+                The user will be notified of the rejection.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <AlertDialogFooter className="mt-6 sm:flex-row flex-col gap-2">
+          <AlertDialogCancel
+            onClick={handleCancel}
+            disabled={isLoading}
+            className="mt-0 sm:w-auto w-full order-2 sm:order-1"
+          >
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleConfirm}
+            disabled={
+              isLoading || 
+              (actionType === 'reject' && !reason.trim()) ||
+              (actionType === 'complete' && !proofFile)
+            }
+            className={`sm:w-auto w-full order-1 sm:order-2 ${
+              actionType === 'reject' ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""
+            }`}
+          >
+            {isLoading ? (
+              <>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />
+                Processing...
+              </>
+            ) : (
+              'Confirm'
             )}
-          </div>
-          
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting} type="button">
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Completing..." : "Complete Withdrawal"}
-            </Button>
-          </DialogFooter>
-        </Form>
-      </DialogContent>
-    </Dialog>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
-};
+}
+
+const COLORS = ['#f59e0b', '#8b5cf6', '#3b82f6', '#10b981', '#ef4444'];
 
 export default function Withdrawals() {
   const loaderData = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(true);
   
-  const { user, withdrawalMetrics, withdrawals, total_count } = loaderData;
+  const { user, userId, withdrawalMetrics, withdrawals, total_count } = loaderData;
   
-  const [selectedWithdrawal, setSelectedWithdrawal] = useState<Withdrawal | null>(null);
-  const [dialogType, setDialogType] = useState<'approve' | 'reject' | 'process' | 'complete' | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [actionDialog, setActionDialog] = useState<{
+    open: boolean;
+    withdrawalId: string;
+    withdrawalCode: string;
+    withdrawalAmount: number;
+    actionType: string;
+  }>({
+    open: false,
+    withdrawalId: '',
+    withdrawalCode: '',
+    withdrawalAmount: 0,
+    actionType: ''
+  });
 
   useEffect(() => {
     if (loaderData) {
@@ -601,22 +468,55 @@ export default function Withdrawals() {
     }
   }, [loaderData]);
 
-  useEffect(() => {
-    if (actionData?.success) {
-      toast({
-        title: "Success",
-        description: actionData.message || "Operation completed successfully",
-      });
-      setDialogOpen(false);
-      navigate('.', { replace: true });
-    } else if (actionData?.error) {
+  const handleWithdrawalAction = async (withdrawalId: string, actionType: string, reason?: string, proofFile?: File) => {
+    setIsLoading(true);
+    try {
+      const headers: Record<string, string> = {};
+      if (userId) {
+        headers["X-User-Id"] = userId;
+      }
+
+      let response;
+      
+      if (actionType === 'approve') {
+        response = await AxiosInstance.post(`/admin-withdrawals/${withdrawalId}/approve/`, {}, { headers });
+      } else if (actionType === 'reject') {
+        response = await AxiosInstance.post(`/admin-withdrawals/${withdrawalId}/reject/`, { reason }, { headers });
+      } else if (actionType === 'process') {
+        response = await AxiosInstance.post(`/admin-withdrawals/${withdrawalId}/process/`, {}, { headers });
+      } else if (actionType === 'complete') {
+        const formData = new FormData();
+        if (proofFile) {
+          formData.append('admin_proof', proofFile);
+        }
+        response = await AxiosInstance.post(`/admin-withdrawals/${withdrawalId}/complete/`, formData, {
+          headers: { ...headers, "Content-Type": "multipart/form-data" }
+        });
+      }
+
+      if (response?.data?.success) {
+        toast({
+          title: "Success",
+          description: `Withdrawal ${actionType}d successfully`,
+        });
+        navigate('.', { replace: true });
+      } else {
+        toast({
+          title: "Error",
+          description: response?.data?.error || `Failed to ${actionType} withdrawal`,
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: actionData.error,
+        description: error.response?.data?.error || `Failed to ${actionType} withdrawal`,
         variant: "destructive",
       });
+    } finally {
+      setIsLoading(false);
     }
-  }, [actionData, toast, navigate]);
+  };
 
   const safeWithdrawals = withdrawals || [];
   
@@ -633,20 +533,9 @@ export default function Withdrawals() {
     total_amount_rejected: Number(withdrawalMetrics?.total_amount_rejected) || 0,
   };
 
-  const handleAction = (withdrawal: Withdrawal, action: string) => {
-    setSelectedWithdrawal(withdrawal);
-    setDialogType(action as any);
-    setDialogOpen(true);
-  };
-
-  const handleDialogClose = () => {
-    setDialogOpen(false);
-    setSelectedWithdrawal(null);
-    setDialogType(null);
-  };
-
   const withdrawalFilterConfig = {
     status: {
+      accessorKey: "status",
       options: ['pending', 'approved', 'processing', 'completed', 'rejected', 'cancelled'],
       placeholder: 'Status'
     }
@@ -674,7 +563,211 @@ export default function Withdrawals() {
     return `${name} ${percentage}%`;
   };
 
-  const isSubmitting = navigation.state === "submitting";
+  // Build columns with actions dropdown
+  const columns: ColumnDef<Withdrawal>[] = [
+    {
+      accessorKey: "withdrawal_id",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="text-xs sm:text-sm"
+        >
+          Withdrawal ID
+          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => (
+        <div className="font-medium text-xs sm:text-sm font-mono">
+          {row.getValue("withdrawal_id")}
+        </div>
+      ),
+    },
+    {
+      accessorKey: "user",
+      header: "User",
+      cell: ({ row }) => {
+        const userData = row.original.user;
+        return (
+          <div className="flex items-center gap-2 text-xs sm:text-sm">
+            <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center">
+              <User className="w-3 h-3 text-gray-600" />
+            </div>
+            <div>
+              <div className="font-medium">{userData?.username || 'Unknown'}</div>
+              <div className="text-xs text-muted-foreground">{userData?.email || 'N/A'}</div>
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "amount",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="text-xs sm:text-sm"
+        >
+          Amount
+          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const amount = parseFloat(row.getValue("amount") as string) || 0;
+        return (
+          <div className="flex items-center gap-1 text-xs sm:text-sm font-medium">
+            <DollarSign className="w-3 h-3 text-muted-foreground" />
+            ₱{amount.toLocaleString()}
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "status",
+      header: "Status",
+      cell: ({ row }) => <StatusBadge status={row.getValue("status")} />,
+    },
+    {
+      accessorKey: "requested_at",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="text-xs sm:text-sm"
+        >
+          Requested
+          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
+        </Button>
+      ),
+      cell: ({ row }) => {
+        const date = new Date(row.getValue("requested_at"));
+        const formattedDate = date.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        });
+        
+        return (
+          <div className="flex items-center gap-1 text-xs sm:text-sm">
+            <Calendar className="w-3 h-3 text-muted-foreground" />
+            {formattedDate}
+          </div>
+        );
+      },
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }) => {
+        const withdrawal = row.original;
+        const status = withdrawal.status?.toLowerCase() || '';
+        const amount = parseFloat(withdrawal.amount) || 0;
+
+        const getAvailableActions = () => {
+          const actions: { label: string; id: string; destructive: boolean }[] = [];
+          
+          if (status === 'pending') {
+            actions.push({ label: 'Approve', id: 'approve', destructive: false });
+            actions.push({ label: 'Reject', id: 'reject', destructive: true });
+          } else if (status === 'approved') {
+            actions.push({ label: 'Mark as Processing', id: 'process', destructive: false });
+          } else if (status === 'processing') {
+            actions.push({ label: 'Complete with Proof', id: 'complete', destructive: false });
+          }
+          
+          return actions;
+        };
+
+        const actions = getAvailableActions();
+        const safeActions = actions.filter((a) => !a.destructive);
+        const dangerActions = actions.filter((a) => a.destructive);
+
+        return (
+          <div className="flex items-center gap-1">
+            <Link to={`/admin/admin-view-withdrawal-details/${withdrawal.id}`}>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                <Eye className="h-4 w-4" />
+              </Button>
+            </Link>
+
+            {status === 'completed' && withdrawal.admin_proof && (
+              <a 
+                href={withdrawal.admin_proof} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="inline-flex"
+              >
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                  <Download className="h-4 w-4" />
+                </Button>
+              </a>
+            )}
+
+            {actions.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="h-8 w-8 p-0">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                  <DropdownMenuItem
+                    onClick={() => navigator.clipboard.writeText(withdrawal.withdrawal_id)}
+                  >
+                    Copy Withdrawal ID
+                  </DropdownMenuItem>
+
+                  {safeActions.length > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      {safeActions.map((a) => (
+                        <DropdownMenuItem
+                          key={a.id}
+                          onClick={() => setActionDialog({
+                            open: true,
+                            withdrawalId: withdrawal.id,
+                            withdrawalCode: withdrawal.withdrawal_id,
+                            withdrawalAmount: amount,
+                            actionType: a.id
+                          })}
+                          className="cursor-pointer"
+                        >
+                          {a.label}
+                        </DropdownMenuItem>
+                      ))}
+                    </>
+                  )}
+
+                  {dangerActions.length > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      {dangerActions.map((a) => (
+                        <DropdownMenuItem
+                          key={a.id}
+                          onClick={() => setActionDialog({
+                            open: true,
+                            withdrawalId: withdrawal.id,
+                            withdrawalCode: withdrawal.withdrawal_id,
+                            withdrawalAmount: amount,
+                            actionType: a.id
+                          })}
+                          className="cursor-pointer text-destructive focus:text-destructive"
+                        >
+                          {a.label}
+                        </DropdownMenuItem>
+                      ))}
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
 
   if (isLoading) {
     return (
@@ -742,9 +835,9 @@ export default function Withdrawals() {
               variant="outline" 
               size="sm" 
               onClick={() => navigate('.', { replace: true })}
-              disabled={isSubmitting}
+              disabled={isLoading}
             >
-              <RefreshCw className={`w-4 h-4 mr-2 ${isSubmitting ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
           </div>
@@ -917,7 +1010,7 @@ export default function Withdrawals() {
               <div className="rounded-md">
                 {safeWithdrawals.length > 0 ? (
                   <DataTable 
-                    columns={columns(handleAction)} 
+                    columns={columns} 
                     data={safeWithdrawals}
                     filterConfig={withdrawalFilterConfig}
                     searchConfig={{
@@ -935,218 +1028,24 @@ export default function Withdrawals() {
           </Card>
         </div>
 
-        {selectedWithdrawal && dialogType === 'approve' && (
-          <ApproveDialog
-            withdrawal={selectedWithdrawal}
-            open={dialogOpen}
-            onOpenChange={handleDialogClose}
-            intent="approve"
-          />
-        )}
-
-        {selectedWithdrawal && dialogType === 'reject' && (
-          <RejectDialog
-            withdrawal={selectedWithdrawal}
-            open={dialogOpen}
-            onOpenChange={handleDialogClose}
-            intent="reject"
-          />
-        )}
-
-        {selectedWithdrawal && dialogType === 'process' && (
-          <ProcessDialog
-            withdrawal={selectedWithdrawal}
-            open={dialogOpen}
-            onOpenChange={handleDialogClose}
-            intent="process"
-          />
-        )}
-
-        {selectedWithdrawal && dialogType === 'complete' && (
-          <CompleteDialog
-            withdrawal={selectedWithdrawal}
-            open={dialogOpen}
-            onOpenChange={handleDialogClose}
-            intent="complete"
-          />
-        )}
+        {/* Action Dialog */}
+        <ActionDialog
+          open={actionDialog.open}
+          onOpenChange={(open) => setActionDialog(prev => ({ ...prev, open }))}
+          onConfirm={(reason, proofFile) => handleWithdrawalAction(
+            actionDialog.withdrawalId, 
+            actionDialog.actionType, 
+            reason, 
+            proofFile
+          )}
+          title={`${actionDialog.actionType?.charAt(0).toUpperCase() + actionDialog.actionType?.slice(1)} Withdrawal`}
+          description={`Are you sure you want to ${actionDialog.actionType} this withdrawal request?`}
+          actionType={actionDialog.actionType}
+          withdrawalId={actionDialog.withdrawalId}
+          withdrawalAmount={actionDialog.withdrawalAmount}
+          withdrawalCode={actionDialog.withdrawalCode}
+        />
       </SidebarLayout>
     </UserProvider>
   );
 }
-
-const columns = (handleAction: (withdrawal: Withdrawal, action: string) => void): ColumnDef<Withdrawal>[] => [
-  {
-    accessorKey: "withdrawal_id",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm"
-        >
-          Withdrawal ID
-          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      )
-    },
-    cell: ({ row }) => (
-      <div className="font-medium text-xs sm:text-sm font-mono">
-        {row.getValue("withdrawal_id")}
-      </div>
-    ),
-  },
-  {
-    accessorKey: "user",
-    header: "User",
-    cell: ({ row }) => {
-      const user = row.original.user;
-      return (
-        <div className="flex items-center gap-1 text-xs sm:text-sm">
-          <User className="w-3 h-3 text-muted-foreground" />
-          <div>
-            <div>{user?.username || 'Unknown'}</div>
-            <div className="text-xs text-muted-foreground">{user?.email || 'N/A'}</div>
-          </div>
-        </div>
-      );
-    },
-  },
-  {
-    accessorKey: "amount",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm"
-        >
-          Amount
-          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      )
-    },
-    cell: ({ row }) => {
-      const amount = parseFloat(row.getValue("amount") as string) || 0;
-      return (
-        <div className="flex items-center gap-1 text-xs sm:text-sm font-medium">
-          <DollarSign className="w-3 h-3 text-muted-foreground" />
-          ₱{amount.toLocaleString()}
-        </div>
-      );
-    },
-  },
-  {
-    accessorKey: "status",
-    header: "Status",
-    cell: ({ row }) => <StatusBadge status={row.getValue("status")} />,
-  },
-  {
-    accessorKey: "requested_at",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm"
-        >
-          Requested
-          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      )
-    },
-    cell: ({ row }) => {
-      const date = new Date(row.getValue("requested_at"));
-      const formattedDate = date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      });
-      
-      return (
-        <div className="flex items-center gap-1 text-xs sm:text-sm">
-          <Calendar className="w-3 h-3 text-muted-foreground" />
-          {formattedDate}
-        </div>
-      );
-    },
-  },
-  {
-    id: 'actions',
-    header: 'Actions',
-    cell: ({ row }) => {
-      const withdrawal = row.original;
-      const status = withdrawal.status?.toLowerCase() || '';
-
-      return (
-        <div className="flex items-center gap-1">
-          <Link to={`/admin/admin-view-withdrawal-details/${withdrawal.id}`}>
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-              <Eye className="h-4 w-4" />
-            </Button>
-          </Link>
-
-          {status === 'pending' && (
-            <>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="h-8 w-8 p-0 text-green-600"
-                onClick={() => handleAction(withdrawal, 'approve')}
-                title="Approve"
-              >
-                <CheckCircle className="h-4 w-4" />
-              </Button>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="h-8 w-8 p-0 text-red-600"
-                onClick={() => handleAction(withdrawal, 'reject')}
-                title="Reject"
-              >
-                <XCircle className="h-4 w-4" />
-              </Button>
-            </>
-          )}
-
-          {status === 'approved' && (
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-8 w-8 p-0 text-purple-600"
-              onClick={() => handleAction(withdrawal, 'process')}
-              title="Mark as Processing"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          )}
-
-          {status === 'processing' && (
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="h-8 w-8 p-0 text-green-600"
-              onClick={() => handleAction(withdrawal, 'complete')}
-              title="Complete with Proof"
-            >
-              <Upload className="h-4 w-4" />
-            </Button>
-          )}
-
-          {status === 'completed' && withdrawal.admin_proof && (
-            <a 
-              href={withdrawal.admin_proof} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="inline-flex"
-            >
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                <Download className="h-4 w-4" />
-              </Button>
-            </a>
-          )}
-        </div>
-      );
-    },
-  },
-];

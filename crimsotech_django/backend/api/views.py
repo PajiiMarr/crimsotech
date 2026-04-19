@@ -23685,6 +23685,21 @@ class CheckoutOrder(viewsets.ViewSet):
         print(f"[FEE] Delivery fee: ₱{fee:.2f} for {distance_km:.2f} km")
         return fee
 
+    def _calculate_transaction_fee(self, amount: Decimal, payment_method: str) -> Decimal:
+        """
+        Calculate transaction fee for e-wallet payments
+        5% capped at ₱50
+        """
+        if payment_method.lower() in ['maya', 'gcash']:
+            fee = amount * Decimal('0.05')
+            # Cap at ₱50
+            if fee > Decimal('50.00'):
+                fee = Decimal('50.00')
+            logger.info(f"💰 Transaction fee calculated: ₱{fee:.2f} for {payment_method} payment on ₱{amount:.2f}")
+            print(f"[FEE] Transaction fee: ₱{fee:.2f} (5% capped at ₱50)")
+            return fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return Decimal('0')
+
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')
     def get_checkout_items(self, request):
         user_id = request.GET.get("user_id")
@@ -24062,6 +24077,7 @@ class CheckoutOrder(viewsets.ViewSet):
 
                 if variant and variant.image and hasattr(variant.image, 'url'):
                     try:
+                        from .utils import convert_s3_to_public_url
                         item_data['image'] = convert_s3_to_public_url(variant.image.url)
                     except Exception:
                         item_data['image'] = variant.image.url
@@ -24069,6 +24085,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     first_media = product.productmedia_set.first()
                     if first_media and first_media.file_data:
                         try:
+                            from .utils import convert_s3_to_public_url
                             item_data["image"] = convert_s3_to_public_url(first_media.file_data.url)
                         except Exception:
                             item_data["image"] = first_media.file_data.url
@@ -24095,18 +24112,18 @@ class CheckoutOrder(viewsets.ViewSet):
             
             print(f"[DISTANCE] Max distance found: {max_distance} km")
             
-            delivery = self._calculate_delivery_fee(max_distance)
-            total = subtotal + delivery
+            delivery_fee = self._calculate_delivery_fee(max_distance)
+            total = subtotal + delivery_fee
             
             print("=" * 80)
             print("[TOTALS]")
             print(f"  Subtotal: ₱{subtotal:.2f}")
-            print(f"  Delivery Fee: ₱{delivery:.2f}")
+            print(f"  Delivery Fee: ₱{delivery_fee:.2f}")
             print(f"  Total: ₱{total:.2f}")
             print("=" * 80)
             
             logger.info(f"💰 Subtotal: ₱{subtotal:.2f}")
-            logger.info(f"💰 Delivery Fee: ₱{delivery:.2f} (based on {max_distance:.2f} km distance)")
+            logger.info(f"💰 Delivery Fee: ₱{delivery_fee:.2f} (based on {max_distance:.2f} km distance)")
             logger.info(f"💰 Total: ₱{total:.2f}")
 
             user_purchase_history = self._get_user_purchase_history(user_id)
@@ -24145,7 +24162,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 "checkout_items": checkout_items,
                 "summary": {
                     "subtotal": subtotal,
-                    "delivery": delivery,
+                    "delivery": delivery_fee,
                     "total": total,
                     "item_count": len(checkout_items),
                     "shop_count": len(shop_ids),
@@ -24729,7 +24746,15 @@ class CheckoutOrder(viewsets.ViewSet):
                     )
 
             delivery_fee = Decimal('0') if shipping_method.lower() == "pickup" else Decimal('40.00')
-            total_amount = subtotal + delivery_fee - discount_amount
+            
+            # Calculate base total (subtotal + delivery fee - discount)
+            base_total = subtotal + delivery_fee - discount_amount
+            
+            # Calculate transaction fee for e-wallet payments (5% capped at ₱50)
+            transaction_fee = self._calculate_transaction_fee(base_total, payment_method)
+            
+            # Final total including transaction fee
+            total_amount = base_total + transaction_fee
 
             initial_status = 'pending'
             
@@ -24742,6 +24767,14 @@ class CheckoutOrder(viewsets.ViewSet):
                 delivery_method=shipping_method,
                 delivery_address_text=delivery_address_text
             )
+            
+            # Store transaction fee in metadata for reference
+            if transaction_fee > 0:
+                order.metadata = order.metadata or {}
+                order.metadata['transaction_fee'] = float(transaction_fee)
+                order.metadata['transaction_fee_percentage'] = 5
+                order.metadata['transaction_fee_cap'] = 50
+                order.save(update_fields=['metadata'])
             
             if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() and pickup_date:
                 order.metadata = order.metadata or {}
@@ -24759,10 +24792,12 @@ class CheckoutOrder(viewsets.ViewSet):
                 if direct_product.productmedia_set.exists():
                     first_media = direct_product.productmedia_set.first()
                     if first_media and first_media.file_data:
+                        from .utils import convert_s3_to_public_url
                         product_image_url = convert_s3_to_public_url(first_media.file_data.url)
                 
                 variant_image_url = None
                 if direct_variant.image:
+                    from .utils import convert_s3_to_public_url
                     variant_image_url = convert_s3_to_public_url(direct_variant.image.url)
 
                 checkout_item = Checkout.objects.create(
@@ -24849,7 +24884,7 @@ class CheckoutOrder(viewsets.ViewSet):
             # Decrease stock for the order items
             self._decrease_stock_for_order(order)
 
-            return Response({
+            response_data = {
                 "success": True,
                 "message": "Order created successfully. Waiting for seller confirmation.",
                 "order_id": str(order.order),
@@ -24859,12 +24894,19 @@ class CheckoutOrder(viewsets.ViewSet):
                 "subtotal": float(subtotal),
                 "delivery_fee": float(delivery_fee),
                 "discount_applied": float(discount_amount),
+                "transaction_fee": float(transaction_fee),
                 "voucher_used": voucher.code if voucher else None,
                 "status": "pending_shipment",
                 "payment_method": payment_method,
                 "shipping_method": shipping_method,
                 "pickup_date": pickup_date if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() else None
-            })
+            }
+            
+            # Add transaction fee note for e-wallet payments
+            if transaction_fee > 0:
+                response_data["transaction_fee_note"] = f"Transaction fee of ₱{transaction_fee:.2f} (5% capped at ₱50) applied for {payment_method} payment"
+            
+            return Response(response_data)
 
         except Exception as e:
             logger.error(f"Error creating order: {str(e)}")
@@ -24902,6 +24944,11 @@ class CheckoutOrder(viewsets.ViewSet):
                 },
                 'pickup_date': order.metadata.get('pickup_date') if order.metadata else None
             }
+            
+            # Add transaction fee info if present
+            if order.metadata and order.metadata.get('transaction_fee'):
+                order_data['transaction_fee'] = order.metadata['transaction_fee']
+                order_data['transaction_fee_note'] = "5% transaction fee capped at ₱50 applied for e-wallet payment"
 
             if order.shipping_address:
                 order_data['shipping_address'] = {
@@ -25622,7 +25669,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     product.save()
 
         return stock_errors
-    
+        
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
     def get_shipping_addresses(self, request):
@@ -45395,6 +45442,9 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         except UserWallet.DoesNotExist:
             wallet = UserWallet.objects.create(user=user)
 
+        # Auto-release expired pending transactions (older than 3 days)
+        self._release_expired_pending_transactions(wallet)
+
         transactions_qs = WalletTransaction.objects.filter(wallet=wallet)
 
         total_credits = transactions_qs.filter(
@@ -45422,6 +45472,285 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             'lifetime_withdrawals': float(total_debits),
             'pending_withdrawals': float(pending_withdrawals),
         })
+
+    # ================================================================
+    # PROCESS COMPLETED ORDER (CORRECTED)
+    # ================================================================
+
+    @action(detail=False, methods=['post'], url_path='process_completed_order')
+    def process_completed_order(self, request):
+        """
+        Process a completed order and add the amount to seller's pending balance.
+        Funds will be available for withdrawal only after 3 days with no refund.
+        
+        Body:
+            - order_id: UUID of the completed order
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+
+        order_id = request.data.get('order_id')
+        
+        if not order_id:
+            return Response(
+                {'error': 'order_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            order = Order.objects.get(order=order_id)
+        except Order.DoesNotExist:
+            return Response(
+                {'error': 'Order not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if order is completed or delivered
+        if order.status not in ['completed', 'delivered']:
+            return Response(
+                {'error': f'Order status must be completed or delivered. Current status: {order.status}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if already processed
+        existing_tx = WalletTransaction.objects.filter(
+            order=order,
+            source_type='shop_sale',
+            transaction_type='credit'
+        ).exists()
+
+        if existing_tx:
+            return Response({
+                'success': False,
+                'error': 'Order has already been processed to wallet',
+                'order_id': str(order.order),
+                'status': order.status
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get checkout items for this order
+        checkout_items = Checkout.objects.filter(order=order).select_related(
+            'cart_item__product__shop__customer__customer'
+        )
+
+        if not checkout_items.exists():
+            return Response({
+                'error': 'No checkout items found for this order',
+                'order_id': str(order.order)
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        total_credited = Decimal('0')
+        processed_items = []
+
+        with transaction.atomic():
+            for checkout_item in checkout_items:
+                cart_item = checkout_item.cart_item
+                
+                # Get the seller (shop owner)
+                seller_user = None
+                shop = None
+                
+                if cart_item and cart_item.product and cart_item.product.shop:
+                    shop = cart_item.product.shop
+                    if shop.customer:
+                        seller_user = shop.customer.customer
+                
+                if seller_user:
+                    # Get the product amount (exclude shipping fee)
+                    amount = checkout_item.total_amount
+                    
+                    # Get or create wallet for seller
+                    wallet, _ = UserWallet.objects.get_or_create(user=seller_user)
+                    
+                    # Add to pending_balance with 3-day hold
+                    wallet.pending_balance += amount
+                    wallet.save()
+                    
+                    # Create transaction record with pending status
+                    wallet_transaction = WalletTransaction.objects.create(
+                        wallet=wallet,
+                        user=seller_user,
+                        amount=amount,
+                        transaction_type='credit',
+                        source_type='shop_sale',
+                        status='pending',  # Pending - will be released after 3 days
+                        shop=shop,
+                        order=order,
+                        created_at=timezone.now()
+                    )
+                    
+                    total_credited += amount
+                    processed_items.append({
+                        'shop_id': str(shop.id) if shop else None,
+                        'shop_name': shop.name if shop else 'Unknown',
+                        'amount': float(amount),
+                        'seller_id': str(seller_user.id),
+                        'seller_name': f"{seller_user.first_name} {seller_user.last_name}".strip() or seller_user.username,
+                        'transaction_id': str(wallet_transaction.transaction_id),
+                        'release_date': (timezone.now() + timedelta(days=3)).isoformat()
+                    })
+                    
+                    logger.info(f"Added ₱{amount} to pending balance for seller {seller_user.username} from completed order {order_id}")
+                else:
+                    logger.warning(f"No seller found for checkout item {checkout_item.id} in order {order_id}")
+
+        return Response({
+            'success': True,
+            'message': f'Successfully credited ₱{float(total_credited):.2f} to seller wallet(s) (pending balance)',
+            'order_id': str(order.order),
+            'order_status': order.status,
+            'total_credited': float(total_credited),
+            'processed_items': processed_items,
+            'note': 'Funds will be available for withdrawal after 3 days with no refund.',
+            'release_date': (timezone.now() + timedelta(days=3)).isoformat()
+        }, status=status.HTTP_200_OK)
+
+    # ================================================================
+    # RELEASE PENDING AFTER HOLD PERIOD
+    # ================================================================
+
+    def _release_expired_pending_transactions(self, user_wallet):
+        """
+        Release pending transactions that are older than 3 days and have no refunds.
+        Called before withdrawal request to check available balance.
+        """
+        three_days_ago = timezone.now() - timedelta(days=3)
+        
+        expired_pending = WalletTransaction.objects.filter(
+            wallet=user_wallet,
+            status='pending',
+            transaction_type='credit',
+            source_type__in=['personal_sale', 'shop_sale'],
+            created_at__lte=three_days_ago
+        )
+        
+        released_amount = Decimal('0')
+        
+        for pending_tx in expired_pending:
+            # Check if there's a refund for this order
+            has_refund = False
+            if pending_tx.order:
+                # Check if order has been refunded
+                has_refund = Checkout.objects.filter(
+                    order=pending_tx.order,
+                    status='refunded'
+                ).exists()
+            
+            if not has_refund:
+                pending_tx.status = 'completed'
+                pending_tx.save()
+                
+                user_wallet.pending_balance -= pending_tx.amount
+                user_wallet.available_balance += pending_tx.amount
+                released_amount += pending_tx.amount
+                
+                logger.info(f"Released pending transaction {pending_tx.transaction_id} after 3-day hold")
+        
+        if released_amount > 0:
+            user_wallet.save()
+            
+        return released_amount
+
+    # ================================================================
+    # FIX WALLET - RESET AND RECALCULATE
+    # ================================================================
+
+    @action(detail=False, methods=['post'], url_path='fix_wallet')
+    def fix_wallet(self, request):
+        """
+        ADMIN ONLY: Reset wallet and recalculate from completed orders.
+        This will:
+        1. Reset wallet balance to zero
+        2. Find all completed orders
+        3. Add them to pending balance with proper 3-day hold
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+
+        if not user.is_admin:
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+
+        target_user_id = request.data.get('user_id')
+        if not target_user_id:
+            return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            target_user = User.objects.get(id=target_user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            wallet = UserWallet.objects.get(user=target_user)
+        except UserWallet.DoesNotExist:
+            wallet = UserWallet.objects.create(user=target_user)
+
+        # Reset wallet
+        wallet.available_balance = Decimal('0')
+        wallet.pending_balance = Decimal('0')
+        wallet.save()
+
+        # Delete existing transactions for this user
+        WalletTransaction.objects.filter(user=target_user).delete()
+
+        # Find all completed orders where this user is the seller
+        # This depends on your order structure - adjust as needed
+        completed_orders = Order.objects.filter(
+            status='completed',
+            checkout__cart_item__product__shop__customer__customer=target_user
+        ).distinct()
+
+        total_credited = Decimal('0')
+        processed_orders = []
+
+        for order in completed_orders:
+            checkout_items = Checkout.objects.filter(order=order)
+            
+            for checkout_item in checkout_items:
+                cart_item = checkout_item.cart_item
+                
+                if cart_item and cart_item.product and cart_item.product.shop:
+                    shop = cart_item.product.shop
+                    
+                    if shop.customer and shop.customer.customer == target_user:
+                        amount = checkout_item.total_amount
+                        
+                        wallet.pending_balance += amount
+                        total_credited += amount
+                        
+                        WalletTransaction.objects.create(
+                            wallet=wallet,
+                            user=target_user,
+                            amount=amount,
+                            transaction_type='credit',
+                            source_type='shop_sale',
+                            status='pending',
+                            shop=shop,
+                            order=order,
+                            created_at=order.created_at or timezone.now()
+                        )
+                        
+                        processed_orders.append({
+                            'order_id': str(order.order),
+                            'amount': float(amount),
+                            'order_date': order.created_at.isoformat() if order.created_at else None
+                        })
+            
+            wallet.save()
+
+        return Response({
+            'success': True,
+            'message': f'Wallet reset and recalculated from {len(completed_orders)} completed orders',
+            'user_id': str(target_user.id),
+            'wallet': {
+                'available_balance': float(wallet.available_balance),
+                'pending_balance': float(wallet.pending_balance),
+                'total_balance': float(wallet.available_balance + wallet.pending_balance),
+            },
+            'total_credited': float(total_credited),
+            'orders_processed': processed_orders,
+            'note': 'All amounts added to pending balance. They will become available for withdrawal after 3 days from order completion.'
+        }, status=status.HTTP_200_OK)
 
     # ================================================================
     # CREDIT - Goes to pending_balance with 3-day hold
@@ -45481,6 +45810,12 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         if order_id:
             try:
                 order = Order.objects.get(order=order_id)
+                # Only allow credit if order is completed
+                if source_type == 'shop_sale' and order.status not in ['completed', 'delivered']:
+                    return Response(
+                        {'error': f'Order must be completed or delivered to credit. Current status: {order.status}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             except Order.DoesNotExist:
                 return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -45500,7 +45835,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                 status='pending',  # Pending until 3-day hold period expires
                 shop=shop,
                 order=order,
-                created_at=timezone.now()  # Track when the hold period starts
+                created_at=timezone.now()
             )
 
             logger.info(f"Credit of {amount} to user {user.id} for {source_type} (pending, 3-day hold)")
@@ -45517,50 +45852,6 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             },
             'transaction': serializer.data
         })
-
-    # ================================================================
-    # RELEASE PENDING AFTER HOLD PERIOD
-    # ================================================================
-
-    def _release_expired_pending_transactions(self, user_wallet):
-        """
-        Release pending transactions that are older than 3 days and have no refunds.
-        Called before withdrawal request to check available balance.
-        """
-        three_days_ago = timezone.now() - timedelta(days=3)
-        
-        expired_pending = WalletTransaction.objects.filter(
-            wallet=user_wallet,
-            status='pending',
-            transaction_type='credit',
-            source_type__in=['personal_sale', 'shop_sale'],
-            created_at__lte=three_days_ago
-        )
-        
-        released_amount = Decimal('0')
-        
-        for pending_tx in expired_pending:
-            # Check if there's a refund for this transaction
-            has_refund = Checkout.objects.filter(
-                voucher__isnull=False,
-                order__user=user_wallet.user,
-                created_at__gt=pending_tx.created_at
-            ).exists()
-            
-            if not has_refund:
-                pending_tx.status = 'completed'
-                pending_tx.save()
-                
-                user_wallet.pending_balance -= pending_tx.amount
-                user_wallet.available_balance += pending_tx.amount
-                released_amount += pending_tx.amount
-                
-                logger.info(f"Released pending transaction {pending_tx.transaction_id} after 3-day hold")
-        
-        if released_amount > 0:
-            user_wallet.save()
-            
-        return released_amount
 
     # ================================================================
     # DEBIT
@@ -46108,7 +46399,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         """
         Manually release a specific pending balance to available.
         Admin use only — normally auto-released after 3 days.
-        Body: { "amount": decimal (optional, releases all if omitted) }
+        Body: { "amount": decimal (optional, releases all if omitted), "user_id": required }
         """
         user, error_response = self.get_user_from_header(request)
         if error_response:
@@ -46176,7 +46467,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             },
             'transaction': serializer.data
         })
-
+    
 class WithdrawalRequestViewSet(viewsets.ModelViewSet):
     """
     ViewSet for WithdrawalRequest operations.
@@ -46535,7 +46826,7 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
 
             return Response({
                 "success": True,
-                "data": serializer.data,  # Keep as "data" since frontend now looks for this
+                "data": serializer.data,
                 "stats": metrics,
                 "total_count": total_count
             })
@@ -46549,7 +46840,273 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
                 "error": str(e)
             }, status=500)
 
+    def retrieve(self, request, pk=None):
+        """
+        Get a single withdrawal by ID (using withdrawal_id as primary key)
+        """
+        try:
+            # Use withdrawal_id instead of id since that's the primary key
+            withdrawal = WithdrawalRequest.objects.select_related(
+                "user",
+                "wallet",
+                "approved_by"
+            ).get(withdrawal_id=pk)
 
+            # Get user wallet balance - UserWallet uses wallet_id, not id
+            wallet_balance = withdrawal.wallet.available_balance if withdrawal.wallet else 0
+            pending_balance = withdrawal.wallet.pending_balance if withdrawal.wallet else 0
+
+            # Get user address
+            user_address = None
+            if withdrawal.user.street or withdrawal.user.barangay or withdrawal.user.city:
+                address_parts = []
+                if withdrawal.user.street:
+                    address_parts.append(withdrawal.user.street)
+                if withdrawal.user.barangay:
+                    address_parts.append(withdrawal.user.barangay)
+                if withdrawal.user.city:
+                    address_parts.append(withdrawal.user.city)
+                if withdrawal.user.province:
+                    address_parts.append(withdrawal.user.province)
+                user_address = ", ".join(address_parts)
+
+            # Build withdrawal data
+            withdrawal_data = {
+                "id": str(withdrawal.withdrawal_id),
+                "withdrawal_id": withdrawal.withdrawal_id,
+                "amount": float(withdrawal.amount),
+                "status": withdrawal.status,
+                "requested_at": withdrawal.requested_at.isoformat(),
+                "approved_at": withdrawal.approved_at.isoformat() if withdrawal.approved_at else None,
+                "completed_at": withdrawal.completed_at.isoformat() if withdrawal.completed_at else None,
+                "admin_proof": withdrawal.admin_proof.url if withdrawal.admin_proof else None,
+                
+                # User info
+                "user": {
+                    "id": withdrawal.user.id,
+                    "username": withdrawal.user.username,
+                    "email": withdrawal.user.email,
+                    "first_name": withdrawal.user.first_name,
+                    "last_name": withdrawal.user.last_name,
+                    "phone": withdrawal.user.contact_number,
+                    "address": user_address
+                },
+                
+                # Wallet info - Use wallet_id instead of id
+                "wallet": {
+                    "id": str(withdrawal.wallet.wallet_id) if withdrawal.wallet else None,
+                    "wallet_id": withdrawal.wallet.wallet_id if withdrawal.wallet else None,
+                    "balance": float(wallet_balance),
+                    "available_balance": float(wallet_balance),
+                    "pending_balance": float(pending_balance)
+                },
+                
+                # Approved by info
+                "approved_by": {
+                    "id": withdrawal.approved_by.id,
+                    "username": withdrawal.approved_by.username,
+                    "email": withdrawal.approved_by.email
+                } if withdrawal.approved_by else None
+            }
+
+            return Response({
+                "success": True,
+                "withdrawal": withdrawal_data,
+                "data": withdrawal_data  # For compatibility with frontend
+            })
+
+        except WithdrawalRequest.DoesNotExist:
+            return Response({
+                "success": False,
+                "error": "Withdrawal not found"
+            }, status=404)
+        except Exception as e:
+            import traceback
+            print(f"Error in retrieve: {str(e)}")
+            print(traceback.format_exc())
+            return Response({
+                "success": False,
+                "error": str(e)
+            }, status=500)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """
+        Approve a withdrawal request
+        """
+        try:
+            withdrawal = WithdrawalRequest.objects.get(withdrawal_id=pk)
+            
+            if withdrawal.status != 'pending':
+                return Response({
+                    "success": False,
+                    "error": f"Cannot approve withdrawal with status '{withdrawal.status}'"
+                }, status=400)
+            
+            # Get admin user ID from header
+            admin_user_id = request.headers.get('X-User-Id')
+            admin_user = None
+            if admin_user_id:
+                try:
+                    admin_user = User.objects.get(id=admin_user_id)
+                except User.DoesNotExist:
+                    pass
+            
+            withdrawal.status = 'approved'
+            withdrawal.approved_at = timezone.now()
+            withdrawal.approved_by = admin_user
+            withdrawal.save()
+            
+            return Response({
+                "success": True,
+                "message": "Withdrawal approved successfully",
+                "withdrawal": {
+                    "id": str(withdrawal.withdrawal_id),
+                    "status": withdrawal.status,
+                    "approved_at": withdrawal.approved_at.isoformat()
+                }
+            })
+            
+        except WithdrawalRequest.DoesNotExist:
+            return Response({
+                "success": False,
+                "error": "Withdrawal not found"
+            }, status=404)
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": str(e)
+            }, status=500)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """
+        Reject a withdrawal request
+        """
+        try:
+            withdrawal = WithdrawalRequest.objects.get(withdrawal_id=pk)
+            
+            if withdrawal.status != 'pending':
+                return Response({
+                    "success": False,
+                    "error": f"Cannot reject withdrawal with status '{withdrawal.status}'"
+                }, status=400)
+            
+            reason = request.data.get('reason')
+            if not reason:
+                return Response({
+                    "success": False,
+                    "error": "Rejection reason is required"
+                }, status=400)
+            
+            withdrawal.status = 'rejected'
+            withdrawal.save()
+            
+            return Response({
+                "success": True,
+                "message": "Withdrawal rejected successfully",
+                "withdrawal": {
+                    "id": str(withdrawal.withdrawal_id),
+                    "status": withdrawal.status
+                }
+            })
+            
+        except WithdrawalRequest.DoesNotExist:
+            return Response({
+                "success": False,
+                "error": "Withdrawal not found"
+            }, status=404)
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": str(e)
+            }, status=500)
+
+    @action(detail=True, methods=['post'])
+    def process(self, request, pk=None):
+        """
+        Mark withdrawal as processing
+        """
+        try:
+            withdrawal = WithdrawalRequest.objects.get(withdrawal_id=pk)
+            
+            if withdrawal.status != 'approved':
+                return Response({
+                    "success": False,
+                    "error": f"Cannot process withdrawal with status '{withdrawal.status}'. Status must be 'approved'."
+                }, status=400)
+            
+            withdrawal.status = 'processing'
+            withdrawal.save()
+            
+            return Response({
+                "success": True,
+                "message": "Withdrawal marked as processing",
+                "withdrawal": {
+                    "id": str(withdrawal.withdrawal_id),
+                    "status": withdrawal.status
+                }
+            })
+            
+        except WithdrawalRequest.DoesNotExist:
+            return Response({
+                "success": False,
+                "error": "Withdrawal not found"
+            }, status=404)
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": str(e)
+            }, status=500)
+
+    @action(detail=True, methods=['post'])
+    def complete(self, request, pk=None):
+        """
+        Complete a withdrawal with proof of payment
+        """
+        try:
+            withdrawal = WithdrawalRequest.objects.get(withdrawal_id=pk)
+            
+            if withdrawal.status != 'processing':
+                return Response({
+                    "success": False,
+                    "error": f"Cannot complete withdrawal with status '{withdrawal.status}'. Status must be 'processing'."
+                }, status=400)
+            
+            admin_proof = request.FILES.get('admin_proof')
+            if not admin_proof:
+                return Response({
+                    "success": False,
+                    "error": "Proof of payment is required"
+                }, status=400)
+            
+            withdrawal.status = 'completed'
+            withdrawal.completed_at = timezone.now()
+            withdrawal.admin_proof = admin_proof
+            withdrawal.save()
+            
+            return Response({
+                "success": True,
+                "message": "Withdrawal completed successfully",
+                "withdrawal": {
+                    "id": str(withdrawal.withdrawal_id),
+                    "status": withdrawal.status,
+                    "completed_at": withdrawal.completed_at.isoformat(),
+                    "admin_proof": withdrawal.admin_proof.url if withdrawal.admin_proof else None
+                }
+            })
+            
+        except WithdrawalRequest.DoesNotExist:
+            return Response({
+                "success": False,
+                "error": "Withdrawal not found"
+            }, status=404)
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": str(e)
+            }, status=500)
+                    
 class RiderWalletView(APIView):
     """
     Unified view for rider wallet operations:
