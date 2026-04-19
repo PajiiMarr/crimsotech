@@ -11,7 +11,9 @@ import {
   ActivityIndicator,
   RefreshControl,
   Platform,
+  Modal,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import RoleGuard from '../guards/RoleGuard';
 import AxiosInstance from '../../contexts/axios';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -76,38 +78,41 @@ interface Category {
   name: string;
 }
 
+interface HotItem {
+  product_id: string;
+  product_name: string;
+  product_price: number;
+  seller_username: string;
+  boost_plan: string;
+  days_remaining: number;
+}
+
 const insertCommas = (intPart: string): string => {
   return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 };
 
-// Parse any value to a finite number, returns 0 if invalid
 const toNumber = (val: any): number => {
   if (val === null || val === undefined) return 0;
   const n = typeof val === 'string' ? parseFloat(val) : Number(val);
   return isFinite(n) ? n : 0;
 };
 
-// Format number with commas — always operates on a real number
 const formatNumber = (val: number | string | null | undefined): string => {
   const n = toNumber(val);
   return n.toLocaleString('en-PH');
 };
 
-// Format currency — always operates on a real number
 const formatCurrency = (val: number | string | null | undefined): string => {
   const n = toNumber(val);
-  const fixed = n.toFixed(2);                        // e.g. "50000.00"
-  const [intPart, decPart] = fixed.split('.');        // ["50000", "00"]
-  return `₱${insertCommas(intPart)}.${decPart}`;     // "₱50,000.00"
+  const fixed = n.toFixed(2);
+  const [intPart, decPart] = fixed.split('.');
+  return `₱${insertCommas(intPart)}.${decPart}`;
 };
 
-
-// Format rating with one decimal place — always operates on a real number
 const formatRating = (val: number | string | null | undefined): string => {
   return toNumber(val).toFixed(1);
 };
 
-// Get product price info (always show lowest price)
 const getProductPrice = (product: Product): {
   displayPrice: string;
   originalPrice: string | null;
@@ -183,9 +188,6 @@ const getProductPrice = (product: Product): {
   return { displayPrice: 'Price unavailable', originalPrice: null, hasDiscount: false, isGift: false, hasStock: false };
 };
 
-// ----------------------------
-// Product Card Component
-// ----------------------------
 const CompactProductCard = ({ product, onPress }: { product: Product; onPress: () => void }) => {
   const [productInfo, setProductInfo] = useState(getProductPrice(product));
 
@@ -219,20 +221,17 @@ const CompactProductCard = ({ product, onPress }: { product: Product; onPress: (
     return 'https://via.placeholder.com/150';
   };
 
-  // Always parse review_count to a number before formatting
   const formattedReviewCount = formatNumber(toNumber(product.review_count));
   const formattedRating = formatRating(product.average_rating);
 
   return (
     <TouchableOpacity style={styles.productCard} onPress={onPress} activeOpacity={0.7}>
-      {/* Discount Badge */}
       {productInfo.hasDiscount && (
         <View style={styles.discountBadge}>
           <Text style={styles.discountText}>SALE</Text>
         </View>
       )}
 
-      {/* Gift Badge */}
       {productInfo.isGift && (
         <View style={styles.giftBadge}>
           <MaterialIcons name="card-giftcard" size={10} color="#059669" />
@@ -240,7 +239,6 @@ const CompactProductCard = ({ product, onPress }: { product: Product; onPress: (
         </View>
       )}
 
-      {/* Out of stock badge */}
       {!productInfo.hasStock && product.availability_status && (
         <View style={styles.outOfStockBadge}>
           <Text style={styles.outOfStockText}>
@@ -249,7 +247,6 @@ const CompactProductCard = ({ product, onPress }: { product: Product; onPress: (
         </View>
       )}
 
-      {/* Product image */}
       <View style={styles.productImageContainer}>
         <Image
           source={{ uri: getImageUrl() }}
@@ -259,11 +256,9 @@ const CompactProductCard = ({ product, onPress }: { product: Product; onPress: (
         />
       </View>
 
-      {/* Product info */}
       <View style={styles.productInfo}>
         <Text style={styles.productName} numberOfLines={2}>{product.name}</Text>
 
-        {/* Rating */}
         {product.average_rating !== null && product.average_rating !== undefined && (
           <View style={styles.ratingContainer}>
             <View style={styles.starsContainer}>
@@ -284,7 +279,6 @@ const CompactProductCard = ({ product, onPress }: { product: Product; onPress: (
 
         {categoryName ? <Text style={styles.categoryText}>{categoryName}</Text> : null}
 
-        {/* Seller */}
         <View style={styles.sellerRow}>
           <MaterialIcons
             name={product.listing_type === 'shop' ? 'store' : 'person'}
@@ -296,7 +290,6 @@ const CompactProductCard = ({ product, onPress }: { product: Product; onPress: (
           </Text>
         </View>
 
-        {/* Price */}
         <View style={styles.priceContainer}>
           <View style={styles.priceWrapper}>
             {productInfo.originalPrice && (
@@ -312,16 +305,18 @@ const CompactProductCard = ({ product, onPress }: { product: Product; onPress: (
   );
 };
 
-// ----------------------------
-// Main Screen
-// ----------------------------
 export default function CustomerHome() {
-  const { user, registrationStage, loading: authLoading } = useAuth();
+  const { user, registrationStage, loading: authLoading, userId } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [showHotItemsModal, setShowHotItemsModal] = useState(false);
+  const [hotItems, setHotItems] = useState<HotItem[]>([]);
+  const [loadingHotItems, setLoadingHotItems] = useState(false);
+  const [dontShowAgain, setDontShowAgain] = useState(false);
+  const [manualTriggerLoading, setManualTriggerLoading] = useState(false);
 
   const fetchProducts = async () => {
     try {
@@ -332,7 +327,6 @@ export default function CustomerHome() {
       const raw = response.data;
       const list: Product[] = Array.isArray(raw) ? raw : raw?.results ?? [];
 
-      // Ensure all numeric fields are real numbers
       const normalized = list.map((p) => ({
         ...p,
         average_rating: p.average_rating !== undefined && p.average_rating !== null ? toNumber(p.average_rating) : null,
@@ -362,6 +356,43 @@ export default function CustomerHome() {
     }
   };
 
+  const fetchHotItems = async () => {
+    if (!userId) return false;
+    
+    try {
+      setLoadingHotItems(true);
+      const response = await AxiosInstance.get(`/home-boosts/other_users/?user_id=${userId}`);
+      
+      if (response.data.success) {
+        setHotItems(response.data.products || []);
+        return response.data.products && response.data.products.length > 0;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error fetching hot items:', error);
+      return false;
+    } finally {
+      setLoadingHotItems(false);
+    }
+  };
+
+  const handleManualShowHotItems = async () => {
+    if (!userId || manualTriggerLoading) return;
+    
+    try {
+      setManualTriggerLoading(true);
+      const hasHotItems = await fetchHotItems();
+      
+      if (hasHotItems) {
+        setShowHotItemsModal(true);
+      } else {
+        setShowHotItemsModal(true);
+      }
+    } finally {
+      setManualTriggerLoading(false);
+    }
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -375,6 +406,40 @@ export default function CustomerHome() {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  useEffect(() => {
+    const checkAndShowHotItems = async () => {
+      const dontShow = await AsyncStorage.getItem('dontShowHotItems');
+      
+      if (!dontShow && userId) {
+        const hasHotItems = await fetchHotItems();
+        if (hasHotItems) {
+          setShowHotItemsModal(true);
+        }
+      }
+      
+      if (dontShow) {
+        setDontShowAgain(true);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      checkAndShowHotItems();
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [userId]);
+
+  const handleDontShowAgain = async () => {
+    await AsyncStorage.setItem('dontShowHotItems', 'true');
+    setDontShowAgain(true);
+    setShowHotItemsModal(false);
+  };
+
+  const handleShowAgain = async () => {
+    await AsyncStorage.removeItem('dontShowHotItems');
+    setDontShowAgain(false);
+  };
 
   useEffect(() => {
     if (!authLoading && registrationStage !== 4) {
@@ -394,7 +459,6 @@ export default function CustomerHome() {
         return catId === selectedCategory;
       });
 
-  // Item count is always a number
   const itemCount = filteredProducts.length;
 
   if (loading) {
@@ -413,6 +477,26 @@ export default function CustomerHome() {
   return (
     <RoleGuard allowedRoles={['customer']}>
       <CustomerLayout refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+
+        {/* Show Hot Items Button */}
+        {dontShowAgain && (
+          <View style={styles.hotItemsButtonContainer}>
+            <TouchableOpacity
+              style={styles.hotItemsButton}
+              onPress={handleManualShowHotItems}
+              disabled={manualTriggerLoading}
+            >
+              {manualTriggerLoading ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <MaterialIcons name="whatshot" size={20} color="#FFFFFF" />
+                  <Text style={styles.hotItemsButtonText}>Show Hot Items</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Categories */}
         {categories.length > 0 && (
@@ -451,7 +535,6 @@ export default function CustomerHome() {
         <View style={styles.productsSection}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>For You</Text>
-            {/* itemCount is a real JS number, formatNumber converts it properly */}
             <Text style={styles.productCount}>{formatNumber(itemCount)} items</Text>
           </View>
 
@@ -479,13 +562,129 @@ export default function CustomerHome() {
           )}
         </View>
       </CustomerLayout>
+
+      {/* Hot Items Modal */}
+      <Modal
+        visible={showHotItemsModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowHotItemsModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            {/* Header */}
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHeaderLeft}>
+                <View style={styles.flameIconContainer}>
+                  <MaterialIcons name="whatshot" size={28} color="#FFFFFF" />
+                </View>
+                <View>
+                  <Text style={styles.modalTitle}>Hot Items 🔥</Text>
+                  <Text style={styles.modalSubtitle}>Boosted by other sellers</Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setShowHotItemsModal(false)} style={styles.modalCloseButton}>
+                <MaterialIcons name="close" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              {loadingHotItems ? (
+                <View style={styles.modalLoadingContainer}>
+                  <ActivityIndicator size="large" color="#F97316" />
+                  <Text style={styles.modalLoadingText}>Finding hot items...</Text>
+                  <Text style={styles.modalLoadingSubtext}>Discovering boosted products just for you</Text>
+                </View>
+              ) : hotItems.length === 0 ? (
+                <View style={styles.modalEmptyContainer}>
+                  <View style={styles.modalEmptyIcon}>
+                    <MaterialIcons name="inventory" size={50} color="#F97316" />
+                  </View>
+                  <Text style={styles.modalEmptyTitle}>No Hot Items Yet</Text>
+                  <Text style={styles.modalEmptyText}>No boosted products available at the moment. Check back later for trending items!</Text>
+                </View>
+              ) : (
+                <>
+                  <ScrollView style={styles.modalScrollView} showsVerticalScrollIndicator={false}>
+                    {hotItems.map((item, index) => (
+                      <TouchableOpacity
+                        key={index}
+                        style={styles.hotItemCard}
+                        onPress={() => {
+                          router.push({ pathname: '/customer/view-product', params: { id: item.product_id } });
+                          setShowHotItemsModal(false);
+                        }}
+                      >
+                        <View style={styles.hotItemBadge}>
+                          <MaterialIcons name="whatshot" size={12} color="#FFFFFF" />
+                          <Text style={styles.hotItemBadgeText}>BOOSTED</Text>
+                        </View>
+                        <View style={styles.hotItemDaysBadge}>
+                          <Text style={styles.hotItemDaysText}>{item.days_remaining} days left</Text>
+                        </View>
+                        <View style={styles.hotItemContent}>
+                          <View style={styles.hotItemInfo}>
+                            <Text style={styles.hotItemName} numberOfLines={2}>{item.product_name}</Text>
+                            <View style={styles.hotItemSeller}>
+                              <MaterialIcons name="person" size={14} color="#6B7280" />
+                              <Text style={styles.hotItemSellerText}>by {item.seller_username}</Text>
+                            </View>
+                            <View style={styles.hotItemPlanBadge}>
+                              <Text style={styles.hotItemPlanText}>{item.boost_plan}</Text>
+                            </View>
+                            <View style={styles.hotItemPriceRow}>
+                              <Text style={styles.hotItemPrice}>{formatCurrency(item.product_price)}</Text>
+                              <TouchableOpacity style={styles.hotItemViewButton}>
+                                <Text style={styles.hotItemViewButtonText}>View</Text>
+                                <MaterialIcons name="arrow-forward" size={14} color="#F97316" />
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  <View style={styles.modalSummary}>
+                    <View>
+                      <Text style={styles.modalSummaryText}>Showing <Text style={styles.modalSummaryBold}>{hotItems.length}</Text> boosted products</Text>
+                      <Text style={styles.modalSummarySubtext}>From various sellers</Text>
+                    </View>
+                    <View style={styles.modalSummaryRight}>
+                      <Text style={styles.modalSummaryLabel}>Boosted with:</Text>
+                      <Text style={styles.modalSummaryValue}>Premium visibility</Text>
+                    </View>
+                  </View>
+                </>
+              )}
+            </View>
+
+            <View style={styles.modalFooter}>
+              <View style={styles.modalFooterLeft}>
+                <Text style={styles.modalFooterText}>Want to boost your own products?</Text>
+                <TouchableOpacity onPress={() => {
+                  router.push('/seller/seller-boosts' as any);
+                  setShowHotItemsModal(false);
+                }}>
+                  <Text style={styles.modalFooterLink}>Try Boost Plans →</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.modalFooterButtons}>
+                <TouchableOpacity style={styles.modalFooterButtonOutline} onPress={handleDontShowAgain}>
+                  <Text style={styles.modalFooterButtonOutlineText}>Don't show again</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalFooterButtonSolid} onPress={() => setShowHotItemsModal(false)}>
+                  <Text style={styles.modalFooterButtonSolidText}>Got it!</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </RoleGuard>
   );
 }
 
-// ----------------------------
-// Styles
-// ----------------------------
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
   loadingContainer: {
@@ -585,4 +784,89 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 14, color: '#6B7280', marginTop: 12, textAlign: 'center', fontWeight: '500' },
   conditionText: { fontSize: 12, color: '#9CA3AF', marginTop: 4, textAlign: 'center' },
   bottomPadding: { height: Platform.OS === 'ios' ? 74 : 64 },
+  hotItemsButtonContainer: { paddingHorizontal: 12, marginTop: 12 },
+  hotItemsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F97316',
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 8,
+    shadowColor: '#F97316',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  hotItemsButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modalContainer: { backgroundColor: '#FFFFFF', borderRadius: 16, width: width - 32, maxHeight: '80%', overflow: 'hidden' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F97316', padding: 20 },
+  modalHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  flameIconContainer: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#FFFFFF' },
+  modalSubtitle: { fontSize: 12, color: '#FFEDD5', marginTop: 2 },
+  modalCloseButton: { padding: 4 },
+  modalBody: { padding: 20 },
+  modalLoadingContainer: { alignItems: 'center', paddingVertical: 40 },
+  modalLoadingText: { fontSize: 16, fontWeight: '600', color: '#374151', marginTop: 16 },
+  modalLoadingSubtext: { fontSize: 12, color: '#6B7280', marginTop: 8 },
+  modalEmptyContainer: { alignItems: 'center', paddingVertical: 40 },
+  modalEmptyIcon: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#FFF7ED', justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
+  modalEmptyTitle: { fontSize: 18, fontWeight: 'bold', color: '#1F2937', marginBottom: 8 },
+  modalEmptyText: { fontSize: 14, color: '#6B7280', textAlign: 'center', lineHeight: 20 },
+  modalScrollView: { maxHeight: 400 },
+  hotItemCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    position: 'relative',
+  },
+  hotItemBadge: {
+    position: 'absolute',
+    top: -8,
+    left: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F97316',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 12,
+    gap: 4,
+    zIndex: 1,
+  },
+  hotItemBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: 'bold' },
+  hotItemDaysBadge: { position: 'absolute', top: -8, right: 12, backgroundColor: '#FFF7ED', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12, borderWidth: 1, borderColor: '#FED7AA', zIndex: 1 },
+  hotItemDaysText: { fontSize: 10, color: '#F97316', fontWeight: '600' },
+  hotItemContent: { marginTop: 8 },
+  hotItemInfo: { gap: 8 },
+  hotItemName: { fontSize: 14, fontWeight: '600', color: '#1F2937', lineHeight: 20 },
+  hotItemSeller: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  hotItemSellerText: { fontSize: 12, color: '#6B7280' },
+  hotItemPlanBadge: { backgroundColor: '#F3F4F6', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' },
+  hotItemPlanText: { fontSize: 10, color: '#374151', fontWeight: '500' },
+  hotItemPriceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
+  hotItemPrice: { fontSize: 20, fontWeight: 'bold', color: '#F97316' },
+  hotItemViewButton: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#F97316', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  hotItemViewButtonText: { fontSize: 12, color: '#F97316', fontWeight: '600' },
+  modalSummary: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFF7ED', padding: 12, borderRadius: 8, marginTop: 12, borderWidth: 1, borderColor: '#FED7AA' },
+  modalSummaryText: { fontSize: 12, color: '#4B5563' },
+  modalSummaryBold: { fontWeight: 'bold', color: '#F97316' },
+  modalSummarySubtext: { fontSize: 10, color: '#9CA3AF', marginTop: 2 },
+  modalSummaryRight: { alignItems: 'flex-end' },
+  modalSummaryLabel: { fontSize: 10, color: '#6B7280' },
+  modalSummaryValue: { fontSize: 10, color: '#374151', fontWeight: '500' },
+  modalFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderTopWidth: 1, borderTopColor: '#E5E7EB', gap: 12, flexWrap: 'wrap' },
+  modalFooterLeft: { flex: 1 },
+  modalFooterText: { fontSize: 12, color: '#6B7280' },
+  modalFooterLink: { fontSize: 12, color: '#F97316', fontWeight: '600', marginTop: 2 },
+  modalFooterButtons: { flexDirection: 'row', gap: 8 },
+  modalFooterButtonOutline: { borderWidth: 1, borderColor: '#D1D5DB', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  modalFooterButtonOutlineText: { fontSize: 12, color: '#6B7280', fontWeight: '500' },
+  modalFooterButtonSolid: { backgroundColor: '#F97316', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
+  modalFooterButtonSolidText: { fontSize: 12, color: '#FFFFFF', fontWeight: '600' },
 });
