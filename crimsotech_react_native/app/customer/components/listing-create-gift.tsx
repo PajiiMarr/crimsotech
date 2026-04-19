@@ -12,7 +12,7 @@ import {
   Platform
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { useAuth } from '../../../contexts/AuthContext';
 import RoleGuard from '../../guards/RoleGuard';
 import CreateGiftForm from '../components/listing-create-gift-form';
@@ -67,49 +67,49 @@ export default function CreateGiftPage() {
   if (loading) {
     return (
       <RoleGuard allowedRoles={['customer']}>
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#8B5CF6" />
-            <Text style={styles.loadingText}>Loading...</Text>
-          </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#8B5CF6" />
+          <Text style={styles.loadingText}>Loading...</Text>
+        </View>
       </RoleGuard>
     );
   }
 
   return (
     <RoleGuard allowedRoles={['customer']}>
-        <SafeAreaView style={styles.container}>
-          <View style={styles.header}>
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => router.back()}
-            >
-              <MaterialIcons name="arrow-back" size={24} color="#374151" />
-            </TouchableOpacity>
-            <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitle}>Create New Gift</Text>
-              <Text style={styles.headerSubtitle}>Personal Gift Listing</Text>
-            </View>
-            <View style={styles.headerRight} />
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => router.back()}
+          >
+            <MaterialIcons name="arrow-back" size={24} color="#374151" />
+          </TouchableOpacity>
+          <View style={styles.headerTitleContainer}>
+            <Text style={styles.headerTitle}>Create New Gift</Text>
+            <Text style={styles.headerSubtitle}>Personal Gift Listing</Text>
           </View>
+          <View style={styles.headerRight} />
+        </View>
 
-          {error ? (
-            <View style={styles.errorContainer}>
-              <MaterialIcons name="error-outline" size={48} color="#EF4444" />
-              <Text style={styles.errorText}>{error}</Text>
-              <TouchableOpacity 
-                style={styles.retryButton}
-                onPress={fetchInitialData}
-              >
-                <Text style={styles.retryButtonText}>Retry</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <CreateGiftForm 
-              globalCategories={globalCategories}
-              modelClasses={modelClasses}
-            />
-          )}
-        </SafeAreaView>
+        {error ? (
+          <View style={styles.errorContainer}>
+            <MaterialIcons name="error-outline" size={48} color="#EF4444" />
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity 
+              style={styles.retryButton}
+              onPress={fetchInitialData}
+            >
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <CreateGiftForm 
+            globalCategories={globalCategories}
+            modelClasses={modelClasses}
+          />
+        )}
+      </SafeAreaView>
     </RoleGuard>
   );
 }

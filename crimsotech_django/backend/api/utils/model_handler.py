@@ -27,7 +27,7 @@ class ElectronicsClassifier:
         if model_path is None:
             current_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.dirname(os.path.dirname(current_dir))
-            model_path = os.path.join(project_root, 'model', 'electronics_classifier3.keras')
+            model_path = os.path.join(project_root, 'model', 'electronics_classifier_final.keras')
         
         try:
             self.model = tf.keras.models.load_model(model_path)

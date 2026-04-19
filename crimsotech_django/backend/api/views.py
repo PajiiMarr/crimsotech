@@ -66,7 +66,7 @@ import base64
 
 
 # Initialize classifier once (Django will cache this)
-MODEL_PATH = os.path.join('model', 'electronics_classifier3.keras')
+MODEL_PATH = os.path.join('model', 'electronics_classifier_final.keras')
 
 # Remove this line:
 # classifier = ElectronicsClassifier(MODEL_PATH)
@@ -17861,14 +17861,14 @@ class SellerProducts(viewsets.ModelViewSet):
                 # Load model
                 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
                 MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
-                MODEL_PATH = os.path.join(MODEL_DIR, 'electronics_classifier3.keras')
+                MODEL_PATH = os.path.join(MODEL_DIR, 'electronics_classifier_final.keras')
                 
                 if not os.path.exists(MODEL_PATH):
-                    MODEL_PATH = 'model/electronics_classifier3.keras'
+                    MODEL_PATH = 'model/electronics_classifier_final.keras'
                     if not os.path.exists(MODEL_PATH):
                         return Response({
                             'success': False,
-                            'error': f'Model file not found. Looked at: {os.path.join(MODEL_DIR, "electronics_classifier3.keras")}'
+                            'error': f'Model file not found. Looked at: {os.path.join(MODEL_DIR, "electronics_classifier_final.keras")}'
                         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                 
                 model = tf.keras.models.load_model(MODEL_PATH)
@@ -19532,14 +19532,14 @@ class CustomerProducts(viewsets.ModelViewSet):
                 # Load model
                 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
                 MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
-                MODEL_PATH = os.path.join(MODEL_DIR, 'electronics_classifier3.keras')
+                MODEL_PATH = os.path.join(MODEL_DIR, 'electronics_classifier_final.keras')
                 
                 if not os.path.exists(MODEL_PATH):
-                    MODEL_PATH = 'model/electronics_classifier3.keras'
+                    MODEL_PATH = 'model/electronics_classifier_final.keras'
                     if not os.path.exists(MODEL_PATH):
                         return Response({
                             'success': False,
-                            'error': f'Model file not found. Looked at: {os.path.join(MODEL_DIR, "electronics_classifier3.keras")}'
+                            'error': f'Model file not found. Looked at: {os.path.join(MODEL_DIR, "electronics_classifier_final.keras")}'
                         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                 
                 model = tf.keras.models.load_model(MODEL_PATH)

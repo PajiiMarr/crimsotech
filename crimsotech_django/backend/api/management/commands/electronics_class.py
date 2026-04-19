@@ -110,5 +110,5 @@ print(f"Predicted category: {predicted_class}")
 print(f"Confidence: {confidence:.2f}")
 
 model_dir = os.path.join(settings.BASE_DIR, "model")
-model_path = os.path.join(model_dir, "electronics_classifier3.keras")
+model_path = os.path.join(model_dir, "electronics_classifier_final.keras")
 model.save(model_path)

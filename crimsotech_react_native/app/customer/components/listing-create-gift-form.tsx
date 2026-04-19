@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+// app/customer/components/listing-create-gift-form.tsx
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -12,46 +13,49 @@ import {
   Modal,
   FlatList,
   Switch,
-  Platform
-} from 'react-native';
-import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
-import AxiosInstance from '../../../contexts/axios';
-import { useAuth } from '../../../contexts/AuthContext';
+  Platform,
+  Dimensions,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
+import { router } from "expo-router";
+import AxiosInstance from "../../../contexts/axios";
+import { useAuth } from "../../../contexts/AuthContext";
 
 // --- INTERFACE DEFINITIONS ---
-
 interface User {
   id: string;
   username: string;
 }
-
 interface Category {
   id: string;
   name: string;
   shop: string | null;
   user: User;
 }
-
 interface MediaPreview {
   file: any;
   preview: string;
-  type: 'image' | 'video';
+  type: "image" | "video";
 }
-
-// Variant interface - no price fields
-interface Variant {
+interface GiftVariant {
   id: string;
   title: string;
-  quantity: number | '';
+  quantity: number | "";
   sku_code?: string;
   image?: any | null;
   imagePreview?: string;
-  critical_trigger?: number | '';
+  proofImage?: any | null;
+  proofImagePreview?: string;
+  length?: number | "";
+  width?: number | "";
+  height?: number | "";
+  dimension_unit?: string;
+  weight?: number | "";
+  weight_unit?: "g" | "kg" | "lb" | "oz";
+  critical_trigger?: number | "";
   is_active?: boolean;
 }
-
 interface PredictionResult {
   success?: boolean;
   predicted_category?: {
@@ -64,52 +68,119 @@ interface PredictionResult {
   predicted_class?: string;
   error?: string;
 }
-
 interface CreateGiftFormProps {
   globalCategories: Category[];
   modelClasses: string[];
 }
 
-// Generate a simple UUID function
 const generateId = () => {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
 };
 
-// Condition options
-const conditionOptions = [
-  'Like New',
-  'New',
-  'Refurbished',
-  'Used - Excellent',
-  'Used - Good'
-];
+const SCREEN_WIDTH = Dimensions.get("window").width;
 
-export default function CreateGiftForm({ globalCategories, modelClasses }: CreateGiftFormProps) {
+// --- CONDITION SCALE (1-5 stars) ---
+const CONDITION_SCALE = {
+  1: {
+    label: "Poor - Heavy signs of use, may not function perfectly",
+    shortLabel: "Poor",
+    color: "#FEE2E2",
+    textColor: "#991B1B",
+    borderColor: "#FECACA",
+    stars: 1,
+  },
+  2: {
+    label: "Fair - Visible wear, fully functional",
+    shortLabel: "Fair",
+    color: "#FFEDD5",
+    textColor: "#9A3412",
+    borderColor: "#FED7AA",
+    stars: 2,
+  },
+  3: {
+    label: "Good - Normal wear, well-maintained",
+    shortLabel: "Good",
+    color: "#FEF9C3",
+    textColor: "#854D0E",
+    borderColor: "#FDE047",
+    stars: 3,
+  },
+  4: {
+    label: "Very Good - Minimal wear, almost like new",
+    shortLabel: "Very Good",
+    color: "#DBEAFE",
+    textColor: "#1E40AF",
+    borderColor: "#BFDBFE",
+    stars: 4,
+  },
+  5: {
+    label: "Like New - No signs of use, original packaging",
+    shortLabel: "Like New",
+    color: "#DCFCE7",
+    textColor: "#166534",
+    borderColor: "#BBF7D0",
+    stars: 5,
+  },
+} as const;
+
+type ConditionValue = keyof typeof CONDITION_SCALE;
+
+const weightUnitOptions = ["g", "kg", "lb", "oz"];
+const dimensionUnitOptions = ["cm", "m", "in", "ft"];
+
+const normalizeText = (s: string) => {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(" ");
+};
+
+const tokenSimilarity = (a: string, b: string) => {
+  const ta = new Set(normalizeText(a).split(" "));
+  const tb = new Set(normalizeText(b).split(" "));
+  if (ta.size === 0 || tb.size === 0) return 0;
+  const inter = [...ta].filter((x) => tb.has(x)).length;
+  const union = new Set([...ta, ...tb]).size;
+  return union === 0 ? 0 : inter / union;
+};
+
+const findBestCategoryMatch = (predictedName: string, globalCategories: Category[]) => {
+  const scores = globalCategories.map((gc) => ({
+    category: gc,
+    score: tokenSimilarity(predictedName, gc.name),
+  }));
+  scores.sort((a, b) => b.score - a.score);
+  return scores[0] || null;
+};
+
+export default function CreateGiftForm({
+  globalCategories,
+  modelClasses,
+}: CreateGiftFormProps) {
   const { userId } = useAuth();
 
   // Form state
-  const [giftName, setGiftName] = useState('');
-  const [giftDescription, setGiftDescription] = useState('');
-  const [giftCondition, setGiftCondition] = useState('');
-  const [selectedCategoryName, setSelectedCategoryName] = useState<string>('');
-  
-  // Critical stock trigger
-  const [enableCriticalTrigger, setEnableCriticalTrigger] = useState(false);
-  const [criticalStock, setCriticalStock] = useState<number | ''>('');
+  const [giftName, setGiftName] = useState("");
+  const [giftDescription, setGiftDescription] = useState("");
+  const [giftCondition, setGiftCondition] = useState<ConditionValue | "">("");
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string>("");
 
   // Media state
   const [mainMedia, setMainMedia] = useState<MediaPreview[]>([]);
-  
-  // Variants state - no price fields
-  const [variants, setVariants] = useState<Variant[]>([
+
+  // Variants state - NO PRICE FIELDS (gifts are free)
+  const [variants, setVariants] = useState<GiftVariant[]>([
     {
       id: generateId(),
-      title: giftName || "Default",
-      quantity: '',
-      sku_code: '',
+      title: "",
+      quantity: "",
+      sku_code: "",
+      weight_unit: "g",
+      dimension_unit: "cm",
       is_active: true,
-      critical_trigger: '',
-    }
+    },
   ]);
 
   // UI state
@@ -117,107 +188,160 @@ export default function CreateGiftForm({ globalCategories, modelClasses }: Creat
   const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [apiResponseError, setApiResponseError] = useState<string | null>(null);
+
+  // Validation errors for each step
+  const [step1Errors, setStep1Errors] = useState<{ name?: string; description?: string; condition?: string }>({});
+  const [step2Errors, setStep2Errors] = useState<{ media?: string }>({});
+  const [step3Errors, setStep3Errors] = useState<{ variants?: string }>({});
 
   // Modal state
   const [conditionModalVisible, setConditionModalVisible] = useState(false);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
+  const [weightUnitModal, setWeightUnitModal] = useState<{
+    visible: boolean;
+    variantId: string | null;
+  }>({ visible: false, variantId: null });
+  const [dimensionUnitModal, setDimensionUnitModal] = useState<{
+    visible: boolean;
+    variantId: string | null;
+  }>({ visible: false, variantId: null });
 
   // Prediction state
   const [isPredicting, setIsPredicting] = useState(false);
   const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null);
-  const [showPrediction, setShowPrediction] = useState(false);
   const [predictionError, setPredictionError] = useState<string | null>(null);
+  const predictionAbortController = useRef<AbortController | null>(null);
 
   // Update first variant title when gift name changes
   useEffect(() => {
-    setVariants(prev => prev.map((variant, index) => 
-      index === 0 ? { ...variant, title: giftName || "Default" } : variant
-    ));
+    setVariants((prev) =>
+      prev.map((variant, index) =>
+        index === 0 ? { ...variant, title: giftName || "Default" } : variant,
+      ),
+    );
   }, [giftName]);
 
-  // Normalize text for category matching
-  const normalizeText = (s: string) => {
-    return s
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter(Boolean)
-      .join(' ');
-  };
-
-  const tokenSimilarity = (a: string, b: string) => {
-    const ta = new Set(normalizeText(a).split(' '));
-    const tb = new Set(normalizeText(b).split(' '));
-    if (ta.size === 0 || tb.size === 0) return 0;
-    const inter = [...ta].filter(x => tb.has(x)).length;
-    const union = new Set([...ta, ...tb]).size;
-    return union === 0 ? 0 : inter / union;
-  };
-
-  const findBestCategoryMatch = (predictedName: string) => {
-    const scores = globalCategories.map((gc) => ({
-      category: gc,
-      score: tokenSimilarity(predictedName, gc.name),
-    }));
-    scores.sort((a, b) => b.score - a.score);
-    return scores[0] || null;
-  };
-
-  // Media handlers
-  // Replace the existing pickMedia function with this camera version
-const pickMedia = async () => {
-  if (mainMedia.length >= 9) {
-    Alert.alert('Limit Reached', 'Maximum 9 media files allowed');
-    return;
-  }
-
-  const { status } = await ImagePicker.requestCameraPermissionsAsync();
-  if (status !== 'granted') {
-    Alert.alert('Permission Required', 'Please allow access to your camera');
-    return;
-  }
-
-  const result = await ImagePicker.launchCameraAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.All,
-    allowsEditing: true,
-    quality: 0.8,
-  });
-
-  if (!result.canceled && result.assets[0]) {
-    const asset = result.assets[0];
-    const isVideo = asset.type?.startsWith('video') || false;
-    const fileName = asset.uri.split('/').pop() || 'file';
+  // --- VALIDATION FUNCTIONS ---
+  const validateStep1 = (): boolean => {
+    const errors: { name?: string; description?: string; condition?: string } = {};
     
-    const newMedia = {
-      file: {
-        uri: asset.uri,
-        name: fileName,
-        type: isVideo ? 'video/mp4' : 'image/jpeg',
-      },
-      preview: asset.uri,
-      type: isVideo ? 'video' : 'image' as 'image' | 'video',
-    };
-
-    setMainMedia(prev => [...prev, newMedia]);
-
-    // Auto-analyze images for category prediction
-    if (!isVideo) {
-      analyzeImages([{
-        uri: asset.uri,
-        name: fileName,
-        type: 'image/jpeg',
-      }]);
+    if (!giftName.trim()) {
+      errors.name = "Gift name is required";
+    } else if (giftName.trim().length < 2) {
+      errors.name = "Gift name must be at least 2 characters";
+    } else if (giftName.trim().length > 100) {
+      errors.name = "Gift name cannot exceed 100 characters";
     }
-  }
-};
-
-  const removeMedia = (index: number) => {
-    setMainMedia(prev => prev.filter((_, i) => i !== index));
+    
+    if (!giftDescription.trim()) {
+      errors.description = "Description is required";
+    } else if (giftDescription.trim().length < 10) {
+      errors.description = "Description must be at least 10 characters";
+    } else if (giftDescription.trim().length > 1000) {
+      errors.description = "Description cannot exceed 1000 characters";
+    }
+    
+    if (!giftCondition) {
+      errors.condition = "Condition rating is required";
+    }
+    
+    setStep1Errors(errors);
+    return Object.keys(errors).length === 0;
   };
 
-  // Image-based prediction
+  const validateStep2 = (): boolean => {
+    const errors: { media?: string } = {};
+    
+    if (mainMedia.length < 3) {
+      errors.media = "Please upload at least 3 product images (minimum 3 required)";
+    } else if (mainMedia.length > 9) {
+      errors.media = "Maximum 9 images allowed";
+    }
+    
+    setStep2Errors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const validateStep3 = (): boolean => {
+    const errors: { variants?: string } = {};
+    
+    if (variants.length === 0) {
+      errors.variants = "At least one variant is required";
+    }
+    
+    for (let i = 0; i < variants.length; i++) {
+      const v = variants[i];
+      if (!v.title || !v.title.trim()) {
+        errors.variants = `Variant ${i + 1} title is required`;
+        break;
+      }
+      if (!v.quantity || Number(v.quantity) <= 0) {
+        errors.variants = `Variant ${i + 1} quantity must be greater than 0`;
+        break;
+      }
+    }
+    
+    setStep3Errors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // --- MEDIA ---
+  const pickMedia = async () => {
+    if (mainMedia.length >= 9) {
+      Alert.alert("Limit Reached", "Maximum 9 media files allowed");
+      return;
+    }
+
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission Required", "Please allow access to your camera");
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      const fileName = asset.uri.split("/").pop() || `photo_${Date.now()}.jpg`;
+
+      const newMedia = {
+        file: {
+          uri: asset.uri,
+          name: fileName,
+          type: "image/jpeg",
+        },
+        preview: asset.uri,
+        type: "image" as const,
+      };
+
+      setMainMedia((prev) => [...prev, newMedia]);
+      setStep2Errors({});
+      analyzeImages([
+        {
+          uri: asset.uri,
+          name: fileName,
+          type: "image/jpeg",
+        },
+      ]);
+    }
+  };
+
+  const removeMainMedia = (index: number) => {
+    setMainMedia((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const analyzeImages = async (files: any[]) => {
     if (files.length === 0) return;
+
+    if (predictionAbortController.current) {
+      predictionAbortController.current.abort();
+    }
+    predictionAbortController.current = new AbortController();
 
     setIsPredicting(true);
     setPredictionError(null);
@@ -225,38 +349,40 @@ const pickMedia = async () => {
     try {
       const requests = files.map((file) => {
         const formData = new FormData();
-        formData.append('image', {
+        formData.append("image", {
           uri: file.uri,
           name: file.name,
           type: file.type,
         } as any);
-        
-        return AxiosInstance.post('/predict/', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
+
+        return AxiosInstance.post("/predict/", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+          signal: predictionAbortController.current!.signal,
         });
       });
 
       const settled = await Promise.allSettled(requests);
-      const successful = settled.filter(s => s.status === 'fulfilled') as PromiseFulfilledResult<any>[];
+      const successful = settled.filter(
+        (s) => s.status === "fulfilled",
+      ) as PromiseFulfilledResult<any>[];
 
       if (successful.length === 0) {
-        setPredictionError('All image predictions failed');
+        setPredictionError("All image predictions failed");
         return;
       }
 
       const aggregateScores: Record<string, number> = {};
       let count = 0;
 
-      successful.forEach(res => {
+      successful.forEach((res) => {
         const data = res.value?.data;
         if (!data || !data.success || !data.predictions) return;
         const p = data.predictions;
 
-        if (p.all_predictions && typeof p.all_predictions === 'object') {
+        if (p.all_predictions && typeof p.all_predictions === "object") {
           Object.entries(p.all_predictions).forEach(([cls, score]) => {
-            aggregateScores[cls] = (aggregateScores[cls] || 0) + Number(score || 0);
+            aggregateScores[cls] =
+              (aggregateScores[cls] || 0) + Number(score || 0);
           });
         } else if (p.predicted_class) {
           const cls = String(p.predicted_class);
@@ -268,14 +394,18 @@ const pickMedia = async () => {
       });
 
       if (count === 0) {
-        setPredictionError('No valid predictions received');
+        setPredictionError("No valid predictions received");
         return;
       }
 
-      Object.keys(aggregateScores).forEach(k => { aggregateScores[k] = aggregateScores[k] / count; });
+      Object.keys(aggregateScores).forEach((k) => {
+        aggregateScores[k] = aggregateScores[k] / count;
+      });
 
-      const sorted = Object.entries(aggregateScores).sort((a, b) => b[1] - a[1]);
-      const topClass = sorted[0]?.[0] || 'Unknown';
+      const sorted = Object.entries(aggregateScores).sort(
+        (a, b) => b[1] - a[1],
+      );
+      const topClass = sorted[0]?.[0] || "Unknown";
       const topConfidence = Number(sorted[0]?.[1] || 0);
 
       const mapped: PredictionResult = {
@@ -283,326 +413,405 @@ const pickMedia = async () => {
         predicted_category: {
           category_name: topClass,
           confidence: topConfidence,
-          category_uuid: null
+          category_uuid: null,
         },
-        alternative_categories: sorted.slice(1, 4).map(s => ({ category_name: s[0], confidence: s[1] })),
+        alternative_categories: sorted
+          .slice(1, 4)
+          .map((s) => ({ category_name: s[0], confidence: s[1] })),
         all_predictions: Object.fromEntries(sorted),
         predicted_class: topClass,
       };
 
       setPredictionResult(mapped);
-      setShowPrediction(true);
 
       if (mapped.predicted_category?.category_name && globalCategories) {
         const predictedName = mapped.predicted_category.category_name.toLowerCase();
-        const found = globalCategories.find((gc: any) => gc.name.toLowerCase() === predictedName);
+        const found = globalCategories.find(
+          (gc: any) => gc.name.toLowerCase() === predictedName,
+        );
         if (found) {
           setSelectedCategoryName(found.name);
         }
       }
-
     } catch (error: any) {
-      setPredictionError('Prediction request failed');
-      console.error('Image prediction failed:', error);
+      if (error.name === "AbortError" || error.code === "ERR_CANCELED") {
+        return;
+      }
+      setPredictionError("Prediction request failed");
     } finally {
       setIsPredicting(false);
+      predictionAbortController.current = null;
     }
   };
 
-  // Variant handlers
+  useEffect(() => {
+    return () => {
+      if (predictionAbortController.current) {
+        predictionAbortController.current.abort();
+      }
+      mainMedia.forEach((item) => URL.revokeObjectURL(item.preview));
+      variants.forEach((variant) => {
+        if (variant.imagePreview) URL.revokeObjectURL(variant.imagePreview);
+        if (variant.proofImagePreview)
+          URL.revokeObjectURL(variant.proofImagePreview);
+      });
+    };
+  }, []);
+
+  // --- VARIANTS ---
   const addVariant = () => {
-    setVariants(prev => [
+    setVariants((prev) => [
       ...prev,
       {
         id: generateId(),
         title: `Variant ${prev.length + 1}`,
-        quantity: '',
-        sku_code: '',
+        quantity: "",
+        sku_code: "",
+        weight_unit: "g",
+        dimension_unit: "cm",
         is_active: true,
-        critical_trigger: '',
-      }
+      },
     ]);
   };
 
   const removeVariant = (variantId: string) => {
     if (variants.length <= 1) {
-      Alert.alert('Cannot Remove', 'Gifts must have at least one variant');
+      Alert.alert("Cannot Remove", "Gifts must have at least one variant");
       return;
     }
-    
-    setVariants(prev => prev.filter(v => v.id !== variantId));
+
+    const variant = variants.find((v) => v.id === variantId);
+    if (variant?.imagePreview) URL.revokeObjectURL(variant.imagePreview);
+    if (variant?.proofImagePreview)
+      URL.revokeObjectURL(variant.proofImagePreview);
+
+    setVariants((prev) => prev.filter((v) => v.id !== variantId));
   };
 
-  const updateVariantField = (variantId: string, field: keyof Variant, value: any) => {
-    setVariants(prev => prev.map(v => 
-      v.id === variantId ? { ...v, [field]: value } : v
-    ));
+  const updateVariantField = (
+    variantId: string,
+    field: keyof GiftVariant,
+    value: any,
+  ) => {
+    setVariants((prev) =>
+      prev.map((v) => (v.id === variantId ? { ...v, [field]: value } : v)),
+    );
   };
 
-// Replace the existing handleVariantImagePick function with this camera version
-const handleVariantImagePick = async (variantId: string) => {
-  const { status } = await ImagePicker.requestCameraPermissionsAsync();
-  if (status !== 'granted') {
-    Alert.alert('Permission Required', 'Please allow access to your camera');
-    return;
-  }
+  const handleVariantImagePick = async (variantId: string) => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission Required", "Please allow camera access");
+      return;
+    }
 
-  const result = await ImagePicker.launchCameraAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    allowsEditing: true,
-    aspect: [1, 1],
-    quality: 0.8,
-  });
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
 
-  if (!result.canceled && result.assets[0]) {
-    const asset = result.assets[0];
-    
-    setVariants(prev => prev.map(v => 
-      v.id === variantId ? { 
-        ...v, 
-        image: {
-          uri: asset.uri,
-          name: asset.uri.split('/').pop() || 'image.jpg',
-          type: 'image/jpeg',
-        },
-        imagePreview: asset.uri 
-      } : v
-    ));
-  }
-};
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      setVariants((prev) =>
+        prev.map((v) =>
+          v.id === variantId
+            ? {
+                ...v,
+                image: {
+                  uri: asset.uri,
+                  name: asset.uri.split("/").pop() || `variant_${variantId}.jpg`,
+                  type: "image/jpeg",
+                },
+                imagePreview: asset.uri,
+              }
+            : v,
+        ),
+      );
+    }
+  };
 
-  const removeVariantImage = (variantId: string) => {
-    setVariants(prev => prev.map(v => 
-      v.id === variantId ? { ...v, image: null, imagePreview: undefined } : v
-    ));
+  const handleProofImagePick = async (variantId: string) => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission Required", "Please allow camera access");
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      setVariants((prev) =>
+        prev.map((v) =>
+          v.id === variantId
+            ? {
+                ...v,
+                proofImage: {
+                  uri: asset.uri,
+                  name: asset.uri.split("/").pop() || `proof_${variantId}.jpg`,
+                  type: "image/jpeg",
+                },
+                proofImagePreview: asset.uri,
+              }
+            : v,
+        ),
+      );
+    }
   };
 
   const toggleVariantExpand = (variantId: string) => {
-    setExpandedVariants(prev => ({
-      ...prev,
-      [variantId]: !prev[variantId]
-    }));
+    setExpandedVariants((prev) => ({ ...prev, [variantId]: !prev[variantId] }));
   };
 
-  // Validation
-  const validateForm = () => {
-    if (!giftName.trim()) {
-      Alert.alert('Validation Error', 'Gift name is required');
-      return false;
+  // --- STEP NAVIGATION ---
+  const goToNextStep = () => {
+    if (currentStep === 1 && validateStep1()) {
+      setCurrentStep(2);
+    } else if (currentStep === 2 && validateStep2()) {
+      setCurrentStep(3);
+    } else if (currentStep === 3 && validateStep3()) {
+      setCurrentStep(4);
     }
-    if (giftName.length < 2) {
-      Alert.alert('Validation Error', 'Gift name must be at least 2 characters');
-      return false;
-    }
-    if (!giftDescription.trim()) {
-      Alert.alert('Validation Error', 'Description is required');
-      return false;
-    }
-    if (giftDescription.length < 10) {
-      Alert.alert('Validation Error', 'Description must be at least 10 characters');
-      return false;
-    }
-    if (!giftCondition) {
-      Alert.alert('Validation Error', 'Condition is required');
-      return false;
-    }
-    if (variants.length === 0) {
-      Alert.alert('Validation Error', 'At least one variant is required');
-      return false;
-    }
-
-    for (let i = 0; i < variants.length; i++) {
-      const v = variants[i];
-      if (!v.title) {
-        Alert.alert('Validation Error', `Variant ${i + 1} title is required`);
-        return false;
-      }
-      if (!v.quantity || Number(v.quantity) <= 0) {
-        Alert.alert('Validation Error', `Variant ${i + 1} quantity must be greater than 0`);
-        return false;
-      }
-    }
-
-    return true;
   };
 
-  // Submit handler
+  const goToPreviousStep = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
+
+  // --- SUBMIT ---
   const handleSubmit = async () => {
-    if (!validateForm()) return;
+    // Final validation before submit
+    if (!validateStep1() || !validateStep2() || !validateStep3()) {
+      Alert.alert("Validation Error", "Please complete all steps correctly before submitting");
+      return;
+    }
+    
     if (!userId) {
-      Alert.alert('Error', 'User not authenticated');
+      Alert.alert("Error", "User not authenticated");
       return;
     }
 
     setSubmitting(true);
-    setError(null);
+    setApiResponseError(null);
 
     try {
       const formData = new FormData();
 
       // Basic fields
-      formData.append('name', giftName.trim());
-      formData.append('description', giftDescription.trim());
-      formData.append('condition', giftCondition);
-      formData.append('status', 'active');
-      formData.append('upload_status', 'draft');
-      formData.append('customer_id', userId);
+      formData.append("name", giftName.trim());
+      formData.append("description", giftDescription.trim());
+      formData.append("condition", giftCondition.toString());
+      formData.append("status", "active");
+      formData.append("customer_id", userId);
+      formData.append("is_gift", "true");
 
-      // IMPORTANT: Set price to 0 for gifts
-      formData.append('price', '0');
-      
-      // Set refundable to false for gifts
-      formData.append('is_refundable', 'false');
-      formData.append('refundable', 'false');
-      
-      // Set refund_days to 0
-      formData.append('refund_days', '0');
+      // Price is forced to 0 for gifts
+      formData.append("price", "0");
+      formData.append("is_refundable", "false");
+      formData.append("refundable", "false");
+      formData.append("refund_days", "0");
 
-      // Add critical stock if enabled
-      if (enableCriticalTrigger && criticalStock) {
-        formData.append('critical_stock', String(criticalStock));
-      }
-
-      // Handle category
+      // Category handling
       if (selectedCategoryName?.trim()) {
-        const match = globalCategories.find(gc => gc.name.toLowerCase() === selectedCategoryName.toLowerCase());
+        let match = globalCategories.find(
+          (gc) => gc.name.toLowerCase() === selectedCategoryName.toLowerCase(),
+        );
+        if (!match) {
+          const best = findBestCategoryMatch(selectedCategoryName, globalCategories);
+          if (best && best.score >= 0.25) {
+            match = best.category;
+          }
+        }
+
         if (match) {
-          formData.append('category_admin_id', match.id);
+          formData.append("category_admin_id", match.id);
         } else {
-          formData.append('category_admin_name', selectedCategoryName);
+          const nameToSend =
+            selectedCategoryName && selectedCategoryName.toLowerCase() === "others"
+              ? "others"
+              : selectedCategoryName;
+          formData.append("category_admin_name", nameToSend);
         }
       }
 
       // Add media files
-      mainMedia.forEach((media) => {
-        formData.append('media_files', {
-          uri: media.file.uri,
-          name: media.file.name,
-          type: media.file.type,
-        } as any);
+      if (mainMedia.length < 3) {
+        throw new Error(`Please upload at least 3 product images. Currently: ${mainMedia.length}`);
+      }
+      
+      mainMedia.forEach((mediaItem, index) => {
+        const fileObject = {
+          uri: mediaItem.file.uri,
+          name: mediaItem.file.name || `gift_image_${Date.now()}_${index}.jpg`,
+          type: mediaItem.file.type || 'image/jpeg',
+        };
+        formData.append('media_files', fileObject as any);
       });
 
-      // Prepare variants payload - no price fields
-      const variantsPayload = variants.map(v => ({
+      // Add variants payload
+      const variantsPayload = variants.map((v) => ({
         id: v.id,
         title: v.title,
+        price: 0,
         quantity: v.quantity,
+        length: v.length !== undefined && v.length !== "" ? Number(v.length) : null,
+        width: v.width !== undefined && v.width !== "" ? Number(v.width) : null,
+        height: v.height !== undefined && v.height !== "" ? Number(v.height) : null,
+        dimension_unit: v.dimension_unit || "cm",
+        weight: v.weight !== undefined && v.weight !== "" ? Number(v.weight) : null,
+        weight_unit: v.weight_unit || "g",
         sku_code: v.sku_code,
         critical_trigger: v.critical_trigger || null,
-        is_active: v.is_active ?? true,
-        // Set price to 0 for all variants
-        price: 0,
-        compare_price: null,
         is_refundable: false,
-        refundable: false,
-        refund_days: 0
+        is_active: v.is_active ?? true,
       }));
 
-      formData.append('variants', JSON.stringify(variantsPayload));
+      formData.append("variants", JSON.stringify(variantsPayload));
 
       // Add variant images
-      variants.forEach(v => {
+      variants.forEach((v) => {
         if (v.image) {
-          formData.append(`variant_image_${v.id}`, {
+          const imageObject = {
             uri: v.image.uri,
-            name: v.image.name,
-            type: v.image.type,
-          } as any);
+            name: v.image.name || `variant_${v.id}.jpg`,
+            type: v.image.type || 'image/jpeg',
+          };
+          formData.append(`variant_image_${v.id}`, imageObject as any);
+        }
+        if (v.proofImage) {
+          const proofObject = {
+            uri: v.proofImage.uri,
+            name: v.proofImage.name || `proof_${v.id}.jpg`,
+            type: v.proofImage.type || 'image/jpeg',
+          };
+          formData.append(`proof_image_${v.id}`, proofObject as any);
         }
       });
 
-      const response = await AxiosInstance.post('/customer-products-viewset/create_product/', formData, {
+      // Send to personal listing endpoint (no shop)
+      const response = await AxiosInstance.post("/customer-products-viewset/create_product/", formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
-          'X-User-Id': userId,
+          "Content-Type": "multipart/form-data",
+          "X-User-Id": userId,
         },
+        timeout: 60000,
       });
 
       if (response.data.success) {
-        Alert.alert(
-          'Success',
-          'Gift created successfully!',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.replace('/customer/comgift')
-            }
-          ]
-        );
+        Alert.alert("Success", "Gift created successfully!", [
+          {
+            text: "OK",
+            onPress: () => router.replace("/customer/comgift"),
+          },
+        ]);
       } else {
-        setError(response.data.message || 'Gift creation failed');
+        throw new Error(response.data.message || "Gift creation failed");
       }
     } catch (err: any) {
-      console.error('Error creating gift:', err);
-      setError(err.response?.data?.error || err.message || 'Failed to create gift');
+      console.error("Gift creation failed:", err.response?.data || err.message);
+
+      if (err.response?.data) {
+        const apiErrors = err.response.data;
+        if (typeof apiErrors === "object") {
+          const fieldErrors = Object.keys(apiErrors)
+            .map(
+              (field) =>
+                `${field}: ${Array.isArray(apiErrors[field]) ? apiErrors[field][0] : apiErrors[field]}`,
+            )
+            .join("\n");
+          setApiResponseError(fieldErrors);
+        } else if (typeof apiErrors === "string") {
+          setApiResponseError(apiErrors);
+        }
+      } else {
+        setApiResponseError(err.message || "Gift creation failed");
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
-  const canProceedToNextStep = () => {
-    switch (currentStep) {
-      case 1:
-        return giftName.trim() && giftDescription.trim() && giftCondition;
-      case 2:
-        return true; // Media is optional
-      case 3:
-        return variants.length > 0 && variants.every(v => v.quantity);
-      default:
-        return true;
-    }
-  };
+  // --- STEP INDICATOR ---
+  const StepIndicator = () => (
+    <View style={styles.progressContainer}>
+      {[
+        { n: 1, label: "1. Basic" },
+        { n: 2, label: "2. Media" },
+        { n: 3, label: "3. Variants" },
+        { n: 4, label: "4. Review" },
+      ].map(({ n, label }, i, arr) => (
+        <React.Fragment key={n}>
+          <TouchableOpacity
+            style={[styles.stepBadge, currentStep >= n && styles.stepActive]}
+            onPress={() => {
+              if (n < currentStep) {
+                setCurrentStep(n);
+              }
+            }}
+            disabled={n > currentStep}
+          >
+            <Text
+              style={[
+                styles.stepBadgeText,
+                currentStep >= n && styles.stepTextActive,
+              ]}
+            >
+              {label}
+            </Text>
+          </TouchableOpacity>
+          {i < arr.length - 1 && (
+            <View
+              style={[
+                styles.stepLine,
+                currentStep > n && styles.stepLineActive,
+              ]}
+            />
+          )}
+        </React.Fragment>
+      ))}
+    </View>
+  );
+
+  // --- CONDITION STARS ---
+  const StarRow = ({ count }: { count: number }) => (
+    <View style={{ flexDirection: "row", gap: 2 }}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <Text
+          key={i}
+          style={{ color: i <= count ? "#F59E0B" : "#D1D5DB", fontSize: 14 }}
+        >
+          ★
+        </Text>
+      ))}
+    </View>
+  );
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      {/* Progress Steps */}
-      <View style={styles.progressContainer}>
-        <TouchableOpacity 
-          style={[styles.stepIndicator, currentStep >= 1 && styles.stepActive]} 
-          onPress={() => setCurrentStep(1)}
-        >
-          <Text style={[styles.stepText, currentStep >= 1 && styles.stepTextActive]}>1</Text>
-        </TouchableOpacity>
-        <View style={[styles.stepLine, currentStep >= 2 && styles.stepLineActive]} />
-        
-        <TouchableOpacity 
-          style={[styles.stepIndicator, currentStep >= 2 && styles.stepActive]} 
-          onPress={() => currentStep >= 2 && setCurrentStep(2)}
-          disabled={currentStep < 2}
-        >
-          <Text style={[styles.stepText, currentStep >= 2 && styles.stepTextActive]}>2</Text>
-        </TouchableOpacity>
-        <View style={[styles.stepLine, currentStep >= 3 && styles.stepLineActive]} />
-        
-        <TouchableOpacity 
-          style={[styles.stepIndicator, currentStep >= 3 && styles.stepActive]} 
-          onPress={() => currentStep >= 3 && setCurrentStep(3)}
-          disabled={currentStep < 3}
-        >
-          <Text style={[styles.stepText, currentStep >= 3 && styles.stepTextActive]}>3</Text>
-        </TouchableOpacity>
-        <View style={[styles.stepLine, currentStep >= 4 && styles.stepLineActive]} />
-        
-        <View style={[styles.stepIndicator, currentStep >= 4 && styles.stepActive]}>
-          <Text style={[styles.stepText, currentStep >= 4 && styles.stepTextActive]}>4</Text>
-        </View>
-      </View>
+    <View style={styles.container}>
+      <StepIndicator />
 
-      <View style={styles.stepLabels}>
-        <Text style={[styles.stepLabel, currentStep >= 1 && styles.stepLabelActive]}>Basic</Text>
-        <Text style={[styles.stepLabel, currentStep >= 2 && styles.stepLabelActive]}>Media</Text>
-        <Text style={[styles.stepLabel, currentStep >= 3 && styles.stepLabelActive]}>Variants</Text>
-        <Text style={[styles.stepLabel, currentStep >= 4 && styles.stepLabelActive]}>Stock</Text>
-      </View>
-
-      {/* STEP 1: Basic Information */}
+      {/* ===== STEP 1: Basic Information ===== */}
       {currentStep === 1 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <View style={styles.sectionIconContainer}>
-              <MaterialIcons name="info" size={20} color="#8B5CF6" />
+            <View style={styles.sectionIcon}>
+              <Ionicons name="gift-outline" size={20} color="#9333EA" />
             </View>
-            <Text style={styles.sectionTitle}>Basic Information</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>Basic Information</Text>
+              <Text style={styles.sectionSubtitle}>
+                Start with gift details. AI will suggest a category when you upload images.
+              </Text>
+            </View>
           </View>
 
           <View style={styles.formGroup}>
@@ -610,31 +819,70 @@ const handleVariantImagePick = async (variantId: string) => {
               Gift Name <Text style={styles.required}>*</Text>
             </Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, step1Errors.name && styles.inputError]}
               value={giftName}
-              onChangeText={setGiftName}
+              onChangeText={(text) => {
+                setGiftName(text);
+                if (step1Errors.name) setStep1Errors({ ...step1Errors, name: undefined });
+              }}
               placeholder="Enter gift name"
               placeholderTextColor="#9CA3AF"
               maxLength={100}
             />
-            <Text style={styles.hintText}>
-              This will be used as the title for the first variant
-            </Text>
+            {step1Errors.name && <Text style={styles.errorText}>{step1Errors.name}</Text>}
           </View>
 
           <View style={styles.formGroup}>
             <Text style={styles.label}>
-              Condition <Text style={styles.required}>*</Text>
+              Condition Rating <Text style={styles.required}>*</Text>
             </Text>
             <TouchableOpacity
-              style={styles.selectButton}
+              style={[styles.selectButton, step1Errors.condition && styles.inputError]}
               onPress={() => setConditionModalVisible(true)}
             >
-              <Text style={giftCondition ? styles.selectButtonText : styles.selectButtonPlaceholder}>
-                {giftCondition || 'Select condition'}
-              </Text>
-              <MaterialIcons name="arrow-drop-down" size={24} color="#9CA3AF" />
+              {giftCondition ? (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                    flex: 1,
+                  }}
+                >
+                  <StarRow count={CONDITION_SCALE[giftCondition].stars} />
+                  <Text style={styles.selectButtonText} numberOfLines={1}>
+                    {CONDITION_SCALE[giftCondition].shortLabel}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.placeholderText}>
+                  Select condition rating
+                </Text>
+              )}
+              <Ionicons name="chevron-down" size={20} color="#9CA3AF" />
             </TouchableOpacity>
+            {step1Errors.condition && <Text style={styles.errorText}>{step1Errors.condition}</Text>}
+            {giftCondition ? (
+              <View
+                style={[
+                  styles.conditionBadge,
+                  {
+                    backgroundColor: CONDITION_SCALE[giftCondition].color,
+                    borderColor: CONDITION_SCALE[giftCondition].borderColor,
+                  },
+                ]}
+              >
+                <StarRow count={CONDITION_SCALE[giftCondition].stars} />
+                <Text
+                  style={[
+                    styles.conditionBadgeText,
+                    { color: CONDITION_SCALE[giftCondition].textColor },
+                  ]}
+                >
+                  {CONDITION_SCALE[giftCondition].label}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.formGroup}>
@@ -642,9 +890,12 @@ const handleVariantImagePick = async (variantId: string) => {
               Description <Text style={styles.required}>*</Text>
             </Text>
             <TextInput
-              style={[styles.input, styles.textArea]}
+              style={[styles.input, styles.textArea, step1Errors.description && styles.inputError]}
               value={giftDescription}
-              onChangeText={setGiftDescription}
+              onChangeText={(text) => {
+                setGiftDescription(text);
+                if (step1Errors.description) setStep1Errors({ ...step1Errors, description: undefined });
+              }}
               placeholder="Describe your gift in detail..."
               placeholderTextColor="#9CA3AF"
               multiline
@@ -652,71 +903,95 @@ const handleVariantImagePick = async (variantId: string) => {
               maxLength={1000}
               textAlignVertical="top"
             />
+            <Text style={styles.charCount}>{giftDescription.length}/1000</Text>
+            {step1Errors.description && <Text style={styles.errorText}>{step1Errors.description}</Text>}
           </View>
 
           <TouchableOpacity
-            style={[styles.nextButton, !canProceedToNextStep() && styles.nextButtonDisabled]}
-            onPress={() => setCurrentStep(2)}
-            disabled={!canProceedToNextStep()}
+            style={styles.nextButton}
+            onPress={goToNextStep}
           >
             <Text style={styles.nextButtonText}>Next: Media</Text>
-            <MaterialIcons name="arrow-forward" size={20} color="#FFFFFF" />
+            <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
       )}
 
-      {/* STEP 2: Media & Category */}
+      {/* ===== STEP 2: Media & Category ===== */}
       {currentStep === 2 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <View style={styles.sectionIconContainer}>
-              <MaterialIcons name="photo-library" size={20} color="#8B5CF6" />
+            <View style={styles.sectionIcon}>
+              <Ionicons name="camera" size={20} color="#9333EA" />
             </View>
-            <Text style={styles.sectionTitle}>Gift Media</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>Gift Photos</Text>
+              <Text style={styles.sectionSubtitle}>
+                Take photos with your camera (max 9). First photo is the cover.
+              </Text>
+            </View>
+            <View style={[styles.mediaCountBadge, mainMedia.length >= 3 && styles.mediaCountBadgeValid]}>
+              <Text style={[styles.mediaCountBadgeText, mainMedia.length >= 3 && styles.mediaCountBadgeTextValid]}>
+                {mainMedia.length}/9
+              </Text>
+            </View>
           </View>
 
-          <View style={styles.mediaContainer}>
-            <View style={styles.mediaHeader}>
-              <Text style={styles.mediaLabel}>Upload images/videos (max 9)</Text>
-              <Text style={styles.mediaCount}>{mainMedia.length}/9</Text>
+          {step2Errors.media && (
+            <View style={styles.errorCard}>
+              <Ionicons name="alert-circle" size={16} color="#EF4444" />
+              <Text style={styles.errorCardText}>{step2Errors.media}</Text>
             </View>
+          )}
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
-              <TouchableOpacity style={styles.addMediaButton} onPress={pickMedia}>
-                <MaterialIcons name="photo-camera" size={32} color="#9CA3AF" /> {/* Changed icon */}
-                <Text style={styles.addMediaText}>Take Photo</Text> {/* Changed text */}
-                </TouchableOpacity>
+          <TouchableOpacity style={styles.cameraArea} onPress={pickMedia}>
+            <Ionicons name="camera" size={40} color="#9CA3AF" />
+            <Text style={styles.cameraAreaText}>
+              Take photos of your gift (max 9 photos)
+            </Text>
+            <View style={styles.cameraButton}>
+              <Ionicons name="camera-outline" size={16} color="#9333EA" />
+              <Text style={styles.cameraButtonText}>Open Camera</Text>
+            </View>
+          </TouchableOpacity>
 
+          {mainMedia.length > 0 && (
+            <View style={styles.mediaGrid}>
               {mainMedia.map((item, index) => (
-                <View key={index} style={styles.mediaPreviewContainer}>
-                  {item.type === 'image' ? (
-                    <Image source={{ uri: item.preview }} style={styles.mediaPreview} />
-                  ) : (
-                    <View style={[styles.mediaPreview, styles.videoPreview]}>
-                      <MaterialIcons name="play-circle-fill" size={32} color="#FFFFFF" />
-                    </View>
-                  )}
+                <View key={index} style={styles.mediaGridItem}>
+                  <Image
+                    source={{ uri: item.preview }}
+                    style={styles.mediaGridImage}
+                  />
                   {index === 0 && (
                     <View style={styles.coverBadge}>
                       <Text style={styles.coverBadgeText}>Cover</Text>
                     </View>
                   )}
                   <TouchableOpacity
-                    style={styles.removeMediaButton}
-                    onPress={() => removeMedia(index)}
+                    style={styles.removeMediaBtn}
+                    onPress={() => removeMainMedia(index)}
                   >
-                    <MaterialIcons name="close" size={16} color="#FFFFFF" />
+                    <Ionicons name="close-circle" size={20} color="#EF4444" />
                   </TouchableOpacity>
                 </View>
               ))}
-            </ScrollView>
-          </View>
+              {mainMedia.length < 9 && (
+                <TouchableOpacity
+                  style={styles.addMoreMedia}
+                  onPress={pickMedia}
+                >
+                  <Ionicons name="camera" size={24} color="#9CA3AF" />
+                  <Text style={styles.addMoreMediaText}>Take Another</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
-          {/* AI Category Prediction */}
           <View style={styles.aiSection}>
             <View style={styles.aiHeader}>
               <View style={styles.aiTitleContainer}>
-                <MaterialIcons name="auto-awesome" size={20} color="#8B5CF6" />
+                <Ionicons name="sparkles" size={18} color="#9333EA" />
                 <Text style={styles.aiTitle}>AI Category Prediction</Text>
               </View>
               {predictionResult && (
@@ -725,95 +1000,132 @@ const handleVariantImagePick = async (variantId: string) => {
                 </View>
               )}
             </View>
-
-            <TouchableOpacity
-              style={[styles.analyzeButton, (mainMedia.length === 0 || isPredicting) && styles.analyzeButtonDisabled]}
-              onPress={() => analyzeImages(mainMedia.filter(m => m.type === 'image').map(m => m.file))}
-              disabled={mainMedia.length === 0 || isPredicting}
-            >
-              {isPredicting ? (
-                <ActivityIndicator size="small" color="#8B5CF6" />
-              ) : (
-                <>
-                  <MaterialIcons name="analytics" size={20} color="#8B5CF6" />
-                  <Text style={styles.analyzeButtonText}>Analyze Images</Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Category</Text>
-              <TouchableOpacity
-                style={styles.selectButton}
-                onPress={() => setCategoryModalVisible(true)}
-              >
-                <Text style={selectedCategoryName ? styles.selectButtonText : styles.selectButtonPlaceholder}>
-                  {selectedCategoryName || 'Select category'}
+            <View style={styles.aiContent}>
+              <View style={styles.aiRow}>
+                <Text style={styles.aiDescription}>
+                  Analyze photos to get AI category suggestions
                 </Text>
-                <MaterialIcons name="arrow-drop-down" size={24} color="#9CA3AF" />
-              </TouchableOpacity>
-            </View>
-
-            {predictionResult && predictionResult.predicted_category && (
-              <View style={styles.predictionCard}>
-                <Text style={styles.predictionTitle}>AI Suggestion</Text>
-                <View style={styles.predictionRow}>
-                  <Text style={styles.predictionCategory}>
-                    {predictionResult.predicted_category.category_name}
+                <TouchableOpacity
+                  style={[
+                    styles.analyzeButton,
+                    (mainMedia.length === 0 || isPredicting) &&
+                      styles.analyzeButtonDisabled,
+                  ]}
+                  onPress={() =>
+                    analyzeImages(
+                      mainMedia
+                        .filter((m) => m.type === "image")
+                        .map((m) => m.file),
+                    )
+                  }
+                  disabled={mainMedia.length === 0 || isPredicting}
+                >
+                  {isPredicting ? (
+                    <ActivityIndicator size="small" color="#9333EA" />
+                  ) : (
+                    <Text style={styles.analyzeButtonText}>Analyze Photos</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Category</Text>
+                <TouchableOpacity
+                  style={styles.selectButton}
+                  onPress={() => setCategoryModalVisible(true)}
+                >
+                  <Text
+                    style={
+                      selectedCategoryName
+                        ? styles.selectButtonText
+                        : styles.placeholderText
+                    }
+                  >
+                    {selectedCategoryName || "Select category"}
                   </Text>
-                  <Text style={styles.predictionConfidence}>
-                    {Math.round((predictionResult.predicted_category.confidence || 0) * 100)}% confidence
-                  </Text>
+                  <Ionicons name="chevron-down" size={20} color="#9CA3AF" />
+                </TouchableOpacity>
+              </View>
+              {predictionResult && predictionResult.predicted_category && (
+                <View style={styles.predictionCard}>
+                  <Text style={styles.predictionTitle}>AI Suggestion</Text>
+                  <View style={styles.predictionRow}>
+                    <Text style={styles.predictionCategory}>
+                      {predictionResult.predicted_category.category_name}
+                    </Text>
+                    <Text style={styles.predictionConfidence}>
+                      {Math.round(
+                        (predictionResult.predicted_category.confidence || 0) *
+                          100,
+                      )}
+                      % confidence
+                    </Text>
+                  </View>
+                  {predictionResult.alternative_categories &&
+                    predictionResult.alternative_categories.length > 0 && (
+                      <Text style={styles.alternativeText}>
+                        Also considered:{" "}
+                        {predictionResult.alternative_categories
+                          .map((a) => a.category_name)
+                          .join(", ")}
+                      </Text>
+                    )}
                 </View>
-                {predictionResult.alternative_categories && predictionResult.alternative_categories.length > 0 && (
-                  <Text style={styles.alternativeText}>
-                    Also considered: {predictionResult.alternative_categories.map(a => a.category_name).join(', ')}
-                  </Text>
-                )}
-              </View>
-            )}
-
-            {predictionError && (
-              <View style={styles.errorCard}>
-                <Text style={styles.errorCardText}>{predictionError}</Text>
-              </View>
-            )}
+              )}
+              {predictionError && (
+                <View style={styles.errorCard}>
+                  <Text style={styles.errorCardText}>{predictionError}</Text>
+                </View>
+              )}
+            </View>
           </View>
 
           <View style={styles.navigationButtons}>
             <TouchableOpacity
               style={styles.backButton}
-              onPress={() => setCurrentStep(1)}
+              onPress={goToPreviousStep}
             >
-              <MaterialIcons name="arrow-back" size={20} color="#6B7280" />
+              <Ionicons name="arrow-back" size={20} color="#6B7280" />
               <Text style={styles.backButtonText}>Back</Text>
             </TouchableOpacity>
-            
             <TouchableOpacity
               style={styles.nextButton}
-              onPress={() => setCurrentStep(3)}
+              onPress={goToNextStep}
             >
               <Text style={styles.nextButtonText}>Next: Variants</Text>
-              <MaterialIcons name="arrow-forward" size={20} color="#FFFFFF" />
+              <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
         </View>
       )}
 
-      {/* STEP 3: Gift Variants */}
+      {/* ===== STEP 3: Variants ===== */}
       {currentStep === 3 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <View style={styles.sectionIconContainer}>
-              <MaterialIcons name="layers" size={20} color="#8B5CF6" />
+            <View style={styles.sectionIcon}>
+              <Ionicons name="cube" size={20} color="#9333EA" />
             </View>
-            <Text style={styles.sectionTitle}>Gift Variants</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>Gift Variants</Text>
+              <Text style={styles.sectionSubtitle}>
+                Each gift must have at least one variant with stock
+              </Text>
+            </View>
+            <View style={styles.requiredBadge}>
+              <Text style={styles.requiredBadgeText}>Required</Text>
+            </View>
           </View>
+
+          {step3Errors.variants && (
+            <View style={styles.errorCard}>
+              <Ionicons name="alert-circle" size={16} color="#EF4444" />
+              <Text style={styles.errorCardText}>{step3Errors.variants}</Text>
+            </View>
+          )}
 
           {variants.map((variant, index) => (
             <View key={variant.id} style={styles.variantCard}>
-              {/* Variant Header */}
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.variantHeader}
                 onPress={() => toggleVariantExpand(variant.id)}
               >
@@ -822,7 +1134,9 @@ const handleVariantImagePick = async (variantId: string) => {
                     <Text style={styles.variantNumberText}>{index + 1}</Text>
                   </View>
                   <View>
-                    <Text style={styles.variantTitle}>{variant.title}</Text>
+                    <Text style={styles.variantTitle}>
+                      {variant.title || `Variant ${index + 1}`}
+                    </Text>
                   </View>
                 </View>
                 <View style={styles.variantHeaderRight}>
@@ -835,10 +1149,10 @@ const handleVariantImagePick = async (variantId: string) => {
                     onPress={() => removeVariant(variant.id)}
                     disabled={variants.length === 1}
                   >
-                    <MaterialIcons 
-                      name="close" 
-                      size={20} 
-                      color={variants.length === 1 ? '#D1D5DB' : '#EF4444'} 
+                    <Ionicons
+                      name="close"
+                      size={20}
+                      color={variants.length === 1 ? "#D1D5DB" : "#EF4444"}
                     />
                   </TouchableOpacity>
                 </View>
@@ -846,115 +1160,334 @@ const handleVariantImagePick = async (variantId: string) => {
 
               {expandedVariants[variant.id] && (
                 <View style={styles.variantContent}>
-                  {/* Variant Image */}
-                  <View style={styles.variantImageSection}>
-                    <View style={styles.variantImageContainer}>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>Variant Image</Text>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 12,
+                      }}
+                    >
                       {variant.imagePreview ? (
-                        <>
-                          <Image source={{ uri: variant.imagePreview }} style={styles.variantImage} />
+                        <View style={styles.variantImageContainer}>
+                          <Image
+                            source={{ uri: variant.imagePreview }}
+                            style={styles.variantImage}
+                          />
                           <TouchableOpacity
-                            style={styles.removeVariantImageButton}
-                            onPress={() => removeVariantImage(variant.id)}
+                            style={styles.removeVariantImage}
+                            onPress={() => {
+                              updateVariantField(variant.id, "image", null);
+                              updateVariantField(
+                                variant.id,
+                                "imagePreview",
+                                undefined,
+                              );
+                            }}
                           >
-                            <MaterialIcons name="close" size={16} color="#FFFFFF" />
+                            <Ionicons
+                              name="close-circle"
+                              size={20}
+                              color="#EF4444"
+                            />
                           </TouchableOpacity>
-                        </>
+                        </View>
                       ) : (
                         <TouchableOpacity
-                        style={styles.addVariantImageButton}
-                        onPress={() => handleVariantImagePick(variant.id)}
+                          style={styles.addVariantImageBtn}
+                          onPress={() => handleVariantImagePick(variant.id)}
                         >
-                        <MaterialIcons name="photo-camera" size={24} color="#9CA3AF" /> {/* Changed icon */}
-                        <Text style={styles.addVariantImageText}>Take Photo</Text> {/* Changed text */}
+                          <Ionicons name="camera" size={24} color="#9CA3AF" />
+                          <Text style={styles.addVariantImageText}>
+                            Add Photo
+                          </Text>
                         </TouchableOpacity>
                       )}
+                      <Text style={styles.variantImageHint}>
+                        Main gift image for this variant
+                      </Text>
                     </View>
-                    <Text style={styles.variantImageHint}>Optional variant-specific image</Text>
                   </View>
 
-                  {/* Main Variant Fields */}
                   <View style={styles.formGroup}>
                     <Text style={styles.label}>
                       Title <Text style={styles.required}>*</Text>
                     </Text>
                     <TextInput
-                      style={[styles.input, index === 0 && styles.inputDisabled]}
+                      style={styles.input}
                       value={variant.title}
                       onChangeText={(text) => {
-                        if (index !== 0) {
-                          updateVariantField(variant.id, 'title', text);
-                        }
+                        updateVariantField(variant.id, "title", text);
+                        if (step3Errors.variants) setStep3Errors({});
                       }}
                       placeholder="e.g., Small, Red, etc."
                       placeholderTextColor="#9CA3AF"
-                      editable={index !== 0}
                     />
-                    {index === 0 && (
-                      <Text style={styles.hintText}>
-                        First variant title is linked to gift name
+                  </View>
+
+                  <View style={styles.row}>
+                    <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
+                      <Text style={[styles.label, { marginBottom: 6 }]}>
+                        Stock <Text style={styles.required}>*</Text>
                       </Text>
-                    )}
-                  </View>
-                  
-                  {/* Quantity */}
-                  <View style={styles.formGroup}>
-                    <Text style={styles.label}>
-                      Stock <Text style={styles.required}>*</Text>
-                    </Text>
-                    <TextInput
-                      style={styles.input}
-                      value={variant.quantity?.toString() || ''}
-                      onChangeText={(text) => updateVariantField(variant.id, 'quantity', parseInt(text) || '')}
-                      keyboardType="numeric"
-                      placeholder="0"
-                      placeholderTextColor="#9CA3AF"
-                    />
-                  </View>
-
-                  {/* SKU Code */}
-                  <View style={styles.formGroup}>
-                    <Text style={styles.label}>SKU Code</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={variant.sku_code || ''}
-                      onChangeText={(text) => updateVariantField(variant.id, 'sku_code', text)}
-                      placeholder="Optional"
-                      placeholderTextColor="#9CA3AF"
-                    />
-                  </View>
-
-                  {/* Critical Stock Trigger */}
-                  <View style={styles.criticalStockSection}>
-                    <View style={styles.criticalStockHeader}>
-                      <Text style={styles.criticalStockTitle}>Critical Stock Trigger</Text>
-                      <View style={styles.optionalBadge}>
-                        <Text style={styles.optionalBadgeText}>Optional</Text>
-                      </View>
-                    </View>
-                    
-                    <View style={styles.formGroup}>
-                      <Text style={styles.label}>Alert when stock falls below</Text>
                       <TextInput
                         style={styles.input}
-                        value={variant.critical_trigger?.toString() || ''}
-                        onChangeText={(text) => updateVariantField(variant.id, 'critical_trigger', parseInt(text) || '')}
+                        value={variant.quantity?.toString() || ""}
+                        onChangeText={(text) => {
+                          updateVariantField(
+                            variant.id,
+                            "quantity",
+                            parseInt(text) || "",
+                          );
+                          if (step3Errors.variants) setStep3Errors({});
+                        }}
                         keyboardType="numeric"
-                        placeholder="e.g., 5"
+                        placeholder="0"
+                        placeholderTextColor="#9CA3AF"
+                      />
+                    </View>
+                    <View style={[styles.formGroup, { flex: 1 }]}>
+                      <Text style={styles.label}>SKU Code</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={variant.sku_code || ""}
+                        onChangeText={(text) =>
+                          updateVariantField(variant.id, "sku_code", text)
+                        }
+                        placeholder="Optional"
                         placeholderTextColor="#9CA3AF"
                       />
                     </View>
                   </View>
 
-                  {/* Status Toggle */}
                   <View style={styles.toggleRow}>
                     <View style={styles.toggleContainer}>
-                      <Text style={styles.toggleLabel}>Active</Text>
                       <Switch
                         value={variant.is_active !== false}
-                        onValueChange={(value) => updateVariantField(variant.id, 'is_active', value)}
-                        trackColor={{ false: '#E5E7EB', true: '#8B5CF6' }}
-                        thumbColor="#FFFFFF"
+                        onValueChange={(value) =>
+                          updateVariantField(variant.id, "is_active", value)
+                        }
+                        trackColor={{ false: "#E5E7EB", true: "#9333EA" }}
+                        thumbColor={
+                          variant.is_active !== false ? "#9333EA" : "#9CA3AF"
+                        }
                       />
+                      <Text style={styles.toggleLabel}>Active</Text>
+                    </View>
+                    <View style={styles.toggleContainer}>
+                      <Switch
+                        value={false}
+                        disabled={true}
+                        trackColor={{ false: "#E5E7EB", true: "#9333EA" }}
+                        thumbColor={"#9CA3AF"}
+                      />
+                      <Text style={[styles.toggleLabel, { color: "#9CA3AF" }]}>
+                        Refundable (Gifts cannot be refunded)
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.sectionDivider}>
+                    <View style={styles.advancedSectionHeader}>
+                      <Ionicons
+                        name="resize-outline"
+                        size={15}
+                        color="#9333EA"
+                      />
+                      <Text style={styles.advancedSectionTitle}>
+                        Dimensions
+                      </Text>
+                    </View>
+                    <View style={styles.formGroup}>
+                      <Text style={styles.label}>Size (L × W × H)</Text>
+                      <View style={{ flexDirection: "row", gap: 6 }}>
+                        <TextInput
+                          style={[styles.input, { flex: 1 }]}
+                          value={variant.length?.toString() || ""}
+                          onChangeText={(t) =>
+                            updateVariantField(
+                              variant.id,
+                              "length",
+                              parseFloat(t) || "",
+                            )
+                          }
+                          keyboardType="numeric"
+                          placeholder="L"
+                          placeholderTextColor="#9CA3AF"
+                        />
+                        <TextInput
+                          style={[styles.input, { flex: 1 }]}
+                          value={variant.width?.toString() || ""}
+                          onChangeText={(t) =>
+                            updateVariantField(
+                              variant.id,
+                              "width",
+                              parseFloat(t) || "",
+                            )
+                          }
+                          keyboardType="numeric"
+                          placeholder="W"
+                          placeholderTextColor="#9CA3AF"
+                        />
+                        <TextInput
+                          style={[styles.input, { flex: 1 }]}
+                          value={variant.height?.toString() || ""}
+                          onChangeText={(t) =>
+                            updateVariantField(
+                              variant.id,
+                              "height",
+                              parseFloat(t) || "",
+                            )
+                          }
+                          keyboardType="numeric"
+                          placeholder="H"
+                          placeholderTextColor="#9CA3AF"
+                        />
+                        <TouchableOpacity
+                          style={[styles.selectButton, { width: 56 }]}
+                          onPress={() =>
+                            setDimensionUnitModal({
+                              visible: true,
+                              variantId: variant.id,
+                            })
+                          }
+                        >
+                          <Text
+                            style={[styles.selectButtonText, { fontSize: 12 }]}
+                          >
+                            {variant.dimension_unit || "cm"}
+                          </Text>
+                          <Ionicons
+                            name="chevron-down"
+                            size={12}
+                            color="#9CA3AF"
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    <View style={styles.formGroup}>
+                      <Text style={styles.label}>Weight</Text>
+                      <View style={{ flexDirection: "row", gap: 8 }}>
+                        <TextInput
+                          style={[styles.input, { flex: 1 }]}
+                          value={variant.weight?.toString() || ""}
+                          onChangeText={(t) =>
+                            updateVariantField(
+                              variant.id,
+                              "weight",
+                              parseFloat(t) || "",
+                            )
+                          }
+                          keyboardType="numeric"
+                          placeholder="0.00"
+                          placeholderTextColor="#9CA3AF"
+                        />
+                        <TouchableOpacity
+                          style={[styles.selectButton, { width: 70 }]}
+                          onPress={() =>
+                            setWeightUnitModal({
+                              visible: true,
+                              variantId: variant.id,
+                            })
+                          }
+                        >
+                          <Text style={styles.selectButtonText}>
+                            {variant.weight_unit || "g"}
+                          </Text>
+                          <Ionicons
+                            name="chevron-down"
+                            size={14}
+                            color="#9CA3AF"
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    <View style={styles.formGroup}>
+                      <Text style={styles.label}>Low Stock Alert</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={variant.critical_trigger?.toString() || ""}
+                        onChangeText={(t) =>
+                          updateVariantField(
+                            variant.id,
+                            "critical_trigger",
+                            parseInt(t) || "",
+                          )
+                        }
+                        keyboardType="numeric"
+                        placeholder="Alert when stock below this number"
+                        placeholderTextColor="#9CA3AF"
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.sectionDivider}>
+                    <View style={styles.advancedSectionHeader}>
+                      <Ionicons
+                        name="shield-checkmark-outline"
+                        size={15}
+                        color="#9333EA"
+                      />
+                      <Text style={styles.advancedSectionTitle}>
+                        Proof of Ownership
+                      </Text>
+                    </View>
+                    <View style={styles.formGroup}>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 12,
+                        }}
+                      >
+                        {variant.proofImagePreview ? (
+                          <View style={styles.variantImageContainer}>
+                            <Image
+                              source={{ uri: variant.proofImagePreview }}
+                              style={[
+                                styles.variantImage,
+                                { borderColor: "#34D399", borderWidth: 2 },
+                              ]}
+                            />
+                            <TouchableOpacity
+                              style={styles.removeVariantImage}
+                              onPress={() => {
+                                updateVariantField(
+                                  variant.id,
+                                  "proofImage",
+                                  null,
+                                );
+                                updateVariantField(
+                                  variant.id,
+                                  "proofImagePreview",
+                                  undefined,
+                                );
+                              }}
+                            >
+                              <Ionicons
+                                name="close-circle"
+                                size={20}
+                                color="#EF4444"
+                              />
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            style={styles.addVariantImageBtn}
+                            onPress={() => handleProofImagePick(variant.id)}
+                          >
+                            <Ionicons name="camera" size={24} color="#9CA3AF" />
+                            <Text style={styles.addVariantImageText}>
+                              Add Proof
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                        <Text style={styles.variantImageHint}>
+                          Upload proof of authenticity or condition (receipt,
+                          certificate, etc.)
+                        </Text>
+                      </View>
                     </View>
                   </View>
                 </View>
@@ -962,8 +1495,11 @@ const handleVariantImagePick = async (variantId: string) => {
             </View>
           ))}
 
-          <TouchableOpacity style={styles.addVariantButton} onPress={addVariant}>
-            <MaterialIcons name="add" size={20} color="#8B5CF6" />
+          <TouchableOpacity
+            style={styles.addVariantButton}
+            onPress={addVariant}
+          >
+            <Ionicons name="add" size={20} color="#9333EA" />
             <Text style={styles.addVariantButtonText}>Add Another Variant</Text>
           </TouchableOpacity>
 
@@ -972,110 +1508,111 @@ const handleVariantImagePick = async (variantId: string) => {
               Total Variants: {variants.length}
             </Text>
             <Text style={styles.variantSummaryText}>
-              Total Stock: {variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units
+              Total Stock:{" "}
+              {variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)}{" "}
+              units
             </Text>
           </View>
 
           <View style={styles.navigationButtons}>
             <TouchableOpacity
               style={styles.backButton}
-              onPress={() => setCurrentStep(2)}
+              onPress={goToPreviousStep}
             >
-              <MaterialIcons name="arrow-back" size={20} color="#6B7280" />
+              <Ionicons name="arrow-back" size={20} color="#6B7280" />
               <Text style={styles.backButtonText}>Back</Text>
             </TouchableOpacity>
-            
             <TouchableOpacity
-              style={[styles.nextButton, !canProceedToNextStep() && styles.nextButtonDisabled]}
-              onPress={() => setCurrentStep(4)}
-              disabled={!canProceedToNextStep()}
+              style={styles.nextButton}
+              onPress={goToNextStep}
             >
-              <Text style={styles.nextButtonText}>Next: Stock</Text>
-              <MaterialIcons name="arrow-forward" size={20} color="#FFFFFF" />
+              <Text style={styles.nextButtonText}>Next: Review</Text>
+              <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
         </View>
       )}
 
-      {/* STEP 4: Stock & Submit */}
+      {/* ===== STEP 4: Review & Submit ===== */}
       {currentStep === 4 && (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <View style={styles.sectionIconContainer}>
-              <MaterialIcons name="inventory" size={20} color="#8B5CF6" />
+            <View style={styles.sectionIcon}>
+              <Ionicons name="checkmark-circle" size={20} color="#9333EA" />
             </View>
-            <Text style={styles.sectionTitle}>Stock Settings</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>Review & Submit</Text>
+              <Text style={styles.sectionSubtitle}>
+                Review your gift details before creating
+              </Text>
+            </View>
           </View>
 
-          {/* Global Critical Stock Trigger */}
-          <View style={styles.globalCriticalStock}>
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>Enable Critical Stock Alert</Text>
-              <Switch
-                value={enableCriticalTrigger}
-                onValueChange={setEnableCriticalTrigger}
-                trackColor={{ false: '#E5E7EB', true: '#8B5CF6' }}
-                thumbColor="#FFFFFF"
-              />
-            </View>
-
-            {enableCriticalTrigger && (
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Global Critical Stock Level</Text>
-                <TextInput
-                  style={styles.input}
-                  value={criticalStock?.toString() || ''}
-                  onChangeText={(text) => setCriticalStock(parseInt(text) || '')}
-                  keyboardType="numeric"
-                  placeholder="Enter stock level for alerts"
-                  placeholderTextColor="#9CA3AF"
-                />
-                <Text style={styles.hintText}>
-                  This will apply to all variants that don't have their own trigger
-                </Text>
+          <View style={styles.reviewCard}>
+            <Text style={styles.reviewCardTitle}>Gift Summary</Text>
+            {[
+              { label: "Name", value: giftName || "Not set" },
+              {
+                label: "Condition",
+                value: giftCondition
+                  ? `${CONDITION_SCALE[giftCondition].shortLabel} (${CONDITION_SCALE[giftCondition].stars}★)`
+                  : "Not set",
+              },
+              {
+                label: "Category",
+                value: selectedCategoryName || "Not selected",
+              },
+              { label: "Media", value: `${mainMedia.length} / 3+ files` },
+              { label: "Variants", value: String(variants.length) },
+              {
+                label: "Total Stock",
+                value: `${variants.reduce((sum, v) => sum + (Number(v.quantity) || 0), 0)} units`,
+              },
+              { label: "Price", value: "FREE (₱0.00)" },
+            ].map(({ label, value }) => (
+              <View key={label} style={styles.reviewRow}>
+                <Text style={styles.reviewLabel}>{label}:</Text>
+                <Text style={styles.reviewValue}>{value}</Text>
               </View>
-            )}
+            ))}
           </View>
 
-          {/* Submit Button */}
-          <View style={styles.submitSection}>
-            <Text style={styles.submitTitle}>Ready to create your gift?</Text>
-            <Text style={styles.submitSubtitle}>Create a personal gift listing (no shop required)</Text>
-
-            {error && (
-              <View style={styles.errorContainer}>
-                <MaterialIcons name="error-outline" size={20} color="#EF4444" />
-                <Text style={styles.errorContainerText}>{error}</Text>
-              </View>
-            )}
-
-            <View style={styles.submitButtons}>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => router.back()}
-                disabled={submitting}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
-                onPress={handleSubmit}
-                disabled={submitting}
-              >
-                {submitting ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <MaterialIcons name="check" size={20} color="#FFFFFF" />
-                    <Text style={styles.submitButtonText}>Create Gift</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+          {apiResponseError && (
+            <View style={styles.apiErrorContainer}>
+              <Ionicons name="alert-circle" size={20} color="#EF4444" />
+              <Text style={styles.apiErrorText}>{apiResponseError}</Text>
             </View>
+          )}
+
+          <View style={styles.submitContainer}>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={goToPreviousStep}
+            >
+              <Text style={styles.cancelButtonText}>Back</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.submitButton,
+                submitting && styles.submitButtonDisabled,
+              ]}
+              onPress={handleSubmit}
+              disabled={submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark" size={20} color="#FFFFFF" />
+                  <Text style={styles.submitButtonText}>Create Gift</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
       )}
+
+      {/* ===== MODALS ===== */}
 
       {/* Condition Modal */}
       <Modal
@@ -1084,35 +1621,67 @@ const handleVariantImagePick = async (variantId: string) => {
         animationType="slide"
         onRequestClose={() => setConditionModalVisible(false)}
       >
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
           onPress={() => setConditionModalVisible(false)}
         >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Condition</Text>
+              <Text style={styles.modalTitle}>Select Condition Rating</Text>
               <TouchableOpacity onPress={() => setConditionModalVisible(false)}>
-                <MaterialIcons name="close" size={24} color="#374151" />
+                <Ionicons name="close" size={24} color="#374151" />
               </TouchableOpacity>
             </View>
             <FlatList
-              data={conditionOptions}
-              keyExtractor={(item) => item}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.modalItem}
-                  onPress={() => {
-                    setGiftCondition(item);
-                    setConditionModalVisible(false);
-                  }}
-                >
-                  <Text style={styles.modalItemText}>{item}</Text>
-                  {giftCondition === item && (
-                    <MaterialIcons name="check" size={20} color="#8B5CF6" />
-                  )}
-                </TouchableOpacity>
-              )}
+              data={
+                Object.entries(CONDITION_SCALE) as [
+                  string,
+                  (typeof CONDITION_SCALE)[1],
+                ][]
+              }
+              keyExtractor={([key]) => key}
+              renderItem={({ item: [key, cond] }) => {
+                const val = parseInt(key) as ConditionValue;
+                const isSelected = giftCondition === val;
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.modalItem,
+                      isSelected && { backgroundColor: "#FAF5FF" },
+                    ]}
+                    onPress={() => {
+                      setGiftCondition(val);
+                      setConditionModalVisible(false);
+                      if (step1Errors.condition) setStep1Errors({ ...step1Errors, condition: undefined });
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 8,
+                          marginBottom: 2,
+                        }}
+                      >
+                        <StarRow count={cond.stars} />
+                        <Text
+                          style={[styles.modalItemText, { fontWeight: "600" }]}
+                        >
+                          {cond.shortLabel}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: "#6B7280" }}>
+                        {cond.label}
+                      </Text>
+                    </View>
+                    {isSelected && (
+                      <Ionicons name="checkmark" size={20} color="#9333EA" />
+                    )}
+                  </TouchableOpacity>
+                );
+              }}
             />
           </View>
         </TouchableOpacity>
@@ -1125,7 +1694,7 @@ const handleVariantImagePick = async (variantId: string) => {
         animationType="slide"
         onRequestClose={() => setCategoryModalVisible(false)}
       >
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
           onPress={() => setCategoryModalVisible(false)}
@@ -1134,15 +1703,20 @@ const handleVariantImagePick = async (variantId: string) => {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Category</Text>
               <TouchableOpacity onPress={() => setCategoryModalVisible(false)}>
-                <MaterialIcons name="close" size={24} color="#374151" />
+                <Ionicons name="close" size={24} color="#374151" />
               </TouchableOpacity>
             </View>
             <FlatList
-              data={['Others', ...modelClasses]}
+              data={["Others", ...modelClasses]}
               keyExtractor={(item) => item}
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={styles.modalItem}
+                  style={[
+                    styles.modalItem,
+                    selectedCategoryName === item && {
+                      backgroundColor: "#FAF5FF",
+                    },
+                  ]}
                   onPress={() => {
                     setSelectedCategoryName(item);
                     setCategoryModalVisible(false);
@@ -1150,7 +1724,7 @@ const handleVariantImagePick = async (variantId: string) => {
                 >
                   <Text style={styles.modalItemText}>{item}</Text>
                   {selectedCategoryName === item && (
-                    <MaterialIcons name="check" size={20} color="#8B5CF6" />
+                    <Ionicons name="checkmark" size={20} color="#9333EA" />
                   )}
                 </TouchableOpacity>
               )}
@@ -1158,642 +1732,624 @@ const handleVariantImagePick = async (variantId: string) => {
           </View>
         </TouchableOpacity>
       </Modal>
-    </ScrollView>
+
+      {/* Weight Unit Modal */}
+      <Modal
+        visible={weightUnitModal.visible}
+        transparent
+        animationType="slide"
+        onRequestClose={() =>
+          setWeightUnitModal({ visible: false, variantId: null })
+        }
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() =>
+            setWeightUnitModal({ visible: false, variantId: null })
+          }
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Weight Unit</Text>
+              <TouchableOpacity
+                onPress={() =>
+                  setWeightUnitModal({ visible: false, variantId: null })
+                }
+              >
+                <Ionicons name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={weightUnitOptions}
+              keyExtractor={(item) => item}
+              renderItem={({ item }) => {
+                const current = weightUnitModal.variantId
+                  ? variants.find((v) => v.id === weightUnitModal.variantId)
+                      ?.weight_unit
+                  : null;
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.modalItem,
+                      current === item && { backgroundColor: "#FAF5FF" },
+                    ]}
+                    onPress={() => {
+                      if (weightUnitModal.variantId)
+                        updateVariantField(
+                          weightUnitModal.variantId,
+                          "weight_unit",
+                          item,
+                        );
+                      setWeightUnitModal({ visible: false, variantId: null });
+                    }}
+                  >
+                    <Text style={styles.modalItemText}>{item}</Text>
+                    {current === item && (
+                      <Ionicons name="checkmark" size={20} color="#9333EA" />
+                    )}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Dimension Unit Modal */}
+      <Modal
+        visible={dimensionUnitModal.visible}
+        transparent
+        animationType="slide"
+        onRequestClose={() =>
+          setDimensionUnitModal({ visible: false, variantId: null })
+        }
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() =>
+            setDimensionUnitModal({ visible: false, variantId: null })
+          }
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Dimension Unit</Text>
+              <TouchableOpacity
+                onPress={() =>
+                  setDimensionUnitModal({ visible: false, variantId: null })
+                }
+              >
+                <Ionicons name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={dimensionUnitOptions}
+              keyExtractor={(item) => item}
+              renderItem={({ item }) => {
+                const current = dimensionUnitModal.variantId
+                  ? variants.find((v) => v.id === dimensionUnitModal.variantId)
+                      ?.dimension_unit
+                  : null;
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.modalItem,
+                      current === item && { backgroundColor: "#FAF5FF" },
+                    ]}
+                    onPress={() => {
+                      if (dimensionUnitModal.variantId)
+                        updateVariantField(
+                          dimensionUnitModal.variantId,
+                          "dimension_unit",
+                          item,
+                        );
+                      setDimensionUnitModal({
+                        visible: false,
+                        variantId: null,
+                      });
+                    }}
+                  >
+                    <Text style={styles.modalItemText}>{item}</Text>
+                    {current === item && (
+                      <Ionicons name="checkmark" size={20} color="#9333EA" />
+                    )}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </View>
   );
 }
 
+// ============================================================
+// STYLES - GIFT THEME (Purple/Magenta) - same as seller version
+// ============================================================
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F9FAFB',
-  },
+  container: { flex: 1, backgroundColor: "#F9FAFB" },
+
   progressContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
-    paddingVertical: 20,
-    backgroundColor: '#FFFFFF',
+    paddingVertical: 14,
+    backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: "#E5E7EB",
   },
-  stepIndicator: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#F3F4F6',
-    alignItems: 'center',
-    justifyContent: 'center',
+  stepBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: "#F3F4F6",
   },
-  stepActive: {
-    backgroundColor: '#8B5CF6',
-  },
-  stepText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#9CA3AF',
-  },
-  stepTextActive: {
-    color: '#FFFFFF',
-  },
+  stepActive: { backgroundColor: "#9333EA" },
+  stepBadgeText: { fontSize: 10, fontWeight: "500", color: "#6B7280" },
+  stepTextActive: { color: "#FFFFFF" },
   stepLine: {
-    width: 40,
+    flex: 1,
     height: 2,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: "#E5E7EB",
     marginHorizontal: 4,
   },
-  stepLineActive: {
-    backgroundColor: '#8B5CF6',
-  },
-  stepLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingBottom: 12,
-    backgroundColor: '#FFFFFF',
-  },
-  stepLabel: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    width: 60,
-    textAlign: 'center',
-  },
-  stepLabelActive: {
-    color: '#8B5CF6',
-    fontWeight: '600',
-  },
-  section: {
-    padding: 16,
-  },
+  stepLineActive: { backgroundColor: "#9333EA" },
+
+  section: { padding: 16 },
   sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 20,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: 16,
+    gap: 12,
   },
-  sectionIconContainer: {
+  sectionIcon: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#EDE9FE',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
+    backgroundColor: "#FAF5FF",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  formGroup: {
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    marginBottom: 6,
-  },
-  required: {
-    color: '#EF4444',
-  },
+  sectionTitle: { fontSize: 18, fontWeight: "600", color: "#111827" },
+  sectionSubtitle: { fontSize: 12, color: "#6B7280", marginTop: 2 },
+
+  formGroup: { marginBottom: 16 },
+  label: { fontSize: 14, fontWeight: "500", color: "#374151", marginBottom: 6 },
+  required: { color: "#EF4444" },
   input: {
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: "#D1D5DB",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 12,
     fontSize: 14,
-    color: '#111827',
-    backgroundColor: '#FFFFFF',
+    color: "#111827",
+    backgroundColor: "#FFFFFF",
   },
-  hintText: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  inputDisabled: {
-    backgroundColor: '#F3F4F6',
-    color: '#9CA3AF',
-  },
-  textArea: {
-    minHeight: 100,
-    textAlignVertical: 'top',
-  },
-  selectButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  inputError: { borderColor: "#EF4444", borderWidth: 2 },
+  textArea: { minHeight: 100, textAlignVertical: "top" },
+  errorText: { fontSize: 12, color: "#EF4444", marginTop: 4 },
+  charCount: { fontSize: 10, color: "#9CA3AF", textAlign: "right", marginTop: 4 },
+
+  conditionBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+  },
+  conditionBadgeText: { fontSize: 12, fontWeight: "500", flex: 1 },
+
+  selectButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
   },
-  selectButtonText: {
-    fontSize: 14,
-    color: '#111827',
-  },
-  selectButtonPlaceholder: {
-    fontSize: 14,
-    color: '#9CA3AF',
-  },
+  selectButtonText: { fontSize: 14, color: "#111827" },
+  placeholderText: { fontSize: 14, color: "#9CA3AF" },
+
   nextButton: {
-    backgroundColor: '#8B5CF6',
-    borderRadius: 8,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 20,
+    backgroundColor: "#9333EA",
+    borderRadius: 10,
+    minHeight: 50,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: 8,
   },
-  nextButtonDisabled: {
-    backgroundColor: '#9CA3AF',
-  },
-  nextButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
+  nextButtonText: { fontSize: 15, fontWeight: "600", color: "#FFFFFF" },
   navigationButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginTop: 20,
     gap: 12,
   },
   backButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 14,
+    borderColor: "#D1D5DB",
+    borderRadius: 10,
+    minHeight: 50,
+    paddingHorizontal: 14,
     gap: 8,
+    backgroundColor: "#FFFFFF",
   },
-  backButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6B7280',
+  backButtonText: { fontSize: 14, fontWeight: "500", color: "#6B7280" },
+
+  mediaCountBadge: {
+    backgroundColor: "#F3F4F6",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
   },
-  mediaContainer: {
-    marginBottom: 20,
-  },
-  mediaHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  mediaLabel: {
-    fontSize: 14,
-    color: '#374151',
-  },
-  mediaCount: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#8B5CF6',
-  },
-  mediaScroll: {
-    flexDirection: 'row',
-  },
-  addMediaButton: {
-    width: 100,
-    height: 100,
+  mediaCountBadgeValid: { backgroundColor: "#DCFCE7" },
+  mediaCountBadgeText: { fontSize: 12, color: "#6B7280" },
+  mediaCountBadgeTextValid: { color: "#059669", fontWeight: "600" },
+  cameraArea: {
     borderWidth: 2,
-    borderColor: '#D1D5DB',
-    borderStyle: 'dashed',
+    borderColor: "#D1D5DB",
+    borderStyle: "dashed",
+    borderRadius: 12,
+    padding: 24,
+    alignItems: "center",
+    marginBottom: 16,
+    backgroundColor: "#F9FAFB",
+  },
+  cameraAreaText: {
+    fontSize: 13,
+    color: "#6B7280",
+    marginTop: 8,
+    marginBottom: 12,
+    textAlign: "center",
+  },
+  cameraButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
     borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    backgroundColor: '#F9FAFB',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: "#FFFFFF",
   },
-  addMediaText: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    marginTop: 4,
+  cameraButtonText: { fontSize: 14, color: "#9333EA", fontWeight: "500" },
+  mediaGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
   },
-  mediaPreviewContainer: {
-    position: 'relative',
-    marginRight: 12,
-  },
-  mediaPreview: {
-    width: 100,
-    height: 100,
+  mediaGridItem: { position: "relative", width: 80, height: 80 },
+  mediaGridImage: {
+    width: 80,
+    height: 80,
     borderRadius: 8,
-  },
-  videoPreview: {
-    backgroundColor: '#374151',
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
   },
   coverBadge: {
-    position: 'absolute',
+    position: "absolute",
     top: 4,
     left: 4,
-    backgroundColor: '#8B5CF6',
-    paddingHorizontal: 6,
+    backgroundColor: "#9333EA",
+    paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 4,
   },
-  coverBadgeText: {
-    fontSize: 9,
-    fontWeight: '600',
-    color: '#FFFFFF',
+  coverBadgeText: { fontSize: 9, fontWeight: "600", color: "#FFFFFF" },
+  removeMediaBtn: { position: "absolute", top: -6, right: -6 },
+  addMoreMedia: {
+    width: 80,
+    height: 80,
+    borderWidth: 2,
+    borderColor: "#D1D5DB",
+    borderStyle: "dashed",
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F9FAFB",
   },
-  removeMediaButton: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#EF4444',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  addMoreMediaText: { fontSize: 10, color: "#9CA3AF", marginTop: 4 },
+
   aiSection: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: "#E5E7EB",
+    marginBottom: 20,
+    overflow: "hidden",
   },
   aiHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#FAF5FF",
   },
-  aiTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  aiTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
+  aiTitleContainer: { flexDirection: "row", alignItems: "center", gap: 8 },
+  aiTitle: { fontSize: 15, fontWeight: "600", color: "#111827" },
   aiReadyBadge: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: "#DCFCE7",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
   },
-  aiReadyText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#059669',
-  },
+  aiReadyText: { fontSize: 11, fontWeight: "600", color: "#059669" },
+  aiContent: { padding: 16 },
+  aiRow: { marginBottom: 16 },
+  aiDescription: { fontSize: 13, color: "#6B7280", marginBottom: 8 },
   analyzeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#8B5CF6',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    gap: 8,
+    borderColor: "#E9D5FF",
+    borderRadius: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    alignSelf: "flex-start",
+    backgroundColor: "#FAF5FF",
   },
-  analyzeButtonDisabled: {
-    borderColor: '#9CA3AF',
-    opacity: 0.5,
-  },
-  analyzeButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#8B5CF6',
-  },
+  analyzeButtonDisabled: { opacity: 0.5 },
+  analyzeButtonText: { fontSize: 13, fontWeight: "500", color: "#9333EA" },
   predictionCard: {
-    backgroundColor: '#EDE9FE',
+    backgroundColor: "#FAF5FF",
     borderRadius: 8,
     padding: 12,
-    marginTop: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
   },
   predictionTitle: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#6D28D9',
+    fontWeight: "600",
+    color: "#6B21A5",
     marginBottom: 4,
   },
   predictionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-  predictionCategory: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#5B21B6',
-  },
-  predictionConfidence: {
-    fontSize: 12,
-    color: '#6D28D9',
-  },
-  alternativeText: {
-    fontSize: 11,
-    color: '#6D28D9',
-    marginTop: 4,
-  },
+  predictionCategory: { fontSize: 14, fontWeight: "500", color: "#6B21A5" },
+  predictionConfidence: { fontSize: 12, color: "#9333EA" },
+  alternativeText: { fontSize: 11, color: "#9333EA", marginTop: 4 },
   errorCard: {
-    backgroundColor: '#FEF2F2',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF2F2",
     borderRadius: 8,
     padding: 12,
-    marginTop: 12,
+    marginBottom: 16,
+    gap: 8,
   },
-  errorCardText: {
-    fontSize: 12,
-    color: '#991B1B',
+  errorCardText: { fontSize: 12, color: "#991B1B", flex: 1 },
+
+  requiredBadge: {
+    backgroundColor: "#FAF5FF",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
+    alignSelf: "flex-start",
+    marginBottom: 16,
   },
+  requiredBadgeText: { fontSize: 12, color: "#9333EA", fontWeight: "500" },
+
   variantCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: 12,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
-    overflow: 'hidden',
+    borderColor: "#E5E7EB",
+    overflow: "hidden",
   },
   variantHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     padding: 16,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: "#F9FAFB",
   },
-  variantHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
+  variantHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
   variantNumber: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#8B5CF6',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "#9333EA",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  variantNumberText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  variantTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  variantHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
+  variantNumberText: { fontSize: 12, fontWeight: "700", color: "#FFFFFF" },
+  variantTitle: { fontSize: 14, fontWeight: "600", color: "#111827" },
+  variantHeaderRight: { flexDirection: "row", alignItems: "center", gap: 12 },
   defaultBadge: {
-    backgroundColor: '#EDE9FE',
+    backgroundColor: "#FAF5FF",
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+    borderWidth: 1,
+    borderColor: "#E9D5FF",
   },
-  defaultBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#6D28D9',
-  },
-  variantContent: {
-    padding: 16,
-  },
-  variantImageSection: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  variantImageContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 8,
-    overflow: 'hidden',
-    marginBottom: 4,
-  },
-  variantImage: {
-    width: '100%',
-    height: '100%',
-  },
-  addVariantImageButton: {
-    width: '100%',
-    height: '100%',
+  defaultBadgeText: { fontSize: 10, fontWeight: "600", color: "#9333EA" },
+  variantContent: { padding: 16 },
+
+  variantImageContainer: { position: "relative" },
+  variantImage: { width: 80, height: 80, borderRadius: 8 },
+  addVariantImageBtn: {
+    width: 80,
+    height: 80,
     borderWidth: 2,
-    borderColor: '#D1D5DB',
-    borderStyle: 'dashed',
+    borderColor: "#D1D5DB",
+    borderStyle: "dashed",
     borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F9FAFB',
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F9FAFB",
   },
-  addVariantImageText: {
-    fontSize: 10,
-    color: '#9CA3AF',
-    marginTop: 2,
-  },
-  removeVariantImageButton: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#EF4444',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  variantImageHint: {
-    fontSize: 11,
-    color: '#9CA3AF',
-  },
-  criticalStockSection: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-  },
-  criticalStockHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    gap: 8,
-  },
-  criticalStockTitle: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#374151',
-  },
-  optionalBadge: {
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  optionalBadgeText: {
-    fontSize: 9,
-    color: '#6B7280',
-  },
+  addVariantImageText: { fontSize: 10, color: "#9CA3AF", marginTop: 4 },
+  variantImageHint: { fontSize: 11, color: "#9CA3AF", flex: 1 },
+  removeVariantImage: { position: "absolute", top: -6, right: -6 },
+
+  row: { flexDirection: "row" },
+
   toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-around",
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
     marginBottom: 16,
   },
-  toggleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  toggleContainer: { flexDirection: "row", alignItems: "center", gap: 8 },
+  toggleLabel: { fontSize: 14, color: "#374151" },
+
+  sectionDivider: {
+    marginTop: 12,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
   },
-  toggleLabel: {
+  advancedSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 12,
+  },
+  advancedSectionTitle: {
     fontSize: 14,
-    color: '#374151',
+    fontWeight: "600",
+    color: "#374151",
   },
+
   addVariantButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 2,
-    borderColor: '#8B5CF6',
-    borderStyle: 'dashed',
+    borderColor: "#E9D5FF",
+    borderStyle: "dashed",
     borderRadius: 8,
     padding: 16,
     marginTop: 8,
     marginBottom: 16,
     gap: 8,
   },
-  addVariantButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#8B5CF6',
-  },
+  addVariantButtonText: { fontSize: 14, fontWeight: "500", color: "#9333EA" },
   variantSummary: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#F9FAFB',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    backgroundColor: "#F9FAFB",
     borderRadius: 8,
     padding: 12,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
   },
-  variantSummaryText: {
-    fontSize: 13,
-    color: '#4B5563',
-  },
-  globalCriticalStock: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
+  variantSummaryText: { fontSize: 13, color: "#4B5563" },
+
+  reviewCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
     padding: 16,
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
   },
-  submitSection: {
-    marginTop: 20,
-  },
-  submitTitle: {
+  reviewCardTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  submitSubtitle: {
-    fontSize: 13,
-    color: '#6B7280',
+    fontWeight: "600",
+    color: "#111827",
     marginBottom: 16,
   },
-  submitButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
+  reviewRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
   },
-  cancelButton: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+  reviewLabel: { fontSize: 14, color: "#6B7280" },
+  reviewValue: { fontSize: 14, fontWeight: "500", color: "#111827" },
+
+  apiErrorContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF2F2",
     borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 14,
-  },
-  cancelButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6B7280',
-  },
-  submitButton: {
-    flex: 2,
-    backgroundColor: '#8B5CF6',
-    borderRadius: 8,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  submitButtonDisabled: {
-    backgroundColor: '#9CA3AF',
-  },
-  submitButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: "#FECACA",
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
     gap: 8,
   },
-  errorContainerText: {
+  apiErrorText: { flex: 1, fontSize: 13, color: "#991B1B" },
+
+  submitContainer: { flexDirection: "row", gap: 12, marginTop: 20 },
+  cancelButton: {
     flex: 1,
-    fontSize: 13,
-    color: '#991B1B',
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 8,
+    padding: 14,
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
   },
+  cancelButtonText: { fontSize: 14, fontWeight: "500", color: "#6B7280" },
+  submitButton: {
+    flex: 2,
+    backgroundColor: "#9333EA",
+    borderRadius: 8,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  submitButtonDisabled: { backgroundColor: "#9CA3AF" },
+  submitButtonText: { fontSize: 14, fontWeight: "600", color: "#FFFFFF" },
+
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    maxHeight: '80%',
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "80%",
   },
   modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: "#E5E7EB",
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-  },
+  modalTitle: { fontSize: 18, fontWeight: "600", color: "#111827" },
   modalItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: "#F3F4F6",
   },
-  modalItemText: {
-    fontSize: 15,
-    color: '#374151',
-  },
+  modalItemText: { fontSize: 15, color: "#374151" },
 });
