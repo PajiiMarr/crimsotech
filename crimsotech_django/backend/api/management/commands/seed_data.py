@@ -17,9 +17,9 @@ class Command(BaseCommand):
         """Only seed if database is empty"""
         
         # Check if data already exists
-        if Shop.objects.exists():
-            self.stdout.write(self.style.WARNING("⚠️  Data already exists, skipping seed..."))
-            return
+        # if Shop.objects.exists():
+        #     self.stdout.write(self.style.WARNING("⚠️  Data already exists, skipping seed..."))
+        #     return
         
         self.stdout.write("🌱 Starting comprehensive shop data seeding...")
         
@@ -235,16 +235,14 @@ class Command(BaseCommand):
     def create_categories(self, shops, admin_user):
         """Create product categories"""
         categories_data = [
-            'Cameras & Photography',
-            'Mobile Accessories',
-            'Mobile Phones',
-            'Desktop and Laptops',
             'Audio Devices',
-            'Controllers',
-            'Wearables',
-            'Televisions',
-            'Storage Devices',
+            'Cameras',
+            'Computers (Laptops & Desktops)',
+            'Displays (Monitors & TVs)',
+            'Electronic Accessories',
             'Home Appliances',
+            'Mobile Devices',
+            'Wearables',
         ]
         
         categories = []
@@ -6921,59 +6919,59 @@ class Command(BaseCommand):
         random.shuffle(ratings)
         return ratings
     
-    def create_additional_data(self, products, customers, shops):
-        """Create additional related data with real references"""
-        # Create variants
-        variant_count = 0
-        for product in products:
-            for i in range(min(3, 2)):
-                variant, created = Variants.objects.get_or_create(
-                    product=product,
-                    shop=product.shop,
-                    title=f"{product.name} - Variant {i+1}"
-                )
+    # def create_additional_data(self, products, customers, shops):
+    #     """Create additional related data with real references"""
+    #     # Create variants
+    #     variant_count = 0
+    #     for product in products:
+    #         for i in range(min(3, 2)):
+    #             variant, created = Variants.objects.get_or_create(
+    #                 product=product,
+    #                 shop=product.shop,
+    #                 title=f"{product.name} - Variant {i+1}"
+    #             )
                 
-                if created:
-                    variant_count += 1
-                    # Create variant options
-                    for j in range(2):
-                        VariantOptions.objects.get_or_create(
-                            variant=variant,
-                            title=f"Option {j+1}",
-                            defaults={}
-                        )
+    #             if created:
+    #                 variant_count += 1
+    #                 # Create variant options
+    #                 for j in range(2):
+    #                     VariantOptions.objects.get_or_create(
+    #                         variant=variant,
+    #                         title=f"Option {j+1}",
+    #                         defaults={}
+    #                     )
         
-        if variant_count > 0:
-            self.stdout.write(self.style.SUCCESS(f"✅ Created {variant_count} variants"))
+    #     if variant_count > 0:
+    #         self.stdout.write(self.style.SUCCESS(f"✅ Created {variant_count} variants"))
         
-        # Create some issues
-        issue_count = 0
-        for product in products[:8]:
-            for i in range(min(2, 1)):
-                issue, created = Issues.objects.get_or_create(
-                    product=product,
-                    description=f"Reported issue with {product.name}"
-                )
-                if created:
-                    issue_count += 1
+    #     # Create some issues
+    #     issue_count = 0
+    #     for product in products[:8]:
+    #         for i in range(min(2, 1)):
+    #             issue, created = Issues.objects.get_or_create(
+    #                 product=product,
+    #                 description=f"Reported issue with {product.name}"
+    #             )
+    #             if created:
+    #                 issue_count += 1
         
-        if issue_count > 0:
-            self.stdout.write(self.style.SUCCESS(f"✅ Created {issue_count} issues"))
+    #     if issue_count > 0:
+    #         self.stdout.write(self.style.SUCCESS(f"✅ Created {issue_count} issues"))
         
-        # Create favorites
-        favorite_count = 0
-        for i, customer in enumerate(customers[:5]):
-            for j in range(3):
-                if products:
-                    favorite, created = Favorites.objects.get_or_create(
-                        customer=customer,
-                        product=products[(i + j) % len(products)],
-                    )
-                    if created:
-                        favorite_count += 1
+    #     # Create favorites
+    #     favorite_count = 0
+    #     for i, customer in enumerate(customers[:5]):
+    #         for j in range(3):
+    #             if products:
+    #                 favorite, created = Favorites.objects.get_or_create(
+    #                     customer=customer,
+    #                     product=products[(i + j) % len(products)],
+    #                 )
+    #                 if created:
+    #                     favorite_count += 1
         
-        if favorite_count > 0:
-            self.stdout.write(self.style.SUCCESS(f"✅ Created {favorite_count} favorites"))
+    #     if favorite_count > 0:
+    #         self.stdout.write(self.style.SUCCESS(f"✅ Created {favorite_count} favorites"))
 
     def create_customer_activities(self, products, customers):
         """Create customer activities for engagement"""
