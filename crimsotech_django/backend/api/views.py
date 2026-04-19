@@ -31901,7 +31901,7 @@ class RefundViewSet(viewsets.ViewSet):
                 return_request = ReturnRequestItem.objects.create(
                     refund_id=refund,
                     return_method=refund.buyer_preferred_refund_method or 'courier',
-                    return_deadline=timezone.now() + timedelta(days=7)
+                    return_deadline=timezone.now() + timedelta(days=3)
                 )
 
             # Do not modify refund.status here; leave it 'approved' so DB remains consistent.
@@ -31913,13 +31913,11 @@ class RefundViewSet(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
+    
     @action(detail=True, methods=['post'])
     def update_tracking(self, request, pk=None):
         """
         BUYER VIEW: Update logistic service and tracking number for an ongoing return.
-        Creates a ReturnRequestItem if necessary and marks the return_request as 'shipped'.
-        Also saves uploaded media files as buyer shipping proofs.
-        Note: This does NOT change `refund.status`; keep refund.status as 'approved'.
         """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
@@ -31933,9 +31931,8 @@ class RefundViewSet(viewsets.ViewSet):
             except Refund.DoesNotExist:
                 return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
 
-            # Authorization: only buyer can update tracking
             if str(refund.requested_by.id) != str(user.id):
-                return Response({"error": "Not authorized to update tracking for this refund"}, status=status.HTTP_403_FORBIDDEN)
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
 
             if refund.refund_type not in ['return', 'replace']:
                 return Response({"error": "This refund is not a return item refund"}, status=status.HTTP_400_BAD_REQUEST)
@@ -31953,25 +31950,35 @@ class RefundViewSet(viewsets.ViewSet):
                     return_deadline=timezone.now() + timedelta(days=7)
                 )
 
-            # Update return request with shipping info
+            # Update return request
             return_request.logistic_service = logistic_service
-            return_request.tracking_number = tracking_number
-            return_request.status = 'shipped'
-
-            # Use provided shipped_at if present (ISO format expected), else now
-            shipped_at = request.data.get('shipped_at')
-            if shipped_at:
-                try:
-                    return_request.shipped_at = timezone.datetime.fromisoformat(shipped_at)
-                except Exception:
-                    return_request.shipped_at = timezone.now()
+            
+            # Handle tracking_number - allow null for walk-in
+            if tracking_number is not None and str(tracking_number).strip():
+                return_request.tracking_number = str(tracking_number).strip()
             else:
+                return_request.tracking_number = None  # Set to null for walk-in
+
+            # FIX: Always set status to 'shipped' for ALL submissions (including walk-in)
+            # This ensures the buyer's return submission is properly recorded
+            return_request.status = 'shipped'
+            
+            # For walk-in, we don't set shipped_by, but we still record submission time
+            if logistic_service == 'Walk-in':
+                # Record when the buyer submitted the return info
                 return_request.shipped_at = timezone.now()
+                # Don't set shipped_by for walk-in
+            else:
+                shipped_at = request.data.get('shipped_at')
+                if shipped_at:
+                    try:
+                        return_request.shipped_at = timezone.datetime.fromisoformat(shipped_at)
+                    except Exception:
+                        return_request.shipped_at = timezone.now()
+                else:
+                    return_request.shipped_at = timezone.now()
+                return_request.shipped_by = user
 
-            # Save shipped_by if uploader is a buyer
-            return_request.shipped_by = user
-
-            # Save notes if provided
             if notes:
                 return_request.notes = notes
 
@@ -31993,7 +32000,6 @@ class RefundViewSet(viewsets.ViewSet):
 
             created_media = []
             media_objects = []
-            
             
             if files:
                 # Enforce server-side limit: max 9 media files per return request
@@ -33151,46 +33157,46 @@ class RefundViewSet(viewsets.ViewSet):
 
         # Return request information
         # Return request information
-        if refund.refund_type in ['return', 'replace']:
-            try:
-                return_request = refund.return_request
-                data['return_request'] = {
-                    "return_id": str(return_request.return_id),
-                    "return_method": return_request.return_method,
-                    "logistic_service": return_request.logistic_service,
-                    "tracking_number": return_request.tracking_number,
-                    "status": return_request.status,
-                    "shipped_at": return_request.shipped_at.isoformat() if return_request.shipped_at else None,
-                    "received_at": return_request.received_at.isoformat() if return_request.received_at else None,
-                    "return_deadline": return_request.return_deadline.isoformat() if return_request.return_deadline else None,
-                    "notes": return_request.notes
-                }
+        # if refund.refund_type in ['return', 'replace']:
+        #     try:
+        #         return_request = refund.return_request
+        #         data['return_request'] = {
+        #             "return_id": str(return_request.return_id),
+        #             "return_method": return_request.return_method,
+        #             "logistic_service": return_request.logistic_service,
+        #             "tracking_number": return_request.tracking_number,
+        #             "status": return_request.status,
+        #             "shipped_at": return_request.shipped_at.isoformat() if return_request.shipped_at else None,
+        #             "received_at": return_request.received_at.isoformat() if return_request.received_at else None,
+        #             "return_deadline": return_request.return_deadline.isoformat() if return_request.return_deadline else None,
+        #             "notes": return_request.notes
+        #         }
                 
-                # Get return request media
-                return_media = ReturnRequestMedia.objects.filter(return_id=return_request).order_by('-uploaded_at')
+        #         # Get return request media
+        #         return_media = ReturnRequestMedia.objects.filter(return_id=return_request).order_by('-uploaded_at')
                 
-                # Create media array with proper URLs
-                media_array = []
-                for rm in return_media:
-                    if rm.file_data:
-                        # Build absolute URL
-                        file_url = request.build_absolute_uri(rm.file_data.url)
-                        media_array.append({
-                            "id": str(rm.id),
-                            "file_url": file_url,
-                            "file_type": rm.file_type,
-                            "notes": rm.notes,
-                            "uploaded_at": rm.uploaded_at.isoformat(),
-                            "uploaded_by": str(rm.uploaded_by.id) if rm.uploaded_by else None
-                        })
+        #         # Create media array with proper URLs
+        #         media_array = []
+        #         for rm in return_media:
+        #             if rm.file_data:
+        #                 # Build absolute URL
+        #                 file_url = request.build_absolute_uri(rm.file_data.url)
+        #                 media_array.append({
+        #                     "id": str(rm.id),
+        #                     "file_url": file_url,
+        #                     "file_type": rm.file_type,
+        #                     "notes": rm.notes,
+        #                     "uploaded_at": rm.uploaded_at.isoformat(),
+        #                     "uploaded_by": str(rm.uploaded_by.id) if rm.uploaded_by else None
+        #                 })
                 
-                # Add media to return_request in multiple formats for frontend compatibility
-                data['return_request']['media'] = media_array
-                data['return_request']['medias'] = media_array  # For backward compatibility
-                data['return_request']['media_files'] = media_array  # For backward compatibility
+        #         # Add media to return_request in multiple formats for frontend compatibility
+        #         data['return_request']['media'] = media_array
+        #         data['return_request']['medias'] = media_array  # For backward compatibility
+        #         data['return_request']['media_files'] = media_array  # For backward compatibility
                 
-            except ReturnRequestItem.DoesNotExist:
-                data['return_request'] = None
+        #     except ReturnRequestItem.DoesNotExist:
+        #         data['return_request'] = None
 
         # Return address
         try:

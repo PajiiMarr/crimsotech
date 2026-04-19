@@ -206,18 +206,55 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
   // Get return address - first from refund data, then from shop data
   const returnAddress = refund.return_address || shopReturnAddress || null;
 
+  // In your ApprovedStatus component, update the extractReturnProofUrls function:
   const extractReturnProofUrls = () => {
+    // First, try to get from refund.return_request
     const rrObj = refund.return_request || {};
-    const mediaFromReturn = rrObj.medias || rrObj.media || rrObj.media_files || refund.return_request_media || [];
+    
+    // Debug logging to see what's actually in the object
+    console.log('=== DEBUGGING SHIPPING PROOFS ===');
+    console.log('refund.return_request exists?', !!refund.return_request);
+    console.log('refund.return_request keys:', refund.return_request ? Object.keys(refund.return_request) : []);
+    console.log('refund.return_request.medias:', refund.return_request?.medias);
+    console.log('refund.return_request.media:', refund.return_request?.media);
+    console.log('refund.return_request.media_files:', refund.return_request?.media_files);
+    console.log('rrObj:', rrObj);
+    
+    // Try multiple possible locations for media
+    let mediaArray = [];
+    
+    // Check all possible field names in order of likelihood
+    if (rrObj.medias && Array.isArray(rrObj.medias) && rrObj.medias.length > 0) {
+      mediaArray = rrObj.medias;
+      console.log('Found medias array:', mediaArray);
+    } else if (rrObj.media && Array.isArray(rrObj.media) && rrObj.media.length > 0) {
+      mediaArray = rrObj.media;
+      console.log('Found media array:', mediaArray);
+    } else if (rrObj.media_files && Array.isArray(rrObj.media_files) && rrObj.media_files.length > 0) {
+      mediaArray = rrObj.media_files;
+      console.log('Found media_files array:', mediaArray);
+    }
+    
+    // Also check if media is directly on the return_request object (not in an array)
+    if (mediaArray.length === 0 && rrObj.file_url) {
+      mediaArray = [rrObj];
+      console.log('Found single file_url on return_request');
+    }
+    
     const urls: string[] = [];
-    if (Array.isArray(mediaFromReturn) && mediaFromReturn.length > 0) {
-      mediaFromReturn.forEach((m: any) => {
+    if (mediaArray.length > 0) {
+      mediaArray.forEach((m: any, idx: number) => {
+        console.log(`Media item ${idx}:`, m);
+        // Check all possible URL field names
         const url = m.file_url || m.url || m.file_data;
         if (url && typeof url === 'string') {
           urls.push(url);
+          console.log(`Added URL ${idx}:`, url);
         }
       });
     }
+    
+    console.log('Final extracted shipping proof URLs:', urls);
     return urls;
   };
   const shippingProofUrls = extractReturnProofUrls();
@@ -240,6 +277,14 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
 
   const getDisplayTitle = () => {
     if (!isReturnOrReplace) return 'Refund Approved';
+    
+    // Check for walk-in return (logistic_service is "Walk-in" and no tracking_number)
+    const isWalkIn = rr.logistic_service === 'Walk-in' && !rr.tracking_number;
+    
+    if (isWalkIn) {
+      return isReturnItem ? 'Approved - Waiting for return' : 'Replacement Approved - Waiting for return';
+    }
+    
     if (rrStatus === 'shipped') {
       return isReturnItem ? 'Approved - Shipped' : 'Replacement Approved - Shipped';
     }
@@ -319,14 +364,14 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
             </View>
           </View>
           
-          {returnDeadline && (
+          {/* {returnDeadline && (
             <View style={styles.returnDeadlineCard}>
               <Clock size={16} color="#F59E0B" />
               <Text style={styles.returnDeadlineText}>
                 Please ship the item by <Text style={styles.returnDeadlineDate}>{formatDate(returnDeadline.toISOString())}</Text>
               </Text>
             </View>
-          )}
+          )} */}
         </View>
       )}
       
@@ -876,6 +921,13 @@ export default function ViewRefundPage() {
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
   const [shopReturnAddress, setShopReturnAddress] = useState<any | null>(null);
+  const effectiveShopId = ''; 
+  // Return Media modal for walk-in returns
+const [showReturnMediaModal, setShowReturnMediaModal] = useState(false);
+const [returnMediaFiles, setReturnMediaFiles] = useState<any[]>([]);
+const [returnMediaNotes, setReturnMediaNotes] = useState('');
+const [uploadingReturnMedia, setUploadingReturnMedia] = useState(false);
+
 
   // Add this useEffect after your fetchRefund useEffect
 // Update the fetchShopAddress useEffect
@@ -935,6 +987,72 @@ useEffect(() => {
   useEffect(() => {
     fetchRefund();
   }, [refundId, user?.id]);
+
+  const handleMarkAsReturnedWithMedia = async () => {
+    if (!returnMediaFiles.length) {
+      Alert.alert('Required', 'Please upload at least one proof photo');
+      return;
+    }
+    
+    try {
+      setUploadingReturnMedia(true);
+      
+      // Create FormData
+      const formData = new FormData();
+      
+      // Add media files with proper React Native formatting
+      for (let i = 0; i < returnMediaFiles.length; i++) {
+        const file = returnMediaFiles[i];
+        formData.append('media_files', {
+          uri: file.uri,
+          name: file.fileName || `proof_${Date.now()}_${i}.jpg`,
+          type: file.mime || 'image/jpeg',
+        } as any);
+      }
+      
+      // Add required fields
+      formData.append('logistic_service', 'Walk-in');
+      formData.append('notes', returnMediaNotes || 'Item returned (walk-in)');
+      
+      console.log('Uploading to:', `/return-refund/${refundId}/update_tracking/`);
+      console.log('Files count:', returnMediaFiles.length);
+      
+      // IMPORTANT: Increase timeout and add more headers
+      const response = await AxiosInstance.post(
+        `/return-refund/${refundId}/update_tracking/`,
+        formData,
+        {
+          headers: {
+            'X-User-Id': user?.id || '',
+            'Content-Type': 'multipart/form-data',
+            'Accept': 'application/json',
+          },
+          timeout: 60000, // Increase to 60 seconds for file uploads
+        }
+      );
+      
+      console.log('Upload response:', response.data);
+      
+      Alert.alert('Success', 'Item marked as returned with proof');
+      setShowReturnMediaModal(false);
+      setReturnMediaFiles([]);
+      setReturnMediaNotes('');
+      fetchRefund();
+    } catch (err: any) {
+      console.error('Error marking as returned:', err);
+      console.error('Error message:', err?.message);
+      console.error('Error response:', err?.response);
+      
+      // Better error message
+      if (err?.message === 'Network Error') {
+        Alert.alert('Network Error', 'Cannot connect to server. Please check:\n1. Phone and computer on same WiFi\n2. Server is running on 0.0.0.0:8000\n3. Firewall is not blocking port 8000');
+      } else {
+        Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to mark as returned');
+      }
+    } finally {
+      setUploadingReturnMedia(false);
+    }
+  };
 
   const fetchRefund = async () => {
     if (!user?.id) {
@@ -1065,21 +1183,81 @@ useEffect(() => {
       ]);
     }
   };
+  const handleMarkAsReturned = async () => {
+    Alert.alert(
+      'Confirm Return',
+      'Have you already returned the item to the store? This will notify the seller that the item has been returned.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Yes, Mark as Returned', 
+          onPress: async () => {
+            try {
+              setActionLoading(true);
+              
+              // Call the update_return_status endpoint to mark as received
+              await AxiosInstance.post(`/return-refund/${refundId}/update_return_status/`, {
+                action: 'mark_received',
+                notes: 'Buyer marked item as returned (walk-in)'
+              }, {
+                headers: { 'X-User-Id': user?.id }
+              });
+              
+              Alert.alert('Success', 'Item marked as returned. The seller will process your refund.');
+              await fetchRefund();
+            } catch (err: any) {
+              console.error('Mark as returned error:', err);
+              Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to mark as returned');
+            } finally {
+              setActionLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
   const handleOpenTrackingForm = () => { setTrackingForm({ logistic_service: '', tracking_number: '', notes: '' }); setShowTrackingForm(true); };
   const handleAddTracking = () => handleOpenTrackingForm();
   const handleOpenWalkInConfirm = () => setShowWalkInConfirm(true);
   const handleConfirmWalkIn = async () => {
     try {
       setActionLoading(true);
+      
+      // First, ensure return request exists
       if (!refund.return_request) {
-        await AxiosInstance.post(`/return-refund/${refundId}/start_return_process/`, {}, { headers: { 'X-User-Id': user?.id } });
+        await AxiosInstance.post(`/return-refund/${refundId}/start_return_process/`, {}, { 
+          headers: { 'X-User-Id': user?.id } 
+        });
       }
-      await AxiosInstance.post(`/return-refund/${refundId}/update_tracking/`, {}, { headers: { 'X-User-Id': user?.id } });
+      
+      // Update tracking with "Walk-in" as logistic service
+      const formData = new FormData();
+      formData.append('logistic_service', 'Walk-in');
+      // DO NOT send tracking_number - let backend handle null
+      formData.append('notes', 'Walk-in return - item will be dropped off at store');
+      
+      const response = await AxiosInstance.post(
+        `/return-refund/${refundId}/update_tracking/`, 
+        formData,
+        { 
+          headers: { 
+            'X-User-Id': user?.id,
+            'Content-Type': 'multipart/form-data'
+          } 
+        }
+      );
+      
+      console.log('Walk-in return response:', response.data);
       Alert.alert('Success', 'Walk-in return recorded. Please bring the item to the store address shown.');
       setShowWalkInConfirm(false);
       await fetchRefund();
-    } catch (err: any) { Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to record walk-in return'); }
-    finally { setActionLoading(false); }
+    } catch (err: any) { 
+      console.error('Walk-in return error:', err);
+      Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to record walk-in return'); 
+    }
+    finally { 
+      setActionLoading(false); 
+    }
   };
 const handleSubmitTrackingForm = async () => {
   if (!trackingForm.logistic_service || !trackingForm.tracking_number) {
@@ -1167,7 +1345,68 @@ const handleSubmitTrackingForm = async () => {
     } catch (err: any) { Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to acknowledge dispute'); }
     finally { setActionLoading(false); }
   };
-
+  const pickReturnMedia = async () => {
+    try {
+      if (returnMediaFiles.length >= 9) {
+        Alert.alert('Limit reached', 'You can upload up to 9 media files.');
+        return;
+      }
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission required', 'Permission needed to access your media library.');
+        return;
+      }
+      const res: any = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        allowsEditing: false,
+        quality: 0.7,
+      });
+      if (res?.canceled) return;
+      
+      const assets = Array.isArray(res?.assets) && res.assets.length > 0 ? res.assets : (res?.uri ? [res] : []);
+      const selected = assets.map((a: any) => {
+        let mimeType = a.mimeType || a.type;
+        let fileType = 'image';
+        
+        if (!mimeType) {
+          const uri = a.uri;
+          if (uri && uri.toLowerCase().endsWith('.mp4')) {
+            mimeType = 'video/mp4';
+            fileType = 'video';
+          } else if (uri && (uri.toLowerCase().endsWith('.jpg') || uri.toLowerCase().endsWith('.jpeg'))) {
+            mimeType = 'image/jpeg';
+            fileType = 'image';
+          } else if (uri && uri.toLowerCase().endsWith('.png')) {
+            mimeType = 'image/png';
+            fileType = 'image';
+          } else if (uri && uri.toLowerCase().endsWith('.gif')) {
+            mimeType = 'image/gif';
+            fileType = 'image';
+          } else {
+            mimeType = 'image/jpeg';
+            fileType = 'image';
+          }
+        } else {
+          fileType = mimeType.startsWith('video') ? 'video' : 'image';
+        }
+        
+        return {
+          uri: a.uri,
+          type: fileType,
+          mime: mimeType,
+          fileName: a.fileName || a.uri.split('/').pop() || `return_proof_${Date.now()}.${mimeType.split('/')[1] || 'jpg'}`,
+        };
+      });
+      setReturnMediaFiles(prev => [...prev, ...selected].slice(0, 9));
+    } catch (e) {
+      console.error('Picker error', e);
+      Alert.alert('Error', 'Failed to pick media');
+    }
+  };
+  
+  const removeReturnMedia = (index: number) => {
+    setReturnMediaFiles(prev => prev.filter((_, i) => i !== index));
+  };
   // Media picker for tracking proofs
  const pickTrackingMedia = async () => {
   try {
@@ -1368,49 +1607,114 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
     return <PendingStatus refund={refund} />;
   };
 
-const renderActionButtons = () => {
-  if (!refund) return null;
-
-  // Check if the refund is effectively completed
-  const isCompleted = 
-    refund.status?.toLowerCase() === 'completed' ||
-    (refund.status?.toLowerCase() === 'approved' && refund.refund_payment_status?.toLowerCase() === 'completed');
-
-  // If completed, only show the back button
-  if (isCompleted) {
-    return <DefaultActions onBack={() => router.back()} />;
-  }
-
-  const statusUpper = (refund.status || '').toUpperCase();
-  const rrStatus = String(refund.return_request?.status || '').toLowerCase();
-  const payStatus = String(refund.refund_payment_status || '').toLowerCase();
-  const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
-  const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
+  const renderActionButtons = () => {
+    if (!refund) return null;
   
-  // UPDATE THIS CONDITION - Include both 'return' and 'replace' types
-  const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
+    // Check if the refund is effectively completed
+    const isCompleted = 
+      refund.status?.toLowerCase() === 'completed' ||
+      (refund.status?.toLowerCase() === 'approved' && refund.refund_payment_status?.toLowerCase() === 'completed');
   
-  const showAddTrackingAction = (
-    (statusUpper === 'APPROVED' && 
-     isReturnOrReplace && 
-     !['shipped', 'received', 'inspected'].includes(rrStatus) && 
-     !(rrStatus === 'approved' && ['processing', 'completed'].includes(payStatus)) && 
-     !isReturnAcceptedWaitingModeration) ||
-    STATUS_CONDITIONS.showWaitingStatus(statusUpper)
-  );
-  
-  if (showAddTrackingAction) return <ReturnActions onAddTracking={handleAddTracking} onWalkIn={handleOpenWalkInConfirm} loading={actionLoading} />;
-  if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) return <PendingActions onCancel={handleCancelRefund} loading={actionLoading} />;
-  if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) return <NegotiationActions onAccept={handleAcceptOffer} onReject={handleRejectOffer} loading={actionLoading} isAccepting={isAccepting} />;
-  if (STATUS_CONDITIONS.showRejectedStatus(statusUpper)) return <RejectedActions onFileDispute={handleDispute} loading={actionLoading} />;
-  if (STATUS_CONDITIONS.showDisputeStatus(statusUpper)) {
-    const dr = refund.dispute || refund.dispute_request || null;
-    if (dr && dr.status?.toLowerCase() === 'rejected' && refund.status?.toLowerCase() === 'dispute') {
-      return <DisputeActions onAcknowledge={handleAcknowledgeDispute} loading={actionLoading} acknowledged={acknowledged} />;
+    // If completed, only show the back button
+    if (isCompleted) {
+      return (
+        <View style={styles.stickyButtonContainer}>
+          <DefaultActions onBack={() => router.back()} />
+        </View>
+      );
     }
-  }
-  return <DefaultActions onBack={() => router.back()} />;
-};
+  
+    const statusUpper = (refund.status || '').toUpperCase();
+    const rrStatus = String(refund.return_request?.status || '').toLowerCase();
+    const payStatus = String(refund.refund_payment_status || '').toLowerCase();
+    const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
+    const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
+    
+    // UPDATE THIS CONDITION - Include both 'return' and 'replace' types
+    const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
+    
+    // Check if this is a walk-in return (already selected by buyer)
+    const isWalkIn = refund.return_request?.logistic_service === 'Walk-in' && !refund.return_request?.tracking_number;
+    
+    // For walk-in returns, show "Mark as Returned" button instead of shipping options
+    // For walk-in returns, show "Mark as Returned" button that opens modal
+    // In renderActionButtons function, find this section (around line 1185):
+
+    // For walk-in returns, show "Mark as Returned" button that opens modal
+    if (isWalkIn && statusUpper === 'APPROVED' && rrStatus !== 'received' && rrStatus !== 'inspected') {
+      return (
+        <View style={styles.stickyButtonContainer}>
+          <TouchableOpacity 
+            style={[styles.primaryButton, { backgroundColor: '#10B981', marginBottom: 0 }]} 
+            onPress={() => setShowReturnMediaModal(true)}  // ← Change this line
+            disabled={actionLoading}
+          >
+            {actionLoading ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <>
+                <CheckCircle2 size={16} color="#FFF" />
+                <Text style={styles.primaryButtonText}>Mark as Returned</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    
+    const showAddTrackingAction = (
+      (statusUpper === 'APPROVED' && 
+       isReturnOrReplace && 
+       !['shipped', 'received', 'inspected'].includes(rrStatus) && 
+       !(rrStatus === 'approved' && ['processing', 'completed'].includes(payStatus)) && 
+       !isReturnAcceptedWaitingModeration) ||
+      STATUS_CONDITIONS.showWaitingStatus(statusUpper)
+    );
+    
+    if (showAddTrackingAction) {
+      return (
+        <View style={styles.stickyButtonContainer}>
+          <ReturnActions onAddTracking={handleAddTracking} onWalkIn={handleOpenWalkInConfirm} loading={actionLoading} />
+        </View>
+      );
+    }
+    if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) {
+      return (
+        <View style={styles.stickyButtonContainer}>
+          <PendingActions onCancel={handleCancelRefund} loading={actionLoading} />
+        </View>
+      );
+    }
+    if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) {
+      return (
+        <View style={styles.stickyButtonContainer}>
+          <NegotiationActions onAccept={handleAcceptOffer} onReject={handleRejectOffer} loading={actionLoading} isAccepting={isAccepting} />
+        </View>
+      );
+    }
+    if (STATUS_CONDITIONS.showRejectedStatus(statusUpper)) {
+      return (
+        <View style={styles.stickyButtonContainer}>
+          <RejectedActions onFileDispute={handleDispute} loading={actionLoading} />
+        </View>
+      );
+    }
+    if (STATUS_CONDITIONS.showDisputeStatus(statusUpper)) {
+      const dr = refund.dispute || refund.dispute_request || null;
+      if (dr && dr.status?.toLowerCase() === 'rejected' && refund.status?.toLowerCase() === 'dispute') {
+        return (
+          <View style={styles.stickyButtonContainer}>
+            <DisputeActions onAcknowledge={handleAcknowledgeDispute} loading={actionLoading} acknowledged={acknowledged} />
+          </View>
+        );
+      }
+    }
+    return (
+      <View style={styles.stickyButtonContainer}>
+        <DefaultActions onBack={() => router.back()} />
+      </View>
+    );
+  };
 
   if (loading) {
     return (
@@ -1708,7 +2012,7 @@ const renderActionButtons = () => {
               <TextInput style={styles.input} placeholder="Logistic Service (e.g., LBC, J&T)" value={trackingForm.logistic_service} onChangeText={(t) => setTrackingForm(prev => ({ ...prev, logistic_service: t }))} />
               <TextInput style={styles.input} placeholder="Tracking Number" value={trackingForm.tracking_number} onChangeText={(t) => setTrackingForm(prev => ({ ...prev, tracking_number: t }))} />
               {/* shipped_at is set automatically on submission; not collected from user */}
-              <TextInput style={[styles.input, { height: 80 }]} placeholder="Notes (optional)" value={trackingForm.notes} onChangeText={(t) => setTrackingForm(prev => ({ ...prev, notes: t }))} multiline />
+              {/* <TextInput style={[styles.input, { height: 80 }]} placeholder="Notes (optional)" value={trackingForm.notes} onChangeText={(t) => setTrackingForm(prev => ({ ...prev, notes: t }))} multiline /> */}
 
               <View style={styles.trackingMediaRow}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: 'center' }}>
@@ -1733,6 +2037,73 @@ const renderActionButtons = () => {
             </View>
           </KeyboardAvoidingView>
         </Modal>
+
+        {/* Return Media Modal for Walk-in Returns */}
+<Modal visible={showReturnMediaModal} transparent={true} animationType="none" onRequestClose={() => setShowReturnMediaModal(false)}>
+  <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.centeredModalOverlay}>
+    <View style={styles.centeredModalBox}>
+      <Text style={styles.modalTitle}>Confirm Return</Text>
+      <Text style={styles.modalSubtitle}>
+        Please upload proof that the item has been returned (photos/videos).
+      </Text>
+      
+      <Text style={styles.label}>Proof Media (required, up to 9 files)</Text>
+      <TouchableOpacity style={styles.uploadBtn} onPress={pickReturnMedia}>
+        <Ionicons name="cloud-upload-outline" size={20} color="#EE4D2D" />
+        <Text style={styles.uploadText}>Select files</Text>
+      </TouchableOpacity>
+      
+      {returnMediaFiles.length > 0 && (
+        <ScrollView horizontal style={styles.previewScroll}>
+          {returnMediaFiles.map((file, idx) => (
+            <View key={idx} style={styles.previewItem}>
+              {file.mime?.startsWith('video') ? (
+                <View style={[styles.previewImage, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#1F2937' }]}>
+                  <Ionicons name="play-circle" size={30} color="#FFF" />
+                </View>
+              ) : (
+                <Image source={{ uri: file.uri }} style={styles.previewImage} />
+              )}
+              <TouchableOpacity onPress={() => removeReturnMedia(idx)} style={styles.removePreview}>
+                <Ionicons name="close-circle" size={20} color="#EF4444" />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+      
+      {/* <TextInput
+        style={styles.textArea}
+        placeholder="Notes (optional)"
+        multiline
+        numberOfLines={3}
+        value={returnMediaNotes}
+        onChangeText={setReturnMediaNotes}
+      />
+       */}
+      <View style={styles.modalBtns}>
+        <TouchableOpacity style={styles.modalCancel} onPress={() => {
+          setShowReturnMediaModal(false);
+          setReturnMediaFiles([]);
+          setReturnMediaNotes('');
+        }}>
+          <Text style={styles.modalCancelText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.modalConfirm, { backgroundColor: '#10B981' }]} 
+          onPress={handleMarkAsReturnedWithMedia} 
+          disabled={uploadingReturnMedia || returnMediaFiles.length === 0}
+        >
+          {uploadingReturnMedia ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.modalConfirmText}>Confirm & Upload</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  </KeyboardAvoidingView>
+</Modal>
 
         <Modal animationType="none" transparent={true} visible={showWalkInConfirm} onRequestClose={() => setShowWalkInConfirm(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
@@ -2017,5 +2388,130 @@ const styles = StyleSheet.create({
   evidencePartyTitle: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  walkInNotice: {
+    backgroundColor: '#EFF6FF',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+  },
+  walkInNoticeText: {
+    fontSize: 13,
+    color: '#1E40AF',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  stickyButtonContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 4,
+    zIndex: 10,
+  },
+  uploadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#EE4D2D',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+    gap: 8,
+  },
+  uploadText: {
+    marginLeft: 8,
+    color: '#EE4D2D',
+    fontSize: 14,
+  },
+  previewScroll: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  previewItem: {
+    marginRight: 8,
+    position: 'relative',
+  },
+  previewImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#374151',
+    marginBottom: 6,
+  },
+  textArea: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 14,
+    color: '#1F2937',
+    height: 80,
+    textAlignVertical: 'top',
+    marginBottom: 16,
+  },
+  modalBtns: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+  },
+  modalCancel: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  modalConfirm: {
+    flex: 1,
+    backgroundColor: '#EE4D2D',
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalConfirmText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  centeredModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  centeredModalBox: {
+    width: SCREEN_WIDTH - 32,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    maxHeight: '80%',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginBottom: 16,
   },
 });

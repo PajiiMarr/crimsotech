@@ -30,7 +30,7 @@ interface OrderItem {
   quantity: number;
   price: string;
   subtotal: string;
-  product_image?: string;   // absolute URL from backend
+  product_image?: string;
 }
 
 interface PaymentDetail {
@@ -47,6 +47,14 @@ interface MediaItem {
   file_url?: string;
   file_type: string;
   uploaded_at: string;
+}
+
+interface ReturnRequest {
+  status: string;
+  tracking_number?: string;
+  shipped_at?: string;
+  received_at?: string;
+  notes?: string;
 }
 
 interface RefundItem {
@@ -67,9 +75,7 @@ interface RefundItem {
   dispute_request?: any;
   evidence?: any[];
   available_actions?: string[];
-  return_request?: {
-    status: string;
-  };
+  return_request?: ReturnRequest;
   order_items?: OrderItem[];
   buyer_notified_at?: string;
   payment_detail?: PaymentDetail;
@@ -89,11 +95,14 @@ const STATUS_CONFIG: Record<string, { label: string; bgColor: string; textColor:
   pending: { label: 'Pending', bgColor: '#FEF3C7', textColor: '#92400E' },
   negotiation: { label: 'Negotiation', bgColor: '#DBEAFE', textColor: '#1E40AF' },
   approved: { label: 'Approved', bgColor: '#D1FAE5', textColor: '#065F46' },
-  to_ship: { label: 'To Ship', bgColor: '#FED7AA', textColor: '#9A3412' },
+  'approved-waiting': { label: 'Waiting for Return', bgColor: '#EFF6FF', textColor: '#3B82F6' },
   shipped: { label: 'Shipped', bgColor: '#DBEAFE', textColor: '#1E40AF' },
   received: { label: 'Received', bgColor: '#E9D5FF', textColor: '#6B21A8' },
   inspected: { label: 'Inspected', bgColor: '#C7D2FE', textColor: '#3730A3' },
+  'return-accepted': { label: 'Return Accepted', bgColor: '#D1FAE5', textColor: '#065F46' },
+  'return-rejected': { label: 'Return Rejected', bgColor: '#FEE2E2', textColor: '#991B1B' },
   dispute: { label: 'Dispute', bgColor: '#FEE2E2', textColor: '#991B1B' },
+  processing: { label: 'Processing Refund', bgColor: '#F5F3FF', textColor: '#7C3AED' },
   completed: { label: 'Completed', bgColor: '#D1FAE5', textColor: '#065F46' },
   cancelled: { label: 'Cancelled', bgColor: '#F3F4F6', textColor: '#1F2937' },
   rejected: { label: 'Rejected', bgColor: '#FEE2E2', textColor: '#991B1B' },
@@ -112,66 +121,80 @@ export default function ReturnRefund() {
   const [refreshing, setRefreshing] = useState(false);
   const [cancellingRefund, setCancellingRefund] = useState<string | null>(null);
 
-const getRefundsForTab = (tabId: string): RefundItem[] => {
-  if (!refundData) return [];
-  const refunds = Array.isArray(refundData) ? refundData : [];
+  const getRefundsForTab = (tabId: string): RefundItem[] => {
+    if (!refundData) return [];
+    const refunds = Array.isArray(refundData) ? refundData : [];
 
-  switch (tabId) {
-    case 'pending-request':
-      return refunds.filter(refund =>
-        String(refund.status).toLowerCase() === 'pending' &&
-        String(refund.refund_payment_status).toLowerCase() === 'pending'
-      );
-    case 'to-process':
-      return refunds.filter(refund => {
-        const st = String(refund.status || '').toLowerCase();
-        const rtype = String(refund.refund_type || '').toLowerCase();
-        const rrStatus = (refund.return_request?.status || '').toLowerCase();
-        const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
+    switch (tabId) {
+      case 'pending-request':
+        return refunds.filter(refund =>
+          String(refund.status).toLowerCase() === 'pending' &&
+          String(refund.refund_payment_status).toLowerCase() === 'pending'
+        );
+      
+      case 'to-process':
+        return refunds.filter(refund => {
+          const st = String(refund.status || '').toLowerCase();
+          const rtype = String(refund.refund_type || '').toLowerCase();
+          const rrStatus = (refund.return_request?.status || '').toLowerCase();
+          const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
 
-        // Negotiation status
-        if (st === 'negotiation' && paymentStatus === 'pending') return true;
-        
-        // KEEP type refund: approved and payment pending
-        if (rtype === 'keep' && st === 'approved' && paymentStatus === 'pending') return true;
-        
-        // REPLACE type refund: approved (needs to return item for replacement)
-        if (rtype === 'replace' && st === 'approved') return true;
-        
-        // RETURN type refund: approved and waiting for buyer to ship
-        if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped', 'received', 'inspected', 'approved'].includes(rrStatus))) return true;
-        
-        // RETURN type refund: shipped (waiting for seller to receive)
-        if (rtype === 'return' && st === 'approved' && rrStatus === 'shipped') return true;
-        
-        // RETURN type refund: received (waiting for inspection)
-        if (rtype === 'return' && st === 'approved' && rrStatus === 'received') return true;
-        
-        // RETURN type refund: inspected (waiting for seller to accept/reject)
-        if (rtype === 'return' && st === 'approved' && rrStatus === 'inspected') return true;
-        
-        // RETURN type refund: approved (seller accepted, admin processing payment)
-        if (rtype === 'return' && st === 'approved' && rrStatus === 'approved' && paymentStatus === 'processing') return true;
-        
-        // Any approved refund with processing payment status
-        if (st === 'approved' && paymentStatus === 'processing') return true;
-        
-        return false;
-      });
-    case 'disputes':
-      return refunds.filter(refund => String(refund.status || '').toLowerCase() === 'dispute');
-    case 'completed':
-      return refunds.filter(refund => {
-        const st = String(refund.status || '').toLowerCase();
-        const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
-        return paymentStatus === 'completed' ||
-          ['rejected', 'cancelled', 'failed'].includes(st) ||
-          (st === 'approved' && refund.return_request?.status === 'rejected');
-      });
-    default:
-      return refunds;
-  }
-};
+          // Negotiation status
+          if (st === 'negotiation' && paymentStatus === 'pending') return true;
+          
+          // KEEP type refund: approved and payment pending
+          if (rtype === 'keep' && st === 'approved' && paymentStatus === 'pending') return true;
+          
+          // REPLACE type refund: approved (needs to return item for replacement)
+          if (rtype === 'replace' && st === 'approved') return true;
+          
+          // RETURN type refund: approved and waiting for buyer to ship
+          if (rtype === 'return' && st === 'approved' && paymentStatus === 'pending' && (!rrStatus || !['shipped', 'received', 'inspected', 'approved'].includes(rrStatus))) return true;
+          
+          // RETURN type refund: shipped (waiting for seller to receive)
+          if (rtype === 'return' && st === 'approved' && rrStatus === 'shipped') return true;
+          
+          // RETURN type refund: received (waiting for inspection)
+          if (rtype === 'return' && st === 'approved' && rrStatus === 'received') return true;
+          
+          // RETURN type refund: inspected (waiting for seller to accept/reject)
+          if (rtype === 'return' && st === 'approved' && rrStatus === 'inspected') return true;
+          
+          // RETURN type refund: approved (seller accepted, admin processing payment)
+          if (rtype === 'return' && st === 'approved' && rrStatus === 'approved' && paymentStatus === 'processing') return true;
+          
+          // Any approved refund with processing payment status
+          if (st === 'approved' && paymentStatus === 'processing') return true;
+          
+          // ADD THIS: For 'return' type with 'approved' status and 'return_request' status is 'pending' or not set
+          // This ensures approved return refunds show in To Process tab
+          if (rtype === 'return' && st === 'approved') return true;
+          
+          // For 'keep' type with 'approved' status
+          if (rtype === 'keep' && st === 'approved') return true;
+          
+          // For 'replace' type with 'approved' status
+          if (rtype === 'replace' && st === 'approved') return true;
+          
+          return false;
+        });
+      
+      case 'disputes':
+        return refunds.filter(refund => String(refund.status || '').toLowerCase() === 'dispute');
+      
+      case 'completed':
+        return refunds.filter(refund => {
+          const st = String(refund.status || '').toLowerCase();
+          const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
+          return paymentStatus === 'completed' ||
+            ['rejected', 'cancelled', 'failed'].includes(st) ||
+            (st === 'approved' && refund.return_request?.status === 'rejected');
+        });
+      
+      default:
+        return refunds;
+    }
+  };
 
   useEffect(() => {
     fetchRefundData();
@@ -222,57 +245,93 @@ const getRefundsForTab = (tabId: string): RefundItem[] => {
     }
   };
 
-const getStatusBadge = (refund: RefundItem) => {
-  let status = refund.status;
-  
-  // For replace type with approved status
-  if (refund.refund_type === 'replace' && refund.status === 'approved') {
-    const config = STATUS_CONFIG.approved;
-    return (
-      <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
-        <Text style={[styles.statusText, { color: config.textColor }]}>Replacement - Approved</Text>
-      </View>
-    );
-  }
-  
-  // For return type with approved status, show return status if available
-  if (refund.refund_type === 'return' && refund.status === 'approved' && refund.return_request?.status) {
-    const returnStatus = refund.return_request.status;
-    const returnStatusMap: Record<string, string> = {
-      'pending': 'Waiting for Shipment',
-      'shipped': 'Shipped',
-      'received': 'Received',
-      'inspected': 'Inspected',
-      'approved': 'Return Accepted',
-      'completed': 'Completed',
-      'rejected': 'Return Rejected'
-    };
-    status = returnStatusMap[returnStatus] || returnStatus;
-    const config = STATUS_CONFIG[status] || { label: status, bgColor: '#F3F4F6', textColor: '#1F2937' };
+  const getStatusBadge = (refund: RefundItem) => {
+    let statusKey = refund.status?.toLowerCase() || 'pending';
+    const refundType = refund.refund_type?.toLowerCase();
+    const returnStatus = refund.return_request?.status?.toLowerCase();
+    const paymentStatus = refund.refund_payment_status?.toLowerCase();
+
+    // For replace type with approved status
+    if (refundType === 'replace' && statusKey === 'approved') {
+      return (
+        <View style={[styles.statusBadge, { backgroundColor: STATUS_CONFIG.approved.bgColor }]}>
+          <Text style={[styles.statusText, { color: STATUS_CONFIG.approved.textColor }]}>Replacement - Approved</Text>
+        </View>
+      );
+    }
+    
+    // For return type with approved status, show return status if available
+    if (refundType === 'return' && statusKey === 'approved' && returnStatus) {
+      const returnStatusMap: Record<string, string> = {
+        'pending': 'Waiting for Shipment',
+        'shipped': 'Shipped',
+        'received': 'Received',
+        'inspected': 'Inspected',
+        'approved': 'Return Accepted',
+        'completed': 'Completed',
+        'rejected': 'Return Rejected'
+      };
+      const displayStatus = returnStatusMap[returnStatus] || returnStatus;
+      const config = STATUS_CONFIG[displayStatus === 'Waiting for Shipment' ? 'approved-waiting' : 
+                                  displayStatus === 'Shipped' ? 'shipped' :
+                                  displayStatus === 'Received' ? 'received' :
+                                  displayStatus === 'Inspected' ? 'inspected' :
+                                  displayStatus === 'Return Accepted' ? 'return-accepted' :
+                                  displayStatus === 'Return Rejected' ? 'return-rejected' : 'approved'];
+      return (
+        <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
+          <Text style={[styles.statusText, { color: config.textColor }]}>{displayStatus}</Text>
+        </View>
+      );
+    }
+    
+    // For negotiation status
+    if (statusKey === 'negotiation') {
+      const config = STATUS_CONFIG.negotiation;
+      return (
+        <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
+          <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
+        </View>
+      );
+    }
+    
+    // For dispute status
+    if (statusKey === 'dispute') {
+      const config = STATUS_CONFIG.dispute;
+      return (
+        <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
+          <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
+        </View>
+      );
+    }
+    
+    // For processing payment status
+    if (statusKey === 'approved' && paymentStatus === 'processing') {
+      const config = STATUS_CONFIG.processing;
+      return (
+        <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
+          <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
+        </View>
+      );
+    }
+    
+    // For completed
+    if (statusKey === 'completed' || paymentStatus === 'completed') {
+      const config = STATUS_CONFIG.completed;
+      return (
+        <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
+          <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
+        </View>
+      );
+    }
+    
+    const config = STATUS_CONFIG[statusKey] || STATUS_CONFIG.pending;
     return (
       <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
         <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
       </View>
     );
-  }
-  
-  // For negotiation status, use the config directly
-  if (refund.status === 'negotiation') {
-    const config = STATUS_CONFIG.negotiation;
-    return (
-      <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
-        <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
-      </View>
-    );
-  }
-  
-  const config = STATUS_CONFIG[status] || { label: status, bgColor: '#F3F4F6', textColor: '#1F2937' };
-  return (
-    <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
-      <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
-    </View>
-  );
-};
+  };
 
   const getTabCount = (tabId: string) => {
     if (!refundData) return 0;
@@ -329,8 +388,18 @@ const getStatusBadge = (refund: RefundItem) => {
   // Helper to get image URL (falls back to placeholder)
   const getImageUrl = (url?: string): string => {
     if (!url) return 'https://via.placeholder.com/40';
-    // If URL is relative, you might need to prepend base URL, but backend returns absolute
     return url;
+  };
+
+  // Helper function to safely get order items
+  const getOrderItems = (refund: RefundItem): OrderItem[] => {
+    return refund.order_items || [];
+  };
+
+  // Helper function to safely get first order item
+  const getFirstOrderItem = (refund: RefundItem): OrderItem | null => {
+    const items = getOrderItems(refund);
+    return items.length > 0 ? items[0] : null;
   };
 
   if (loading) {
@@ -413,11 +482,12 @@ const getStatusBadge = (refund: RefundItem) => {
               filteredRefunds.map((refund) => {
                 const isExpanded = expandedRefunds.has(refund.refund_id);
                 const isPending = activeTab === 'pending-request';
-                const firstItem = refund.order_items && refund.order_items.length > 0 ? refund.order_items[0] : null;
+                const firstItem = getFirstOrderItem(refund);
+                const orderItems = getOrderItems(refund);
+                const productCount = orderItems.length;
                 const productImage = firstItem ? getImageUrl(firstItem.product_image) : 'https://via.placeholder.com/40';
-                const productName = firstItem ? firstItem.product_name : 'Product information not available';
+                const productName = firstItem?.product_name || 'Product information not available';
                 const productMeta = firstItem ? `Qty: ${firstItem.quantity} • ₱${parseFloat(firstItem.price).toFixed(2)}` : '';
-                const productCount = refund.order_items ? refund.order_items.length : 0;
 
                 return (
                   <TouchableOpacity
@@ -457,7 +527,7 @@ const getStatusBadge = (refund: RefundItem) => {
                       {/* Product Preview */}
                       <View style={styles.productPreview}>
                         {firstItem ? (
-                          refund.order_items.length === 1 ? (
+                          productCount === 1 ? (
                             <View style={styles.singleProduct}>
                               <Image source={{ uri: productImage }} style={styles.productImage} />
                               <View style={styles.productDetails}>
@@ -470,7 +540,7 @@ const getStatusBadge = (refund: RefundItem) => {
                           ) : (
                             <View style={styles.multipleProducts}>
                               <View style={styles.imageStack}>
-                                {refund.order_items.slice(0, 3).map((item, idx) => (
+                                {orderItems.slice(0, 3).map((item, idx) => (
                                   <Image
                                     key={idx}
                                     source={{ uri: getImageUrl(item.product_image) }}
@@ -502,7 +572,7 @@ const getStatusBadge = (refund: RefundItem) => {
                         <View style={styles.expandedSection}>
                           <Text style={styles.expandedTitle}>Refund Details</Text>
                           <View style={styles.detailsGrid}>
-                            <Text style={styles.detailItem}>Type: {refund.refund_type === 'return' ? 'Return Item' : 'Keep Item'}</Text>
+                            <Text style={styles.detailItem}>Type: {refund.refund_type === 'return' ? 'Return Item' : refund.refund_type === 'replace' ? 'Replacement' : 'Keep Item'}</Text>
                             <Text style={styles.detailItem}>Method: {refund.buyer_preferred_refund_method || 'N/A'}</Text>
                             <Text style={styles.detailItem}>Payment Status: {refund.refund_payment_status}</Text>
                             {refund.return_request && (
