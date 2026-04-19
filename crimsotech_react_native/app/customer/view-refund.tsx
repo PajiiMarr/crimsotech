@@ -281,6 +281,11 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
     // Check for walk-in return (logistic_service is "Walk-in" and no tracking_number)
     const isWalkIn = rr.logistic_service === 'Walk-in' && !rr.tracking_number;
     
+    // NEW: When seller has accepted the return (return_request.status = 'approved')
+    if (rrStatus === 'approved') {
+      return isReturnItem ? 'Return Accepted' : 'Replacement Accepted';
+    }
+    
     if (isWalkIn) {
       return isReturnItem ? 'Approved - Waiting for return' : 'Replacement Approved - Waiting for return';
     }

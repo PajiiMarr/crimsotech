@@ -147,14 +147,14 @@ const refundMethods: RefundMethod[] = [
     type: 'wallet',
     allowedRefundTypes: ['return_item', 'keep_item']
   },
-  {
-    id: 'bank',
-    label: 'Bank Transfer',
-    description: 'Get refund via bank transfer',
-    icon: 'credit-card-outline',
-    type: 'bank',
-    allowedRefundTypes: ['return_item', 'keep_item']
-  },
+  // {
+  //   id: 'bank',
+  //   label: 'Bank Transfer',
+  //   description: 'Get refund via bank transfer',
+  //   icon: 'credit-card-outline',
+  //   type: 'bank',
+  //   allowedRefundTypes: ['return_item', 'keep_item']
+  // },
   {
     id: 'voucher',
     label: 'Store Voucher',

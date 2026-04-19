@@ -124,7 +124,7 @@ export default function ReturnRefund() {
   const getRefundsForTab = (tabId: string): RefundItem[] => {
     if (!refundData) return [];
     const refunds = Array.isArray(refundData) ? refundData : [];
-
+  
     switch (tabId) {
       case 'pending-request':
         return refunds.filter(refund =>
@@ -138,7 +138,10 @@ export default function ReturnRefund() {
           const rtype = String(refund.refund_type || '').toLowerCase();
           const rrStatus = (refund.return_request?.status || '').toLowerCase();
           const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
-
+  
+          // CRITICAL: If payment is completed, this should NOT be in to-process
+          if (paymentStatus === 'completed') return false;
+  
           // Negotiation status
           if (st === 'negotiation' && paymentStatus === 'pending') return true;
           
@@ -166,8 +169,7 @@ export default function ReturnRefund() {
           // Any approved refund with processing payment status
           if (st === 'approved' && paymentStatus === 'processing') return true;
           
-          // ADD THIS: For 'return' type with 'approved' status and 'return_request' status is 'pending' or not set
-          // This ensures approved return refunds show in To Process tab
+          // For 'return' type with 'approved' status
           if (rtype === 'return' && st === 'approved') return true;
           
           // For 'keep' type with 'approved' status
@@ -186,6 +188,10 @@ export default function ReturnRefund() {
         return refunds.filter(refund => {
           const st = String(refund.status || '').toLowerCase();
           const paymentStatus = String(refund.refund_payment_status || '').toLowerCase();
+          
+          // CRITICAL: When status is 'approved' AND payment_status is 'completed', show in Completed tab
+          if (st === 'approved' && paymentStatus === 'completed') return true;
+          
           return paymentStatus === 'completed' ||
             ['rejected', 'cancelled', 'failed'].includes(st) ||
             (st === 'approved' && refund.return_request?.status === 'rejected');
@@ -250,7 +256,18 @@ export default function ReturnRefund() {
     const refundType = refund.refund_type?.toLowerCase();
     const returnStatus = refund.return_request?.status?.toLowerCase();
     const paymentStatus = refund.refund_payment_status?.toLowerCase();
-
+  
+    // CRITICAL: Check for completed payment first
+    // If refund.status is 'approved' AND payment_status is 'completed', show Completed
+    if (statusKey === 'approved' && paymentStatus === 'completed') {
+      const config = STATUS_CONFIG.completed;
+      return (
+        <View style={[styles.statusBadge, { backgroundColor: config.bgColor }]}>
+          <Text style={[styles.statusText, { color: config.textColor }]}>{config.label}</Text>
+        </View>
+      );
+    }
+  
     // For replace type with approved status
     if (refundType === 'replace' && statusKey === 'approved') {
       return (
