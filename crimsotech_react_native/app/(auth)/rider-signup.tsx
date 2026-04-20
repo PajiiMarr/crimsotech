@@ -28,6 +28,7 @@ export default function RiderSignupScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
+  const [riderId, setRiderId] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -36,15 +37,20 @@ export default function RiderSignupScreen() {
 
   const checkRiderSession = async () => {
     try {
+      // Get both userId and riderId from storage
       const storedUserId = await AsyncStorage.getItem('userId');
+      const storedRiderId = await SecureStore.getItemAsync('riderId');
       const isRider = await AsyncStorage.getItem('is_rider');
       
-      if (!storedUserId || isRider !== 'true') {
+      console.log('Session check - userId:', storedUserId, 'riderId:', storedRiderId);
+      
+      if (!storedUserId || isRider !== 'true' || !storedRiderId) {
         Alert.alert('Error', 'Please complete vehicle registration first', [
           { text: 'OK', onPress: () => router.replace('/(auth)/rider-apply') }
         ]);
       } else {
         setUserId(storedUserId);
+        setRiderId(storedRiderId);
       }
     } catch (error) {
       console.error('Session check error:', error);
@@ -83,7 +89,7 @@ export default function RiderSignupScreen() {
       return;
     }
 
-    if (!userId) {
+    if (!userId || !riderId) {
       Alert.alert('Error', 'User session not found. Please start over.');
       router.replace('/(auth)/rider-apply');
       return;
@@ -91,14 +97,18 @@ export default function RiderSignupScreen() {
 
     setLoading(true);
     try {
+      // Pass the rider_id to the backend
       const payload = {
         username: username.trim(),
         password: password.trim(),
         registration_stage: 2,
         is_rider: true,
+        rider_id: riderId, // Pass the existing rider ID
       };
 
-      console.log('🚀 Sending rider signup request:', payload);
+      console.log('🚀 Sending rider signup request with rider_id:', riderId);
+      console.log('Payload:', payload);
+      
       const response = await AxiosInstance.post('/register/', payload, {
         headers: { 'Content-Type': 'application/json', 'X-User-Id': userId },
       });
@@ -109,7 +119,7 @@ export default function RiderSignupScreen() {
       const returnedUserId = data.user_id || data.id;
 
       if (returnedUserId) {
-        // Save user ID to SecureStore for next stages (like signup.tsx)
+        // Save user ID to SecureStore for next stages
         await SecureStore.setItemAsync('temp_user_id', String(returnedUserId));
         const userObj = {
           user_id: returnedUserId,
@@ -119,7 +129,7 @@ export default function RiderSignupScreen() {
         };
         await SecureStore.setItemAsync('user', JSON.stringify(userObj));
 
-        // Also persist AsyncStorage keys that rider-apply checks
+        // Also persist AsyncStorage keys
         try {
           await AsyncStorage.setItem('userId', String(returnedUserId));
           await AsyncStorage.setItem('is_rider', 'true');

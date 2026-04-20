@@ -711,35 +711,76 @@ class Register(APIView):
         return Response(users)
 
     def post(self, request):
-        serializer = UserSerializer(data=request.data)
-        if serializer.is_valid(raise_exception=True):
-            user = serializer.save()
-            
-            # Create customer for new user
-            customer_data = {"customer": user.id}
-            customer_serializer = CustomerSerializer(data=customer_data)
-            if customer_serializer.is_valid(raise_exception=True):
-                customer = customer_serializer.save()
+        # Check if this is a rider completing registration
+        rider_id = request.data.get('rider_id')
+        
+        if rider_id:
+            # Rider completing existing rider application
+            try:
+                rider = Rider.objects.get(rider_id=rider_id)
+                user = rider.rider
                 
-                # Check if wallet already exists before creating
-                wallet, created = UserWallet.objects.get_or_create(
-                    user=user,
-                    defaults={
-                        'available_balance': Decimal('0.00'),
-                        'pending_balance': Decimal('0.00')
-                    }
-                )
+                username = request.data.get('username')
+                password = request.data.get('password')
+                
+                if not username or not password:
+                    return Response({"error": "Username and password are required"}, status=400)
+                
+                # Check if username is taken by another user
+                if User.objects.filter(username=username).exclude(id=user.id).exists():
+                    return Response({"username": "Username already taken"}, status=400)
+                
+                # Update the existing user (NOT create a new one)
+                user.username = username
+                # Manually hash the password since User model doesn't have set_password
+                user.password = make_password(password)
+                user.registration_stage = 2
+                user.save()
                 
                 return Response({
                     "user_id": user.id,
                     "username": user.username,
                     "email": user.email,
                     "registration_stage": user.registration_stage,
-                    "wallet_id": str(wallet.wallet_id),
-                    "wallet_created": created,
-                    "message": "User registered successfully"
-                })
-            
+                    "is_rider": True,
+                    "message": "Rider account created successfully"
+                }, status=200)
+                
+            except Rider.DoesNotExist:
+                return Response({"error": "Rider application not found"}, status=404)
+        
+        else:
+            # Regular customer registration (creates NEW user)
+            serializer = UserSerializer(data=request.data)
+            if serializer.is_valid(raise_exception=True):
+                user = serializer.save()
+                
+                # Create customer for new user
+                customer_data = {"customer": user.id}
+                customer_serializer = CustomerSerializer(data=customer_data)
+                if customer_serializer.is_valid(raise_exception=True):
+                    customer = customer_serializer.save()
+                    
+                    # Check if wallet already exists before creating
+                    wallet, created = UserWallet.objects.get_or_create(
+                        user=user,
+                        defaults={
+                            'available_balance': Decimal('0.00'),
+                            'pending_balance': Decimal('0.00')
+                        }
+                    )
+                    
+                    return Response({
+                        "user_id": user.id,
+                        "username": user.username,
+                        "email": user.email,
+                        "registration_stage": user.registration_stage,
+                        "wallet_id": str(wallet.wallet_id),
+                        "wallet_created": created,
+                        "is_rider": False,
+                        "message": "User registered successfully"
+                    })
+               
     def put(self, request):
         user_id = request.headers.get("X-User-Id")
         
@@ -756,6 +797,7 @@ class Register(APIView):
             serializer.save()
             return Response(serializer.data)
         
+              
 class Profiling(APIView):
     def get(self, request):
         user_id = request.headers.get('X-User-Id')
@@ -1038,15 +1080,17 @@ class RiderRegistration(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='register')
     def register(self, request):
         """
-        Complete rider registration in one step - creates user and rider records
+        First step: Create rider application record with vehicle details.
+        Creates a placeholder user with empty password (will be updated later)
         """
         try:
-            # Step 1: Create user account
+            # Create a placeholder user first (will be updated later with username/password)
             user_data = {
                 'is_customer': False,
                 'is_rider': True,
                 'registration_stage': 1,
-                'password': ''
+                'username': f"temp_rider_{uuid.uuid4().hex[:8]}",
+                'password': ''  # Empty password, will be set later by register endpoint
             }
             
             user_serializer = UserSerializer(data=user_data)
@@ -1055,7 +1099,7 @@ class RiderRegistration(viewsets.ViewSet):
                 
             user = user_serializer.save()
             
-            # Step 2: Create rider record with comprehensive validation
+            # Create rider record with comprehensive validation
             vehicle_type = request.data.get('vehicle_type', '').strip()
             plate_number = request.data.get('plate_number', '').strip()
             vehicle_brand = request.data.get('vehicle_brand', '').strip()
@@ -1101,7 +1145,7 @@ class RiderRegistration(viewsets.ViewSet):
             # Vehicle Image validation
             if not vehicle_image:
                 errors['vehicle_image'] = "Vehicle image is required"
-            elif vehicle_image.size > 5 * 1024 * 1024:  # 5MB limit
+            elif vehicle_image.size > 5 * 1024 * 1024:
                 errors['vehicle_image'] = "Vehicle image should be less than 5MB"
             elif not vehicle_image.content_type.startswith('image/'):
                 errors['vehicle_image'] = "Please upload a valid image file"
@@ -1109,7 +1153,7 @@ class RiderRegistration(viewsets.ViewSet):
             # License Image validation
             if not license_image:
                 errors['license_image'] = "License image is required"
-            elif license_image.size > 5 * 1024 * 1024:  # 5MB limit
+            elif license_image.size > 5 * 1024 * 1024:
                 errors['license_image'] = "License image should be less than 5MB"
             elif not license_image.content_type.startswith('image/'):
                 errors['license_image'] = "License image should be a valid image file"
@@ -1130,59 +1174,31 @@ class RiderRegistration(viewsets.ViewSet):
                 verified=False
             )
             
-            # Handle file uploads - this will use the S3 storage configured in settings
+            # Handle file uploads
             if vehicle_image:
-                # Reset file pointer to beginning
                 vehicle_image.seek(0)
-                # Save directly to the model field - this triggers the S3 upload
-                rider.vehicle_image.save(
-                    vehicle_image.name,
-                    vehicle_image,
-                    save=False  # Don't save yet, we'll save after both files are set
-                )
+                rider.vehicle_image.save(vehicle_image.name, vehicle_image, save=False)
             
             if license_image:
-                # Reset file pointer to beginning
                 license_image.seek(0)
-                # Save directly to the model field - this triggers the S3 upload
-                rider.license_image.save(
-                    license_image.name,
-                    license_image,
-                    save=False  # Don't save yet
-                )
+                rider.license_image.save(license_image.name, license_image, save=False)
             
-            # Save the rider instance with all fields including the image fields
             rider.save()
             
             return Response({
-                "message": "Rider registration completed successfully",
+                "message": "Rider application submitted successfully",
                 "user_id": str(user.id),
-                "rider_id": str(rider.rider_id),  # This is the user.id since it's OneToOne
+                "rider_id": str(rider.rider_id),
                 "registration_stage": user.registration_stage,
-                "status": "pending_verification",
-                "vehicle_image_url": rider.vehicle_image.url if rider.vehicle_image else None,
-                "license_image_url": rider.license_image.url if rider.license_image else None
+                "status": "pending_verification"
             }, status=status.HTTP_201_CREATED)
                 
         except Exception as e:
-            # Clean up: delete user if any error occurs
             logger.error(f"Rider registration failed: {str(e)}", exc_info=True)
             if 'user' in locals():
                 user.delete()
             return Response({"error": f"Registration failed: {str(e)}"}, status=500)
-
-    def hash_image_file(self, image_file):
-        """Helper method to hash image files for verification"""
-        if not image_file:
-            return None
-        # Reset file pointer before reading
-        image_file.seek(0)
-        file_hash = hashlib.sha256(image_file.read()).hexdigest()
-        # Reset file pointer after reading so it can be used again
-        image_file.seek(0)
-        return file_hash
-
-
+        
 class AdminDashboard(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_comprehensive_dashboard(self, request):
@@ -7134,13 +7150,19 @@ class AdminRiders(viewsets.ViewSet):
             # Calculate total earnings - placeholder
             total_earnings = Decimal('0')
             
+            # Get full name from rider's user data
+            first_name = rider.rider.first_name or ''
+            last_name = rider.rider.last_name or ''
+            full_name = f"{first_name} {last_name}".strip()
+            
             rider_data = {
                 'rider': {
                     'id': str(rider.rider.id),
                     'username': rider.rider.username,
                     'email': rider.rider.email,
-                    'first_name': rider.rider.first_name,
-                    'last_name': rider.rider.last_name,
+                    'first_name': first_name,
+                    'last_name': last_name,
+                    'full_name': full_name,  # Add computed full_name for easy display
                     'contact_number': rider.rider.contact_number,
                     'created_at': rider.rider.created_at.isoformat() if rider.rider.created_at else None,
                     'is_rider': rider.rider.is_rider,
@@ -7164,12 +7186,14 @@ class AdminRiders(viewsets.ViewSet):
                 'average_rating': float(average_rating),
                 'total_earnings': float(total_earnings),
                 'rider_status': rider_status,
+                'riderName': full_name,  # Add riderName at root level for easy access in table
             }
             
             rider_list.append(rider_data)
         
         return rider_list
-    
+        
+
     @action(detail=False, methods=['get'])
     def get_rider_details(self, request):
         """Get detailed rider information"""
@@ -7459,20 +7483,33 @@ class AdminRiders(viewsets.ViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            rider = Rider.objects.get(rider_id=user_id)
+            # First check if user exists
+            user = User.objects.get(id=user_id)
             
-            return Response({
-                'success': True,
-                'verified': rider.verified,
-                'approval_date': rider.approval_date.isoformat() if rider.approval_date else None,
-                'rider_status': 'approved' if rider.verified else 'pending'
-            })
-        except Rider.DoesNotExist:
+            # Then check if rider exists for this user
+            try:
+                rider = Rider.objects.get(rider_id=user)
+                
+                return Response({
+                    'success': True,
+                    'verified': rider.verified,
+                    'approval_date': rider.approval_date.isoformat() if rider.approval_date else None,
+                    'rider_status': 'approved' if rider.verified else 'pending'
+                })
+            except Rider.DoesNotExist:
+                return Response({
+                    'success': True,
+                    'verified': False,
+                    'rider_status': 'not_registered',
+                    'message': 'User is not registered as a rider'
+                }, status=status.HTTP_200_OK)
+                
+        except User.DoesNotExist:
             return Response({
                 'success': False,
-                'error': 'Rider not found'
+                'error': 'User not found'
             }, status=status.HTTP_404_NOT_FOUND)
-
+        
 class AdminVouchers(viewsets.ViewSet):
     
     @action(detail=False, methods=['post'])

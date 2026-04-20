@@ -11,6 +11,7 @@ export default function RiderLayout() {
   const { userId, userRole, registrationStage, loading } = useAuth();
   const pathname = usePathname();
   const [checking, setChecking] = useState(true);
+  const [isVerified, setIsVerified] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,16 +57,21 @@ export default function RiderLayout() {
         );
 
         const verified = Boolean(riderResponse.data?.verified);
-        if (!verified && !pathname.includes("/rider/pendings")) {
-          router.replace("/rider/pendings" as any);
+        setIsVerified(verified);
+        
+        // If not verified and not already on pending-verification screen, redirect
+        if (!verified && !pathname.includes("/rider/pending-verification")) {
+          router.replace("/rider/pending-verification" as any);
         }
-
-        if (verified && pathname.includes("/rider/pendings")) {
+        
+        // If verified and on pending-verification screen, redirect to home
+        if (verified && pathname.includes("/rider/pending-verification")) {
           router.replace("/rider/home" as any);
         }
       } catch (error) {
-        if (!pathname.includes("/rider/pendings")) {
-          router.replace("/rider/pendings" as any);
+        // On error, redirect to pending-verification if not already there
+        if (!pathname.includes("/rider/pending-verification")) {
+          router.replace("/rider/pending-verification" as any);
         }
       } finally {
         if (!cancelled) setChecking(false);
@@ -81,11 +87,21 @@ export default function RiderLayout() {
 
   if (checking) return null;
 
+  // Check if we're on the pending-verification screen
+  const isPendingVerification = pathname.includes("/rider/pending-verification");
+
   return (
     <RoleGuard allowedRoles={["rider"]}>
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
         <Tabs
-          tabBar={(props) => <RiderBottomTab {...(props as any)} />}
+          tabBar={(props) => {
+            // Only show tab bar if user is verified
+            if (isVerified && !isPendingVerification) {
+              return <RiderBottomTab {...(props as any)} />;
+            }
+            // Return null to hide tab bar on pending-verification or when not verified
+            return null;
+          }}
           screenOptions={{
             headerShown: false,
             tabBarShowLabel: false,
@@ -107,6 +123,8 @@ export default function RiderLayout() {
           <Tabs.Screen name="add-proof" options={{ headerShown: false, href: null }} />
           <Tabs.Screen name="withdraw" options={{ headerShown: false, href: null }} />
           <Tabs.Screen name="rider-view-order" options={{ headerShown: false, href: null }} />
+          <Tabs.Screen name="pending-verification" options={{ headerShown: false }} />
+          <Tabs.Screen name="pendings" options={{ headerShown: false }} />
         </Tabs>
       </SafeAreaView>
     </RoleGuard>

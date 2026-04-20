@@ -24,6 +24,7 @@ export default function VerifyPhoneScreen() {
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [isRider, setIsRider] = useState(false);
+  const [riderVerificationStatus, setRiderVerificationStatus] = useState<"pending" | "approved" | "rejected" | null>(null);
   const { updateRegistrationStage, setAuthData } = useAuth();
 
   // Phone verification state
@@ -79,6 +80,31 @@ export default function VerifyPhoneScreen() {
         });
 
         setIsRider(Boolean(response.data?.is_rider));
+        
+        // Check rider verification status if user is a rider
+        if (response.data?.is_rider) {
+          try {
+            // Fixed endpoint: admin-riders (with dash, matching router)
+            const verificationResponse = await AxiosInstance.get("/admin-riders/check-verification/", {
+              headers: { "X-User-Id": storedUserId },
+            });
+            if (verificationResponse.data.success) {
+              if (verificationResponse.data.verified) {
+                setRiderVerificationStatus("approved");
+              } else {
+                setRiderVerificationStatus("pending");
+              }
+            }
+          } catch (e: any) {
+            // If 404, assume pending (endpoint not yet implemented)
+            if (e.response?.status === 404) {
+              console.log("Verification endpoint not found, assuming pending");
+              setRiderVerificationStatus("pending");
+            } else {
+              setRiderVerificationStatus("pending");
+            }
+          }
+        }
       }
     } catch (error) {
       // Silent fail
@@ -322,7 +348,18 @@ export default function VerifyPhoneScreen() {
           text: "Continue",
           onPress: () => {
             if (effectiveIsRider) {
-              router.replace("/rider/home");
+              // Check verification status before redirecting
+              if (riderVerificationStatus === "pending") {
+                // Redirect to pending verification screen (DO NOT go to home)
+                router.replace("/rider/pending-verification");
+              } else if (riderVerificationStatus === "approved") {
+                router.replace("/rider/home");
+              } else if (riderVerificationStatus === "rejected") {
+                router.replace("/rider/rejected-verification");
+              } else {
+                // If status unknown, go to pending verification
+                router.replace("/rider/pending-verification");
+              }
             } else {
               router.replace("/customer/home");
             }
