@@ -12,8 +12,12 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
 import CustomerLayout from './CustomerLayout';
@@ -27,6 +31,11 @@ interface Message {
   created_at: string;
   status: 'sent' | 'delivered' | 'read';
   conversation_id: string;
+  message_type?: 'text' | 'image' | 'file';
+  attachment?: string;
+  attachment_url?: string;
+  attachment_name?: string;
+  attachment_mime_type?: string;
 }
 
 const formatTime = (value: string): string => {
@@ -47,13 +56,11 @@ const ensureAbsoluteUrl = (url?: string | null) => {
 
 export default function OpenMessagePage() {
   const params = useLocalSearchParams<{ 
-    // Shop params (from view-shop)
     shopId?: string; 
     shopName?: string; 
     shopAvatar?: string; 
     shopUsername?: string;
     ownerId?: string;
-    // User params (from messages list)
     userId?: string;
     userName?: string;
     userAvatar?: string;
@@ -72,46 +79,33 @@ export default function OpenMessagePage() {
   const [conversationId, setConversationId] = useState<string | null>(params.conversationId || null);
   const [otherUserId, setOtherUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [previewModalVisible, setPreviewModalVisible] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [attachmentModalVisible, setAttachmentModalVisible] = useState(false);
   
   // Determine display info
   const isFromShop = !!params.shopId;
   
-  // Display name - priority: shopName > userName > 'User'
   const displayName = isFromShop 
     ? (params.shopName || 'Shop') 
     : (params.userName || 'User');
   
-  // Display username - priority: shopUsername > username > null
   const displayUsername = isFromShop 
     ? params.shopUsername 
     : params.username;
   
-  // Display avatar - priority: shopAvatar > userAvatar
   const displayAvatar = isFromShop ? params.shopAvatar : params.userAvatar;
-  
-  // Log for debugging
-  console.log('OpenMessage params:', { 
-    isFromShop, 
-    displayName, 
-    displayUsername, 
-    displayAvatar,
-    shopId: params.shopId,
-    userId: params.userId,
-    ownerId: params.ownerId
-  });
 
   // Get the other user's ID
   useEffect(() => {
     if (params.ownerId) {
-      // Coming from shop page with ownerId
       setOtherUserId(params.ownerId);
       setIsLoadingMessages(false);
     } else if (params.userId) {
-      // Coming from messages list with userId
       setOtherUserId(params.userId);
       setIsLoadingMessages(false);
     } else if (params.shopId && !params.ownerId) {
-      // Need to fetch shop owner ID from shop data
       const fetchShopOwner = async () => {
         try {
           const response = await AxiosInstance.get(`/shops/${params.shopId}/`);
@@ -137,10 +131,7 @@ export default function OpenMessagePage() {
 
   // Load messages
   const loadMessages = useCallback(async () => {
-    if (!currentUserId || !otherUserId) {
-      console.log('Cannot load messages: missing userId or otherUserId');
-      return;
-    }
+    if (!currentUserId || !otherUserId) return;
     
     try {
       setIsLoadingMessages(true);
@@ -161,7 +152,6 @@ export default function OpenMessagePage() {
       
       setMessages(messagesList.reverse());
       
-      // Set conversation ID from first message if exists
       if (!conversationId && messagesList.length > 0 && messagesList[0].conversation_id) {
         setConversationId(messagesList[0].conversation_id);
       }
@@ -187,7 +177,176 @@ export default function OpenMessagePage() {
     }
   }, [conversationId, currentUserId]);
 
-  // Send a new message
+  // Send image message using FormData
+  const sendImageMessage = async (imageAsset: any) => {
+    if (!otherUserId || !currentUserId) return;
+
+    setUploadingFile(true);
+    try {
+      const formData = new FormData();
+      formData.append('receiver_id', otherUserId);
+      formData.append('message_type', 'image');
+      if (conversationId) {
+        formData.append('conversation_id', conversationId);
+      }
+      
+      const fileObject = {
+        uri: imageAsset.uri,
+        name: imageAsset.fileName || `photo_${Date.now()}.jpg`,
+        type: 'image/jpeg',
+      };
+      
+      formData.append('attachment', fileObject as any);
+
+      const response = await AxiosInstance.post('/messages/', formData, {
+        headers: {
+          'X-User-Id': currentUserId,
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 60000,
+      });
+      
+      const newMsg = response.data;
+      setMessages(prev => [...prev, newMsg]);
+      
+      if (!conversationId && newMsg.conversation_id) {
+        setConversationId(newMsg.conversation_id);
+      }
+      
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+    } catch (error: any) {
+      console.error('Failed to send image:', error);
+      Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to send image');
+    } finally {
+      setUploadingFile(false);
+      setAttachmentModalVisible(false);
+    }
+  };
+
+  // Send file message using FormData
+  const sendFileMessage = async (fileAsset: any) => {
+    if (!otherUserId || !currentUserId) return;
+
+    setUploadingFile(true);
+    try {
+      const formData = new FormData();
+      formData.append('receiver_id', otherUserId);
+      formData.append('message_type', 'file');
+      if (conversationId) {
+        formData.append('conversation_id', conversationId);
+      }
+      
+      const fileObject = {
+        uri: fileAsset.uri,
+        name: fileAsset.name,
+        type: fileAsset.mimeType || fileAsset.type || 'application/octet-stream',
+      };
+      
+      formData.append('attachment', fileObject as any);
+
+      const response = await AxiosInstance.post('/messages/', formData, {
+        headers: {
+          'X-User-Id': currentUserId,
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 60000,
+      });
+      
+      const newMsg = response.data;
+      setMessages(prev => [...prev, newMsg]);
+      
+      if (!conversationId && newMsg.conversation_id) {
+        setConversationId(newMsg.conversation_id);
+      }
+      
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+    } catch (error: any) {
+      console.error('Failed to send file:', error);
+      Alert.alert('Error', error.response?.data?.error || error.message || 'Failed to send file');
+    } finally {
+      setUploadingFile(false);
+      setAttachmentModalVisible(false);
+    }
+  };
+
+  // Pick image from camera
+  const takePhoto = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow camera access to send photos');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setAttachmentModalVisible(false);
+      sendImageMessage(result.assets[0]);
+    }
+  };
+
+  // Pick image from gallery
+  const pickFromGallery = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow access to your gallery');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setAttachmentModalVisible(false);
+      sendImageMessage(result.assets[0]);
+    }
+  };
+
+  // Pick file
+  const pickFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'application/msword', 'text/plain'],
+        copyToCacheDirectory: true,
+      });
+      
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        
+        const formatFileSize = (bytes: number): string => {
+          if (bytes === 0) return '0 B';
+          const k = 1024;
+          const sizes = ['B', 'KB', 'MB', 'GB'];
+          const i = Math.floor(Math.log(bytes) / Math.log(k));
+          return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        };
+        
+        Alert.alert(
+          'Send File',
+          `Send "${asset.name}" (${formatFileSize(asset.size || 0)})?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Send', onPress: () => {
+              setAttachmentModalVisible(false);
+              sendFileMessage(asset);
+            }}
+          ]
+        );
+      }
+    } catch (error) {
+      console.error('Error picking file:', error);
+      Alert.alert('Error', 'Failed to pick file');
+    }
+  };
+
+  // Send a new text message
   const handleSend = async () => {
     if (!newMessage.trim() || !otherUserId || !currentUserId || isSending) return;
 
@@ -281,12 +440,65 @@ export default function OpenMessagePage() {
     }
   }, [messages]);
 
+  const openAttachmentPreview = (url: string, messageType: string, fileName?: string) => {
+    if (messageType === 'image') {
+      setPreviewUrl(url);
+      setPreviewModalVisible(true);
+    } else {
+      Alert.alert(
+        'File Attachment',
+        `File: ${fileName || 'Attachment'}`,
+        [{ text: 'OK', style: 'cancel' }]
+      );
+    }
+  };
+
   const renderMessageItem = ({ item }: { item: Message }) => {
     const mine = item.sender === currentUserId;
+    const isImage = item.message_type === 'image';
+    const isFile = item.message_type === 'file';
+    const attachmentUrl = ensureAbsoluteUrl(item.attachment_url || item.attachment);
+    
     return (
       <View style={[styles.messageRow, mine ? styles.messageMineRow : styles.messageOtherRow]}>
         <View style={[styles.messageBubble, mine ? styles.messageMine : styles.messageOther]}>
-          <Text style={[styles.messageText, mine && styles.messageMineText]}>{item.content}</Text>
+          
+          {/* Render image as actual image */}
+          {attachmentUrl && isImage && (
+            <TouchableOpacity 
+              style={styles.imageWrapper}
+              onPress={() => openAttachmentPreview(attachmentUrl, 'image')}
+              activeOpacity={0.9}
+            >
+              <Image 
+                source={{ uri: attachmentUrl }} 
+                style={styles.messageImage}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
+          )}
+          
+          {/* Render file as document icon */}
+          {attachmentUrl && isFile && (
+            <TouchableOpacity 
+              style={styles.fileWrapper}
+              onPress={() => openAttachmentPreview(attachmentUrl, 'file', item.attachment_name)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="document-text-outline" size={36} color={mine ? "#FFFFFF" : "#F97316"} />
+              <View style={styles.fileTextContainer}>
+                <Text style={[styles.fileName, mine && styles.messageMineText]} numberOfLines={1}>
+                  {item.attachment_name || 'File attachment'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          )}
+          
+          {/* Render text content */}
+          {item.content ? (
+            <Text style={[styles.messageText, mine && styles.messageMineText]}>{item.content}</Text>
+          ) : null}
+          
           <Text style={[styles.messageMeta, mine && styles.messageMineMeta]}>
             {formatTime(item.created_at)} {mine ? `• ${item.status}` : ''}
           </Text>
@@ -332,7 +544,7 @@ export default function OpenMessagePage() {
     <SafeAreaView style={styles.safeArea}>
       <CustomerLayout disableScroll>
         <View style={styles.container}>
-          {/* Header - Unified design */}
+          {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
               <Ionicons name="chevron-back" size={28} color="#111827" />
@@ -373,24 +585,34 @@ export default function OpenMessagePage() {
             }
           />
 
-          {/* Composer */}
+          {/* Composer with attachment buttons */}
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
           >
             <View style={styles.composerRow}>
+              <TouchableOpacity
+                style={styles.attachBtn}
+                onPress={() => setAttachmentModalVisible(true)}
+                disabled={uploadingFile}
+              >
+                <Ionicons name="add-circle" size={28} color="#F97316" />
+              </TouchableOpacity>
+              
               <TextInput
                 style={styles.composerInput}
                 value={newMessage}
                 onChangeText={setNewMessage}
-                placeholder="Type a message..."
+                placeholder={uploadingFile ? "Uploading..." : "Type a message..."}
                 placeholderTextColor="#9CA3AF"
                 multiline
+                editable={!uploadingFile}
               />
+              
               <TouchableOpacity
-                style={[styles.sendBtn, (!newMessage.trim() || isSending) && styles.sendBtnDisabled]}
+                style={[styles.sendBtn, (!newMessage.trim() || isSending || uploadingFile) && styles.sendBtnDisabled]}
                 onPress={handleSend}
-                disabled={!newMessage.trim() || isSending}
+                disabled={!newMessage.trim() || isSending || uploadingFile}
               >
                 {isSending ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
@@ -399,9 +621,101 @@ export default function OpenMessagePage() {
                 )}
               </TouchableOpacity>
             </View>
+            
+            {uploadingFile && (
+              <View style={styles.uploadingIndicator}>
+                <ActivityIndicator size="small" color="#F97316" />
+                <Text style={styles.uploadingText}>Uploading attachment...</Text>
+              </View>
+            )}
           </KeyboardAvoidingView>
         </View>
       </CustomerLayout>
+
+      {/* Attachment Modal - Beautiful Design */}
+      <Modal
+        visible={attachmentModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setAttachmentModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.attachmentModalOverlay}
+          activeOpacity={1}
+          onPress={() => setAttachmentModalVisible(false)}
+        >
+          <View style={styles.attachmentModalContent}>
+            <View style={styles.attachmentModalHeader}>
+              <Text style={styles.attachmentModalTitle}>Add Attachment</Text>
+              <TouchableOpacity onPress={() => setAttachmentModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.attachmentOptions}>
+              <TouchableOpacity style={styles.attachmentOption} onPress={takePhoto}>
+                <View style={[styles.attachmentIconBg, { backgroundColor: '#FEE2E2' }]}>
+                  <Ionicons name="camera" size={28} color="#EF4444" />
+                </View>
+                <View style={styles.attachmentOptionTextContainer}>
+                  <Text style={styles.attachmentOptionTitle}>Take Photo</Text>
+                  <Text style={styles.attachmentOptionDesc}>Capture a photo with your camera</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.attachmentOption} onPress={pickFromGallery}>
+                <View style={[styles.attachmentIconBg, { backgroundColor: '#DCFCE7' }]}>
+                  <Ionicons name="images" size={28} color="#22C55E" />
+                </View>
+                <View style={styles.attachmentOptionTextContainer}>
+                  <Text style={styles.attachmentOptionTitle}>Choose from Gallery</Text>
+                  <Text style={styles.attachmentOptionDesc}>Select an image from your gallery</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* <TouchableOpacity style={styles.attachmentOption} onPress={pickFile}>
+                <View style={[styles.attachmentIconBg, { backgroundColor: '#DBEAFE' }]}>
+                  <Ionicons name="document" size={28} color="#3B82F6" />
+                </View>
+                <View style={styles.attachmentOptionTextContainer}>
+                  <Text style={styles.attachmentOptionTitle}>Send File</Text>
+                  <Text style={styles.attachmentOptionDesc}>PDF, DOC, TXT files</Text>
+                </View>
+              </TouchableOpacity> */}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Image Preview Modal */}
+      <Modal
+        visible={previewModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setPreviewModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.previewOverlay}
+          activeOpacity={1}
+          onPress={() => setPreviewModalVisible(false)}
+        >
+          <View style={styles.previewContainer}>
+            <TouchableOpacity
+              style={styles.previewClose}
+              onPress={() => setPreviewModalVisible(false)}
+            >
+              <Ionicons name="close" size={28} color="#FFFFFF" />
+            </TouchableOpacity>
+            {previewUrl && (
+              <Image
+                source={{ uri: previewUrl }}
+                style={styles.previewImage}
+                resizeMode="contain"
+              />
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -482,6 +796,33 @@ const styles = StyleSheet.create({
   messageMineText: { color: '#FFFFFF' },
   messageMeta: { marginTop: 4, fontSize: 10, color: '#6B7280' },
   messageMineMeta: { color: '#FFEDD5' },
+  imageWrapper: {
+    marginBottom: 8,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  messageImage: {
+    width: 220,
+    height: 160,
+    borderRadius: 12,
+  },
+  fileWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  fileTextContainer: {
+    flex: 1,
+  },
+  fileName: {
+    fontSize: 13,
+    color: '#111827',
+    fontWeight: '500',
+  },
   composerRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -491,6 +832,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
+  },
+  attachBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   composerInput: {
     flex: 1,
@@ -513,6 +861,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sendBtnDisabled: { opacity: 0.45 },
+  uploadingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    backgroundColor: '#FFF7ED',
+    borderTopWidth: 1,
+    borderTopColor: '#FED7AA',
+  },
+  uploadingText: {
+    fontSize: 12,
+    color: '#F97316',
+  },
   emptyChat: {
     flex: 1,
     alignItems: 'center',
@@ -530,5 +892,86 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     paddingHorizontal: 40,
+  },
+  // Attachment Modal Styles
+  attachmentModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  attachmentModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+  },
+  attachmentModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  attachmentModalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  attachmentOptions: {
+    gap: 16,
+  },
+  attachmentOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    padding: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+  },
+  attachmentIconBg: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachmentOptionTextContainer: {
+    flex: 1,
+  },
+  attachmentOptionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  attachmentOptionDesc: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  previewOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  previewContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  previewClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    padding: 8,
+  },
+  previewImage: {
+    width: '100%',
+    height: '80%',
   },
 });

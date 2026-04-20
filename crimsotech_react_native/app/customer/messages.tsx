@@ -11,6 +11,7 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -292,8 +293,6 @@ export default function CustomerMessagesPage() {
   }, []);
 
   // Handle conversation selection
-  // Replace the handleSelectConversation function in messages.tsx
-  // Replace the handleSelectConversation function in messages.tsx
   const handleSelectConversation = (conversation: Conversation) => {
     // Navigate to open-message with all conversation data
     router.push({
@@ -335,6 +334,7 @@ export default function CustomerMessagesPage() {
     }
   }, [messages]);
 
+  // Updated renderConversationItem with profile picture support
   const renderConversationItem = ({ item }: { item: Conversation }) => {
     const selected = selectedConversation === item.conversation_id;
     const hasShop = !!item.shop_name;
@@ -347,9 +347,18 @@ export default function CustomerMessagesPage() {
       >
         <View style={styles.threadRow}>
           <View style={styles.threadLeft}>
-            <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarText}>{item.user_name.charAt(0).toUpperCase()}</Text>
-            </View>
+            {/* Avatar with profile picture support */}
+            {item.user_avatar ? (
+              <Image 
+                source={{ uri: item.user_avatar }}
+                style={styles.avatarImage}
+                onError={(e) => console.log('Avatar load error:', e.nativeEvent.error)}
+              />
+            ) : (
+              <View style={styles.avatarPlaceholder}>
+                <Text style={styles.avatarText}>{item.user_name.charAt(0).toUpperCase()}</Text>
+              </View>
+            )}
             <View style={styles.threadInfo}>
               <Text style={styles.threadName} numberOfLines={1}>{item.user_name}</Text>
               {item.username && (
@@ -391,9 +400,9 @@ export default function CustomerMessagesPage() {
     <View style={styles.pane}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Messages</Text>
-        <TouchableOpacity onPress={handleNewConversation} style={styles.newChatBtn}>
+        {/* <TouchableOpacity onPress={handleNewConversation} style={styles.newChatBtn}>
           <Ionicons name="create-outline" size={22} color="#F97316" />
-        </TouchableOpacity>
+        </TouchableOpacity> */}
       </View>
       
       <TextInput
@@ -441,6 +450,11 @@ export default function CustomerMessagesPage() {
           <Text style={styles.chatHeaderTitle} numberOfLines={1}>
             {selectedConversationData?.user_name || 'Conversation'}
           </Text>
+          {selectedConversationData?.username && (
+            <Text style={styles.chatHeaderSubtitle} numberOfLines={1}>
+              @{selectedConversationData.username}
+            </Text>
+          )}
         </View>
       </View>
 
@@ -570,6 +584,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  avatarImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F3F4F6',
+  },
   avatarText: {
     color: '#FFFFFF',
     fontSize: 18,
@@ -606,6 +626,7 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, alignItems: 'flex-start' },
   chatHeaderTextWrap: { flex: 1 },
   chatHeaderTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  chatHeaderSubtitle: { fontSize: 12, color: '#6B7280', marginTop: 2 },
   chatListContainer: { paddingTop: 10, paddingBottom: 8, flexGrow: 1 },
   messageRow: { marginBottom: 12, flexDirection: 'row' },
   messageMineRow: { justifyContent: 'flex-end' },

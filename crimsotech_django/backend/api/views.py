@@ -49804,12 +49804,7 @@ class MessageViewSet(viewsets.ModelViewSet):
     
     def create(self, request, *args, **kwargs):
         """
-        Send a new message
-        Expected data: {
-            'receiver_id': 'uuid',
-            'content': 'message text',
-            'conversation_id': 'uuid' (optional)
-        }
+        Send a new message (supports text, image, file)
         """
         user, error_response = self.get_user_from_header(request)
         if error_response:
@@ -49818,6 +49813,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         receiver_id = request.data.get('receiver_id')
         content = request.data.get('content')
         conversation_id = request.data.get('conversation_id')
+        message_type = request.data.get('message_type', 'text')
         
         if not receiver_id:
             return Response(
@@ -49825,9 +49821,10 @@ class MessageViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if not content:
+        # For text messages, content is required
+        if message_type == 'text' and not content:
             return Response(
-                {'error': 'content is required'},
+                {'error': 'content is required for text messages'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -49849,14 +49846,28 @@ class MessageViewSet(viewsets.ModelViewSet):
         if not conversation_id:
             conversation_id = uuid.uuid4()
         
-        message = Message.objects.create(
-            sender=user,
-            receiver=receiver,
-            content=content,
-            conversation_id=conversation_id,
-            message_type=request.data.get('message_type', 'text'),
-            status='sent'
-        )
+        # Prepare message data
+        message_data = {
+            'sender': user,
+            'receiver': receiver,
+            'conversation_id': conversation_id,
+            'message_type': message_type,
+            'status': 'sent'
+        }
+        
+        # Add content for text messages
+        if content:
+            message_data['content'] = content
+        
+        # Handle file attachment
+        attachment = request.FILES.get('attachment')
+        if attachment:
+            message_data['attachment'] = attachment
+            message_data['attachment_name'] = attachment.name
+            message_data['attachment_size'] = attachment.size
+            message_data['attachment_mime_type'] = attachment.content_type
+        
+        message = Message.objects.create(**message_data)
         
         serializer = self.get_serializer(message)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -49965,13 +49976,16 @@ class MessageViewSet(viewsets.ModelViewSet):
                 except Exception as e:
                     print(f"Error getting shop for user {other_id}: {e}")
                 
+                # Get profile picture URL using the helper function
+                profile_picture_url = get_media_url(other_user.profile_picture)
+                
                 conversations.append({
                     'conversation_id': str(last_message.conversation_id) if last_message else None,
                     'user_id': str(other_id),
                     'user_name': display_name,  # Main title (shop name or username)
                     'username': other_user.username,  # Always show username as subtitle
                     'shop_name': shop_name,  # Shop name if exists
-                    'user_avatar': other_user.profile_picture.url if other_user.profile_picture else None,
+                    'user_avatar': profile_picture_url,  # Using helper function for consistent URL
                     'last_message': last_message.content if last_message else None,
                     'last_message_time': last_message.created_at.isoformat() if last_message else None,
                     'last_message_type': last_message.message_type if last_message else None,
@@ -49987,7 +50001,6 @@ class MessageViewSet(viewsets.ModelViewSet):
             'count': len(conversations),
             'conversations': conversations
         })
-    
     @action(detail=False, methods=['post'], url_path='mark-read')
     def mark_messages_read(self, request):
         """

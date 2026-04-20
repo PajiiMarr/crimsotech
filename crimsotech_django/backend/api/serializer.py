@@ -1960,11 +1960,24 @@ class BulkNotificationSerializer(serializers.Serializer):
             )
         return data
 
-
 class MessageSerializer(serializers.ModelSerializer):
+    attachment_url = serializers.SerializerMethodField()
+    attachment_type = serializers.SerializerMethodField()
+    
     class Meta:
         model = Message
         fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'updated_at', 'delivered_at', 'read_at', 'edited_at', 'deleted_at']
-
-
+        read_only_fields = ['id', 'created_at', 'updated_at', 'delivered_at', 'read_at', 'edited_at', 'deleted_at', 'attachment_url', 'attachment_type']
+    
+    def get_attachment_url(self, obj):
+        """Get public URL for attachment"""
+        return get_media_url(obj.attachment)
+    
+    def get_attachment_type(self, obj):
+        """Determine attachment type based on MIME type"""
+        if not obj.attachment:
+            return None
+        
+        if obj.attachment_mime_type and obj.attachment_mime_type.startswith('image/'):
+            return 'image'
+        return 'file'
