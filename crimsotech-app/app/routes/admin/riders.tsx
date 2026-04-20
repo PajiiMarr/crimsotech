@@ -67,7 +67,7 @@ import { DataTable } from '~/components/ui/data-table';
 import AxiosInstance from '~/components/axios/Axios';
 import DateRangeFilter from '~/components/ui/date-range-filter';
 import { useState, useEffect } from 'react';
-import { useLoaderData, useNavigate, useSearchParams } from 'react-router';
+import { useLoaderData, useNavigate, useSearchParams, Link } from 'react-router';
 
 export function meta(): Route.MetaDescriptors {
   return [
@@ -102,7 +102,6 @@ interface Rider {
     username: string;
   } | null;
   approval_date: string | null;
-  // Computed fields for frontend display
   total_deliveries?: number;
   completed_deliveries?: number;
   average_rating?: number;
@@ -110,20 +109,34 @@ interface Rider {
   rider_status?: 'pending' | 'approved' | 'rejected' | 'suspended';
 }
 
+interface RiderMetrics {
+  total_riders: number;
+  pending_riders: number;
+  approved_riders: number;
+  active_riders: number;
+  total_deliveries: number;
+  completed_deliveries: number;
+  success_rate: number;
+  average_rating: number;
+  total_earnings: number;
+  all_time_total_riders?: number;
+  all_time_total_deliveries?: number;
+  all_time_completed_deliveries?: number;
+}
+
+interface RiderAnalytics {
+  rider_registrations: Array<{ date: string; count: number }>;
+  status_distribution: Array<{ name: string; value: number }>;
+  vehicle_type_distribution: Array<{ name: string; value: number }>;
+  performance_trends: Array<{ month: string; deliveries: number; earnings: number; rating: number }>;
+  period_type: string;
+}
+
 interface LoaderData {
   user: any;
-  riderMetrics: {
-    total_riders: number;
-    pending_riders: number;
-    approved_riders: number;
-    active_riders: number;
-    total_deliveries: number;
-    completed_deliveries: number;
-    success_rate: number;
-    average_rating: number;
-    total_earnings: number;
-  };
+  riderMetrics: RiderMetrics;
   riders: Rider[];
+  analytics: RiderAnalytics;
   dateRange: {
     start: string;
     end: string;
@@ -142,17 +155,14 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
 
   await requireRole(request, context, ["isAdmin"]);
 
-  // Get session for authentication
   const { getSession } = await import('~/sessions.server');
   const session = await getSession(request.headers.get("Cookie"));
 
-  // Parse URL search params for date range
   const url = new URL(request.url);
   const startParam = url.searchParams.get('start');
   const endParam = url.searchParams.get('end');
   const rangeTypeParam = url.searchParams.get('rangeType');
 
-  // Set default date range (last 7 days)
   const defaultStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const defaultEnd = new Date();
   
@@ -160,12 +170,10 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   const endDate = endParam ? new Date(endParam) : defaultEnd;
   const rangeType = rangeTypeParam || 'weekly';
 
-  // Validate dates
   const validStart = !isNaN(startDate.getTime()) ? startDate : defaultStart;
   const validEnd = !isNaN(endDate.getTime()) ? endDate : defaultEnd;
 
-  // Initialize empty data structures
-  let riderMetrics = {
+  let riderMetrics: RiderMetrics = {
     total_riders: 0,
     pending_riders: 0,
     approved_riders: 0,
@@ -178,9 +186,15 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
   };
 
   let ridersList: Rider[] = [];
+  let analyticsData: RiderAnalytics = {
+    rider_registrations: [],
+    status_distribution: [],
+    vehicle_type_distribution: [],
+    performance_trends: [],
+    period_type: 'daily'
+  };
 
   try {
-    // Fetch real data from API with date range parameters
     const response = await AxiosInstance.get('/admin-riders/get_metrics/', {
       params: {
         start_date: validStart.toISOString(),
@@ -194,6 +208,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     if (response.data.success) {
       riderMetrics = response.data.metrics || riderMetrics;
       ridersList = response.data.riders || [];
+      analyticsData = response.data.analytics || analyticsData;
     }
   } catch (error) {
     console.log('API fetch failed - no data available');
@@ -203,6 +218,7 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
     user, 
     riderMetrics,
     riders: ridersList,
+    analytics: analyticsData,
     dateRange: {
       start: validStart.toISOString(),
       end: validEnd.toISOString(),
@@ -378,7 +394,6 @@ function InteractiveNumberCard({
           </DialogHeader>
 
           <div className="mt-4 space-y-6">
-            {/* Summary Card */}
             <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg p-4">
               <div className="flex justify-between items-center">
                 <div>
@@ -392,7 +407,6 @@ function InteractiveNumberCard({
               </div>
             </div>
 
-            {/* Breakdown List */}
             <div className="space-y-3">
               <h4 className="font-semibold text-lg">Breakdown</h4>
               {breakdown.filter(item => item.value > 0 || item.label.includes("──")).map((item, index) => (
@@ -420,7 +434,6 @@ function InteractiveNumberCard({
               ))}
             </div>
 
-            {/* Chart Visualization */}
             <div className="pt-4 border-t">
               <h4 className="font-semibold text-lg mb-3">Distribution</h4>
               <div className="flex flex-wrap gap-2">
@@ -442,7 +455,6 @@ function InteractiveNumberCard({
               </div>
             </div>
 
-            {/* Action Buttons */}
             <div className="flex justify-end gap-2 pt-4">
               <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
                 Close
@@ -472,7 +484,7 @@ const EmptyTable = () => (
   </div>
 );
 
-// Responsive Action Dialog Component (Dialog for desktop, Drawer for mobile)
+// Responsive Action Dialog Component
 function ResponsiveActionDialog({ 
   open, 
   onOpenChange, 
@@ -506,7 +518,6 @@ function ResponsiveActionDialog({
         await onConfirm();
       }
       onOpenChange(false);
-      // Reset form
       setReason('');
       setDays('7');
     } finally {
@@ -620,7 +631,7 @@ function ResponsiveActionDialog({
   );
 }
 
-// Columns factory function to pass onAction and navigate callbacks
+// Columns factory function
 const columns = ({ 
   onAction, 
   navigate 
@@ -863,9 +874,8 @@ export default function Riders() {
   const loaderData = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { user, riderMetrics, riders, dateRange } = loaderData;
+  const { user, riderMetrics, riders, analytics, dateRange } = loaderData;
 
-  // State management for date range
   const [currentDateRange, setCurrentDateRange] = useState({
     start: new Date(dateRange.start),
     end: new Date(dateRange.end),
@@ -885,17 +895,14 @@ export default function Riders() {
     actionType: ''
   });
 
-  // Handle date range change - update URL search params
   const handleDateRangeChange = (range: { start: Date; end: Date; rangeType: string }) => {
     setIsLoading(true);
     
-    // Update URL search params
     const newSearchParams = new URLSearchParams(searchParams);
     newSearchParams.set('start', range.start.toISOString());
     newSearchParams.set('end', range.end.toISOString());
     newSearchParams.set('rangeType', range.rangeType);
     
-    // Navigate to update the URL, which will trigger a new loader call
     navigate(`?${newSearchParams.toString()}`, { replace: true });
     
     setCurrentDateRange({
@@ -905,7 +912,6 @@ export default function Riders() {
     });
   };
 
-  // Handle rider actions
   const handleRiderAction = async (riderId: string, actionType: string, reason?: string, days?: number) => {
     setIsLoading(true);
     try {
@@ -916,9 +922,6 @@ export default function Riders() {
 
       if (reason) payload.reason = reason;
       if (days) payload.suspension_days = days;
-
-      console.log('Sending payload:', payload);
-      console.log('User ID:', user?.user_id);
 
       const response = await AxiosInstance.post('/admin-riders/update_rider_status/', payload, {
         headers: {
@@ -940,7 +943,6 @@ export default function Riders() {
     }
   };
 
-  // Reset loading state when loader data changes
   useEffect(() => {
     setIsLoading(false);
   }, [loaderData]);
@@ -953,7 +955,6 @@ export default function Riders() {
     );
   }
 
-  // Use only the fetched data
   const safeRiders = riders || [];
   const safeMetrics = riderMetrics || {
     total_riders: 0,
@@ -969,22 +970,57 @@ export default function Riders() {
 
   const hasRiders = safeRiders.length > 0;
 
-  // Add computed status to riders for filtering
   const ridersWithComputedStatus = safeRiders.map(rider => ({
     ...rider,
     rider_status: getRiderStatus(rider),
     riderName: `${rider.rider.first_name} ${rider.rider.last_name}`.trim() || rider.rider.username
   }));
 
-  // Calculate breakdowns for metrics
-  const calculateTotalRidersBreakdown = () => {
+  // Use analytics data for vehicle breakdown if available
+  const getVehicleBreakdown = () => {
+    if (analytics.vehicle_type_distribution && analytics.vehicle_type_distribution.length > 0) {
+      return analytics.vehicle_type_distribution.map(item => ({
+        label: item.name.charAt(0).toUpperCase() + item.name.slice(1),
+        value: item.value,
+        percentage: (item.value / safeRiders.length) * 100,
+        color: "bg-blue-500",
+      }));
+    }
+    
+    const vehicleTypes: Record<string, number> = {};
+    ridersWithComputedStatus.forEach((rider) => {
+      const vehicle = rider.vehicle_type || 'Unknown';
+      vehicleTypes[vehicle] = (vehicleTypes[vehicle] || 0) + 1;
+    });
+    const totalRiders = safeRiders.length || 1;
+    return Object.entries(vehicleTypes).map(([label, value]) => ({
+      label: label.charAt(0).toUpperCase() + label.slice(1),
+      value,
+      percentage: (value / totalRiders) * 100,
+      color: "bg-blue-500",
+    }));
+  };
+
+  // Use analytics data for status breakdown
+  const getStatusBreakdown = () => {
+    if (analytics.status_distribution && analytics.status_distribution.length > 0) {
+      return analytics.status_distribution.map(item => ({
+        label: item.name,
+        value: item.value,
+        percentage: (item.value / safeMetrics.total_riders) * 100,
+        color: 
+          item.name === "Approved" ? "bg-green-500" :
+          item.name === "Pending" ? "bg-yellow-500" :
+          item.name === "Rejected" ? "bg-red-500" : "bg-gray-500",
+      }));
+    }
+    
     const statusBreakdown: Record<string, number> = {
       'Approved': 0,
       'Pending': 0,
       'Rejected': 0,
       'Suspended': 0,
     };
-
     ridersWithComputedStatus.forEach((rider) => {
       const status = rider.rider_status;
       if (status === 'approved') statusBreakdown['Approved']++;
@@ -992,44 +1028,31 @@ export default function Riders() {
       else if (status === 'rejected') statusBreakdown['Rejected']++;
       else if (status === 'suspended') statusBreakdown['Suspended']++;
     });
-
     const totalRiders = safeMetrics.total_riders || 0;
-    
-    return {
-      byStatus: Object.entries(statusBreakdown).map(([label, value]) => ({
-        label,
-        value,
-        percentage: totalRiders > 0 ? (value / totalRiders) * 100 : 0,
-        color: 
-          label === "Approved" ? "bg-green-500" :
-          label === "Pending" ? "bg-yellow-500" :
-          label === "Rejected" ? "bg-red-500" :
-          label === "Suspended" ? "bg-gray-500" : "bg-gray-500",
-      })),
-    };
+    return Object.entries(statusBreakdown).map(([label, value]) => ({
+      label,
+      value,
+      percentage: totalRiders > 0 ? (value / totalRiders) * 100 : 0,
+      color: 
+        label === "Approved" ? "bg-green-500" :
+        label === "Pending" ? "bg-yellow-500" :
+        label === "Rejected" ? "bg-red-500" :
+        label === "Suspended" ? "bg-gray-500" : "bg-gray-500",
+    }));
   };
 
-  const calculateVehicleBreakdown = () => {
-    const vehicleTypes: Record<string, number> = {};
+  // Use analytics data for rating breakdown
+  const getRatingBreakdown = () => {
+    if (analytics.performance_trends && analytics.performance_trends.length > 0) {
+      const avgRating = safeMetrics.average_rating || 0;
+      return [
+        { label: "4.5-5★", value: avgRating >= 4.5 ? safeRiders.length : 0, percentage: avgRating >= 4.5 ? 100 : 0, color: "bg-yellow-500" },
+        { label: "4-4.4★", value: avgRating >= 4 && avgRating < 4.5 ? safeRiders.length : 0, percentage: avgRating >= 4 && avgRating < 4.5 ? 100 : 0, color: "bg-lime-500" },
+        { label: "3-3.9★", value: avgRating >= 3 && avgRating < 4 ? safeRiders.length : 0, percentage: avgRating >= 3 && avgRating < 4 ? 100 : 0, color: "bg-blue-500" },
+        { label: "No Rating", value: avgRating === 0 ? safeRiders.length : 0, percentage: avgRating === 0 ? 100 : 0, color: "bg-gray-500" },
+      ].filter(item => item.value > 0);
+    }
     
-    ridersWithComputedStatus.forEach((rider) => {
-      const vehicle = rider.vehicle_type || 'Unknown';
-      vehicleTypes[vehicle] = (vehicleTypes[vehicle] || 0) + 1;
-    });
-
-    const totalRiders = safeRiders.length || 1;
-    
-    return {
-      byVehicle: Object.entries(vehicleTypes).map(([label, value]) => ({
-        label: label.charAt(0).toUpperCase() + label.slice(1),
-        value,
-        percentage: (value / totalRiders) * 100,
-        color: "bg-blue-500",
-      })),
-    };
-  };
-
-  const calculateRatingBreakdown = () => {
     const ratingRanges = {
       "4.5-5★": 0,
       "4-4.4★": 0,
@@ -1038,7 +1061,6 @@ export default function Riders() {
       "1-1.9★": 0,
       "No Rating": 0,
     };
-
     ridersWithComputedStatus.forEach((rider) => {
       const rating = rider.average_rating || 0;
       if (rating >= 4.5) ratingRanges["4.5-5★"]++;
@@ -1048,62 +1070,29 @@ export default function Riders() {
       else if (rating >= 1) ratingRanges["1-1.9★"]++;
       else ratingRanges["No Rating"]++;
     });
-
     const totalRiders = safeRiders.length || 1;
-    
-    return {
-      byRating: Object.entries(ratingRanges).map(([label, value]) => ({
-        label,
-        value,
-        percentage: (value / totalRiders) * 100,
-        color:
-          label === "4.5-5★" ? "bg-yellow-500" :
-          label === "4-4.4★" ? "bg-lime-500" :
-          label === "3-3.9★" ? "bg-blue-500" :
-          label === "2-2.9★" ? "bg-orange-500" :
-          label === "1-1.9★" ? "bg-red-500" : "bg-gray-500",
-      })),
-    };
+    return Object.entries(ratingRanges).map(([label, value]) => ({
+      label,
+      value,
+      percentage: (value / totalRiders) * 100,
+      color:
+        label === "4.5-5★" ? "bg-yellow-500" :
+        label === "4-4.4★" ? "bg-lime-500" :
+        label === "3-3.9★" ? "bg-blue-500" :
+        label === "2-2.9★" ? "bg-orange-500" :
+        label === "1-1.9★" ? "bg-red-500" : "bg-gray-500",
+    }));
   };
 
-  const calculateDeliveryBreakdown = () => {
-    const deliveryRanges = {
-      "0-50": 0,
-      "51-100": 0,
-      "101-200": 0,
-      "201-500": 0,
-      "500+": 0,
-    };
-
-    ridersWithComputedStatus.forEach((rider) => {
-      const deliveries = rider.total_deliveries || 0;
-      if (deliveries <= 50) deliveryRanges["0-50"]++;
-      else if (deliveries <= 100) deliveryRanges["51-100"]++;
-      else if (deliveries <= 200) deliveryRanges["101-200"]++;
-      else if (deliveries <= 500) deliveryRanges["201-500"]++;
-      else deliveryRanges["500+"]++;
-    });
-
-    const totalRiders = safeRiders.length || 1;
-    
-    return {
-      byRange: Object.entries(deliveryRanges).map(([label, value]) => ({
-        label: `${label} deliveries`,
-        value,
-        percentage: (value / totalRiders) * 100,
-        color:
-          label === "500+" ? "bg-purple-500" :
-          label === "201-500" ? "bg-blue-500" :
-          label === "101-200" ? "bg-green-500" :
-          label === "51-100" ? "bg-yellow-500" : "bg-gray-500",
-      })),
-    };
+  const totalRidersBreakdown = {
+    byStatus: getStatusBreakdown()
   };
-
-  const totalRidersBreakdown = calculateTotalRidersBreakdown();
-  const vehicleBreakdown = calculateVehicleBreakdown();
-  const ratingBreakdown = calculateRatingBreakdown();
-  const deliveryBreakdown = calculateDeliveryBreakdown();
+  const vehicleBreakdown = {
+    byVehicle: getVehicleBreakdown()
+  };
+  const ratingBreakdown = {
+    byRating: getRatingBreakdown()
+  };
 
   const riderFilterConfig = {
     rider_status: {
@@ -1120,20 +1109,17 @@ export default function Riders() {
     <UserProvider user={user}>
       <SidebarLayout>
         <div className="space-y-6">
-          {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold">Riders Management</h1>
             </div>            
           </div>
 
-          {/* Date Range Filter */}
           <DateRangeFilter 
             onDateRangeChange={handleDateRangeChange}
             isLoading={isLoading}
           />
 
-          {/* Interactive Number Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {isLoading ? (
               <>
@@ -1162,10 +1148,11 @@ export default function Riders() {
                   icon={<Package className="w-4 h-4 sm:w-6 sm:h-6 text-white" />}
                   color="bg-green-600"
                   breakdown={[
-                    { label: "By Rider Performance", value: safeRiders.length || 0, color: "bg-green-500" },
-                    ...deliveryBreakdown.byRange,
+                    { label: "Delivery Statistics", value: safeMetrics.total_deliveries || 0, color: "bg-green-500" },
+                    { label: "Completed", value: safeMetrics.completed_deliveries || 0, percentage: safeMetrics.success_rate || 0, color: "bg-green-600" },
+                    { label: "Pending/Failed", value: (safeMetrics.total_deliveries || 0) - (safeMetrics.completed_deliveries || 0), percentage: 100 - (safeMetrics.success_rate || 0), color: "bg-red-500" },
                   ]}
-                  totalLabel="Active Riders"
+                  totalLabel="Total Deliveries"
                 />
 
                 <InteractiveNumberCard
@@ -1198,7 +1185,6 @@ export default function Riders() {
             )}
           </div>
 
-          {/* Status Overview Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {isLoading ? (
               <>
@@ -1273,7 +1259,6 @@ export default function Riders() {
             )}
           </div>
 
-          {/* Vehicle Type Distribution */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-lg sm:text-xl">Vehicle Type Distribution</CardTitle>
@@ -1295,7 +1280,6 @@ export default function Riders() {
             </CardContent>
           </Card>
 
-          {/* Riders Table */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-lg sm:text-xl">All Riders</CardTitle>
@@ -1335,7 +1319,6 @@ export default function Riders() {
           </Card>
         </div>
 
-        {/* Responsive Action Dialog (Desktop) / Drawer (Mobile) */}
         <ResponsiveActionDialog
           open={actionDialog.open}
           onOpenChange={(open) => setActionDialog(prev => ({ ...prev, open }))}
