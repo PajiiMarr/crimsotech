@@ -717,8 +717,18 @@ class Register(APIView):
         if rider_id:
             # Rider completing existing rider application
             try:
-                rider = Rider.objects.get(rider_id=rider_id)
-                user = rider.rider
+                # Try to get rider by the user_id (since rider.rider is OneToOne to User)
+                # First, check if a user exists with this ID
+                try:
+                    user = User.objects.get(id=rider_id)
+                except User.DoesNotExist:
+                    return Response({"error": f"User with ID {rider_id} not found"}, status=404)
+                
+                # Now find the rider associated with this user
+                try:
+                    rider = Rider.objects.get(rider=user)
+                except Rider.DoesNotExist:
+                    return Response({"error": "Rider application not found for this user"}, status=404)
                 
                 username = request.data.get('username')
                 password = request.data.get('password')
@@ -732,7 +742,7 @@ class Register(APIView):
                 
                 # Update the existing user (NOT create a new one)
                 user.username = username
-                # Manually hash the password since User model doesn't have set_password
+                # Manually hash the password
                 user.password = make_password(password)
                 user.registration_stage = 2
                 user.save()
@@ -746,8 +756,8 @@ class Register(APIView):
                     "message": "Rider account created successfully"
                 }, status=200)
                 
-            except Rider.DoesNotExist:
-                return Response({"error": "Rider application not found"}, status=404)
+            except Exception as e:
+                return Response({"error": str(e)}, status=500)
         
         else:
             # Regular customer registration (creates NEW user)
@@ -780,7 +790,7 @@ class Register(APIView):
                         "is_rider": False,
                         "message": "User registered successfully"
                     })
-               
+                
     def put(self, request):
         user_id = request.headers.get("X-User-Id")
         
@@ -6314,7 +6324,7 @@ class AdminOrders(viewsets.ViewSet):
                     'discount_type': checkout.voucher.discount_type,
                     'value': float(checkout.voucher.value),
                     'minimum_spend': float(checkout.voucher.minimum_spend) if checkout.voucher.minimum_spend else 0,
-                    'valid_until': checkout.voucher.valid_until.isoformat() if checkout.voucher.valid_until else None,
+                    'valid_until': checkout.voucher.end_date.isoformat() if checkout.voucher.end_date else None,
                     'is_active': checkout.voucher.is_active
                 } if checkout.voucher else None,
                 'total_amount': float(checkout.total_amount),
@@ -6789,6 +6799,82 @@ class AdminOrders(viewsets.ViewSet):
         except Exception as e:
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)   
 
+    @action(detail=False, methods=['post'])
+    def compensate_rider(self, request):
+        """Compensate rider for failed delivery (return to seller)"""
+        order_id = request.data.get('order_id')
+        
+        if not order_id:
+            return Response({'success': False, 'error': 'Order ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            order = Order.objects.get(order=order_id)
+            delivery = Delivery.objects.filter(order=order).first()
+            
+            if not delivery:
+                return Response({'success': False, 'error': 'No delivery found for this order'}, status=status.HTTP_404_NOT_FOUND)
+            
+            if delivery.status != 'failed' or delivery.failed_reason != 'return_to_seller':
+                return Response({
+                    'success': False, 
+                    'error': 'Rider compensation is only available for failed deliveries with "return to seller" reason'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if not delivery.rider:
+                return Response({'success': False, 'error': 'No rider assigned to this delivery'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get rider's wallet
+            rider_user = delivery.rider.rider
+            rider_wallet = UserWallet.objects.filter(user=rider_user).first()
+            
+            if not rider_wallet:
+                # Create wallet for rider if doesn't exist
+                rider_wallet = UserWallet.objects.create(user=rider_user)
+            
+            # Compensation amount (delivery fee)
+            compensation_amount = delivery.delivery_fee or Decimal('0')
+            
+            if compensation_amount <= 0:
+                return Response({
+                    'success': False, 
+                    'error': 'No compensation amount available for this delivery'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Add compensation to rider's wallet
+            rider_wallet.available_balance += compensation_amount
+            rider_wallet.save()
+            
+            # Create transaction record
+            WalletTransaction.objects.create(
+                wallet=rider_wallet,
+                amount=compensation_amount,
+                transaction_type='credit',
+                source_type='delivery_compensation',
+                status='completed',
+                order=order,
+                user=rider_user
+            )
+            
+            # Create notification for rider
+            Notification.objects.create(
+                user=rider_user,
+                title='Delivery Compensation',
+                type='wallet',
+                message=f'You have received ₱{compensation_amount:,.2f} compensation for failed delivery #{str(order.order)[:8]}.',
+                is_read=False
+            )
+            
+            return Response({
+                'success': True,
+                'message': f'Rider compensated ₱{compensation_amount:,.2f} for failed delivery',
+                'compensation_amount': float(compensation_amount)
+            })
+            
+        except Order.DoesNotExist:
+            return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 class AdminRiders(viewsets.ViewSet):
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""

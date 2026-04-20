@@ -26,7 +26,8 @@ import {
   Image,
   MoreVertical,
   Undo,
-  Ban
+  Ban,
+  RefreshCw
 } from 'lucide-react';
 import AxiosInstance from "~/components/axios/Axios";
 import { useState } from 'react';
@@ -182,6 +183,15 @@ interface ShippingAddressInfo {
     created_at: string | null;
     updated_at: string | null;
 }
+interface DeliveryInfo {
+    id: string;
+    status: string;
+    delivery_fee: number | null;
+    failed_reason: string | null;
+    created_at: string;
+    picked_at: string | null;
+    delivered_at: string | null;
+}
 interface Order {
     order_id: string;
     user: UserInfo;
@@ -196,13 +206,14 @@ interface Order {
     updated_at: string;
     completed_at: string | null;
     items: OrderItem[];
+    delivery?: DeliveryInfo;
 }
 interface LoaderData {
     user: any;
     order: Order | null;
     error?: string;
 }
-// Action configurations — approval/receipt removed
+// Action configurations
 const actionConfigs = {
     markAsShipped: {
         title: "Mark as Shipped",
@@ -227,6 +238,14 @@ const actionConfigs = {
         variant: "destructive" as const,
         icon: Undo,
         needsReason: true,
+    },
+    compensateRider: {
+        title: "Compensate Rider",
+        description: "Compensate the rider for failed delivery (return to seller)",
+        confirmText: "Compensate Rider",
+        variant: "default" as const,
+        icon: RefreshCw,
+        needsReason: false,
     },
 };
 export async function loader({ request, context, params }: Route.LoaderArgs): Promise<LoaderData> {
@@ -297,7 +316,8 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
             delivered: { variant: "default", label: "Delivered" },
             cancelled: { variant: "destructive", label: "Cancelled" },
             completed: { variant: "default", label: "Completed" },
-            refunded: { variant: "destructive", label: "Refunded" }
+            refunded: { variant: "destructive", label: "Refunded" },
+            failed: { variant: "destructive", label: "Failed" }
         };
         const config = statusConfig[status?.toLowerCase() || 'pending'] || statusConfig.pending;
         return <Badge variant={config.variant}>{config.label}</Badge>;
@@ -306,6 +326,8 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
         if (!order) return [];
         const actions = [];
         const status = order.status?.toLowerCase();
+        const deliveryStatus = order.delivery?.status?.toLowerCase();
+        
         if (status === 'processing') {
             actions.push({
                 id: "markAsShipped",
@@ -328,6 +350,15 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                 label: "Issue Refund",
                 icon: Undo,
                 variant: "destructive" as const,
+            });
+        }
+        // Show compensate rider button for failed deliveries where rider returned to seller
+        if (deliveryStatus === 'failed' && order.delivery?.failed_reason === 'return_to_seller') {
+            actions.push({
+                id: "compensateRider",
+                label: "Compensate Rider",
+                icon: RefreshCw,
+                variant: "outline" as const,
             });
         }
         return actions;
@@ -367,6 +398,11 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                     response = await AxiosInstance.post('/admin-orders/issue_refund/', {
                         order_id: order.order_id,
                         reason: reason,
+                    });
+                    break;
+                case 'compensateRider':
+                    response = await AxiosInstance.post('/admin-orders/compensate_rider/', {
+                        order_id: order.order_id,
                     });
                     break;
                 default:
@@ -422,6 +458,19 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                         <p className="text-xs text-muted-foreground">
                             Current Status: {order.status}
                         </p>
+                        {activeAction === 'compensateRider' && order.delivery && (
+                            <>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Delivery Status: {order.delivery.status}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                    Failed Reason: {order.delivery.failed_reason === 'return_to_seller' ? 'Return to Seller' : order.delivery.failed_reason}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                    Delivery Fee: ₱{order.delivery.delivery_fee?.toLocaleString() || 0}
+                                </p>
+                            </>
+                        )}
                     </div>
                     {currentAction.needsReason && (
                         <div className="space-y-2">
@@ -443,6 +492,17 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                             <p className="text-sm font-medium text-destructive flex items-center gap-1">
                                 <AlertCircle className="w-4 h-4" />
                                 Warning: This action may have consequences
+                            </p>
+                        </div>
+                    )}
+                    {activeAction === 'compensateRider' && (
+                        <div className="rounded-lg border border-green-200 bg-green-50 p-3">
+                            <p className="text-sm font-medium text-green-700 flex items-center gap-1">
+                                <RefreshCw className="w-4 h-4" />
+                                Compensation Information
+                            </p>
+                            <p className="text-xs text-green-600 mt-1">
+                                The rider will receive compensation for the delivery attempt and returning the order to seller.
                             </p>
                         </div>
                     )}
@@ -573,7 +633,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                             Order #{order.order_id.slice(0, 8)}...
                         </span>
                     </nav>
-                    {/* {availableActions.length > 0 && (
+                    {availableActions.length > 0 && (
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button variant="outline" size="sm" className="ml-auto">
@@ -605,7 +665,7 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                 })}
                             </DropdownMenuContent>
                         </DropdownMenu>
-                    )} */}
+                    )}
                 </div>
                 {/* Main Content */}
                 <Card>
@@ -619,6 +679,12 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                             </div>
                             <div className="flex items-center gap-2 flex-wrap">
                                 {getStatusBadge(order.status)}
+                                {order.delivery && (
+                                    <Badge variant="outline" className="text-xs">
+                                        <Truck className="w-3 h-3 mr-1" />
+                                        Delivery: {order.delivery.status}
+                                    </Badge>
+                                )}
                             </div>
                         </div>
                     </CardHeader>
@@ -697,6 +763,49 @@ export default function ViewOrder({ loaderData }: { loaderData: LoaderData }) {
                                 )}
                             </div>
                         </div>
+                        {/* Delivery Information (if failed) */}
+                        {order.delivery && order.delivery.status === 'failed' && (
+                            <>
+                                <Separator />
+                                <div>
+                                    <h3 className="text-sm font-semibold mb-3 flex items-center gap-2 text-red-600">
+                                        <AlertCircle className="w-4 h-4" />
+                                        Delivery Failed Information
+                                    </h3>
+                                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                                            <div>
+                                                <span className="text-muted-foreground">Failed Reason: </span>
+                                                <span className="font-medium text-red-700">
+                                                    {order.delivery.failed_reason === 'return_to_seller' 
+                                                        ? 'Return to Seller' 
+                                                        : order.delivery.failed_reason || 'Unknown'}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <span className="text-muted-foreground">Delivery Fee: </span>
+                                                <span className="font-medium">₱{order.delivery.delivery_fee?.toLocaleString() || 0}</span>
+                                            </div>
+                                            <div>
+                                                <span className="text-muted-foreground">Requested Date: </span>
+                                                <span className="font-medium">{new Date(order.delivery.created_at).toLocaleString()}</span>
+                                            </div>
+                                            {order.delivery.picked_at && (
+                                                <div>
+                                                    <span className="text-muted-foreground">Picked Up: </span>
+                                                    <span className="font-medium">{new Date(order.delivery.picked_at).toLocaleString()}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="mt-3 pt-3 border-t border-red-200">
+                                            <p className="text-sm text-red-700">
+                                                The rider has returned the order to the seller. The rider is eligible for delivery fee compensation.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </>
+                        )}
                         <Separator />
                         {/* Order Items */}
                         <div>
