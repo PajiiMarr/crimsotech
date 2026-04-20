@@ -1293,15 +1293,28 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__date__lte=end_date
             ).count()
 
-            # Calculate revenue breakdown
+            # Calculate revenue breakdown including pending orders
             current_completed_orders = Order.objects.filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date,
                 status='completed'
             )
-            current_revenue = current_completed_orders.aggregate(
+            current_completed_revenue = current_completed_orders.aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
+
+            # Calculate incoming balance from ongoing transactions (pending/processing orders)
+            current_pending_orders = Order.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date,
+                status__in=['pending', 'processing', 'shipped']
+            )
+            current_pending_revenue = current_pending_orders.aggregate(
+                total_revenue=Sum('total_amount')
+            )['total_revenue'] or Decimal('0')
+
+            # Total revenue including pending
+            current_revenue = current_completed_revenue + current_pending_revenue
 
             # Calculate shipping fees from completed orders
             current_shipping_fees = Delivery.objects.filter(
@@ -1312,7 +1325,7 @@ class AdminDashboard(viewsets.ViewSet):
             )['total_shipping'] or Decimal('0')
 
             # Calculate platform fees (5% of order total for completed orders)
-            current_platform_fees = current_revenue * Decimal('0.05')
+            current_platform_fees = current_completed_revenue * Decimal('0.05')
 
             # Previous period metrics
             previous_orders = Order.objects.filter(
@@ -1325,9 +1338,20 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__date__lte=previous_end_date,
                 status='completed'
             )
-            previous_revenue = previous_completed_orders.aggregate(
+            previous_completed_revenue = previous_completed_orders.aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
+
+            previous_pending_orders = Order.objects.filter(
+                created_at__date__gte=previous_start_date,
+                created_at__date__lte=previous_end_date,
+                status__in=['pending', 'processing', 'shipped']
+            )
+            previous_pending_revenue = previous_pending_orders.aggregate(
+                total_revenue=Sum('total_amount')
+            )['total_revenue'] or Decimal('0')
+
+            previous_revenue = previous_completed_revenue + previous_pending_revenue
 
             # Growth calculations
             order_growth = 0
@@ -1352,24 +1376,36 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__date__lte=end_date
             ).count()
 
-            # Lifetime totals
-            total_revenue = Order.objects.filter(
+            # Lifetime totals including all orders
+            total_completed_revenue = Order.objects.filter(
                 status='completed',
                 created_at__date__lte=end_date
             ).aggregate(
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
 
+            total_pending_revenue = Order.objects.filter(
+                status__in=['pending', 'processing', 'shipped'],
+                created_at__date__lte=end_date
+            ).aggregate(
+                total_revenue=Sum('total_amount')
+            )['total_revenue'] or Decimal('0')
+
+            total_revenue = total_completed_revenue + total_pending_revenue
             total_orders = Order.objects.filter(
                 created_at__date__lte=end_date
             ).count()
 
             return {
                 'total_revenue': float(total_revenue),
+                'total_completed_revenue': float(total_completed_revenue),
+                'total_pending_revenue': float(total_pending_revenue),
                 'total_orders': total_orders,
                 'active_customers': active_customers,
                 'active_shops': active_shops,
                 'current_period_orders': current_orders,
+                'current_period_completed_revenue': float(current_completed_revenue),
+                'current_period_pending_revenue': float(current_pending_revenue),
                 'current_period_revenue': float(current_revenue),
                 'current_period_shipping_fees': float(current_shipping_fees),
                 'current_period_platform_fees': float(current_platform_fees),
@@ -1378,7 +1414,7 @@ class AdminDashboard(viewsets.ViewSet):
                 'order_growth': round(order_growth, 1),
                 'revenue_growth': round(revenue_growth, 1),
                 'date_range_days': date_range_days,
-                'breakdown_note': 'Platform fees calculated as 5% of order total from completed orders',
+                'breakdown_note': 'Platform fees calculated as 5% of completed order total only. Pending revenue represents incoming balance from ongoing transactions.',
             }
         except Exception as e:
             print(f"Error in _get_overview_data: {str(e)}")
@@ -1399,23 +1435,33 @@ class AdminDashboard(viewsets.ViewSet):
                     )
                     
                     day_completed = day_orders.filter(status='completed')
-                    day_revenue = day_completed.aggregate(
+                    day_completed_revenue = day_completed.aggregate(
                         revenue=Sum('total_amount')
                     )['revenue'] or Decimal('0')
+                    
+                    day_pending = day_orders.filter(status__in=['pending', 'processing', 'shipped'])
+                    day_pending_revenue = day_pending.aggregate(
+                        revenue=Sum('total_amount')
+                    )['revenue'] or Decimal('0')
+                    
+                    day_revenue = day_completed_revenue + day_pending_revenue
                     
                     day_shipping = Delivery.objects.filter(
                         order__in=day_completed,
                         status='delivered'
                     ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
                     
-                    day_platform_fees = day_revenue * Decimal('0.05')
+                    day_platform_fees = day_completed_revenue * Decimal('0.05')
 
                     sales_data.append({
                         'date': current_date.isoformat(),
                         'name': current_date.strftime('%a, %b %d'),
                         'revenue': float(day_revenue),
+                        'completed_revenue': float(day_completed_revenue),
+                        'pending_revenue': float(day_pending_revenue),
                         'orders': day_orders.count(),
                         'completed_orders': day_completed.count(),
+                        'pending_orders': day_pending.count(),
                         'shipping_fees': float(day_shipping),
                         'platform_fees': float(day_platform_fees),
                     })
@@ -1430,7 +1476,7 @@ class AdminDashboard(viewsets.ViewSet):
                 ).annotate(
                     month=TruncMonth('created_at')
                 ).values('month').annotate(
-                    revenue=Sum('total_amount'),
+                    total_revenue=Sum('total_amount'),
                     orders=Count('order')
                 ).order_by('month')
 
@@ -1444,21 +1490,37 @@ class AdminDashboard(viewsets.ViewSet):
                             created_at__date__lte=month_end,
                             status='completed'
                         )
-                        month_revenue = month_data['revenue'] or Decimal('0')
+                        month_completed_revenue = month_completed.aggregate(
+                            revenue=Sum('total_amount')
+                        )['revenue'] or Decimal('0')
+                        
+                        month_pending = Order.objects.filter(
+                            created_at__date__gte=month_start,
+                            created_at__date__lte=month_end,
+                            status__in=['pending', 'processing', 'shipped']
+                        )
+                        month_pending_revenue = month_pending.aggregate(
+                            revenue=Sum('total_amount')
+                        )['revenue'] or Decimal('0')
+                        
+                        month_revenue = month_completed_revenue + month_pending_revenue
                         
                         month_shipping = Delivery.objects.filter(
                             order__in=month_completed,
                             status='delivered'
                         ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
                         
-                        month_platform_fees = month_revenue * Decimal('0.05')
+                        month_platform_fees = month_completed_revenue * Decimal('0.05')
 
                         sales_data.append({
                             'date': month_data['month'].strftime('%Y-%m-%d'),
                             'name': month_data['month'].strftime('%b %Y'),
                             'revenue': float(month_revenue),
+                            'completed_revenue': float(month_completed_revenue),
+                            'pending_revenue': float(month_pending_revenue),
                             'orders': month_data['orders'] or 0,
                             'completed_orders': month_completed.count(),
+                            'pending_orders': month_pending.count(),
                             'shipping_fees': float(month_shipping),
                             'platform_fees': float(month_platform_fees),
                         })
@@ -1476,23 +1538,33 @@ class AdminDashboard(viewsets.ViewSet):
                     )
                     
                     week_completed = week_orders.filter(status='completed')
-                    week_revenue = week_completed.aggregate(
+                    week_completed_revenue = week_completed.aggregate(
                         revenue=Sum('total_amount')
                     )['revenue'] or Decimal('0')
+                    
+                    week_pending = week_orders.filter(status__in=['pending', 'processing', 'shipped'])
+                    week_pending_revenue = week_pending.aggregate(
+                        revenue=Sum('total_amount')
+                    )['revenue'] or Decimal('0')
+                    
+                    week_revenue = week_completed_revenue + week_pending_revenue
                     
                     week_shipping = Delivery.objects.filter(
                         order__in=week_completed,
                         status='delivered'
                     ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
                     
-                    week_platform_fees = week_revenue * Decimal('0.05')
+                    week_platform_fees = week_completed_revenue * Decimal('0.05')
 
                     sales_data.append({
                         'date': current_date.isoformat(),
                         'name': f'Week {week_num}',
                         'revenue': float(week_revenue),
+                        'completed_revenue': float(week_completed_revenue),
+                        'pending_revenue': float(week_pending_revenue),
                         'orders': week_orders.count(),
                         'completed_orders': week_completed.count(),
+                        'pending_orders': week_pending.count(),
                         'shipping_fees': float(week_shipping),
                         'platform_fees': float(week_platform_fees),
                     })
@@ -1555,7 +1627,6 @@ class AdminDashboard(viewsets.ViewSet):
                             order__created_at__date__lte=month_end
                         ).distinct().count()
 
-                        # Calculate total orders from users in this month
                         total_orders = Order.objects.filter(
                             user__is_customer=True,
                             created_at__date__gte=month_start,
@@ -1632,7 +1703,6 @@ class AdminDashboard(viewsets.ViewSet):
                 product_id = stat['cart_item__product__id']
                 product_name = stat['cart_item__product__name'] or 'Unknown Product'
                 
-                # Calculate platform fee for this product (5% of revenue)
                 product_revenue = float(stat['total_revenue'] or 0)
                 platform_fee = product_revenue * 0.05
 
@@ -1679,7 +1749,6 @@ class AdminDashboard(viewsets.ViewSet):
                 try:
                     shop = Shop.objects.get(id=shop_id)
                     
-                    # Calculate platform fee for this shop (5% of sales)
                     platform_fee = shop_sales * 0.05
 
                     avg_rating = Review.objects.filter(
@@ -1842,6 +1911,15 @@ class AdminDashboard(viewsets.ViewSet):
                 total_discount=Sum('voucher__value')
             )['total_discount'] or Decimal('0')
 
+            # Calculate incoming balance from ongoing transactions
+            pending_orders_value = Order.objects.filter(
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date,
+                status__in=['pending', 'processing', 'shipped']
+            ).aggregate(
+                total=Sum('total_amount')
+            )['total'] or Decimal('0')
+
             return {
                 'active_boosts': active_boosts,
                 'boost_revenue': float(boost_revenue),
@@ -1860,6 +1938,7 @@ class AdminDashboard(viewsets.ViewSet):
                 'active_vouchers': active_vouchers,
                 'vouchers_used': vouchers_used,
                 'total_voucher_discount': float(total_voucher_discount),
+                'incoming_balance': float(pending_orders_value),
                 'calculation_notes': {
                     'boost_revenue': 'Sum of boost_plan prices for active boosts in this period',
                     'pending_refund_amount': 'Sum of total_refund_amount for pending refunds',
@@ -1867,6 +1946,7 @@ class AdminDashboard(viewsets.ViewSet):
                     'total_delivery_fees': 'Sum of delivery_fee from completed deliveries',
                     'total_voucher_discount': 'Sum of voucher values applied to checkouts',
                     'platform_fee': 'Calculated as 5% of total revenue from completed orders',
+                    'incoming_balance': 'Sum of total_amount from pending/processing/shipped orders (ongoing transactions)',
                 }
             }
         except Exception as e:
@@ -1886,7 +1966,8 @@ class AdminDashboard(viewsets.ViewSet):
             'refunded': '#6b7280',
         }
         return color_map.get(status.lower(), '#6b7280')
-    
+
+        
 class AdminAnalytics(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_comprehensive_analytics(self, request):
