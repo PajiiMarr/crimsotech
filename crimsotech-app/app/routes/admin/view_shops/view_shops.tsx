@@ -519,7 +519,7 @@ const productColumns: ColumnDef<Product>[] = [
     accessorKey: "rating",
     header: "Rating",
     cell: ({ row }) => {
-      const rating = row.original.rating;
+      const rating = row.original.rating ?? 0;
       return (
         <div className="hidden lg:flex items-center gap-1">
           <Star
@@ -712,7 +712,7 @@ export default function ShopDetails({
   // Calculate statistics
   const avgRating =
     reviews.length > 0
-      ? reviews.reduce((acc, review) => acc + review.rating, 0) / reviews.length
+      ? reviews.reduce((acc, review) => acc + (review.rating || 0), 0) / reviews.length
       : 0;
 
   const totalProducts = products.length;
@@ -721,7 +721,7 @@ export default function ShopDetails({
     (r) => r.status === "pending" || r.status === "under_review",
   ).length;
   const totalFavorites = products.reduce(
-    (sum, product) => sum + product.favorites,
+    (sum, product) => sum + (product.favorites || 0),
     0,
   );
 
@@ -1173,7 +1173,7 @@ export default function ShopDetails({
                           ))}
                         </div>
                         <span className="text-xs sm:text-sm text-muted-foreground">
-                          {avgRating.toFixed(1)}
+                          {(avgRating || 0).toFixed(1)}
                         </span>
                       </div>
                       <div className="flex items-center gap-1">
@@ -1593,7 +1593,7 @@ export default function ShopDetails({
                   Customer Reviews
                 </CardTitle>
                 <CardDescription className="text-xs sm:text-sm">
-                  {reviews.length} total reviews • {avgRating.toFixed(1)}{" "}
+                  {reviews.length} total reviews • {(avgRating || 0).toFixed(1)}{" "}
                   average rating
                 </CardDescription>
               </CardHeader>
@@ -1609,7 +1609,7 @@ export default function ShopDetails({
                           <Star
                             key={star}
                             className={`w-3 h-3 ${
-                              star <= review.rating
+                              star <= (review.rating || 0)
                                 ? "fill-yellow-400 text-yellow-400"
                                 : "text-gray-300"
                             }`}
