@@ -1,5 +1,5 @@
 // app/routes/admin/analytics.tsx
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { Route } from './+types/analytics'
 import SidebarLayout from '~/components/layouts/sidebar'
 import { UserProvider } from '~/components/providers/user-role-provider';
@@ -28,9 +28,10 @@ import {
   Users, 
   ShoppingCart, 
   Package, 
-  DollarSign,
   Store,
   X,
+  Printer,
+  PhilippinePeso,
 } from 'lucide-react';
 
 import AxiosInstance from '~/components/axios/Axios';
@@ -213,6 +214,350 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#8b5cf6'];
+
+const printStyles = `
+  @media print {
+    @page {
+      size: A4 portrait;
+      margin: 1.2cm 1.5cm;
+    }
+
+    * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+
+    html, body {
+      width: 210mm;
+      font-size: 10pt;
+      background: #fff !important;
+    }
+
+    body > * { display: none !important; }
+
+    #print-root,
+    #print-root * {
+      display: revert !important;
+    }
+
+    .no-print { display: none !important; }
+    .print-only { display: block !important; }
+
+    #print-root {
+      width: 100% !important;
+      max-width: 100% !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+
+    .print-header {
+      text-align: center;
+      padding-bottom: 12pt;
+      margin-bottom: 16pt;
+      border-bottom: 2pt solid #3b82f6;
+    }
+    .print-header h1 { font-size: 18pt; font-weight: 700; color: #1e3a5f; margin: 0 0 4pt; }
+    .print-header p  { font-size: 9pt; color: #4b5563; margin: 2pt 0 0; }
+
+    .print-section-title {
+      font-size: 11pt;
+      font-weight: 700;
+      color: #1e3a5f;
+      margin: 14pt 0 6pt;
+      padding-bottom: 3pt;
+      border-bottom: 1pt solid #e5e7eb;
+      page-break-after: avoid;
+    }
+
+    .print-metric-grid {
+      display: grid !important;
+      grid-template-columns: repeat(4, 1fr) !important;
+      gap: 6pt !important;
+      margin-bottom: 10pt !important;
+      page-break-inside: avoid;
+    }
+
+    .print-metric-card {
+      border: 1pt solid #e5e7eb !important;
+      border-radius: 6pt !important;
+      padding: 8pt !important;
+      background: #fff !important;
+      page-break-inside: avoid;
+    }
+    .print-metric-card .card-label  { font-size: 7pt; color: #6b7280; margin-bottom: 2pt; }
+    .print-metric-card .card-value  { font-size: 13pt; font-weight: 700; color: #111827; line-height: 1.2; }
+    .print-metric-card .card-sub    { font-size: 6.5pt; color: #9ca3af; margin-top: 2pt; }
+
+    .print-chart-row {
+      display: grid !important;
+      grid-template-columns: 2fr 1fr !important;
+      gap: 8pt !important;
+      margin-bottom: 10pt !important;
+      page-break-inside: avoid;
+    }
+    .print-chart-row-half {
+      display: grid !important;
+      grid-template-columns: 1fr 1fr !important;
+      gap: 8pt !important;
+      margin-bottom: 10pt !important;
+      page-break-inside: avoid;
+    }
+
+    .print-chart-card {
+      border: 1pt solid #e5e7eb !important;
+      border-radius: 6pt !important;
+      padding: 8pt !important;
+      background: #fff !important;
+      page-break-inside: avoid;
+    }
+    .print-chart-card h3 { font-size: 9pt; font-weight: 700; color: #1e3a5f; margin: 0 0 2pt; }
+    .print-chart-card p  { font-size: 7pt; color: #6b7280; margin: 0 0 6pt; }
+
+    .print-shop-item {
+      display: flex !important;
+      justify-content: space-between !important;
+      align-items: center !important;
+      padding: 5pt 0 !important;
+      border-bottom: 0.5pt solid #f3f4f6 !important;
+    }
+    .shop-avatar {
+      width: 22pt; height: 22pt;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff; font-weight: 700; font-size: 9pt;
+      flex-shrink: 0;
+    }
+    .shop-info  { flex: 1; padding: 0 6pt; }
+    .shop-name  { font-size: 8pt; font-weight: 600; color: #111827; }
+    .shop-meta  { font-size: 6.5pt; color: #9ca3af; }
+    .shop-sales { text-align: right; }
+    .shop-sales .amount { font-size: 8pt; font-weight: 700; color: #111827; }
+    .shop-sales .rating { font-size: 6.5pt; color: #9ca3af; }
+
+    .print-platform-grid {
+      display: grid !important;
+      grid-template-columns: repeat(3, 1fr) !important;
+      gap: 6pt !important;
+    }
+    .print-platform-item {
+      text-align: center;
+      padding: 6pt;
+      border: 1pt solid #e5e7eb;
+      border-radius: 5pt;
+    }
+    .platform-val  { font-size: 14pt; font-weight: 700; }
+    .platform-label{ font-size: 7pt; color: #6b7280; margin-top: 1pt; }
+
+    .print-status-table { width: 100%; border-collapse: collapse; font-size: 8pt; }
+    .print-status-table th { background: #f3f4f6; padding: 4pt 6pt; text-align: left; font-weight: 600; color: #374151; }
+    .print-status-table td { padding: 4pt 6pt; border-bottom: 0.5pt solid #f3f4f6; }
+
+    .print-footer {
+      text-align: center;
+      margin-top: 16pt;
+      padding-top: 8pt;
+      border-top: 1pt solid #e5e7eb;
+      font-size: 7.5pt;
+      color: #9ca3af;
+    }
+
+    .page-break-avoid { page-break-inside: avoid; }
+  }
+`;
+
+// Print Report Component
+const PrintReport = ({
+  totalRevenue, totalUsers, totalOrders, activeShops,
+  orderMetricsData, orderStatusDistribution, paymentMethodData,
+  userGrowthData, userRoleDistribution, registrationStageData,
+  productPerformanceData, categoryPerformanceData, inventoryStatusData,
+  shopPerformanceData, shopGrowthData, shopLocationData,
+  dateRange, formatCurrency, formatDate,
+}: any) => {
+  const avatarColors = ['#3b82f6','#10b981','#f59e0b','#8b5cf6','#ec4899','#06b6d4'];
+
+  const MetricCard = ({ label, value, sub }: any) => (
+    <div className="print-metric-card">
+      <div className="card-label">{label}</div>
+      <div className="card-value">{value}</div>
+      {sub && <div className="card-sub">{sub}</div>}
+    </div>
+  );
+
+  const maxOrders = Math.max(...(productPerformanceData || []).map((p: any) => p.orders || 0), 1);
+
+  return (
+    <div id="print-root" className="print-only hidden" style={{ fontFamily: 'Arial, sans-serif' }}>
+      <div className="print-header">
+        <h1>Analytics Report</h1>
+        <p>Generated: {new Date().toLocaleString('en-PH')}</p>
+        <p>Period: {formatDate(dateRange.start)} — {formatDate(dateRange.end)} &nbsp;|&nbsp; {dateRange.rangeType.toUpperCase()}</p>
+      </div>
+
+      <div className="print-section-title">Platform Overview</div>
+      <div className="print-metric-grid">
+        <MetricCard label="Total Revenue" value={formatCurrency(totalRevenue)} sub="Lifetime sales" />
+        <MetricCard label="Active Users" value={totalUsers.toLocaleString()} sub="Registered customers" />
+        <MetricCard label="Total Orders" value={totalOrders.toLocaleString()} sub="Completed orders" />
+        <MetricCard label="Active Shops" value={activeShops.toLocaleString()} sub="Verified merchants" />
+      </div>
+
+      <div className="print-section-title page-break-avoid">Order & Sales Analytics</div>
+      <div className="print-chart-row page-break-avoid">
+        <div className="print-chart-card">
+          <h3>Order Performance Trends</h3>
+          <p>Revenue, orders, and AOV over time</p>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '7.5pt' }}>
+            <thead>
+              <tr style={{ background: '#f3f4f6' }}>
+                <th style={{ padding: '3pt 5pt', textAlign: 'left' }}>Period</th>
+                <th style={{ padding: '3pt 5pt', textAlign: 'right' }}>Revenue</th>
+                <th style={{ padding: '3pt 5pt', textAlign: 'right' }}>Orders</th>
+                <th style={{ padding: '3pt 5pt', textAlign: 'right' }}>AOV</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(orderMetricsData || []).map((row: any, i: number) => (
+                <tr key={i} style={{ borderBottom: '0.5pt solid #f3f4f6' }}>
+                  <td style={{ padding: '3pt 5pt' }}>{row.month || '—'}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#3b82f6' }}>{formatCurrency(row.revenue ?? 0)}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#10b981' }}>{row.orders ?? 0}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#f59e0b' }}>{formatCurrency(row.avgOrderValue ?? 0)}</td>
+                </tr>
+              ))}
+              {(orderMetricsData || []).length === 0 && (
+                <tr><td colSpan={4} style={{ padding: '6pt', textAlign: 'center', color: '#9ca3af' }}>No data available</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="print-chart-card">
+          <h3>Order Status Distribution</h3>
+          <p>Current order status breakdown</p>
+          <table className="print-status-table">
+            <thead><tr><th>Status</th><th style={{ textAlign: 'right' }}>Count</th><th style={{ textAlign: 'right' }}>%</th></tr></thead>
+            <tbody>
+              {(() => {
+                const total = (orderStatusDistribution || []).reduce((s: number, d: any) => s + (d.count || 0), 0) || 1;
+                return (orderStatusDistribution || []).map((d: any, i: number) => (
+                  <tr key={i}>
+                    <td><span style={{ display: 'inline-block', width: '7pt', height: '7pt', borderRadius: '50%', background: d.color || COLORS[i % COLORS.length], marginRight: '4pt' }} />{d.status}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{d.count || 0}</td>
+                    <td style={{ textAlign: 'right', color: '#6b7280' }}>{((d.count / total) * 100).toFixed(1)}%</td>
+                  </tr>
+                ));
+              })()}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="print-section-title page-break-avoid">User & Customer Analytics</div>
+      <div className="print-chart-row-half page-break-avoid">
+        <div className="print-chart-card">
+          <h3>User Growth Trends</h3>
+          <p>New vs returning user acquisition</p>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '7.5pt' }}>
+            <thead><tr style={{ background: '#f3f4f6' }}><th>Period</th><th>New</th><th>Returning</th><th>Total</th></tr></thead>
+            <tbody>
+              {(userGrowthData || []).map((row: any, i: number) => (
+                <tr key={i} style={{ borderBottom: '0.5pt solid #f3f4f6' }}>
+                  <td style={{ padding: '3pt 5pt' }}>{row.month || '—'}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#3b82f6' }}>{row.new ?? 0}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#10b981' }}>{row.returning ?? 0}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right', fontWeight: 600 }}>{row.total ?? 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="print-chart-card">
+          <h3>User Role Distribution</h3>
+          <table className="print-status-table">
+            <thead><tr><th>Role</th><th style={{ textAlign: 'right' }}>Count</th></tr></thead>
+            <tbody>
+              {(userRoleDistribution || []).map((role: any, i: number) => (
+                <tr key={i}><td>{role.role}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{role.count}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="print-section-title page-break-avoid">Product & Inventory Analytics</div>
+      <div className="print-chart-row-half page-break-avoid">
+        <div className="print-chart-card">
+          <h3>Top Products</h3>
+          <table className="print-bar-table" style={{ width: '100%', fontSize: '7.5pt' }}>
+            <thead><tr><th>Product</th><th style={{ textAlign: 'right' }}>Orders</th><th style={{ textAlign: 'right' }}>Revenue</th></tr></thead>
+            <tbody>
+              {(productPerformanceData || []).slice(0, 6).map((p: any, i: number) => (
+                <tr key={i} style={{ borderBottom: '0.5pt solid #f3f4f6' }}>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4pt' }}>
+                      <div style={{ background: '#f3f4f6', borderRadius: '3pt', height: '10pt', width: '36pt', flexShrink: 0 }}>
+                        <div style={{ width: `${((p.orders || 0) / maxOrders) * 100}%`, height: '100%', borderRadius: '3pt', background: COLORS[i % COLORS.length] }} />
+                      </div>
+                      <span style={{ fontSize: '6.5pt' }}>{p.name}</span>
+                    </div>
+                  </td>
+                  <td style={{ textAlign: 'right', fontWeight: 600 }}>{p.orders ?? 0}</td>
+                  <td style={{ textAlign: 'right', color: '#10b981' }}>{formatCurrency(p.revenue ?? 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="print-chart-card">
+          <h3>Category Performance</h3>
+          <table className="print-status-table">
+            <thead><tr><th>Category</th><th style={{ textAlign: 'right' }}>Revenue</th></tr></thead>
+            <tbody>
+              {(categoryPerformanceData || []).slice(0, 6).map((cat: any, i: number) => (
+                <tr key={i}><td>{cat.category}</td><td style={{ textAlign: 'right', color: '#f59e0b' }}>{formatCurrency(cat.revenue ?? 0)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="print-section-title page-break-avoid">Shop & Merchant Analytics</div>
+      <div className="print-chart-row-half page-break-avoid">
+        <div className="print-chart-card">
+          <h3>Top Performing Shops</h3>
+          {(shopPerformanceData || []).slice(0, 5).map((shop: any, i: number) => (
+            <div className="print-shop-item" key={i}>
+              <div className="shop-avatar" style={{ background: avatarColors[i % avatarColors.length] }}>{shop.name?.charAt(0) || 'S'}</div>
+              <div className="shop-info"><div className="shop-name">{shop.name}</div><div className="shop-meta">{shop.followers || 0} followers</div></div>
+              <div className="shop-sales"><div className="amount">{formatCurrency(shop.sales || 0)}</div><div className="rating">{shop.rating || 0}★</div></div>
+            </div>
+          ))}
+        </div>
+
+        <div className="print-chart-card">
+          <h3>Shop Location Distribution</h3>
+          <table className="print-status-table">
+            <thead><tr><th>Location</th><th style={{ textAlign: 'right' }}>Shops</th></tr></thead>
+            <tbody>
+              {(shopLocationData || []).slice(0, 6).map((loc: any, i: number) => (
+                <tr key={i}><td>{loc.location}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{loc.shops ?? 0}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="print-footer">
+        <p>This is a computer-generated report. No signature required.</p>
+        <p>Printed by Admin Analytics &nbsp;·&nbsp; {new Date().toLocaleString('en-PH')}</p>
+      </div>
+    </div>
+  );
+};
 
 // Modal Component for breakdown
 const BreakdownModal = ({ isOpen, onClose, title, data, type }: { isOpen: boolean; onClose: () => void; title: string; data: any; type: string }) => {
@@ -430,11 +775,13 @@ const LoadingSkeleton = ({ className = "" }: { className?: string }) => (
 
 export default function Analytics({ loaderData }: Route.ComponentProps) {
   const { user, analytics: initialAnalytics } = loaderData;
+  const analyticsRef = useRef<HTMLDivElement>(null);
   
   const [analytics, setAnalytics] = useState(initialAnalytics);
   const [isLoading, setIsLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalData, setModalData] = useState({ title: '', data: {}, type: '' });
+  const [isPrinting, setIsPrinting] = useState(false);
   const [dateRange, setDateRange] = useState({
     start: new Date(initialAnalytics.date_range?.start_date || Date.now() - 7 * 24 * 60 * 60 * 1000),
     end: new Date(initialAnalytics.date_range?.end_date || Date.now()),
@@ -498,6 +845,11 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
       rangeType: range.rangeType
     });
     fetchAnalyticsData(range.start, range.end, range.rangeType);
+  };
+
+  const handlePrintReport = () => {
+    setIsPrinting(true);
+    setTimeout(() => { window.print(); setIsPrinting(false); }, 100);
   };
 
   const handleCardClick = (type: string, title: string) => {
@@ -591,15 +943,53 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
     }
     return `₱${amount.toLocaleString()}`;
   };
+
+  const formatDate = (date: Date) =>
+    date.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
   
   return (
     <UserProvider user={user}>
+      <style>{printStyles}</style>
+
+      <PrintReport
+        totalRevenue={totalRevenue}
+        totalUsers={totalUsers}
+        totalOrders={totalOrders}
+        activeShops={activeShops}
+        orderMetricsData={orderMetricsData}
+        orderStatusDistribution={orderStatusDistribution}
+        paymentMethodData={paymentMethodData}
+        userGrowthData={userGrowthData}
+        userRoleDistribution={userRoleDistribution}
+        registrationStageData={registrationStageData}
+        productPerformanceData={productPerformanceData}
+        categoryPerformanceData={categoryPerformanceData}
+        inventoryStatusData={inventoryStatusData}
+        shopPerformanceData={shopPerformanceData}
+        shopGrowthData={shopGrowthData}
+        shopLocationData={shopLocationData}
+        dateRange={dateRange}
+        formatCurrency={formatCurrency}
+        formatDate={formatDate}
+      />
+
       <SidebarLayout>
-        <div className="space-y-6">
+        <div ref={analyticsRef} className="space-y-6 no-print">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-3xl font-bold">Analytics</h1>
+              <h1 className="text-3xl font-bold">Analytics Dashboard</h1>
+              <p className="text-muted-foreground mt-1">
+                Comprehensive platform analytics and insights
+              </p>
             </div>
+            <button
+              onClick={handlePrintReport}
+              disabled={isLoading || isPrinting}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+            >
+              <Printer className="w-4 h-4" />
+              {isPrinting ? 'Preparing Report...' : 'Print Report'}
+            </button>
           </div>
 
           <DateRangeFilter 
@@ -612,7 +1002,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
               title="Total Revenue" 
               value={isLoading ? "..." : formatCurrency(totalRevenue)}
               description="Lifetime sales"
-              icon={DollarSign}
+              icon={PhilippinePeso}
               onClick={() => handleCardClick('revenue', 'Revenue Analytics')}
               loading={isLoading}
             />
@@ -642,7 +1032,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
             />
           </MetricGrid>
 
-          {/* 📊 ORDER & SALES ANALYTICS */}
+          {/* ORDER & SALES ANALYTICS */}
           <div className="space-y-4">
             <h2 className="text-2xl font-semibold flex items-center gap-2">
               <ShoppingCart className="w-6 h-6" />
@@ -732,7 +1122,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
             )}
           </div>
 
-          {/* 👥 USER & CUSTOMER ANALYTICS */}
+          {/* USER & CUSTOMER ANALYTICS */}
           <div className="space-y-4">
             <h2 className="text-2xl font-semibold flex items-center gap-2">
               <Users className="w-6 h-6" />
@@ -826,7 +1216,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
             )}
           </div>
 
-          {/* 📦 PRODUCT & INVENTORY ANALYTICS */}
+          {/* PRODUCT & INVENTORY ANALYTICS */}
           <div className="space-y-4">
             <h2 className="text-2xl font-semibold flex items-center gap-2">
               <Package className="w-6 h-6" />
@@ -915,7 +1305,7 @@ export default function Analytics({ loaderData }: Route.ComponentProps) {
             )}
           </div>
 
-          {/* 🏪 SHOP & MERCHANT ANALYTICS */}
+          {/* SHOP & MERCHANT ANALYTICS */}
           <div className="space-y-4">
             <h2 className="text-2xl font-semibold flex items-center gap-2">
               <Store className="w-6 h-6" />

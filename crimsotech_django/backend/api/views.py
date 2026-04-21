@@ -1967,7 +1967,7 @@ class AdminDashboard(viewsets.ViewSet):
         }
         return color_map.get(status.lower(), '#6b7280')
 
-        
+
 class AdminAnalytics(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_comprehensive_analytics(self, request):
@@ -2276,11 +2276,6 @@ class AdminAnalytics(viewsets.ViewSet):
                         'role': 'Riders',
                         'count': User.objects.filter(is_rider=True).count(),
                         'percentage': round((User.objects.filter(is_rider=True).count() / total_users * 100), 1)
-                    },
-                    {
-                        'role': 'Moderators',
-                        'count': User.objects.filter(is_moderator=True).count(),
-                        'percentage': round((User.objects.filter(is_moderator=True).count() / total_users * 100), 1)
                     },
                     {
                         'role': 'Admins',
@@ -2911,7 +2906,7 @@ class AdminAnalytics(viewsets.ViewSet):
             4: 'Stage 4: Complete',
         }
         return stages.get(stage, f'Stage {stage or 0}')
-        
+
 class AdminProduct(viewsets.ViewSet):
     """
     Admin viewset for managing products with comprehensive data
