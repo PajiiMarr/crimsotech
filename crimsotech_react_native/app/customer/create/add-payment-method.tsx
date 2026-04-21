@@ -305,7 +305,7 @@ export default function AddPaymentMethodScreen() {
                   placeholder="XXXXXXXX"
                   placeholderTextColor="#9CA3AF"
                   keyboardType="phone-pad"
-                  maxLength={8}
+                  maxLength={9}
                   secureTextEntry={!showNumber}
                 />
               </View>
