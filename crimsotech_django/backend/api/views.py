@@ -807,8 +807,67 @@ class Register(APIView):
             serializer.save()
             return Response(serializer.data)
         
-              
 class Profiling(APIView):
+    
+    def _get_coordinates_from_address(self, street, barangay, city, province, country="Philippines"):
+        """
+        Get latitude and longitude from address using Google Maps Geocoding API
+        Returns (latitude, longitude) tuple
+        """
+        # Build full address string
+        address_parts = []
+        if street:
+            address_parts.append(street)
+        if barangay:
+            address_parts.append(barangay)
+        if city:
+            address_parts.append(city)
+        if province:
+            address_parts.append(province)
+        if country:
+            address_parts.append(country)
+        
+        full_address = ", ".join(filter(None, address_parts))
+        
+        if not full_address:
+            print(f"[GEOCODE] No address to geocode")
+            return None, None
+        
+        GOOGLE_MAPS_API_KEY = getattr(settings, 'GOOGLE_MAPS_API_KEY', None)
+        
+        if not GOOGLE_MAPS_API_KEY:
+            print(f"[GEOCODE] Google Maps API key not configured")
+            return None, None
+        
+        try:
+            url = "https://maps.googleapis.com/maps/api/geocode/json"
+            params = {
+                'address': full_address,
+                'key': GOOGLE_MAPS_API_KEY
+            }
+            
+            print(f"[GEOCODE] Geocoding address: {full_address}")
+            
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
+            
+            if data.get('status') == 'OK':
+                location = data['results'][0]['geometry']['location']
+                latitude = location['lat']
+                longitude = location['lng']
+                print(f"[GEOCODE] ✅ Got coordinates: ({latitude}, {longitude})")
+                return Decimal(str(latitude)), Decimal(str(longitude))
+            else:
+                print(f"[GEOCODE] ❌ Geocoding failed: {data.get('status')}")
+                return None, None
+                
+        except requests.exceptions.Timeout:
+            print(f"[GEOCODE] ❌ Google Maps API timeout")
+            return None, None
+        except Exception as e:
+            print(f"[GEOCODE] ❌ Error: {str(e)}")
+            return None, None
+    
     def get(self, request):
         user_id = request.headers.get('X-User-Id')
         
@@ -824,6 +883,22 @@ class Profiling(APIView):
             "user_id": user.id,
             "registration_stage": user.registration_stage,
             "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "middle_name": user.middle_name,
+            "email": user.email,
+            "contact_number": user.contact_number,
+            "date_of_birth": user.date_of_birth,
+            "age": user.age,
+            "sex": user.sex,
+            "street": user.street,
+            "barangay": user.barangay,
+            "city": user.city,
+            "province": user.province,
+            "zip_code": user.zip_code,
+            "country": user.country,
+            "latitude": float(user.latitude) if user.latitude else None,
+            "longitude": float(user.longitude) if user.longitude else None,
         }
         return Response(data)
     
@@ -855,60 +930,100 @@ class Profiling(APIView):
             # Save the user and get the updated instance
             updated_user = serializer.save()
             
-            # Check if this is address profiling and create shipping address
-            # Check for any address-related fields in the request
+            # Check if any address field is being updated
             address_fields = ['street', 'barangay', 'city', 'province', 'zip_code', 'country']
             has_address_data = any(field in request.data for field in address_fields)
             
+            latitude = None
+            longitude = None
+            
+            # Get coordinates from the address if address fields are present
             if has_address_data:
-                try:
-                    # Check if user already has a default shipping address
-                    existing_default = ShippingAddress.objects.filter(
+                # Get coordinates from Google Maps API using the updated address
+                latitude, longitude = self._get_coordinates_from_address(
+                    street=updated_user.street,
+                    barangay=updated_user.barangay,
+                    city=updated_user.city,
+                    province=updated_user.province,
+                    country=updated_user.country or "Philippines"
+                )
+                
+                # Update user with coordinates if available
+                if latitude and longitude:
+                    updated_user.latitude = latitude
+                    updated_user.longitude = longitude
+                    updated_user.save(update_fields=['latitude', 'longitude'])
+                    print(f"[PROFILE] Updated user {updated_user.id} with coordinates ({latitude}, {longitude})")
+            
+            # Create or update the default shipping address from user profile
+            try:
+                # Check if user already has a default shipping address
+                existing_default = ShippingAddress.objects.filter(
+                    user=updated_user,
+                    is_default=True
+                ).first()
+                
+                # Get recipient name from user profile
+                recipient_name = f"{updated_user.first_name} {updated_user.last_name}".strip()
+                if not recipient_name:
+                    recipient_name = updated_user.username or "Customer"
+                
+                if not existing_default:
+                    # Create default shipping address from user profile
+                    shipping_address = ShippingAddress(
                         user=updated_user,
-                        is_default=True
-                    ).first()
+                        recipient_name=recipient_name,
+                        recipient_phone=updated_user.contact_number or "",
+                        street=updated_user.street or "",
+                        barangay=updated_user.barangay or "",
+                        city=updated_user.city or "",
+                        province=updated_user.province or "",
+                        state=updated_user.state or "",
+                        zip_code=updated_user.zip_code or "",
+                        country=updated_user.country or "Philippines",
+                        address_type="home",
+                        is_default=True,
+                        is_active=True,
+                        latitude=latitude,
+                        longitude=longitude
+                    )
+                    shipping_address.save()
+                    print(f"[PROFILE] Created default shipping address for user {updated_user.id}")
+                else:
+                    # Update existing default address with new profile data
+                    existing_default.recipient_name = recipient_name
+                    existing_default.recipient_phone = updated_user.contact_number or ""
+                    existing_default.street = updated_user.street or ""
+                    existing_default.barangay = updated_user.barangay or ""
+                    existing_default.city = updated_user.city or ""
+                    existing_default.province = updated_user.province or ""
+                    existing_default.state = updated_user.state or ""
+                    existing_default.zip_code = updated_user.zip_code or ""
+                    existing_default.country = updated_user.country or "Philippines"
                     
-                    if not existing_default:
-                        # Create default shipping address from user profile
-                        shipping_address = ShippingAddress(
-                            user=updated_user,
-                            recipient_name=f"{updated_user.first_name} {updated_user.last_name}".strip() or updated_user.username or "Customer",
-                            recipient_phone=updated_user.contact_number or "",
-                            street=updated_user.street or "",
-                            barangay=updated_user.barangay or "",
-                            city=updated_user.city or "",
-                            province=updated_user.province or "",
-                            state=updated_user.state or "",
-                            zip_code=updated_user.zip_code or "",
-                            country=updated_user.country or "Philippines",
-                            is_default=True,
-                            is_active=True
-                        )
-                        shipping_address.save()
-                    else:
-                        # Update existing default address with new profile data
-                        existing_default.recipient_name = f"{updated_user.first_name} {updated_user.last_name}".strip() or updated_user.username or "Customer"
-                        existing_default.recipient_phone = updated_user.contact_number or ""
-                        existing_default.street = updated_user.street or ""
-                        existing_default.barangay = updated_user.barangay or ""
-                        existing_default.city = updated_user.city or ""
-                        existing_default.province = updated_user.province or ""
-                        existing_default.state = updated_user.state or ""
-                        existing_default.zip_code = updated_user.zip_code or ""
-                        existing_default.country = updated_user.country or "Philippines"
-                        existing_default.save()
-                        
-                except Exception as e:
-                    # Log error but don't fail the profiling update
-                    print(f"Error creating/updating shipping address: {str(e)}")
+                    # Update coordinates if available
+                    if latitude and longitude:
+                        existing_default.latitude = latitude
+                        existing_default.longitude = longitude
+                    
+                    existing_default.save()
+                    print(f"[PROFILE] Updated default shipping address for user {updated_user.id}")
+                    
+            except Exception as e:
+                # Log error but don't fail the profiling update
+                print(f"[PROFILE] Error creating/updating shipping address: {str(e)}")
             
             # Transform response to maintain frontend compatibility
             response_data = serializer.data.copy()
             if 'id' in response_data:
                 response_data['user_id'] = response_data.pop('id')
             
+            # Add coordinates to response if available
+            if latitude and longitude:
+                response_data['latitude'] = float(latitude)
+                response_data['longitude'] = float(longitude)
+            
             return Response(response_data)
-        
 
 class VerifyNumber(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
@@ -24826,7 +24941,29 @@ class SellerOrderList(viewsets.ViewSet):
             print(traceback.format_exc())
             return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)
 
-class CheckoutOrder(viewsets.ViewSet):
+import logging
+import uuid
+import requests
+import base64
+import re
+from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, timedelta
+from django.utils import timezone
+from django.db import models
+from django.db.models import Q, Sum, Count, Avg
+from django.shortcuts import get_object_or_404
+from django.conf import settings
+from django.http import HttpResponse
+from django.shortcuts import redirect
+from rest_framework import status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.viewsets import ViewSet
+
+logger = logging.getLogger(__name__)
+
+
+class CheckoutOrder(ViewSet):
     
     def _calculate_haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """
@@ -24939,21 +25076,17 @@ class CheckoutOrder(viewsets.ViewSet):
     def _calculate_delivery_fee(self, distance_km: float) -> float:
         """
         Calculate dynamic delivery fee based on distance
-        Base fee: ₱40 for up to 1km, additional ₱10 per km beyond 1km
-        Capped at ₱300
+        Base fee: ₱40 per kilometer, capped at ₱300
         """
         if distance_km <= 0:
             print(f"[FEE] Distance is 0 or less, returning base fee ₱40.00")
             return 40.00
         
-        if distance_km <= 1:
-            fee = 40.00
-        else:
-            additional_km = distance_km - 1
-            fee = 40.00 + (additional_km * 10.00)
-            fee = min(fee, 300.00)
+        # ₱40 per kilometer, capped at ₱300
+        fee = distance_km * 40.00
+        fee = min(fee, 300.00)
         
-        logger.info(f"💰 Delivery fee calculated: ₱{fee:.2f} for {distance_km:.2f} km")
+        logger.info(f"💰 Delivery fee calculated: ₱{fee:.2f} for {distance_km:.2f} km (₱40/km, capped at ₱300)")
         print(f"[FEE] Delivery fee: ₱{fee:.2f} for {distance_km:.2f} km")
         return fee
 
@@ -25394,7 +25527,7 @@ class CheckoutOrder(viewsets.ViewSet):
             print("=" * 80)
             
             logger.info(f"💰 Subtotal: ₱{subtotal:.2f}")
-            logger.info(f"💰 Delivery Fee: ₱{delivery_fee:.2f} (based on {max_distance:.2f} km distance)")
+            logger.info(f"💰 Delivery Fee: ₱{delivery_fee:.2f} (based on {max_distance:.2f} km distance at ₱40/km, capped at ₱300)")
             logger.info(f"💰 Total: ₱{total:.2f}")
 
             user_purchase_history = self._get_user_purchase_history(user_id)
@@ -25439,7 +25572,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     "shop_count": len(shop_ids),
                     "personal_seller_count": len(personal_seller_addresses),
                     "distance_km": max_distance,
-                    "distance_text": self._format_distance(max_distance)
+                    "distance_text": self._format_distance(max_distance),
+                    "delivery_fee_rate": "₱40/km, capped at ₱300"
                 },
                 "available_vouchers": available_vouchers,
                 "user_purchase_stats": user_purchase_history,
@@ -26017,7 +26151,26 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            delivery_fee = Decimal('0') if shipping_method.lower() == "pickup" else Decimal('40.00')
+            # Calculate delivery fee based on distance (if Standard Delivery)
+            delivery_fee = Decimal('0')
+            if shipping_method.lower() == "standard delivery" and shipping_address:
+                # Get the farthest shop distance from the checkout data
+                # Since we don't have the distance here, we'll get it from the checkout items
+                # This is a simplified approach - in production, you'd pass the distance
+                max_distance = 0
+                for cart_item in cart_items:
+                    if cart_item.product and cart_item.product.shop:
+                        shop = cart_item.product.shop
+                        if shop.latitude and shop.longitude and shipping_address.latitude and shipping_address.longitude:
+                            distance = self._calculate_distance(
+                                float(shipping_address.latitude),
+                                float(shipping_address.longitude),
+                                float(shop.latitude),
+                                float(shop.longitude)
+                            )
+                            if distance > max_distance:
+                                max_distance = distance
+                delivery_fee = Decimal(str(self._calculate_delivery_fee(max_distance)))
             
             # Calculate base total (subtotal + delivery fee - discount)
             base_total = subtotal + delivery_fee - discount_amount
@@ -26937,6 +27090,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     product.save()
 
         return stock_errors
+
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])

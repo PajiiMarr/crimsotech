@@ -41,6 +41,8 @@ class User(models.Model):
     warning_count = models.IntegerField(default=0)
     last_warning_date = models.DateTimeField(blank=True, null=True)
     profile_picture = models.ImageField(upload_to='user/profile_pictures/', blank=True, null=True, default=None)
+    latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
 
     class Meta:
         indexes = [
