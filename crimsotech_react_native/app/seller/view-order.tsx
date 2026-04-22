@@ -356,20 +356,36 @@ export default function SellerViewOrder() {
       showComplete: false,
     };
 
-    // Check if cancel should be hidden (when rider has accepted)
+    // IMPORTANT FIX: Check if rider has accepted (delivery status = 'accepted')
     const isRiderAccepted = order?.delivery_info?.status === 'accepted';
+    const currentStatus = order?.status?.toLowerCase() || '';
+    
+    // When rider has accepted, we should show Ready to Ship button
+    // even if the order status hasn't been updated to rider_accepted yet
+    let enhancedAvailableActions = [...availableActions];
+    
+    if (isRiderAccepted && currentStatus === 'waiting_for_rider') {
+      // If rider accepted but we're still in waiting_for_rider status,
+      // add ready_to_ship action so seller can proceed
+      if (!enhancedAvailableActions.includes('ready_to_ship')) {
+        enhancedAvailableActions.push('ready_to_ship');
+        console.log('Enhanced actions: added ready_to_ship because rider accepted');
+      }
+    }
+    
+    // Check if cancel should be hidden (when rider has accepted)
     const shouldHideCancel = isRiderAccepted;
 
     return {
-      showConfirm:          availableActions.includes('confirm'),
-      showCancel:           availableActions.includes('cancel') && !shouldHideCancel,
-      showReadyToShip:      availableActions.includes('ready_to_ship'),
-      showArrangeShipment:  availableActions.includes('arrange_shipment'),
-      showReadyForPickup:   availableActions.includes('ready_for_pickup'),
-      showPickedUp:         availableActions.includes('picked_up'),
-      showToDeliver:        availableActions.includes('to_deliver'),
-      showDelivered:        availableActions.includes('delivered'),
-      showComplete:         availableActions.includes('complete'),
+      showConfirm:          enhancedAvailableActions.includes('confirm'),
+      showCancel:           enhancedAvailableActions.includes('cancel') && !shouldHideCancel,
+      showReadyToShip:      enhancedAvailableActions.includes('ready_to_ship'),
+      showArrangeShipment:  enhancedAvailableActions.includes('arrange_shipment'),
+      showReadyForPickup:   enhancedAvailableActions.includes('ready_for_pickup'),
+      showPickedUp:         enhancedAvailableActions.includes('picked_up'),
+      showToDeliver:        enhancedAvailableActions.includes('to_deliver'),
+      showDelivered:        enhancedAvailableActions.includes('delivered'),
+      showComplete:         enhancedAvailableActions.includes('complete'),
     };
   };
 
@@ -761,6 +777,10 @@ export default function SellerViewOrder() {
       }
     };
 
+    // Check if rider has accepted
+    const isRiderAccepted = order?.delivery_info?.status === 'accepted';
+    const isWaitingForRider = currentStatus === 'waiting_for_rider';
+
     return (
       <View style={styles.stickyFooter}>
         <View style={styles.buttonContainer}>
@@ -799,24 +819,38 @@ export default function SellerViewOrder() {
             </TouchableOpacity>
           )}
 
-          {currentStatus === 'waiting_for_pickup' && showReadyToShip && !isPickup && (
+          {/* FIX: Show Ready to Ship button when rider has accepted and we're in waiting_for_rider status */}
+          {isWaitingForRider && isRiderAccepted && showReadyToShip && !isPickup && (
             <TouchableOpacity
-              style={[
-                styles.actionButton, 
-                styles.readyToShipButton,
-                (order?.delivery_info?.status !== 'accepted') && styles.readyToShipButtonDisabled
-              ]}
+              style={[styles.actionButton, styles.readyToShipButton]}
               onPress={() => showActionConfirmation(
                 'ready_to_ship', 'Ready to Ship', 
-                'Mark order as ready to ship? Rider will be notified to pick up.'
+                'The rider has accepted the delivery. Mark order as ready to ship? The rider will be notified to pick up from your store.'
               )}
-              disabled={processing || order?.delivery_info?.status !== 'accepted'}
+              disabled={processing}
             >
               <Text style={styles.actionButtonText}>Ready to Ship</Text>
             </TouchableOpacity>
           )}
 
-          {(currentStatus === 'rider_accepted' || (currentStatus === 'rider_assigned' && order?.delivery_info?.status === 'accepted')) && showReadyToShip && !isPickup && (
+          {currentStatus === 'waiting_for_pickup' && showReadyToShip && !isPickup && (
+            <TouchableOpacity
+              style={[
+                styles.actionButton, 
+                styles.readyToShipButton,
+                (!isRiderAccepted && order?.delivery_info?.rider_name) && styles.readyToShipButtonDisabled
+              ]}
+              onPress={() => showActionConfirmation(
+                'ready_to_ship', 'Ready to Ship', 
+                'Mark order as ready to ship? Rider will be notified to pick up.'
+              )}
+              disabled={processing === true}
+            >
+              <Text style={styles.actionButtonText}>Ready to Ship</Text>
+            </TouchableOpacity>
+          )}
+
+          {(currentStatus === 'rider_accepted' || (currentStatus === 'rider_assigned' && isRiderAccepted)) && showReadyToShip && !isPickup && (
             <TouchableOpacity
               style={[styles.actionButton, styles.readyToShipButton]}
               onPress={() => showActionConfirmation(
@@ -854,7 +888,7 @@ export default function SellerViewOrder() {
             </TouchableOpacity>
           )}
 
-          {!isProcessing && !isReadyToShip && showArrangeShipment && !isPickup && (
+          {!isProcessing && !isReadyToShip && !isWaitingForRider && showArrangeShipment && !isPickup && (
             <TouchableOpacity
               style={[styles.actionButton, styles.readyToShipButton]}
               onPress={() => showActionConfirmation(

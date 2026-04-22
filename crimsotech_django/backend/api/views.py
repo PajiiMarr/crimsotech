@@ -24637,7 +24637,8 @@ class SellerOrderList(viewsets.ViewSet):
             if response_type not in ['accept', 'reject']:
                 return Response({"success": False, "message": "Response must be 'accept' or 'reject'"}, status=status.HTTP_400_BAD_REQUEST)
             
-            delivery = Delivery.objects.filter(order=order, rider=rider, status='pending_offer').first()
+            # Changed from 'pending_offer' to 'pending'
+            delivery = Delivery.objects.filter(order=order, rider=rider, status='pending').first()
             if not delivery:
                 return Response({"success": False, "message": "No pending delivery found for this rider"}, status=status.HTTP_404_NOT_FOUND)
             
@@ -24647,6 +24648,14 @@ class SellerOrderList(viewsets.ViewSet):
                 rider.availability_status = 'busy'
                 rider.is_accepting_deliveries = False
                 rider.save()
+                
+                # Update order status to reflect rider acceptance
+                order.status = 'rider_accepted'
+                order.save()
+                
+                # Cancel other pending deliveries for this order
+                Delivery.objects.filter(order=order, status='pending').exclude(id=delivery.id).update(status='cancelled')
+                
                 message = "Delivery accepted successfully"
                 shop = order.checkout_set.first().cart_item.product.shop
                 Notification.objects.create(
@@ -24664,11 +24673,11 @@ class SellerOrderList(viewsets.ViewSet):
             return Response({
                 "success": True,
                 "message": message,
-                "data": {"delivery_id": str(delivery.id), "status": delivery.status}
+                "data": {"delivery_id": str(delivery.id), "status": delivery.status, "order_status": order.status}
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+        
     @action(detail=False, methods=['post'])
     def assign_deliveries(self, request):
         try:
@@ -24798,79 +24807,85 @@ class SellerOrderList(viewsets.ViewSet):
                     }
                 }, status=status.HTTP_200_OK)
             
+            # Sort by total distance (nearest first)
             rider_distances.sort(key=lambda x: x['total_distance'])
             rider_comparison.sort(key=lambda x: x['total_distance_km'])
             
-            top_riders = rider_distances
-            deliveries_created = []
+            # SELECT ONLY THE NEAREST RIDER (SINGLE ASSIGNMENT)
+            nearest = rider_distances[0]
+            selected_rider = nearest['rider']
+            total_distance = nearest['total_distance']
+            distance_to_pickup = nearest['distance_to_pickup']
+            distance_pickup_to_dest = nearest['distance_pickup_to_dest']
             
-            for rider_data in top_riders:
-                rider = rider_data['rider']
-                total_distance = rider_data['total_distance']
-                distance_to_pickup = rider_data['distance_to_pickup']
-                distance_pickup_to_dest = rider_data['distance_pickup_to_dest']
-                
-                delivery_fee = self._calculate_delivery_fee(total_distance)
-                estimated_minutes = self._calculate_estimated_time(total_distance)
-                
-                delivery = Delivery.objects.create(
-                    order=order,
-                    rider=rider,
-                    status='pending_offer',
-                    distance_km=Decimal(str(total_distance)),
-                    estimated_minutes=estimated_minutes,
-                    delivery_fee=Decimal(str(delivery_fee)),
-                    metadata={
-                        'distance_to_pickup': distance_to_pickup,
-                        'distance_pickup_to_dest': distance_pickup_to_dest,
-                        'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
-                        'destination_location': {'lat': dest_lat, 'lng': dest_lng}
+            # Calculate delivery fee and ETA
+            delivery_fee = self._calculate_delivery_fee(total_distance)
+            estimated_minutes = self._calculate_estimated_time(total_distance)
+            
+            # Delete any existing pending deliveries for this order
+            Delivery.objects.filter(order=order, status='pending_offer').delete()
+            
+            # Create SINGLE delivery record for the nearest rider with status 'pending'
+            delivery = Delivery.objects.create(
+                order=order,
+                rider=selected_rider,
+                status='pending',  # CHANGED FROM 'pending_offer' TO 'pending'
+                distance_km=Decimal(str(total_distance)),
+                estimated_minutes=estimated_minutes,
+                delivery_fee=Decimal(str(delivery_fee)),
+                metadata={
+                    'distance_to_pickup': distance_to_pickup,
+                    'distance_pickup_to_dest': distance_pickup_to_dest,
+                    'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
+                    'destination_location': {'lat': dest_lat, 'lng': dest_lng},
+                    'all_riders_compared': rider_comparison,
+                    'nearest_rider': {
+                        'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
+                        'username': selected_rider.rider.username,
+                        'total_distance_km': round(total_distance, 2),
+                        'delivery_fee': delivery_fee,
+                        'estimated_minutes': estimated_minutes
                     }
-                )
-                deliveries_created.append(str(delivery.id))
-                
-                Notification.objects.create(
-                    user=rider.rider,
-                    title='New Delivery Assignment',
-                    type='delivery',
-                    message=f'You have a new delivery assignment for order #{str(order.order)[:8]}. '
-                            f'Distance: {total_distance:.1f}km, Fee: ₱{delivery_fee:.2f}',
-                    is_read=False
-                )
+                }
+            )
             
-            # Store rider comparison data in the first delivery's metadata
-            if deliveries_created:
-                first_delivery = Delivery.objects.get(id=deliveries_created[0])
-                first_delivery.metadata['all_riders_compared'] = rider_comparison
-                first_delivery.save()
+            # Send notification ONLY to the selected rider
+            Notification.objects.create(
+                user=selected_rider.rider,
+                title='New Delivery Assignment',
+                type='delivery',
+                message=f'You have a new delivery assignment for order #{str(order.order)[:8]}. '
+                        f'Distance: {total_distance:.1f}km, Fee: ₱{delivery_fee:.2f}',
+                is_read=False
+            )
             
+            # Update order status
             order.status = 'rider_assigned'
             order.save()
             
-            nearest_rider = rider_distances[0]
-            nearest_rider_name = f"{nearest_rider['rider'].rider.first_name} {nearest_rider['rider'].rider.last_name}".strip() or nearest_rider['rider'].rider.username
+            nearest_rider_name = f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username
             
             return Response({
                 "success": True,
-                "message": f"Assigned {len(deliveries_created)} nearest riders. Nearest: {nearest_rider_name} ({nearest_rider['total_distance']:.2f} km)",
+                "message": f"Assigned nearest rider: {nearest_rider_name} ({total_distance:.2f} km)",
                 "data": {
                     "order_id": str(order.order),
-                    "deliveries_created": deliveries_created,
-                    "rider_count": len(deliveries_created),
+                    "delivery_id": str(delivery.id),
+                    "rider_count": 1,
                     "pickup_location": pickup_name,
                     "nearest_rider": {
                         "name": nearest_rider_name,
-                        "username": nearest_rider['rider'].rider.username,
-                        "total_distance_km": round(nearest_rider['total_distance'], 2),
-                        "delivery_fee": self._calculate_delivery_fee(nearest_rider['total_distance']),
-                        "estimated_minutes": self._calculate_estimated_time(nearest_rider['total_distance'])
+                        "username": selected_rider.rider.username,
+                        "total_distance_km": round(total_distance, 2),
+                        "delivery_fee": delivery_fee,
+                        "estimated_minutes": estimated_minutes
                     },
                     "all_riders_compared": rider_comparison
                 }
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            
     @action(detail=False, methods=['post'])
     def check_delivery_responses(self, request):
         try:
@@ -24883,7 +24898,8 @@ class SellerOrderList(viewsets.ViewSet):
             except Order.DoesNotExist:
                 return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
             
-            pending_deliveries = Delivery.objects.filter(order=order, status='pending_offer').select_related('rider__rider')
+            # Changed from 'pending_offer' to 'pending'
+            pending_deliveries = Delivery.objects.filter(order=order, status='pending').select_related('rider__rider')
             responses = []
             accepted_delivery = None
             
@@ -24892,14 +24908,14 @@ class SellerOrderList(viewsets.ViewSet):
                     "delivery_id": str(delivery.id),
                     "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery.rider else None,
                     "status": delivery.status,
-                    "has_responded": delivery.status != 'pending_offer'
+                    "has_responded": delivery.status != 'pending'
                 }
                 if delivery.status == 'accepted':
                     accepted_delivery = delivery
                 responses.append(response_info)
             
             if accepted_delivery:
-                Delivery.objects.filter(order=order, status='pending_offer').exclude(id=accepted_delivery.id).update(status='cancelled')
+                Delivery.objects.filter(order=order, status='pending').exclude(id=accepted_delivery.id).update(status='cancelled')
             
             return Response({
                 "success": True,
@@ -24912,7 +24928,7 @@ class SellerOrderList(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+        
     def _get_product_media(self, product):
         media_files = []
         try:
@@ -25153,16 +25169,16 @@ class SellerOrderList(viewsets.ViewSet):
             import traceback
             traceback.print_exc()
             return Response({"success": False, "message": f"Error retrieving orders: {str(e)}", "data": []}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+        
     def _get_shipping_status(self, order_status, delivery_status=None):
         status_mapping = {
             'pending': 'pending_shipment',
             'processing': 'processing',
             'rider_assigned': 'rider_assigned', 
-            'rider_accepted': 'rider_accepted', 
+            'rider_accepted': 'rider_accepted',
             'pending_rider': 'pending_rider',  
             'ready_to_ship': 'ready_to_ship',
-            'waiting_for_rider': 'waiting_for_pickup',
+            'waiting_for_rider': 'waiting_for_rider',
             'shipped': 'shipped',
             'to_deliver': 'to_deliver',
             'delivered': 'delivered',
@@ -25172,18 +25188,20 @@ class SellerOrderList(viewsets.ViewSet):
             'picked_up': 'picked_up',
         }
         
-        if delivery_status in ('pending_offer', 'pending'):
+        # Changed from 'pending_offer' to 'pending'
+        if delivery_status in ('pending',):
             return 'waiting_for_rider'
         
         if delivery_status:
             delivery_map = {
+                'accepted': 'rider_accepted',
                 'picked_up': 'to_deliver',
                 'delivered': 'delivered',
             }
             return delivery_map.get(delivery_status, status_mapping.get(order_status, 'pending_shipment'))
         
         return status_mapping.get(order_status, 'pending_shipment')
-    
+
     def _get_estimated_delivery(self, delivery):
         if delivery.delivered_at:
             return delivery.delivered_at.strftime('%Y-%m-%d')
@@ -25897,7 +25915,7 @@ class SellerOrderList(viewsets.ViewSet):
         except Exception as e:
             return Response({"success": False, "message": f"Error preparing shipment: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='seller_view_order')
     def seller_view_order(self, request):
         order_id = request.GET.get('order_id')
         shop_id = request.GET.get('shop_id')
@@ -25916,23 +25934,51 @@ class SellerOrderList(viewsets.ViewSet):
             if not checkouts.exists():
                 return Response({'success': False, 'message': 'No items found for this shop in the order'}, status=status.HTTP_404_NOT_FOUND)
             
+            # FIX: Get the latest ACCEPTED delivery, not just the first one
             delivery_info = None
             proof_images = []
+            
             try:
-                delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
-                if delivery:
+                # First try to get an accepted or in-progress delivery
+                active_delivery = Delivery.objects.filter(
+                    order=order
+                ).exclude(
+                    status__in=['cancelled', 'expired', 'rejected', 'declined']
+                ).order_by(
+                    models.Case(
+                        models.When(status='accepted', then=models.Value(1)),
+                        models.When(status='picked_up', then=models.Value(2)),
+                        models.When(status='in_progress', then=models.Value(3)),
+                        models.When(status='delivered', then=models.Value(4)),
+                        models.When(status='pending_offer', then=models.Value(5)),
+                        default=models.Value(6),
+                        output_field=models.IntegerField(),
+                    ),
+                    '-created_at'
+                ).select_related('rider__rider').first()
+                
+                # If no active delivery found, get the most recent one
+                if not active_delivery:
+                    active_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
+                
+                if active_delivery:
+                    # Check if this delivery has been accepted by a rider
+                    is_accepted = active_delivery.status in ['accepted', 'picked_up', 'in_progress', 'delivered']
+                    
                     delivery_info = {
-                        'delivery_id': str(delivery.id),
-                        'rider_name': f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}".strip() or delivery.rider.rider.username if delivery.rider else None,
-                        'rider_phone': delivery.rider.rider.contact_number if delivery.rider else None,
-                        'status': delivery.status,
-                        'estimated_delivery': self._get_estimated_delivery(delivery),
-                        'submitted_at': delivery.created_at.isoformat() if delivery.created_at else None,
-                        'tracking_number': f"TRK-{str(delivery.id)[:10]}" if delivery.status != 'pending_offer' else None
+                        'delivery_id': str(active_delivery.id),
+                        'rider_name': f"{active_delivery.rider.rider.first_name} {active_delivery.rider.rider.last_name}".strip() or active_delivery.rider.rider.username if active_delivery.rider else None,
+                        'rider_phone': active_delivery.rider.rider.contact_number if active_delivery.rider else None,
+                        'status': active_delivery.status,
+                        'estimated_delivery': self._get_estimated_delivery(active_delivery),
+                        'submitted_at': active_delivery.created_at.isoformat() if active_delivery.created_at else None,
+                        'tracking_number': f"TRK-{str(active_delivery.id)[:10]}" if active_delivery.status != 'pending_offer' else None,
+                        'is_accepted': is_accepted,
+                        'accepted_at': active_delivery.updated_at.isoformat() if is_accepted and active_delivery.updated_at else None
                     }
                     
-                    if delivery.status == 'delivered':
-                        proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
+                    if active_delivery.status == 'delivered':
+                        proofs = Proof.objects.filter(delivery=active_delivery).order_by('-uploaded_at')
                         for proof in proofs:
                             if proof.file_data:
                                 file_url = convert_s3_to_public_url(proof.file_data.url)
@@ -25942,8 +25988,8 @@ class SellerOrderList(viewsets.ViewSet):
                                     'file_type': proof.file_type,
                                     'uploaded_at': proof.uploaded_at.isoformat() if proof.uploaded_at else None
                                 })
-            except Delivery.DoesNotExist:
-                pass
+            except Exception as e:
+                print(f"Error fetching delivery: {e}")
             
             items = []
             total_amount = float(order.total_amount)
@@ -25981,7 +26027,7 @@ class SellerOrderList(viewsets.ViewSet):
                 product = cart_item.product
                 variant = cart_item.variant
                 price = float(variant.price) if variant and variant.price else 0
-                variant_title = variant.title if variant else product.condition
+                variant_title = variant.title if variant else str(product.condition)
                 product_media = self._get_product_media(product)
                 variant_image_url = None
                 if variant and variant.image:
@@ -26080,7 +26126,7 @@ class SellerOrderList(viewsets.ViewSet):
             return Response({'success': False, 'message': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'success': False, 'message': f'Error retrieving order: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+        
     @action(detail=True, methods=['get'])
     def generate_waybill(self, request, pk=None):
         try:
@@ -26323,6 +26369,7 @@ class SellerOrderList(viewsets.ViewSet):
             import traceback
             print(traceback.format_exc())
             return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)    
+
 
 class CheckoutOrder(viewsets.ViewSet):
     
@@ -31335,6 +31382,20 @@ class RiderOrdersActive(viewsets.ViewSet):
             updated_at__range=[today_start, today_end]
         ).count()
 
+    def _check_delivery_assignment(self, order, rider):
+        """
+        Check if delivery is already assigned to another rider.
+        Returns (is_assigned_to_another, assigned_rider_name)
+        """
+        existing_delivery = Delivery.objects.filter(order=order).first()
+        
+        if existing_delivery and existing_delivery.rider:
+            if existing_delivery.rider != rider:
+                # Assigned to another rider
+                assigned_rider_name = f"{existing_delivery.rider.rider.first_name} {existing_delivery.rider.rider.last_name}".strip() or existing_delivery.rider.rider.username
+                return True, assigned_rider_name, existing_delivery
+        return False, None, existing_delivery
+
     @action(detail=False, methods=['get'])
     def get_decline_limit_info(self, request):
         """
@@ -31790,6 +31851,7 @@ class RiderOrdersActive(viewsets.ViewSet):
         }
         
         return Response(response)
+    
     @action(detail=False, methods=['post'])
     def accept_order(self, request):
         """
@@ -31837,6 +31899,15 @@ class RiderOrdersActive(viewsets.ViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
 
+            # Check if delivery is already assigned to another rider
+            is_assigned, assigned_rider_name, existing_delivery = self._check_delivery_assignment(order, rider)
+            
+            if is_assigned:
+                return Response(
+                    {"success": False, "error": f"This order has already been accepted by another rider: {assigned_rider_name}. You cannot accept this order."},
+                    status=status.HTTP_409_CONFLICT
+                )
+
             delivery = Delivery.objects.filter(order=order).first()
 
             if delivery and delivery.rider and delivery.rider != rider:
@@ -31880,12 +31951,10 @@ class RiderOrdersActive(viewsets.ViewSet):
             )
 
         # Rider explicitly accepts the assignment — mark delivery as 'accepted'
-        # (do NOT mark as picked_up yet; pickup happens when rider collects the package)
         delivery.status = 'accepted'
         delivery.updated_at = timezone.now()
         delivery.save()
 
-        # Do NOT change order.status here; seller UI uses delivery.status === 'accepted' to show processing
         return Response({
             "success": True,
             "message": "Order accepted successfully",
@@ -31940,6 +32009,26 @@ class RiderOrdersActive(viewsets.ViewSet):
             return Response(
                 {"success": False, "error": "Delivery not found"},
                 status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if delivery is assigned to this rider
+        if delivery.rider != rider:
+            return Response(
+                {"success": False, "error": "This delivery is not assigned to you"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Check if delivery is in a valid state for the requested transition
+        if status_value == 'picked_up' and delivery.status not in ['accepted', 'pending']:
+            return Response(
+                {"success": False, "error": f"Cannot pick up order with status: {delivery.status}. Order must be accepted first."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if status_value == 'delivered' and delivery.status != 'picked_up':
+            return Response(
+                {"success": False, "error": f"Cannot deliver order with status: {delivery.status}. Order must be picked up first."},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         delivery.status = status_value
@@ -32014,39 +32103,26 @@ class RiderOrdersActive(viewsets.ViewSet):
             if order_id:
                 try:
                     order_uuid = uuid.UUID(str(order_id))
-                    delivery = Delivery.objects.filter(
-                        order__order=order_uuid,
-                        rider=rider,
-                        status__in=['pending', 'accepted']
-                    ).first()
+                    order = Order.objects.filter(order=order_uuid).first()
+                    if order:
+                        # Check if delivery is assigned to another rider
+                        is_assigned, assigned_rider_name, existing_delivery = self._check_delivery_assignment(order, rider)
+                        
+                        if is_assigned:
+                            return Response(
+                                {"success": False, "error": f"This order has already been picked up by another rider: {assigned_rider_name}. You cannot pick up this order."},
+                                status=status.HTTP_409_CONFLICT
+                            )
+                        
+                        delivery = Delivery.objects.filter(
+                            order=order,
+                            rider=rider,
+                            status__in=['pending', 'accepted']
+                        ).first()
                 except Exception:
                     delivery = None
 
         if not delivery:
-            # Debug information to help identify why lookup failed
-            try:
-                print(f"pickup_order lookup failed - rider_id={getattr(rider, 'id', None)}, delivery_id={request.data.get('delivery_id')}, order_id={request.data.get('order_id')}")
-                # show counts for candidate filters
-                from .models import Delivery as _Delivery
-                d_by_id = 0
-                d_by_order = 0
-                try:
-                    import uuid as _uuid
-                    _did = _uuid.UUID(str(request.data.get('delivery_id'))) if request.data.get('delivery_id') else None
-                    if _did:
-                        d_by_id = _Delivery.objects.filter(id=_did).count()
-                except Exception:
-                    d_by_id = 0
-                try:
-                    _oid = _uuid.UUID(str(request.data.get('order_id'))) if request.data.get('order_id') else None
-                    if _oid:
-                        d_by_order = _Delivery.objects.filter(order__order=_oid).count()
-                except Exception:
-                    d_by_order = 0
-                print(f"delivery counts - by_id={d_by_id}, by_order={d_by_order}")
-            except Exception:
-                pass
-
             extra = {}
             if getattr(settings, 'DEBUG', False):
                 extra = {
@@ -32056,6 +32132,20 @@ class RiderOrdersActive(viewsets.ViewSet):
             return Response(
                 {"success": False, "error": "Delivery not found or not available for pickup", **extra}, 
                 status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify delivery is assigned to this rider
+        if delivery.rider != rider:
+            return Response(
+                {"success": False, "error": "This delivery is not assigned to you"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Verify delivery status allows pickup
+        if delivery.status not in ['pending', 'accepted']:
+            return Response(
+                {"success": False, "error": f"Cannot pick up order with status: {delivery.status}"},
+                status=status.HTTP_400_BAD_REQUEST
             )
         
         # Update delivery status
@@ -32101,15 +32191,29 @@ class RiderOrdersActive(viewsets.ViewSet):
             )
         
         try:
+            delivery_uuid = uuid.UUID(str(delivery_id))
             delivery = Delivery.objects.get(
-                id=delivery_id,
-                rider=rider,
-                status='picked_up'
+                id=delivery_uuid,
+                rider=rider
             )
-        except Delivery.DoesNotExist:
+        except (ValueError, AttributeError, Delivery.DoesNotExist):
             return Response(
-                {"success": False, "error": "Delivery not found or not ready for delivery"}, 
+                {"success": False, "error": "Delivery not found"}, 
                 status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify delivery is assigned to this rider
+        if delivery.rider != rider:
+            return Response(
+                {"success": False, "error": "This delivery is not assigned to you"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Verify delivery status allows delivery
+        if delivery.status != 'picked_up':
+            return Response(
+                {"success": False, "error": f"Cannot deliver order with status: {delivery.status}. Order must be picked up first."},
+                status=status.HTTP_400_BAD_REQUEST
             )
         
         # Update delivery status
@@ -32250,7 +32354,8 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "declines_remaining": 3 - (today_declines + 1)  # Remaining declines for today
             }
         })
-    
+
+
 class ProofManagementViewSet(viewsets.ViewSet):
     """ViewSet for managing delivery proofs"""
     

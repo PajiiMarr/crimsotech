@@ -1,5 +1,3 @@
-# backend/api/management/commands/assign_deliveries.py
-
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from django.db.models import Q
@@ -245,7 +243,7 @@ class Command(BaseCommand):
         return max(15, int(time_minutes))
     
     def assign_nearest_rider_to_order(self, order, available_riders, verbose=False):
-        """Assign the nearest rider to the order with detailed comparison logs"""
+        """Assign ONLY the nearest rider to the order (single rider assignment)"""
         
         self.stdout.write("\n" + "=" * 80)
         self.stdout.write(f"📦 PROCESSING ORDER: {order.order}")
@@ -333,6 +331,8 @@ class Command(BaseCommand):
         
         if not rider_distances:
             self.stdout.write(self.style.WARNING(f"\n❌ No eligible riders with location for order {order.order}"))
+            order.status = 'pending_rider'
+            order.save()
             return
         
         # Sort by total distance (nearest first)
@@ -346,7 +346,7 @@ class Command(BaseCommand):
             medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
             self.stdout.write(f"{medal} {rd['rider'].rider.username} - {rd['total_distance']:.2f} km total")
         
-        # Select the nearest rider
+        # SELECT ONLY THE NEAREST RIDER (SINGLE ASSIGNMENT)
         nearest = rider_distances[0]
         selected_rider = nearest['rider']
         total_distance = nearest['total_distance']
@@ -358,7 +358,7 @@ class Command(BaseCommand):
         estimated_minutes = self.calculate_estimated_time(total_distance)
         
         self.stdout.write("\n" + "=" * 80)
-        self.stdout.write(self.style.SUCCESS("🎉 SELECTED NEAREST RIDER:"))
+        self.stdout.write(self.style.SUCCESS("🎉 SELECTED NEAREST RIDER (SINGLE ASSIGNMENT):"))
         self.stdout.write("=" * 80)
         self.stdout.write(f"   ✅ Rider: {selected_rider.rider.username}")
         self.stdout.write(f"   📍 Name: {selected_rider.rider.first_name} {selected_rider.rider.last_name}")
@@ -368,7 +368,10 @@ class Command(BaseCommand):
         self.stdout.write(f"   ⏱️ Estimated Time: {estimated_minutes} minutes")
         self.stdout.write("=" * 80)
         
-        # Create delivery record
+        # Cancel any existing pending deliveries for this order
+        Delivery.objects.filter(order=order, status='pending_offer').delete()
+        
+        # Create SINGLE delivery record for the nearest rider
         delivery = Delivery.objects.create(
             order=order,
             rider=selected_rider,
@@ -405,6 +408,10 @@ class Command(BaseCommand):
             ]
         }
         delivery.save()
+        
+        # Update order status
+        order.status = 'rider_assigned'
+        order.save()
         
         # Create notification for the rider
         Notification.objects.create(
