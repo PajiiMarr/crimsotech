@@ -85,7 +85,7 @@ const isExpiringSoon = (dateString: string): boolean => {
     const endDate = new Date(dateString);
     const today = new Date();
     const daysLeft = Math.ceil(
-      (endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
+      (endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
     );
     return daysLeft <= 7 && daysLeft >= 0;
   } catch {
@@ -214,7 +214,10 @@ const VoucherCard = ({
             <Text style={styles.savingsValue}>{getSavingsText()}</Text>
           </View>
           <TouchableOpacity
-            style={[styles.applyButton, isApplying && styles.applyButtonDisabled]}
+            style={[
+              styles.applyButton,
+              isApplying && styles.applyButtonDisabled,
+            ]}
             onPress={() => onApply(voucher.code)}
             disabled={isApplying}
           >
@@ -333,7 +336,10 @@ const VoucherCodeModal = ({
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalSubmitButton, isSubmitting && styles.modalSubmitDisabled]}
+                style={[
+                  styles.modalSubmitButton,
+                  isSubmitting && styles.modalSubmitDisabled,
+                ]}
                 onPress={handleSubmit}
                 disabled={isSubmitting}
               >
@@ -372,19 +378,23 @@ export default function VoucherListPage() {
 
     try {
       setLoading(true);
-      const response = await AxiosInstance.get<VoucherApiResponse>(
-        "/view-cart/vouchers/",
-        { params: { user_id: userId } }
-      );
+      const response = await AxiosInstance.get("/view-cart/", {
+        params: {
+          user_id: userId,
+          list_vouchers: "true",
+        },
+      });
 
       if (response.data.success) {
         setVouchers(response.data.available_vouchers || []);
-        setVoucherSummary(response.data.voucher_summary || {
-          total_available: 0,
-          best_discount: 0,
-          global_vouchers: [],
-          shop_vouchers: [],
-        });
+        setVoucherSummary(
+          response.data.voucher_summary || {
+            total_available: 0,
+            best_discount: 0,
+            global_vouchers: [],
+            shop_vouchers: [],
+          },
+        );
       } else {
         Alert.alert("Error", response.data.error || "Failed to load vouchers");
       }
@@ -402,7 +412,7 @@ export default function VoucherListPage() {
       if (userId) {
         fetchVouchers();
       }
-    }, [userId])
+    }, [userId]),
   );
 
   const onRefresh = () => {
@@ -469,7 +479,11 @@ export default function VoucherListPage() {
             onPress={() => setModalVisible(true)}
             style={styles.manualButton}
           >
-            <MaterialIcons name="add-circle-outline" size={24} color="#F97316" />
+            <MaterialIcons
+              name="add-circle-outline"
+              size={24}
+              color="#F97316"
+            />
           </TouchableOpacity>
         </View>
 
@@ -486,7 +500,9 @@ export default function VoucherListPage() {
           </View>
 
           <View style={styles.summaryCard}>
-            <View style={[styles.summaryIconContainer, styles.bestIconContainer]}>
+            <View
+              style={[styles.summaryIconContainer, styles.bestIconContainer]}
+            >
               <MaterialIcons name="star" size={20} color="#10B981" />
             </View>
             <Text style={[styles.summaryValue, styles.bestValue]}>
@@ -496,7 +512,9 @@ export default function VoucherListPage() {
           </View>
 
           <View style={styles.summaryCard}>
-            <View style={[styles.summaryIconContainer, styles.globalIconContainer]}>
+            <View
+              style={[styles.summaryIconContainer, styles.globalIconContainer]}
+            >
               <MaterialIcons name="public" size={20} color="#3B82F6" />
             </View>
             <Text style={styles.summaryValue}>
@@ -513,7 +531,10 @@ export default function VoucherListPage() {
             onPress={() => setActiveTab("all")}
           >
             <Text
-              style={[styles.tabText, activeTab === "all" && styles.tabTextActive]}
+              style={[
+                styles.tabText,
+                activeTab === "all" && styles.tabTextActive,
+              ]}
             >
               All ({vouchers.length})
             </Text>
@@ -523,7 +544,10 @@ export default function VoucherListPage() {
             onPress={() => setActiveTab("global")}
           >
             <Text
-              style={[styles.tabText, activeTab === "global" && styles.tabTextActive]}
+              style={[
+                styles.tabText,
+                activeTab === "global" && styles.tabTextActive,
+              ]}
             >
               Global ({voucherSummary.global_vouchers.length})
             </Text>
@@ -533,7 +557,10 @@ export default function VoucherListPage() {
             onPress={() => setActiveTab("shop")}
           >
             <Text
-              style={[styles.tabText, activeTab === "shop" && styles.tabTextActive]}
+              style={[
+                styles.tabText,
+                activeTab === "shop" && styles.tabTextActive,
+              ]}
             >
               Shop ({voucherSummary.shop_vouchers.length})
             </Text>
@@ -570,7 +597,13 @@ export default function VoucherListPage() {
                       <>
                         <SectionHeader
                           title="Global Vouchers"
-                          icon={<MaterialIcons name="public" size={20} color="#3B82F6" />}
+                          icon={
+                            <MaterialIcons
+                              name="public"
+                              size={20}
+                              color="#3B82F6"
+                            />
+                          }
                           count={voucherSummary.global_vouchers.length}
                         />
                         {voucherSummary.global_vouchers.map((voucher) => (
@@ -588,7 +621,13 @@ export default function VoucherListPage() {
                       <>
                         <SectionHeader
                           title="Shop Vouchers"
-                          icon={<MaterialIcons name="storefront" size={20} color="#8B5CF6" />}
+                          icon={
+                            <MaterialIcons
+                              name="storefront"
+                              size={20}
+                              color="#8B5CF6"
+                            />
+                          }
                           count={voucherSummary.shop_vouchers.length}
                         />
                         {voucherSummary.shop_vouchers.map((voucher) => (
