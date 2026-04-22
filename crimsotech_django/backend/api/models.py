@@ -667,7 +667,23 @@ class Variants(models.Model):
         null=True,
         blank=True,
     )
+    value_added_tax = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    value_added_tax_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    
+    @property
+    def price_with_vat(self):
+        """Calculate price including VAT"""
+        if self.price and self.value_added_tax:
+            vat_amount = (self.price * self.value_added_tax) / Decimal('100')
+            return self.price + vat_amount
+        return self.price or Decimal('0')
 
+    @property
+    def vat_amount(self):
+        """Calculate just the VAT amount"""
+        if self.price and self.value_added_tax:
+            return (self.price * self.value_added_tax) / Decimal('100')
+        return Decimal('0')
     
 
     class Meta:
