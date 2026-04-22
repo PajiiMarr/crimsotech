@@ -213,6 +213,11 @@ const getStatusConfig = (status: string) => {
       color: '#EF4444', bgColor: '#FEF2F2', icon: 'close-circle-outline',
       description: 'This order has been cancelled. No further action required.',
     },
+    declined: {
+      label: 'Rider Declined',
+      color: '#EF4444', bgColor: '#FEF2F2', icon: 'close-circle-outline',
+      description: 'The rider declined this delivery. Click "Arrange Shipment" to assign a new rider.',
+    },
     default: {
       label: 'Unknown',
       color: '#6B7280', bgColor: '#F3F4F6', icon: 'help-circle-outline',
@@ -258,10 +263,6 @@ export default function SellerViewOrder() {
       });
       
       if (response.data.success) {
-        console.log('=== PICKUP DATE FROM API ===');
-        console.log('pickup_date:', response.data.data.pickup_date);
-        console.log('Full response data:', response.data.data);
-        
         setOrder(response.data.data);
         
         if (response.data.data.status === 'delivered' && response.data.data.proof_images) {
@@ -287,7 +288,6 @@ export default function SellerViewOrder() {
         { params: { shop_id: shopId } },
       );
       if (response.data.success) {
-        console.log('Available actions from backend:', response.data.data.available_actions);
         setAvailableActions(response.data.data.available_actions || []);
       }
     } catch (error) {
@@ -310,7 +310,6 @@ export default function SellerViewOrder() {
         
         // If this was an arrange_shipment action, show the rider comparison modal
         if (actionType === 'arrange_shipment' && response.data.data?.all_riders_compared) {
-          // Update order with rider data
           setOrder(prev => prev ? {
             ...prev,
             metadata: {
@@ -342,7 +341,6 @@ export default function SellerViewOrder() {
     handleUpdateStatus(selectedAction.type);
   };
 
-  // Purely driven by availableActions from backend
   const getActionButtons = () => {
     if (!order) return {
       showConfirm: false,
@@ -356,24 +354,18 @@ export default function SellerViewOrder() {
       showComplete: false,
     };
 
-    // IMPORTANT FIX: Check if rider has accepted (delivery status = 'accepted')
     const isRiderAccepted = order?.delivery_info?.status === 'accepted';
+    const isRiderDeclined = order?.delivery_info?.status === 'declined';
     const currentStatus = order?.status?.toLowerCase() || '';
     
-    // When rider has accepted, we should show Ready to Ship button
-    // even if the order status hasn't been updated to rider_accepted yet
     let enhancedAvailableActions = [...availableActions];
     
     if (isRiderAccepted && currentStatus === 'waiting_for_rider') {
-      // If rider accepted but we're still in waiting_for_rider status,
-      // add ready_to_ship action so seller can proceed
       if (!enhancedAvailableActions.includes('ready_to_ship')) {
         enhancedAvailableActions.push('ready_to_ship');
-        console.log('Enhanced actions: added ready_to_ship because rider accepted');
       }
     }
     
-    // Check if cancel should be hidden (when rider has accepted)
     const shouldHideCancel = isRiderAccepted;
 
     return {
@@ -415,49 +407,53 @@ export default function SellerViewOrder() {
   const renderStatusCard = () => {
     if (!order) return null;
     
-    console.log('=== STATUS DEBUG ===');
-    console.log('Order status:', order.status);
-    console.log('Delivery info status:', order?.delivery_info?.status);
-    console.log('Rider name:', order?.delivery_info?.rider_name);
-    
     let displayStatus = order.status;
     let customDescription = '';
     let customLabel = '';
     let customIcon = undefined;
     
-    // Case 1: Rider assigned but waiting for confirmation
-    if ((displayStatus === 'rider_assigned' || displayStatus === 'waiting_for_rider') && 
+    // Check if rider declined
+    const isRiderDeclined = order?.delivery_info?.status === 'declined';
+    
+    if (isRiderDeclined) {
+      customLabel = 'Rider Declined Delivery';
+      customDescription = 'The assigned rider declined this delivery. Click "Arrange Shipment" to assign a new rider.';
+      customIcon = 'close-circle-outline';
+      displayStatus = 'declined';
+    }
+    // Rider assigned but waiting for confirmation
+    else if ((displayStatus === 'rider_assigned' || displayStatus === 'waiting_for_rider') && 
         order?.delivery_info?.rider_name && 
         (!order?.delivery_info?.status || order?.delivery_info?.status === 'pending')) {
       customLabel = 'Rider Assigned - Waiting for Confirmation';
       customDescription = 'A rider has been assigned and is waiting to confirm the delivery. Once the rider accepts, you can mark the order as ready for pickup.';
       customIcon = 'person-outline';
     }
-    // Case 2: Rider accepted the delivery - waiting for pickup
+    // Rider accepted the delivery - waiting for pickup
     else if ((displayStatus === 'rider_assigned' || displayStatus === 'waiting_for_rider') && 
              order?.delivery_info?.status === 'accepted') {
       customLabel = 'Rider Assigned - Accepted';
       customDescription = 'The rider has accepted the delivery and will pick up the items from your store. Please prepare the items and click "Ready to Ship" when ready.';
       customIcon = 'checkmark-circle-outline';
     }
-    // Case 3: Waiting for rider (no rider assigned yet)
+    // Waiting for rider (no rider assigned yet)
     else if (displayStatus === 'waiting_for_rider' && !order?.delivery_info?.rider_name) {
       customLabel = 'Waiting for Rider';
       customDescription = 'Waiting for a rider to accept the delivery assignment.';
       customIcon = 'time-outline';
     }
-    // Case 4: Out for Delivery - rider picked up and on the way (to_deliver status)
+    // Out for Delivery
     else if (displayStatus === 'to_deliver') {
       customLabel = 'Item Shipped - Rider Picked Up';
       customDescription = 'The rider has picked up the items from your store and is on the way to deliver to the customer.';
       customIcon = 'car-outline';
     }
-    // For waiting_for_pickup status
+    // waiting_for_pickup status
     else if (displayStatus === 'waiting_for_pickup') {
       customDescription = 'Order is ready. Waiting for rider to pick up the item from your store for delivery to the customer.';
       customIcon = 'package-outline';
     }
-    // For ready_for_pickup status
+    // ready_for_pickup status
     else if (displayStatus === 'ready_for_pickup') {
       customDescription = 'Order is ready at your store. Customer has been notified.';
       customIcon = 'storefront-outline';
@@ -499,6 +495,7 @@ export default function SellerViewOrder() {
     const deliveryStatus = order?.delivery_info?.status;
     const allRiders = order?.metadata?.all_riders_compared;
     const nearestRider = order?.metadata?.nearest_rider;
+    const isRiderDeclined = deliveryStatus === 'declined';
     
     if (!riderName && !deliveryStatus && !allRiders) return null;
     
@@ -522,12 +519,18 @@ export default function SellerViewOrder() {
             <>
               <View style={styles.riderInfoRow}>
                 <Ionicons name="person-outline" size={16} color="#6B7280" />
-                <Text style={styles.riderName}>{riderName}</Text>
+                <Text style={[styles.riderName, isRiderDeclined && styles.textDeclined]}>{riderName}</Text>
               </View>
               {riderPhone && (
                 <View style={styles.riderInfoRow}>
                   <Ionicons name="call-outline" size={16} color="#6B7280" />
                   <Text style={styles.riderPhone}>{riderPhone}</Text>
+                </View>
+              )}
+              {isRiderDeclined && (
+                <View style={styles.declinedWarning}>
+                  <Ionicons name="warning-outline" size={14} color="#EF4444" />
+                  <Text style={styles.declinedWarningText}>Rider declined this delivery</Text>
                 </View>
               )}
             </>
@@ -558,7 +561,7 @@ export default function SellerViewOrder() {
               <Text style={styles.waitingText}>Waiting for rider assignment...</Text>
             </View>
           )}
-          {deliveryStatus && (
+          {deliveryStatus && deliveryStatus !== 'declined' && (
             <View style={styles.deliveryStatusRow}>
               <MaterialCommunityIcons name="truck-fast" size={16} color="#3B82F6" />
               <Text style={styles.deliveryStatusText}>
@@ -755,6 +758,7 @@ export default function SellerViewOrder() {
     const isProcessing = currentStatus === 'processing';
     const isReadyToShip = currentStatus === 'ready_to_ship';
     const isPickup = isPickupOrder();
+    const isRiderDeclined = order?.delivery_info?.status === 'declined';
 
     const hasAnyAction = showConfirm || showCancel || showReadyToShip ||
       showArrangeShipment || showReadyForPickup || showPickedUp ||
@@ -777,7 +781,6 @@ export default function SellerViewOrder() {
       }
     };
 
-    // Check if rider has accepted
     const isRiderAccepted = order?.delivery_info?.status === 'accepted';
     const isWaitingForRider = currentStatus === 'waiting_for_rider';
 
@@ -806,20 +809,26 @@ export default function SellerViewOrder() {
             </TouchableOpacity>
           )}
 
-          {isProcessing && showArrangeShipment && !isPickup && (
+          {/* Arrange Shipment button - show for processing, pending_rider, and when rider declined */}
+          {((isProcessing && showArrangeShipment) || 
+            currentStatus === 'pending_rider' || 
+            isRiderDeclined) && !isPickup && (
             <TouchableOpacity
               style={[styles.actionButton, styles.readyToShipButton]}
               onPress={() => showActionConfirmation(
                 'arrange_shipment', 'Arrange Shipment',
-                'Assign riders for this delivery? Nearby riders will be notified.'
+                isRiderDeclined 
+                  ? 'The previous rider declined. Assign a new rider for this delivery?'
+                  : 'Assign riders for this delivery? Nearby riders will be notified.'
               )}
               disabled={processing}
             >
-              <Text style={styles.actionButtonText}>Arrange Shipment</Text>
+              <Text style={styles.actionButtonText}>
+                {isRiderDeclined ? 'Arrange Shipment Again' : 'Arrange Shipment'}
+              </Text>
             </TouchableOpacity>
           )}
 
-          {/* FIX: Show Ready to Ship button when rider has accepted and we're in waiting_for_rider status */}
           {isWaitingForRider && isRiderAccepted && showReadyToShip && !isPickup && (
             <TouchableOpacity
               style={[styles.actionButton, styles.readyToShipButton]}
@@ -863,19 +872,6 @@ export default function SellerViewOrder() {
             </TouchableOpacity>
           )}
 
-          {currentStatus === 'pending_rider' && showArrangeShipment && !isPickup && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.readyToShipButton]}
-              onPress={() => showActionConfirmation(
-                'arrange_shipment', 'Arrange Shipment',
-                'No riders available. Try assigning riders again?'
-              )}
-              disabled={processing}
-            >
-              <Text style={styles.actionButtonText}>Retry Arrange Shipment</Text>
-            </TouchableOpacity>
-          )}
-
           {isReadyToShip && showReadyToShip && !isPickup && (
             <TouchableOpacity
               style={[styles.actionButton, styles.readyToShipButton]}
@@ -888,7 +884,7 @@ export default function SellerViewOrder() {
             </TouchableOpacity>
           )}
 
-          {!isProcessing && !isReadyToShip && !isWaitingForRider && showArrangeShipment && !isPickup && (
+          {!isProcessing && !isReadyToShip && !isWaitingForRider && showArrangeShipment && !isPickup && !isRiderDeclined && (
             <TouchableOpacity
               style={[styles.actionButton, styles.readyToShipButton]}
               onPress={() => showActionConfirmation(
@@ -1903,5 +1899,22 @@ const styles = StyleSheet.create({
   riderModalDistanceLabel: {
     fontSize: 10,
     color: '#6B7280',
+  },
+  textDeclined: {
+    color: '#EF4444',
+    textDecorationLine: 'line-through',
+  },
+  declinedWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 0.5,
+    borderTopColor: '#FEE2E2',
+  },
+  declinedWarningText: {
+    fontSize: 12,
+    color: '#EF4444',
   },
 });

@@ -24697,7 +24697,7 @@ class SellerOrderList(viewsets.ViewSet):
                 return Response({"success": False, "message": "Order is for pickup, not delivery"}, status=status.HTTP_400_BAD_REQUEST)
             
             existing_delivery = Delivery.objects.filter(
-                order=order, status__in=['pending', 'pending_offer', 'accepted', 'picked_up', 'in_progress']
+                order=order, status__in=['pending', 'accepted', 'picked_up', 'in_progress']
             ).exists()
             if existing_delivery:
                 return Response({"success": False, "message": "Order already has an active or pending delivery"}, status=status.HTTP_400_BAD_REQUEST)
@@ -24812,7 +24812,7 @@ class SellerOrderList(viewsets.ViewSet):
             rider_distances.sort(key=lambda x: x['total_distance'])
             rider_comparison.sort(key=lambda x: x['total_distance_km'])
             
-            # SELECT ONLY THE NEAREST RIDER (SINGLE ASSIGNMENT)
+            # ========== FIX: SELECT ONLY THE NEAREST RIDER ==========
             nearest = rider_distances[0]
             selected_rider = nearest['rider']
             total_distance = nearest['total_distance']
@@ -24824,13 +24824,13 @@ class SellerOrderList(viewsets.ViewSet):
             estimated_minutes = self._calculate_estimated_time(total_distance)
             
             # Delete any existing pending deliveries for this order
-            Delivery.objects.filter(order=order, status='pending_offer').delete()
+            Delivery.objects.filter(order=order, status='pending').delete()
             
             # Create SINGLE delivery record for the nearest rider with status 'pending'
             delivery = Delivery.objects.create(
                 order=order,
                 rider=selected_rider,
-                status='pending',  # CHANGED FROM 'pending_offer' TO 'pending'
+                status='pending',  # Use 'pending' not 'pending_offer'
                 distance_km=Decimal(str(total_distance)),
                 estimated_minutes=estimated_minutes,
                 delivery_fee=Decimal(str(delivery_fee)),
@@ -24886,7 +24886,9 @@ class SellerOrderList(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
+
+
+
     @action(detail=False, methods=['post'])
     def check_delivery_responses(self, request):
         try:
