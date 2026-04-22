@@ -8247,6 +8247,8 @@ class AdminOrders(viewsets.ViewSet):
         except Exception as e:
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
+
+
 class AdminRiders(viewsets.ViewSet):
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""
@@ -17543,6 +17545,7 @@ class CustomerShopsAddSeller(viewsets.ViewSet):
 class SellerDashboard(viewsets.ViewSet):
     """
     Seller dashboard viewset with comprehensive metrics and data
+    VAT is excluded from sales/earnings calculations but still available from variants
     """
     
     @action(detail=False, methods=['get'])
@@ -17700,7 +17703,10 @@ class SellerDashboard(viewsets.ViewSet):
         return previous_start_date, previous_end_date
     
     def _get_summary_data(self, shop, start_date, end_date, previous_start_date, previous_end_date):
-        """Get summary statistics for the dashboard cards - FILTERED BY SPECIFIC SHOP"""
+        """
+        Get summary statistics for the dashboard cards - FILTERED BY SPECIFIC SHOP
+        Sales and earnings EXCLUDE VAT (use price_without_vat from checkout items)
+        """
         
         # Convert dates to datetime with time for filtering
         start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
@@ -17708,39 +17714,57 @@ class SellerDashboard(viewsets.ViewSet):
         prev_start_datetime = timezone.make_aware(datetime.combine(previous_start_date, time.min))
         prev_end_datetime = timezone.make_aware(datetime.combine(previous_end_date, time.max))
         
-        # Current period data - only for this specific shop
-        current_period_orders = Order.objects.filter(
-            checkout__cart_item__product__shop=shop,
-            created_at__range=[start_datetime, end_datetime]
+        # Get all checkout items for this shop in current period
+        current_checkout_items = Checkout.objects.filter(
+            order__checkout__cart_item__product__shop=shop,
+            order__created_at__range=[start_datetime, end_datetime],
+            order__status='delivered'
         ).exclude(
-            status__in=['cancelled', 'refunded']
-        ).distinct()
+            order__status__in=['cancelled', 'refunded']
+        ).select_related('order')
         
-        current_period_sales = current_period_orders.filter(
-            status='delivered'
-        ).aggregate(
-            total_sales=Sum('total_amount')
-        )['total_sales'] or Decimal('0.00')
+        # Calculate sales WITHOUT VAT - use price (base price) not total_amount which includes VAT
+        current_period_sales = Decimal('0.00')
+        for checkout_item in current_checkout_items:
+            # Use the base price (without VAT) for sales calculation
+            if checkout_item.direct_product_price:
+                # Direct checkout: use direct_product_price (base price without VAT)
+                current_period_sales += checkout_item.direct_product_price * checkout_item.quantity
+            elif checkout_item.cart_item and checkout_item.cart_item.variant:
+                # Cart checkout: use variant price (without VAT)
+                variant_price = checkout_item.cart_item.variant.price or Decimal('0.00')
+                current_period_sales += variant_price * checkout_item.quantity
+            elif checkout_item.cart_item and checkout_item.cart_item.product:
+                # Fallback to product price if no variant
+                product_price = Decimal(str(checkout_item.cart_item.product.price)) if hasattr(checkout_item.cart_item.product, 'price') else Decimal('0.00')
+                current_period_sales += product_price * checkout_item.quantity
         
         current_period_earnings = current_period_sales
-        current_period_order_count = current_period_orders.count()
+        current_period_order_count = current_checkout_items.values('order').distinct().count()
         
-        # Previous period data for comparison - only for this specific shop
-        previous_period_orders = Order.objects.filter(
-            checkout__cart_item__product__shop=shop,
-            created_at__range=[prev_start_datetime, prev_end_datetime]
+        # Get all checkout items for previous period
+        previous_checkout_items = Checkout.objects.filter(
+            order__checkout__cart_item__product__shop=shop,
+            order__created_at__range=[prev_start_datetime, prev_end_datetime],
+            order__status='delivered'
         ).exclude(
-            status__in=['cancelled', 'refunded']
-        ).distinct()
+            order__status__in=['cancelled', 'refunded']
+        ).select_related('order')
         
-        previous_period_sales = previous_period_orders.filter(
-            status='delivered'
-        ).aggregate(
-            total_sales=Sum('total_amount')
-        )['total_sales'] or Decimal('0.00')
+        # Calculate sales WITHOUT VAT for previous period
+        previous_period_sales = Decimal('0.00')
+        for checkout_item in previous_checkout_items:
+            if checkout_item.direct_product_price:
+                previous_period_sales += checkout_item.direct_product_price * checkout_item.quantity
+            elif checkout_item.cart_item and checkout_item.cart_item.variant:
+                variant_price = checkout_item.cart_item.variant.price or Decimal('0.00')
+                previous_period_sales += variant_price * checkout_item.quantity
+            elif checkout_item.cart_item and checkout_item.cart_item.product:
+                product_price = Decimal(str(checkout_item.cart_item.product.price)) if hasattr(checkout_item.cart_item.product, 'price') else Decimal('0.00')
+                previous_period_sales += product_price * checkout_item.quantity
         
         previous_period_earnings = previous_period_sales
-        previous_period_order_count = previous_period_orders.count()
+        previous_period_order_count = previous_checkout_items.values('order').distinct().count()
         
         # Calculate percentage changes
         sales_change = 0
@@ -17863,6 +17887,11 @@ class SellerDashboard(viewsets.ViewSet):
                     'critical_stock': variant.critical_trigger,
                     'sku_code': variant.sku_code,
                     'variant_title': variant.title,
+                    # Include VAT info for display purposes
+                    'price': float(variant.price) if variant.price else 0,
+                    'value_added_tax': float(variant.value_added_tax) if variant.value_added_tax else 0,
+                    'value_added_tax_amount': float(variant.value_added_tax_amount) if variant.value_added_tax_amount else 0,
+                    'price_with_vat': float(variant.price_with_vat) if variant.price else 0,
                 })
             
             return low_stock_items
@@ -17961,6 +17990,15 @@ class SellerDashboard(viewsets.ViewSet):
                 is_removed=False
             ).count()
             
+            # Get total VAT collected from variants (for information purposes only)
+            total_vat_collected = Variants.objects.filter(
+                product__shop=shop,
+                product__is_removed=False,
+                is_active=True
+            ).aggregate(
+                total_vat=Sum('value_added_tax_amount')
+            )['total_vat'] or Decimal('0.00')
+            
             return {
                 'average_rating': round(float(average_rating), 1),
                 'total_reviews': reviews.count(),
@@ -17970,6 +18008,7 @@ class SellerDashboard(viewsets.ViewSet):
                 'total_products': total_products,
                 'active_products': active_products,
                 'draft_products': draft_products,
+                'total_vat_collected': float(total_vat_collected),  # For information only
             }
         except Exception as e:
             print(f"Error in _get_shop_performance_data: {str(e)}")
@@ -17982,6 +18021,7 @@ class SellerDashboard(viewsets.ViewSet):
                 'total_products': 0,
                 'active_products': 0,
                 'draft_products': 0,
+                'total_vat_collected': 0,
             }
     
     def _get_report_data(self, shop):
@@ -18089,6 +18129,9 @@ class SellerDashboard(viewsets.ViewSet):
                     'critical_stock': variant.critical_trigger,
                     'sku_code': variant.sku_code,
                     'price': float(variant.price) if variant.price else None,
+                    'value_added_tax': float(variant.value_added_tax) if variant.value_added_tax else 0,
+                    'value_added_tax_amount': float(variant.value_added_tax_amount) if variant.value_added_tax_amount else 0,
+                    'price_with_vat': float(variant.price_with_vat) if variant.price else 0,
                     'created_at': variant.created_at.isoformat() if variant.created_at else None,
                 })
             
@@ -18177,18 +18220,31 @@ class SellerDashboard(viewsets.ViewSet):
             start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
             end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
             
-            # Get orders for this specific shop
-            orders = Order.objects.filter(
-                checkout__cart_item__product__shop_id=shop_id,
-                created_at__range=[start_datetime, end_datetime],
-                status='delivered'
-            ).distinct()
+            # Get checkout items for this specific shop with delivered orders
+            checkout_items = Checkout.objects.filter(
+                order__checkout__cart_item__product__shop_id=shop_id,
+                order__created_at__range=[start_datetime, end_datetime],
+                order__status='delivered'
+            ).select_related('order')
             
-            # Group by date
+            # Calculate sales WITHOUT VAT by date
             sales_by_date = {}
-            for order in orders:
-                date_key = order.created_at.strftime(date_format)
-                sales_by_date[date_key] = sales_by_date.get(date_key, 0) + float(order.total_amount)
+            for checkout_item in checkout_items:
+                date_key = checkout_item.order.created_at.strftime(date_format)
+                
+                # Calculate item total WITHOUT VAT
+                if checkout_item.direct_product_price:
+                    item_total = float(checkout_item.direct_product_price) * checkout_item.quantity
+                elif checkout_item.cart_item and checkout_item.cart_item.variant:
+                    variant_price = float(checkout_item.cart_item.variant.price or 0)
+                    item_total = variant_price * checkout_item.quantity
+                elif checkout_item.cart_item and checkout_item.cart_item.product:
+                    product_price = float(getattr(checkout_item.cart_item.product, 'price', 0))
+                    item_total = product_price * checkout_item.quantity
+                else:
+                    item_total = 0
+                
+                sales_by_date[date_key] = sales_by_date.get(date_key, 0) + item_total
             
             # Generate date range and build response
             data = []
@@ -18226,7 +18282,8 @@ class SellerDashboard(viewsets.ViewSet):
                 {'error': str(e), 'success': False},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-            
+
+
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
