@@ -19052,7 +19052,7 @@ class SellerProducts(viewsets.ModelViewSet):
         created_variants = []
         try:
             import json
-            from decimal import Decimal
+            from decimal import Decimal, InvalidOperation
             
             variants_list = json.loads(variants_raw) if isinstance(variants_raw, str) else variants_raw
             
@@ -19101,7 +19101,7 @@ class SellerProducts(viewsets.ModelViewSet):
                             if decimal_value > 100000:
                                 logger.warning(f"{field} value is very high: {decimal_value}")
                             variant_fields[field] = decimal_value
-                        except (ValueError, TypeError, Decimal.InvalidOperation):
+                        except (ValueError, TypeError, InvalidOperation):
                             logger.warning(f"Invalid decimal value for {field}: {value}")
                 
                 # Handle refundable flag
@@ -19141,7 +19141,7 @@ class SellerProducts(viewsets.ModelViewSet):
                             if decimal_value < 0:
                                 raise ValidationError(f"{field} cannot be negative")
                             variant_fields[field] = decimal_value
-                        except (ValueError, TypeError, Decimal.InvalidOperation):
+                        except (ValueError, TypeError, InvalidOperation):
                             logger.warning(f"Invalid decimal value for {field}: {value}")
                             if 'payment' in field:
                                 variant_fields[field] = Decimal('0.00')
@@ -19180,7 +19180,7 @@ class SellerProducts(viewsets.ModelViewSet):
                         if original_price_decimal < 0:
                             raise ValidationError("Original price cannot be negative")
                         variant_fields['original_price'] = original_price_decimal
-                    except (ValueError, TypeError, Decimal.InvalidOperation):
+                    except (ValueError, TypeError, InvalidOperation):
                         logger.warning(f"Invalid original_price value: {original_price}")
                 
                 # Validate price vs original price
@@ -19261,7 +19261,7 @@ class SellerProducts(viewsets.ModelViewSet):
                             raise ValidationError("VAT cannot exceed 100%")
                         variant_fields['value_added_tax'] = vat_value
                         logger.info(f"Using provided VAT: {vat_value}% for variant")
-                    except (ValueError, TypeError, Decimal.InvalidOperation):
+                    except (ValueError, TypeError, InvalidOperation):
                         logger.warning(f"Invalid VAT value: {value_added_tax}, using default 12%")
                         variant_fields['value_added_tax'] = Decimal('12.00')
                 else:
@@ -19310,7 +19310,7 @@ class SellerProducts(viewsets.ModelViewSet):
             import traceback
             traceback.print_exc()
             raise
-
+        
     def _build_product_response(self, product, seller, status_code):
         """
         Build standardized product response with variant data including dimensions and VAT
