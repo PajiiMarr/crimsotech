@@ -903,16 +903,18 @@ class Profiling(APIView):
         return Response(data)
     
     def post(self, request):
-        serializer = UserSerializer(data=request.data)
+        # Remove fields that shouldn't be in UserSerializer
+        data = request.data.copy()
+        data.pop('user_id', None)
+        
+        serializer = UserSerializer(data=data)
         if serializer.is_valid(raise_exception=True):
             saved_user = serializer.save()
             
-            # Transform response to maintain frontend compatibility
             response_data = serializer.data.copy()
-            if 'id' in response_data:
-                response_data['user_id'] = response_data.pop('id')
+            response_data['user_id'] = saved_user.id
             
-            return Response(response_data)
+            return Response(response_data, status=status.HTTP_201_CREATED)
         
     def put(self, request):
         user_id = request.headers.get("X-User-Id")
@@ -924,107 +926,115 @@ class Profiling(APIView):
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
+        
+        # Remove fields that shouldn't be in UserSerializer
+        data = request.data.copy()
+        data.pop('user_id', None)
+        data.pop('registration_stage', None)
+        
+        serializer = UserSerializer(user, data=data, partial=True)
+        
+        if not serializer.is_valid():
+            print(f"[PROFILE] Validation errors: {serializer.errors}")
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Save the user and get the updated instance
+        updated_user = serializer.save()
+        
+        # Check if any address field is being updated
+        address_fields = ['street', 'barangay', 'city', 'province', 'zip_code', 'country']
+        has_address_data = any(field in request.data for field in address_fields)
+        
+        latitude = None
+        longitude = None
+        
+        # Get coordinates from the address if address fields are present
+        if has_address_data:
+            # Get coordinates from Google Maps API using the updated address
+            latitude, longitude = self._get_coordinates_from_address(
+                street=updated_user.street,
+                barangay=updated_user.barangay,
+                city=updated_user.city,
+                province=updated_user.province,
+                country=updated_user.country or "Philippines"
+            )
             
-        serializer = UserSerializer(user, data=request.data, partial=True)
-        if serializer.is_valid(raise_exception=True):
-            # Save the user and get the updated instance
-            updated_user = serializer.save()
-            
-            # Check if any address field is being updated
-            address_fields = ['street', 'barangay', 'city', 'province', 'zip_code', 'country']
-            has_address_data = any(field in request.data for field in address_fields)
-            
-            latitude = None
-            longitude = None
-            
-            # Get coordinates from the address if address fields are present
-            if has_address_data:
-                # Get coordinates from Google Maps API using the updated address
-                latitude, longitude = self._get_coordinates_from_address(
-                    street=updated_user.street,
-                    barangay=updated_user.barangay,
-                    city=updated_user.city,
-                    province=updated_user.province,
-                    country=updated_user.country or "Philippines"
-                )
-                
-                # Update user with coordinates if available
-                if latitude and longitude:
-                    updated_user.latitude = latitude
-                    updated_user.longitude = longitude
-                    updated_user.save(update_fields=['latitude', 'longitude'])
-                    print(f"[PROFILE] Updated user {updated_user.id} with coordinates ({latitude}, {longitude})")
-            
-            # Create or update the default shipping address from user profile
-            try:
-                # Check if user already has a default shipping address
-                existing_default = ShippingAddress.objects.filter(
-                    user=updated_user,
-                    is_default=True
-                ).first()
-                
-                # Get recipient name from user profile
-                recipient_name = f"{updated_user.first_name} {updated_user.last_name}".strip()
-                if not recipient_name:
-                    recipient_name = updated_user.username or "Customer"
-                
-                if not existing_default:
-                    # Create default shipping address from user profile
-                    shipping_address = ShippingAddress(
-                        user=updated_user,
-                        recipient_name=recipient_name,
-                        recipient_phone=updated_user.contact_number or "",
-                        street=updated_user.street or "",
-                        barangay=updated_user.barangay or "",
-                        city=updated_user.city or "",
-                        province=updated_user.province or "",
-                        state=updated_user.state or "",
-                        zip_code=updated_user.zip_code or "",
-                        country=updated_user.country or "Philippines",
-                        address_type="home",
-                        is_default=True,
-                        is_active=True,
-                        latitude=latitude,
-                        longitude=longitude
-                    )
-                    shipping_address.save()
-                    print(f"[PROFILE] Created default shipping address for user {updated_user.id}")
-                else:
-                    # Update existing default address with new profile data
-                    existing_default.recipient_name = recipient_name
-                    existing_default.recipient_phone = updated_user.contact_number or ""
-                    existing_default.street = updated_user.street or ""
-                    existing_default.barangay = updated_user.barangay or ""
-                    existing_default.city = updated_user.city or ""
-                    existing_default.province = updated_user.province or ""
-                    existing_default.state = updated_user.state or ""
-                    existing_default.zip_code = updated_user.zip_code or ""
-                    existing_default.country = updated_user.country or "Philippines"
-                    
-                    # Update coordinates if available
-                    if latitude and longitude:
-                        existing_default.latitude = latitude
-                        existing_default.longitude = longitude
-                    
-                    existing_default.save()
-                    print(f"[PROFILE] Updated default shipping address for user {updated_user.id}")
-                    
-            except Exception as e:
-                # Log error but don't fail the profiling update
-                print(f"[PROFILE] Error creating/updating shipping address: {str(e)}")
-            
-            # Transform response to maintain frontend compatibility
-            response_data = serializer.data.copy()
-            if 'id' in response_data:
-                response_data['user_id'] = response_data.pop('id')
-            
-            # Add coordinates to response if available
+            # Update user with coordinates if available
             if latitude and longitude:
-                response_data['latitude'] = float(latitude)
-                response_data['longitude'] = float(longitude)
+                updated_user.latitude = latitude
+                updated_user.longitude = longitude
+                updated_user.save(update_fields=['latitude', 'longitude'])
+                print(f"[PROFILE] Updated user {updated_user.id} with coordinates ({latitude}, {longitude})")
+        
+        # Create or update the default shipping address from user profile
+        try:
+            # Check if user already has a default shipping address
+            existing_default = ShippingAddress.objects.filter(
+                user=updated_user,
+                is_default=True
+            ).first()
             
-            return Response(response_data)
-
+            # Get recipient name from user profile
+            recipient_name = f"{updated_user.first_name} {updated_user.last_name}".strip()
+            if not recipient_name:
+                recipient_name = updated_user.username or "Customer"
+            
+            if not existing_default:
+                # Create default shipping address from user profile
+                shipping_address = ShippingAddress(
+                    user=updated_user,
+                    recipient_name=recipient_name,
+                    recipient_phone=updated_user.contact_number or "",
+                    street=updated_user.street or "",
+                    barangay=updated_user.barangay or "",
+                    city=updated_user.city or "",
+                    province=updated_user.province or "",
+                    state=updated_user.state or "",
+                    zip_code=updated_user.zip_code or "",
+                    country=updated_user.country or "Philippines",
+                    address_type="home",
+                    is_default=True,
+                    is_active=True,
+                    latitude=latitude,
+                    longitude=longitude
+                )
+                shipping_address.save()
+                print(f"[PROFILE] Created default shipping address for user {updated_user.id}")
+            else:
+                # Update existing default address with new profile data
+                existing_default.recipient_name = recipient_name
+                existing_default.recipient_phone = updated_user.contact_number or ""
+                existing_default.street = updated_user.street or ""
+                existing_default.barangay = updated_user.barangay or ""
+                existing_default.city = updated_user.city or ""
+                existing_default.province = updated_user.province or ""
+                existing_default.state = updated_user.state or ""
+                existing_default.zip_code = updated_user.zip_code or ""
+                existing_default.country = updated_user.country or "Philippines"
+                
+                # Update coordinates if available
+                if latitude and longitude:
+                    existing_default.latitude = latitude
+                    existing_default.longitude = longitude
+                
+                existing_default.save()
+                print(f"[PROFILE] Updated default shipping address for user {updated_user.id}")
+                
+        except Exception as e:
+            # Log error but don't fail the profiling update
+            print(f"[PROFILE] Error creating/updating shipping address: {str(e)}")
+        
+        # Transform response to maintain frontend compatibility
+        response_data = serializer.data.copy()
+        response_data['user_id'] = updated_user.id
+        
+        # Add coordinates to response if available
+        if latitude and longitude:
+            response_data['latitude'] = float(latitude)
+            response_data['longitude'] = float(longitude)
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+    
 class VerifyNumber(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def user(self, request):
@@ -16690,7 +16700,61 @@ class RiderStatus(viewsets.ViewSet):
         }, status=status.HTTP_200_OK)
 
 
+import requests
+from decimal import Decimal
+
 class CustomerShops(APIView):
+
+    # ── Geocoding Helper ───────────────────────────────────────────────────────
+
+    def geocode_address(self, street, barangay, city, province):
+        """Convert address to coordinates using Google Maps Geocoding API."""
+        if not all([street, barangay, city, province]):
+            print(f"[GEOCODE] Missing address parts - cannot geocode")
+            return None, None
+        
+        # Build full address
+        full_address = f"{street}, {barangay}, {city}, {province}, Philippines"
+        
+        GOOGLE_MAPS_API_KEY = getattr(settings, 'GOOGLE_MAPS_API_KEY', None)
+        if not GOOGLE_MAPS_API_KEY:
+            print(f"[GEOCODE] ⚠️ Google Maps API key not configured")
+            return None, None
+        
+        try:
+            url = "https://maps.googleapis.com/maps/api/geocode/json"
+            params = {
+                'address': full_address,
+                'key': GOOGLE_MAPS_API_KEY,
+                'components': 'country:PH'  # Restrict to Philippines
+            }
+            
+            print(f"[GEOCODE] Geocoding address: {full_address}")
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('status') == 'OK' and data.get('results'):
+                    location = data['results'][0]['geometry']['location']
+                    lat = Decimal(str(location['lat']))
+                    lng = Decimal(str(location['lng']))
+                    
+                    print(f"[GEOCODE] ✅ Success: ({lat}, {lng})")
+                    return lat, lng
+                else:
+                    print(f"[GEOCODE] ⚠️ Geocoding failed: {data.get('status')}")
+                    return None, None
+            else:
+                print(f"[GEOCODE] ❌ HTTP Error: {response.status_code}")
+                return None, None
+                
+        except requests.exceptions.Timeout:
+            print(f"[GEOCODE] ❌ Request timeout")
+            return None, None
+        except Exception as e:
+            print(f"[GEOCODE] ❌ Error: {str(e)}")
+            return None, None
 
     # ── Image URL helper ───────────────────────────────────────────────────────
 
@@ -16871,6 +16935,14 @@ class CustomerShops(APIView):
                     if file:
                         validate_image(file, label)
 
+                # ── Geocode address to get coordinates ──────────────────────
+                latitude, longitude = self.geocode_address(
+                    street=request.data.get('street', '').strip(),
+                    barangay=request.data.get('barangay', '').strip(),
+                    city=request.data.get('city', '').strip(),
+                    province=request.data.get('province', '').strip()
+                )
+
                 # Create shop
                 shop = Shop.objects.create(
                     id=uuid.uuid4(),
@@ -16886,6 +16958,8 @@ class CustomerShops(APIView):
                     status="Pending",
                     total_sales=0,
                     is_suspended=False,
+                    latitude=latitude,
+                    longitude=longitude,
                     business_registration_type=reg_type,
                     business_registration_number=request.data.get('business_registration_number', '').strip(),
                     government_id_type=request.data.get('government_id_type', '').strip(),
@@ -16906,6 +16980,12 @@ class CustomerShops(APIView):
                         setattr(shop, field_name, file)
 
                 shop.save()
+
+                # Log geocoding result
+                if latitude and longitude:
+                    logger.info(f"📍 Shop '{shop.name}' geocoded to coordinates: ({latitude}, {longitude})")
+                else:
+                    logger.warning(f"⚠️ Could not geocode address for shop '{shop.name}'")
 
                 # Notify admins
                 for admin_user in User.objects.filter(is_admin=True):
@@ -16932,8 +17012,10 @@ class CustomerShops(APIView):
                     'total_sales':    str(shop.total_sales),
                     'created_at':     shop.created_at.isoformat(),
                     'updated_at':     shop.updated_at.isoformat(),
-                    'shop_picture':   self.get_media_url(shop.shop_picture),  # ← fixed
-                    **self.build_shop_legal_docs(shop),                        # ← fixed
+                    'shop_picture':   self.get_media_url(shop.shop_picture),
+                    'latitude':       float(shop.latitude) if shop.latitude else None,
+                    'longitude':      float(shop.longitude) if shop.longitude else None,
+                    **self.build_shop_legal_docs(shop),
                 }
 
                 logger.info(f"Shop created (pending): {shop.name} by user {user_id}")
@@ -16986,10 +17068,12 @@ class CustomerShops(APIView):
                     'street':         shop.street,
                     'contact_number': shop.contact_number,
                     'full_address':   f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}",
+                    'latitude':       float(shop.latitude) if shop.latitude else None,
+                    'longitude':      float(shop.longitude) if shop.longitude else None,
                 },
                 'shop_name':    shop.name,
                 'shop_id':      str(shop.id),
-                'shop_picture': self.get_media_url(shop.shop_picture),  # ← fixed
+                'shop_picture': self.get_media_url(shop.shop_picture),
             }, status=status.HTTP_200_OK)
 
         except Customer.DoesNotExist:
@@ -17000,16 +17084,40 @@ class CustomerShops(APIView):
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def update_return_address(self, request, customer_id, shop_id):
-        """Update shop's return address."""
+        """Update shop's return address and re-geocode coordinates."""
         try:
             customer = Customer.objects.get(customer_id=customer_id)
             shop     = Shop.objects.get(id=shop_id, customer=customer)
 
+            # Update address fields
             shop.province       = request.data.get('province',       shop.province)
             shop.city           = request.data.get('city',           shop.city)
             shop.barangay       = request.data.get('barangay',       shop.barangay)
             shop.street         = request.data.get('street',         shop.street)
             shop.contact_number = request.data.get('contact_number', shop.contact_number)
+            
+            # Re-geocode if address fields were updated
+            address_changed = any([
+                'province' in request.data,
+                'city' in request.data,
+                'barangay' in request.data,
+                'street' in request.data
+            ])
+            
+            if address_changed:
+                latitude, longitude = self.geocode_address(
+                    street=shop.street,
+                    barangay=shop.barangay,
+                    city=shop.city,
+                    province=shop.province
+                )
+                if latitude and longitude:
+                    shop.latitude = latitude
+                    shop.longitude = longitude
+                    logger.info(f"📍 Shop '{shop.name}' coordinates updated to: ({latitude}, {longitude})")
+                else:
+                    logger.warning(f"⚠️ Could not geocode updated address for shop '{shop.name}'")
+            
             shop.save()
 
             return Response({
@@ -17022,8 +17130,10 @@ class CustomerShops(APIView):
                     'street':         shop.street,
                     'contact_number': shop.contact_number,
                     'full_address':   f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}",
+                    'latitude':       float(shop.latitude) if shop.latitude else None,
+                    'longitude':      float(shop.longitude) if shop.longitude else None,
                 },
-                'shop_picture': self.get_media_url(shop.shop_picture),  # ← fixed
+                'shop_picture': self.get_media_url(shop.shop_picture),
             }, status=status.HTTP_200_OK)
 
         except Customer.DoesNotExist:
@@ -17032,7 +17142,7 @@ class CustomerShops(APIView):
             return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
+        
 class CustomerShopsAddSeller(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_shop(self, request):
@@ -17933,6 +18043,8 @@ class SellerProducts(viewsets.ModelViewSet):
                 except (ValueError, TypeError):
                     return Response({"error": "Invalid category_admin_id format"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # VAT field removed from product level - now handled at variant level
+
         if not update_fields:
             return Response({"error": "No fields to update"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -18480,6 +18592,8 @@ class SellerProducts(viewsets.ModelViewSet):
             
         product_data['customer'] = seller.customer_id
         
+        # VAT removed from product level - now handled at variant level
+        
         # Handle category_admin for global categories (accepts id or name)
         category_admin_id = request.data.get('category_admin_id')
         category_admin_name = request.data.get('category_admin_name') or request.data.get('category_name')
@@ -18570,7 +18684,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     except Exception as e:
                         logger.error(f"Error creating ProductMedia: {e}")
 
-                # Process variants with all new fields including dimensions and dimension_unit
+                # Process variants with all new fields including dimensions, dimension_unit, and VAT
                 created_variants = self._process_variants(variants_raw, request.FILES, product, shop)
                 
                 # Verify at least one variant was created
@@ -18628,7 +18742,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     'critical_stock': variant_data.get('critical_stock'),
                 }
                 
-                # Handle dimension_unit field - UPDATED
+                # Handle dimension_unit field
                 dimension_unit = variant_data.get('dimension_unit')
                 if dimension_unit in ['cm', 'm', 'in', 'ft']:
                     variant_fields['dimension_unit'] = dimension_unit
@@ -18790,6 +18904,36 @@ class SellerProducts(viewsets.ModelViewSet):
                             variant_fields.get('maximum_additional_payment', Decimal('0.00'))):
                             raise ValidationError("Minimum payment cannot be greater than maximum payment")
                 
+                # --- VAT HANDLING ---
+                # Get price for VAT calculation
+                price = variant_fields.get('price', Decimal('0'))
+                
+                # Check if VAT value is provided in the variant data
+                value_added_tax = variant_data.get('value_added_tax')
+                
+                if value_added_tax is not None and value_added_tax != '':
+                    try:
+                        # Parse the VAT value (should be a percentage like 12 for 12%)
+                        vat_value = Decimal(str(value_added_tax))
+                        if vat_value < 0:
+                            raise ValidationError("VAT cannot be negative")
+                        if vat_value > 100:
+                            raise ValidationError("VAT cannot exceed 100%")
+                        variant_fields['value_added_tax'] = vat_value
+                        logger.info(f"Using provided VAT: {vat_value}% for variant")
+                    except (ValueError, TypeError, Decimal.InvalidOperation):
+                        logger.warning(f"Invalid VAT value: {value_added_tax}, using default 12%")
+                        variant_fields['value_added_tax'] = Decimal('12.00')
+                else:
+                    # Default VAT of 12% if not specified
+                    variant_fields['value_added_tax'] = Decimal('12.00')
+                    logger.info(f"No VAT provided, using default 12% for variant")
+                
+                # Calculate and store the VAT amount (price * VAT percentage / 100)
+                # This is the actual tax amount that will be added to the price
+                variant_fields['value_added_tax_amount'] = (price * variant_fields['value_added_tax']) / Decimal('100')
+                logger.info(f"VAT amount calculated: {variant_fields['value_added_tax_amount']} (price: {price}, VAT%: {variant_fields['value_added_tax']})")
+                
                 # Handle variant image
                 provided_id = variant_data.get('id')
                 file_key = f"variant_image_{provided_id}" if provided_id else None
@@ -18829,7 +18973,7 @@ class SellerProducts(viewsets.ModelViewSet):
 
     def _build_product_response(self, product, seller, status_code):
         """
-        Build standardized product response with variant data including dimensions
+        Build standardized product response with variant data including dimensions and VAT
         """
         variants_data = []
         for variant in product.variants.all():
@@ -18847,7 +18991,12 @@ class SellerProducts(viewsets.ModelViewSet):
                 "length": str(variant.length) if variant.length else None,
                 "width": str(variant.width) if variant.width else None,
                 "height": str(variant.height) if variant.height else None,
-                "dimension_unit": variant.dimension_unit,  # ADDED
+                "dimension_unit": variant.dimension_unit,
+                # VAT field at variant level
+                "value_added_tax": str(variant.value_added_tax) if variant.value_added_tax else "12.00",
+                "value_added_tax_amount": str(variant.value_added_tax_amount) if variant.value_added_tax_amount else "0.00",
+                "price_with_vat": str(variant.price_with_vat) if variant.price else None,
+                "price_with_vat": str(variant.price_with_vat) if variant.price and variant.value_added_tax else None,
                 "is_active": variant.is_active,
                 "is_refundable": variant.is_refundable,
                 "refund_days": variant.refund_days,
@@ -18875,7 +19024,8 @@ class SellerProducts(viewsets.ModelViewSet):
         total_quantity = sum(v.quantity for v in product.variants.all())
         min_price = None
         if product.variants.exists():
-            min_price = str(product.variants.filter(price__isnull=False).order_by('price').first().price) if product.variants.filter(price__isnull=False).exists() else None
+            min_price_variant = product.variants.filter(price__isnull=False).order_by('price').first()
+            min_price = str(min_price_variant.price) if min_price_variant else None
 
         response_data = {
             "success": True,
@@ -18959,7 +19109,10 @@ class SellerProducts(viewsets.ModelViewSet):
                         "length": str(variant.length) if variant.length else None,
                         "width": str(variant.width) if variant.width else None,
                         "height": str(variant.height) if variant.height else None,
-                        "dimension_unit": variant.dimension_unit,  # ADDED
+                        "dimension_unit": variant.dimension_unit,
+                        # VAT field at variant level
+                        "value_added_tax": str(variant.value_added_tax) if variant.value_added_tax else "12.00",
+                        "price_with_vat": str(variant.price_with_vat) if variant.price and variant.value_added_tax else None,
                         "is_active": variant.is_active,
                         "is_refundable": variant.is_refundable,
                         "refund_days": variant.refund_days,
@@ -19248,7 +19401,10 @@ class SellerProducts(viewsets.ModelViewSet):
                     "length": str(variant.length) if variant.length else None,
                     "width": str(variant.width) if variant.width else None,
                     "height": str(variant.height) if variant.height else None,
-                    "dimension_unit": variant.dimension_unit,  # ADDED
+                    "dimension_unit": variant.dimension_unit,
+                    # VAT field at variant level
+                    "value_added_tax": str(variant.value_added_tax) if variant.value_added_tax else "12.00",
+                    "price_with_vat": str(variant.price_with_vat) if variant.price and variant.value_added_tax else None,
                     "weight": str(variant.weight) if variant.weight else None,
                     "weight_unit": variant.weight_unit,
                     "critical_trigger": variant.critical_trigger,
@@ -19333,7 +19489,7 @@ class SellerProducts(viewsets.ModelViewSet):
                 },
                 "upload_status": product.upload_status,
                 "status": product.status,
-                "condition": product.condition,  # Now returns integer 1-5
+                "condition": product.condition,
                 "is_refundable": product.is_refundable,
                 "refund_days": product.refund_days,
                 "created_at": product.created_at.isoformat() if product.created_at else None,
@@ -19452,6 +19608,10 @@ class SellerProducts(viewsets.ModelViewSet):
                 'length': str(variant.length) if variant.length else None,
                 'width': str(variant.width) if variant.width else None,
                 'height': str(variant.height) if variant.height else None,
+                'dimension_unit': variant.dimension_unit,
+                # VAT field at variant level
+                'value_added_tax': str(variant.value_added_tax) if variant.value_added_tax else "12.00",
+                'price_with_vat': str(variant.price_with_vat) if variant.price and variant.value_added_tax else None,
                 'weight': str(variant.weight) if variant.weight else None,
                 'weight_unit': variant.weight_unit,
                 'critical_trigger': variant.critical_trigger,
@@ -19521,7 +19681,7 @@ class SellerProducts(viewsets.ModelViewSet):
             update_fields = []
 
             simple_str_fields = ['title', 'sku_code', 'weight_unit', 'swap_type',
-                                'swap_description', 'usage_unit', 'dimension_unit']  # ADDED dimension_unit
+                                'swap_description', 'usage_unit', 'dimension_unit']
             for field in simple_str_fields:
                 if field in v_data:
                     if field == 'usage_unit' and v_data[field] not in ['weeks', 'months', 'years']:
@@ -19605,6 +19765,26 @@ class SellerProducts(viewsets.ModelViewSet):
                         except (ValueError, TypeError, Decimal.InvalidOperation):
                             errors.append({'id': variant_id, 'field': field, 'error': f'Invalid decimal value for {field}'})
 
+            # VAT field at variant level
+            if 'value_added_tax' in v_data:
+                vat_val = v_data['value_added_tax']
+                if vat_val is None or vat_val == '':
+                    variant.value_added_tax = Decimal('12.00')
+                    update_fields.append('value_added_tax')
+                else:
+                    try:
+                        from decimal import Decimal
+                        vat_decimal = Decimal(str(vat_val))
+                        if vat_decimal < 0:
+                            errors.append({'id': variant_id, 'field': 'value_added_tax', 'error': 'VAT cannot be negative'})
+                        elif vat_decimal > 100:
+                            errors.append({'id': variant_id, 'field': 'value_added_tax', 'error': 'VAT cannot exceed 100%'})
+                        else:
+                            variant.value_added_tax = vat_decimal
+                            update_fields.append('value_added_tax')
+                    except (ValueError, TypeError, Decimal.InvalidOperation):
+                        errors.append({'id': variant_id, 'field': 'value_added_tax', 'error': 'Invalid VAT value'})
+
             # Validate price vs original_price
             if 'price' in update_fields and variant.original_price and variant.price:
                 if variant.price > variant.original_price:
@@ -19680,7 +19860,10 @@ class SellerProducts(viewsets.ModelViewSet):
                 'length': str(variant.length) if variant.length else None,
                 'width': str(variant.width) if variant.width else None,
                 'height': str(variant.height) if variant.height else None,
-                'dimension_unit': variant.dimension_unit,  # ADDED
+                'dimension_unit': variant.dimension_unit,
+                # VAT field
+                'value_added_tax': str(variant.value_added_tax) if variant.value_added_tax else "12.00",
+                'price_with_vat': str(variant.price_with_vat) if variant.price and variant.value_added_tax else None,
                 'is_active': variant.is_active,
                 'original_price': str(variant.original_price) if variant.original_price else None,
                 'usage_period': variant.usage_period,
@@ -19775,7 +19958,8 @@ class SellerProducts(viewsets.ModelViewSet):
         return Response({
             'success': True,
             'message': 'Media deleted successfully',
-        }, status=status.HTTP_200_OK)    
+        }, status=status.HTTP_200_OK)
+
 
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
@@ -24941,29 +25125,7 @@ class SellerOrderList(viewsets.ViewSet):
             print(traceback.format_exc())
             return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)
 
-import logging
-import uuid
-import requests
-import base64
-import re
-from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, timedelta
-from django.utils import timezone
-from django.db import models
-from django.db.models import Q, Sum, Count, Avg
-from django.shortcuts import get_object_or_404
-from django.conf import settings
-from django.http import HttpResponse
-from django.shortcuts import redirect
-from rest_framework import status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.viewsets import ViewSet
-
-logger = logging.getLogger(__name__)
-
-
-class CheckoutOrder(ViewSet):
+class CheckoutOrder(viewsets.ViewSet):
     
     def _calculate_haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """
@@ -25103,6 +25265,61 @@ class CheckoutOrder(ViewSet):
         logger.info(f"💰 Transaction fee calculated: ₱{fee:.2f} for {payment_method} payment on ₱{amount:.2f}")
         print(f"[FEE] Transaction fee: ₱{fee:.2f} (5% capped at ₱50) for {payment_method}")
         return fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+    def _calculate_vat(self, amount: Decimal, vat_rate: Decimal = Decimal('0.12')) -> Decimal:
+        """
+        Calculate VAT amount
+        Default VAT rate is 12% (Philippines)
+        """
+        vat_amount = amount * vat_rate
+        return vat_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+    def _get_customer_coordinates(self, user_id, selected_address_id=None):
+        """
+        Get customer coordinates from selected shipping address or fallback to user coordinates
+        Returns (latitude, longitude, source_description)
+        """
+        # Try to get from selected shipping address first
+        if selected_address_id:
+            try:
+                shipping_address = ShippingAddress.objects.get(
+                    id=selected_address_id,
+                    user_id=user_id,
+                    is_active=True
+                )
+                if shipping_address.latitude and shipping_address.longitude:
+                    print(f"[COORDS] ✅ Using coordinates from selected shipping address: ({shipping_address.latitude}, {shipping_address.longitude})")
+                    return float(shipping_address.latitude), float(shipping_address.longitude), "shipping_address"
+            except ShippingAddress.DoesNotExist:
+                print(f"[COORDS] ⚠️ Selected shipping address {selected_address_id} not found")
+        
+        # Fallback to user's default shipping address
+        try:
+            default_address = ShippingAddress.objects.filter(
+                user_id=user_id,
+                is_active=True,
+                is_default=True
+            ).first()
+            
+            if default_address and default_address.latitude and default_address.longitude:
+                print(f"[COORDS] ✅ Using coordinates from default shipping address: ({default_address.latitude}, {default_address.longitude})")
+                return float(default_address.latitude), float(default_address.longitude), "default_shipping_address"
+        except Exception as e:
+            print(f"[COORDS] ⚠️ Error getting default address: {e}")
+        
+        # Final fallback: use user's coordinates from User model
+        try:
+            user = User.objects.get(id=user_id)
+            if user.latitude and user.longitude:
+                print(f"[COORDS] ✅ Using coordinates from User profile: ({user.latitude}, {user.longitude})")
+                return float(user.latitude), float(user.longitude), "user_profile"
+        except User.DoesNotExist:
+            print(f"[COORDS] ❌ User {user_id} not found")
+        except Exception as e:
+            print(f"[COORDS] ⚠️ Error getting user coordinates: {e}")
+        
+        print(f"[COORDS] ❌ No coordinates found for customer")
+        return None, None, None
 
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')
     def get_checkout_items(self, request):
@@ -25272,46 +25489,19 @@ class CheckoutOrder(ViewSet):
             shop_addresses = {}
             personal_seller_addresses = {}
 
-            # Get selected shipping address for distance calculation
-            selected_shipping_address = None
-            if selected_address_id:
-                try:
-                    selected_shipping_address = ShippingAddress.objects.get(
-                        id=selected_address_id,
-                        user_id=user_id,
-                        is_active=True
-                    )
-                    
-                    print("=" * 80)
-                    print("📍 [CUSTOMER ADDRESS DETAILS]")
-                    print(f"  ID: {selected_shipping_address.id}")
-                    print(f"  Recipient Name: {selected_shipping_address.recipient_name}")
-                    print(f"  Phone: {selected_shipping_address.recipient_phone}")
-                    print(f"  Street: {selected_shipping_address.street}")
-                    print(f"  Barangay: {selected_shipping_address.barangay}")
-                    print(f"  City: {selected_shipping_address.city}")
-                    print(f"  Province: {selected_shipping_address.province}")
-                    print(f"  ZIP Code: {selected_shipping_address.zip_code}")
-                    print(f"  Country: {selected_shipping_address.country}")
-                    print(f"  Building: {selected_shipping_address.building_name}")
-                    print(f"  Floor: {selected_shipping_address.floor_number}")
-                    print(f"  Unit: {selected_shipping_address.unit_number}")
-                    print(f"  Landmark: {selected_shipping_address.landmark}")
-                    print(f"  Instructions: {selected_shipping_address.instructions}")
-                    print(f"  Address Type: {selected_shipping_address.address_type}")
-                    print(f"  Is Default: {selected_shipping_address.is_default}")
-                    print(f"  Full Address: {selected_shipping_address.get_full_address()}")
-                    print(f"  Latitude: {selected_shipping_address.latitude}")
-                    print(f"  Longitude: {selected_shipping_address.longitude}")
-                    print("=" * 80)
-                    
-                    logger.info(f"🏠 Customer selected address: {selected_shipping_address.get_full_address()}")
-                    logger.info(f"📍 Customer coordinates: ({selected_shipping_address.latitude}, {selected_shipping_address.longitude})")
-                except ShippingAddress.DoesNotExist:
-                    print(f"[ADDRESS] ❌ Shipping address {selected_address_id} not found")
-                    pass
+            # Get customer coordinates (auto-fallback to user profile if no address selected)
+            customer_lat, customer_lng, coord_source = self._get_customer_coordinates(user_id, selected_address_id)
+            
+            if customer_lat and customer_lng:
+                print(f"[COORDS] 📍 Customer coordinates source: {coord_source}")
+                print(f"[COORDS] 📍 Customer location: ({customer_lat}, {customer_lng})")
             else:
-                print(f"[ADDRESS] ❌ No selected_address_id provided in request")
+                print(f"[COORDS] ❌ No customer coordinates available")
+
+            # Track totals including VAT
+            subtotal_excluding_vat = Decimal('0')
+            total_vat_amount = Decimal('0')
+            subtotal_including_vat = Decimal('0')
 
             for cart_item in cart_items:
                 product = cart_item.product
@@ -25343,13 +25533,14 @@ class CheckoutOrder(ViewSet):
                         
                         distance_km = None
                         distance_text = None
-                        if selected_shipping_address and selected_shipping_address.latitude and selected_shipping_address.longitude:
+                        
+                        if customer_lat and customer_lng:
                             if shop.latitude and shop.longitude:
                                 try:
                                     print(f"[DISTANCE] 🔄 Calculating distance from customer to shop...")
                                     distance_km = self._calculate_distance(
-                                        float(selected_shipping_address.latitude),
-                                        float(selected_shipping_address.longitude),
+                                        customer_lat,
+                                        customer_lng,
                                         float(shop.latitude),
                                         float(shop.longitude)
                                     )
@@ -25358,7 +25549,6 @@ class CheckoutOrder(ViewSet):
                                     logger.info(f"📏 Calculated distance: {distance_text}")
                                 except (ValueError, TypeError) as e:
                                     print(f"[DISTANCE] ❌ Error calculating distance: {e}")
-                                    pass
                             else:
                                 print(f"[DISTANCE] ❌ Shop missing coordinates! Lat: {shop.latitude}, Lng: {shop.longitude}")
                         else:
@@ -25411,21 +25601,26 @@ class CheckoutOrder(ViewSet):
                         
                         distance_km = None
                         distance_text = None
-                        if selected_shipping_address and selected_shipping_address.latitude and selected_shipping_address.longitude:
+                        
+                        if customer_lat and customer_lng:
                             if hasattr(seller_user, 'latitude') and seller_user.latitude and hasattr(seller_user, 'longitude') and seller_user.longitude:
                                 try:
-                                    logger.info(f"🔄 Calculating distance from customer to seller...")
+                                    print(f"[DISTANCE] 🔄 Calculating distance from customer to seller...")
                                     distance_km = self._calculate_distance(
-                                        float(selected_shipping_address.latitude),
-                                        float(selected_shipping_address.longitude),
+                                        customer_lat,
+                                        customer_lng,
                                         float(seller_user.latitude),
                                         float(seller_user.longitude)
                                     )
                                     distance_text = self._format_distance(distance_km)
+                                    print(f"[DISTANCE] ✅ Calculated distance: {distance_km} km ({distance_text})")
                                     logger.info(f"📏 Calculated distance: {distance_text}")
                                 except (ValueError, TypeError) as e:
-                                    logger.error(f"Error calculating distance: {e}")
-                                    pass
+                                    print(f"[DISTANCE] ❌ Error calculating distance: {e}")
+                            else:
+                                print(f"[DISTANCE] ❌ Seller missing coordinates!")
+                        else:
+                            print(f"[DISTANCE] ❌ Cannot calculate distance - missing customer coordinates")
                         
                         personal_seller_addresses[seller_id] = {
                             'seller_id': seller_id,
@@ -25441,20 +25636,34 @@ class CheckoutOrder(ViewSet):
                             'distance_text': distance_text
                         }
 
-                resolved_price = 0.0
+                resolved_price = Decimal('0')
+                vat_amount = Decimal('0')
+                price_with_vat = Decimal('0')
                 variant_data = None
 
                 if variant:
                     try:
                         if variant.price is not None:
-                            resolved_price = float(variant.price)
-                    except Exception:
-                        resolved_price = 0.0
+                            resolved_price = Decimal(str(variant.price))
+                            
+                            # Calculate VAT if variant has VAT
+                            if hasattr(variant, 'value_added_tax') and variant.value_added_tax:
+                                vat_amount = Decimal(str(variant.value_added_tax))
+                                price_with_vat = resolved_price + vat_amount
+                            else:
+                                # Default VAT calculation (12% of price)
+                                vat_amount = self._calculate_vat(resolved_price)
+                                price_with_vat = resolved_price + vat_amount
+                    except Exception as e:
+                        print(f"[VAT] Error calculating variant price: {e}")
+                        resolved_price = Decimal('0')
 
                     variant_data = {
                         'id': str(variant.id),
                         'title': variant.title,
-                        'price': float(variant.price) if variant.price is not None else None,
+                        'price': float(resolved_price) if resolved_price else None,
+                        'price_with_vat': float(price_with_vat) if price_with_vat else None,
+                        'vat_amount': float(vat_amount) if vat_amount else None,
                         'quantity': variant.quantity,
                         'sku_code': variant.sku_code,
                         'option_title': variant.option_title,
@@ -25462,19 +25671,36 @@ class CheckoutOrder(ViewSet):
                         'option_map': variant.option_map
                     }
                 else:
-                    resolved_price = float(product.price) if product and product.price else 0.0
+                    resolved_price = Decimal(str(product.price)) if product and product.price else Decimal('0')
+                    # Default VAT for products without variants (12%)
+                    vat_amount = self._calculate_vat(resolved_price)
+                    price_with_vat = resolved_price + vat_amount
+
+                # Calculate line totals
+                line_total_excluding_vat = resolved_price * cart_item.quantity
+                line_vat_amount = vat_amount * cart_item.quantity
+                line_total_including_vat = price_with_vat * cart_item.quantity
+                
+                # Accumulate totals
+                subtotal_excluding_vat += line_total_excluding_vat
+                total_vat_amount += line_vat_amount
+                subtotal_including_vat += line_total_including_vat
 
                 item_data = {
                     "id": str(cart_item.id) if hasattr(cart_item, 'id') else cart_item.id,
                     "product_id": str(product.id) if product else None,
                     "name": product.name if product else "Unknown Product",
-                    "price": resolved_price,
+                    "price": float(resolved_price),
+                    "price_with_vat": float(price_with_vat),
+                    "vat_amount": float(vat_amount),
                     "quantity": cart_item.quantity,
                     "shop_name": shop.name if shop else (product.customer.customer.username if product and product.customer else "Personal Seller"),
                     "shop_id": str(shop.id) if shop else None,
                     "seller_id": str(product.customer.customer.id) if product and product.customer else None,
                     "added_at": cart_item.added_at.isoformat() if hasattr(cart_item, 'added_at') and cart_item.added_at else None,
-                    "subtotal": resolved_price * cart_item.quantity,
+                    "subtotal_excluding_vat": float(line_total_excluding_vat),
+                    "subtotal_vat": float(line_vat_amount),
+                    "subtotal_including_vat": float(line_total_including_vat),
                     "is_ordered": cart_item.is_ordered if hasattr(cart_item, 'is_ordered') else False,
                     "is_personal_listing": shop is None and product and product.customer is not None
                 }
@@ -25499,7 +25725,10 @@ class CheckoutOrder(ViewSet):
 
                 checkout_items.append(item_data)
 
-            subtotal = sum(item["subtotal"] for item in checkout_items)
+            # Use subtotal including VAT for the rest of the calculations
+            subtotal = float(subtotal_including_vat)
+            subtotal_ex_vat = float(subtotal_excluding_vat)
+            total_vat = float(total_vat_amount)
             
             max_distance = 0
             for shop_id, shop_info in shop_addresses.items():
@@ -25521,12 +25750,16 @@ class CheckoutOrder(ViewSet):
             
             print("=" * 80)
             print("[TOTALS]")
-            print(f"  Subtotal: ₱{subtotal:.2f}")
+            print(f"  Subtotal (excl. VAT): ₱{subtotal_ex_vat:.2f}")
+            print(f"  VAT (12%): ₱{total_vat:.2f}")
+            print(f"  Subtotal (incl. VAT): ₱{subtotal:.2f}")
             print(f"  Delivery Fee: ₱{delivery_fee:.2f}")
             print(f"  Total: ₱{total:.2f}")
             print("=" * 80)
             
-            logger.info(f"💰 Subtotal: ₱{subtotal:.2f}")
+            logger.info(f"💰 Subtotal (excl. VAT): ₱{subtotal_ex_vat:.2f}")
+            logger.info(f"💰 VAT (12%): ₱{total_vat:.2f}")
+            logger.info(f"💰 Subtotal (incl. VAT): ₱{subtotal:.2f}")
             logger.info(f"💰 Delivery Fee: ₱{delivery_fee:.2f} (based on {max_distance:.2f} km distance at ₱40/km, capped at ₱300)")
             logger.info(f"💰 Total: ₱{total:.2f}")
 
@@ -25565,15 +25798,21 @@ class CheckoutOrder(ViewSet):
                 "success": True,
                 "checkout_items": checkout_items,
                 "summary": {
+                    "subtotal_excluding_vat": subtotal_ex_vat,
+                    "total_vat_amount": total_vat,
                     "subtotal": subtotal,
                     "delivery": delivery_fee,
                     "total": total,
+                    "vat_rate": "12%",
                     "item_count": len(checkout_items),
                     "shop_count": len(shop_ids),
                     "personal_seller_count": len(personal_seller_addresses),
                     "distance_km": max_distance,
                     "distance_text": self._format_distance(max_distance),
-                    "delivery_fee_rate": "₱40/km, capped at ₱300"
+                    "delivery_fee_rate": "₱40/km, capped at ₱300",
+                    "customer_coordinates_source": coord_source if customer_lat else None,
+                    "customer_latitude": customer_lat,
+                    "customer_longitude": customer_lng
                 },
                 "available_vouchers": available_vouchers,
                 "user_purchase_stats": user_purchase_history,
@@ -25687,7 +25926,7 @@ class CheckoutOrder(ViewSet):
                 if voucher.maximum_usage > 0 and usage_count >= voucher.maximum_usage:
                     continue
                 
-                potential_savings = self._calculate_discount(voucher, current_subtotal)
+                potential_savings = self._calculate_discount(voucher, Decimal(str(current_subtotal)))
                 
                 # Get remaining usage
                 remaining_usage = None
@@ -25909,7 +26148,7 @@ class CheckoutOrder(ViewSet):
                     "error": f"This voucher has reached its maximum usage limit ({voucher.maximum_usage} uses)"
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            discount_amount = self._calculate_discount(voucher, subtotal)
+            discount_amount = self._calculate_discount(voucher, Decimal(str(subtotal)))
             
             remaining_usage = None
             if voucher.maximum_usage > 0:
@@ -26076,7 +26315,14 @@ class CheckoutOrder(ViewSet):
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
                 price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
-                subtotal = price * direct_quantity
+                # Add VAT if variant has it
+                if hasattr(direct_variant, 'value_added_tax') and direct_variant.value_added_tax:
+                    vat_amount = Decimal(str(direct_variant.value_added_tax))
+                    price_with_vat = price + vat_amount
+                else:
+                    vat_amount = self._calculate_vat(price)
+                    price_with_vat = price + vat_amount
+                subtotal = price_with_vat * direct_quantity
                 
             else:
                 for cart_item in cart_items:
@@ -26093,12 +26339,22 @@ class CheckoutOrder(ViewSet):
                         }, status=status.HTTP_400_BAD_REQUEST)
 
                     price = Decimal('0')
+                    vat_amount = Decimal('0')
+                    price_with_vat = Decimal('0')
+                    
                     if cart_item.variant and cart_item.variant.price is not None:
                         price = Decimal(str(cart_item.variant.price))
+                        if hasattr(cart_item.variant, 'value_added_tax') and cart_item.variant.value_added_tax:
+                            vat_amount = Decimal(str(cart_item.variant.value_added_tax))
+                        else:
+                            vat_amount = self._calculate_vat(price)
+                        price_with_vat = price + vat_amount
                     elif cart_item.product and cart_item.product.price is not None:
                         price = Decimal(str(cart_item.product.price))
+                        vat_amount = self._calculate_vat(price)
+                        price_with_vat = price + vat_amount
 
-                    line_total = price * cart_item.quantity
+                    line_total = price_with_vat * cart_item.quantity
                     subtotal += line_total
 
                     if cart_item.variant:
@@ -26154,22 +26410,23 @@ class CheckoutOrder(ViewSet):
             # Calculate delivery fee based on distance (if Standard Delivery)
             delivery_fee = Decimal('0')
             if shipping_method.lower() == "standard delivery" and shipping_address:
-                # Get the farthest shop distance from the checkout data
-                # Since we don't have the distance here, we'll get it from the checkout items
-                # This is a simplified approach - in production, you'd pass the distance
+                # Get customer coordinates from shipping address
+                customer_lat, customer_lng, _ = self._get_customer_coordinates(user_id, shipping_address_id)
+                
                 max_distance = 0
-                for cart_item in cart_items:
-                    if cart_item.product and cart_item.product.shop:
-                        shop = cart_item.product.shop
-                        if shop.latitude and shop.longitude and shipping_address.latitude and shipping_address.longitude:
-                            distance = self._calculate_distance(
-                                float(shipping_address.latitude),
-                                float(shipping_address.longitude),
-                                float(shop.latitude),
-                                float(shop.longitude)
-                            )
-                            if distance > max_distance:
-                                max_distance = distance
+                if customer_lat and customer_lng:
+                    for cart_item in cart_items:
+                        if cart_item.product and cart_item.product.shop:
+                            shop = cart_item.product.shop
+                            if shop.latitude and shop.longitude:
+                                distance = self._calculate_distance(
+                                    customer_lat,
+                                    customer_lng,
+                                    float(shop.latitude),
+                                    float(shop.longitude)
+                                )
+                                if distance > max_distance:
+                                    max_distance = distance
                 delivery_fee = Decimal(str(self._calculate_delivery_fee(max_distance)))
             
             # Calculate base total (subtotal + delivery fee - discount)
@@ -26212,7 +26469,14 @@ class CheckoutOrder(ViewSet):
 
             if is_direct_checkout:
                 unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
-                checkout_total = unit_price * direct_quantity
+                if hasattr(direct_variant, 'value_added_tax') and direct_variant.value_added_tax:
+                    vat_amount = Decimal(str(direct_variant.value_added_tax))
+                    unit_price_with_vat = unit_price + vat_amount
+                else:
+                    vat_amount = self._calculate_vat(unit_price)
+                    unit_price_with_vat = unit_price + vat_amount
+                    
+                checkout_total = unit_price_with_vat * direct_quantity
                 
                 product_image_url = None
                 if direct_product.productmedia_set.exists():
@@ -26237,7 +26501,7 @@ class CheckoutOrder(ViewSet):
                     direct_product_id=direct_product.id,
                     direct_variant_id=direct_variant.id,
                     direct_product_name=direct_product.name,
-                    direct_product_price=unit_price,
+                    direct_product_price=unit_price_with_vat,
                     direct_product_image=variant_image_url or product_image_url,
                     direct_shop_id=direct_product.shop.id if direct_product.shop else None,
                     direct_shop_name=direct_product.shop.name if direct_product.shop else None
@@ -26255,6 +26519,8 @@ class CheckoutOrder(ViewSet):
                     "shop_name": direct_product.shop.name if direct_product.shop else None,
                     "quantity": direct_quantity,
                     "price": float(unit_price),
+                    "price_with_vat": float(unit_price_with_vat),
+                    "vat_amount": float(vat_amount),
                     "total_amount": float(checkout_total),
                     "status": "pending",
                     "product_image": variant_image_url or product_image_url,
@@ -26265,10 +26531,17 @@ class CheckoutOrder(ViewSet):
                 for cart_item in cart_items:
                     if cart_item.variant and cart_item.variant.price is not None:
                         unit_price = Decimal(str(cart_item.variant.price))
+                        if hasattr(cart_item.variant, 'value_added_tax') and cart_item.variant.value_added_tax:
+                            vat_amount = Decimal(str(cart_item.variant.value_added_tax))
+                        else:
+                            vat_amount = self._calculate_vat(unit_price)
+                        unit_price_with_vat = unit_price + vat_amount
                     else:
                         unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
+                        vat_amount = self._calculate_vat(unit_price)
+                        unit_price_with_vat = unit_price + vat_amount
 
-                    checkout_total = unit_price * cart_item.quantity
+                    checkout_total = unit_price_with_vat * cart_item.quantity
 
                     checkout_item = Checkout.objects.create(
                         order=order,
@@ -26292,6 +26565,8 @@ class CheckoutOrder(ViewSet):
                         "shop_name": cart_item.product.shop.name if cart_item.product and cart_item.product.shop else None,
                         "quantity": cart_item.quantity,
                         "price": float(unit_price),
+                        "price_with_vat": float(unit_price_with_vat),
+                        "vat_amount": float(vat_amount),
                         "total_amount": float(checkout_total),
                         "status": "pending",
                         "is_refundable": cart_item.variant.is_refundable if cart_item.variant else getattr(cart_item.product, 'is_refundable', False)
@@ -27090,7 +27365,6 @@ class CheckoutOrder(ViewSet):
                     product.save()
 
         return stock_errors
-
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
