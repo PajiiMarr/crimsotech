@@ -421,7 +421,7 @@ export default function Dashboard() {
 
                   <TouchableOpacity 
                     style={styles.performanceItem} 
-                    onPress={() => showBreakdown('Followers', 'shop_performance')}
+                    onPress={() => router.push(`/seller/view-followers?shopId=${shopId}`)}
                     activeOpacity={0.7}
                   >
                     <Text style={styles.performanceValue}>{performance.total_followers || 0}</Text>
