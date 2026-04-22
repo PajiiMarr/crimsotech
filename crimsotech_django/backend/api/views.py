@@ -23864,7 +23864,47 @@ class SellerOrderList(viewsets.ViewSet):
                         "details": stock_errors
                     }, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'processing'
+                # Set refund_expire_date to 3 days from now
+                # order.refund_expire_date = timezone.now() + timedelta(days=3)
                 message = "Pickup order confirmed" if is_pickup else "Order confirmed"
+
+                # ✅ CREATE WALLET TRANSACTION FOR SELLER
+                try:
+                    from decimal import Decimal
+                    
+                    seller_user = shop.customer.customer if shop.customer else None
+                    if seller_user:
+                        # Calculate total amount for items from this shop
+                        checkouts = Checkout.objects.filter(
+                            Q(order=order, cart_item__product__shop=shop) |
+                            Q(order=order, direct_shop_id=str(shop.id))
+                        )
+                        total_amount = Decimal('0')
+                        for checkout in checkouts:
+                            total_amount += checkout.total_amount
+                        
+                        if total_amount > 0:
+                            wallet, _ = UserWallet.objects.get_or_create(user=seller_user)
+                            
+                            # Add to pending balance
+                            wallet.pending_balance += total_amount
+                            wallet.save()
+                            
+                            # Create transaction record
+                            WalletTransaction.objects.create(
+                                wallet=wallet,
+                                user=seller_user,
+                                amount=total_amount,
+                                transaction_type='credit',
+                                source_type='shop_sale',
+                                status='pending',
+                                shop=shop,
+                                order=order,
+                                created_at=timezone.now()
+                            )
+                            print(f"✅ Wallet credited: ₱{total_amount} to {seller_user.username}")
+                except Exception as e:
+                    print(f"Error creating wallet transaction: {e}")
 
                 # PICKUP DATE: only for Cash on Pickup orders
                 is_cash_on_pickup = (
@@ -46807,46 +46847,57 @@ class UserWalletViewSet(viewsets.ModelViewSet):
 
     def _release_expired_pending_transactions(self, user_wallet):
         """
-        Release pending transactions that are older than 3 days and have no refunds.
+        Release pending transactions where order.refund_expire_date has passed.
         Called before withdrawal request to check available balance.
         """
-        three_days_ago = timezone.now() - timedelta(days=3)
+        today = timezone.now()
+        released_amount = Decimal('0')
         
+        # Get pending transactions for this wallet
         expired_pending = WalletTransaction.objects.filter(
             wallet=user_wallet,
             status='pending',
             transaction_type='credit',
-            source_type__in=['personal_sale', 'shop_sale'],
-            created_at__lte=three_days_ago
+            source_type__in=['personal_sale', 'shop_sale']
         )
         
-        released_amount = Decimal('0')
-        
         for pending_tx in expired_pending:
-            # Check if there's a refund for this order
-            has_refund = False
-            if pending_tx.order:
-                # Check if order has been refunded
+            should_release = False
+            
+            # Check if there's an associated order with refund_expire_date
+            if pending_tx.order and pending_tx.order.refund_expire_date:
+                # Release if refund_expire_date has passed
+                if today > pending_tx.order.refund_expire_date:
+                    should_release = True
+            elif pending_tx.order and pending_tx.order.completed_at:
+                # Fallback: release if completed_at is older than 3 days
+                if (today - pending_tx.order.completed_at).days >= 3:
+                    should_release = True
+            else:
+                # No order reference, don't release automatically
+                continue
+            
+            if should_release:
+                # Check if there's a refund for this order
                 has_refund = Checkout.objects.filter(
                     order=pending_tx.order,
                     status='refunded'
                 ).exists()
-            
-            if not has_refund:
-                pending_tx.status = 'completed'
-                pending_tx.save()
                 
-                user_wallet.pending_balance -= pending_tx.amount
-                user_wallet.available_balance += pending_tx.amount
-                released_amount += pending_tx.amount
-                
-                logger.info(f"Released pending transaction {pending_tx.transaction_id} after 3-day hold")
+                if not has_refund:
+                    pending_tx.status = 'completed'
+                    pending_tx.save()
+                    
+                    user_wallet.pending_balance -= pending_tx.amount
+                    user_wallet.available_balance += pending_tx.amount
+                    released_amount += pending_tx.amount
+                    
+                    logger.info(f"Released pending transaction {pending_tx.transaction_id} after refund_expire_date passed")
         
         if released_amount > 0:
             user_wallet.save()
             
         return released_amount
-
     # ================================================================
     # FIX WALLET - RESET AND RECALCULATE
     # ================================================================
