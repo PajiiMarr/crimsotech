@@ -28875,6 +28875,9 @@ class ViewShopAPIView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+    
+
+
 
 class OrderSuccessful(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
@@ -51381,4 +51384,44 @@ class MessageViewSet(viewsets.ModelViewSet):
         return Response({
             'unread_count': count,
             'has_unread': count > 0
+        })
+
+class ShopFollowersView(APIView):
+    """Get list of followers for a shop (for shop owner)"""
+    
+    def get(self, request, shop_id):
+        try:
+            shop = Shop.objects.get(id=shop_id)
+        except Shop.DoesNotExist:
+            return Response({'success': False, 'message': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if user is the shop owner
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'success': False, 'message': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not shop.customer or str(shop.customer.customer.id) != str(user_id):
+            return Response({'success': False, 'message': 'You do not have permission to view followers of this shop'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Get all followers
+        followers = ShopFollow.objects.filter(shop=shop).select_related('customer__customer').order_by('-followed_at')
+        
+        followers_data = []
+        for follow in followers:
+            customer_user = follow.customer.customer if follow.customer else None
+            followers_data.append({
+                'id': str(follow.id),
+                'customer_id': str(customer_user.id) if customer_user else None,
+                'customer_name': f"{customer_user.first_name} {customer_user.last_name}".strip() if customer_user else None,
+                'customer_username': customer_user.username if customer_user else None,
+                'profile_picture': get_media_url(customer_user.profile_picture) if customer_user and customer_user.profile_picture else None,
+                'followed_at': follow.followed_at.isoformat(),
+            })
+        
+        return Response({
+            'success': True,
+            'shop_id': str(shop.id),
+            'shop_name': shop.name,
+            'total_followers': followers.count(),
+            'followers': followers_data
         })

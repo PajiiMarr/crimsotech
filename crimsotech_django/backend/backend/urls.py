@@ -154,6 +154,7 @@ urlpatterns = [
     path('api/customer-favorites/', CustomerFavoritesView.as_view(), name='customer-favorites'),
     path('api/cart/add/', AddToCartView.as_view(), name='add-to-cart'),
     path('api/shops/<uuid:shop_id>/', ViewShopAPIView.as_view(), name='view-shop'),
+    path('api/shops/<uuid:shop_id>/followers/', ShopFollowersView.as_view(), name='shop-followers'),
     path('api/profile/', ProfileView.as_view(), name='profile'),
     path('api/rider-wallet/', RiderWalletView.as_view(), name='rider-wallet'),
 
