@@ -19,6 +19,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import AxiosInstance from "../../contexts/axios";
 import * as SecureStore from "expo-secure-store";
 import { useAuth } from "../../contexts/AuthContext";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function VerifyPhoneScreen() {
   const [loading, setLoading] = useState(false);
@@ -37,6 +38,8 @@ export default function VerifyPhoneScreen() {
     otp?: string;
     general?: string;
   }>({});
+  const [isLoadingUser, setIsLoadingUser] = useState(true);
+  const [isVerifying, setIsVerifying] = useState(false); // Add this to prevent double verification
 
   // Create refs for OTP inputs
   const otpInputs = useRef<(RNTextInput | null)[]>([]);
@@ -53,9 +56,46 @@ export default function VerifyPhoneScreen() {
   }, [cooldown]);
 
   const loadUserData = async () => {
+    setIsLoadingUser(true);
     try {
-      const storedUserId = await SecureStore.getItemAsync("temp_user_id");
+      // Try multiple sources for userId
+      let storedUserId = await SecureStore.getItemAsync("temp_user_id");
+      
+      // If not found, try getting from 'user' object
+      if (!storedUserId) {
+        const userJson = await SecureStore.getItemAsync("user");
+        if (userJson) {
+          const user = JSON.parse(userJson);
+          storedUserId = user.user_id?.toString();
+          if (storedUserId) {
+            await SecureStore.setItemAsync("temp_user_id", storedUserId);
+          }
+        }
+      }
+      
+      // If still not found, try AsyncStorage
+      if (!storedUserId) {
+        const asyncUserId = await AsyncStorage.getItem("userId");
+        if (asyncUserId) {
+          storedUserId = asyncUserId;
+          await SecureStore.setItemAsync("temp_user_id", storedUserId);
+        }
+      }
+      
       if (storedUserId) {
+        // Check if user already completed verification
+        const registrationStage = await SecureStore.getItemAsync("registration_stage");
+        if (registrationStage === "4") {
+          // User already verified, redirect to appropriate home
+          const isRiderFlag = await SecureStore.getItemAsync("is_rider");
+          if (isRiderFlag === "true") {
+            router.replace("/rider/home");
+          } else {
+            router.replace("/customer/home");
+          }
+          return;
+        }
+        
         setUserId(storedUserId);
 
         const localIsRider = await SecureStore.getItemAsync("is_rider");
@@ -84,7 +124,6 @@ export default function VerifyPhoneScreen() {
         // Check rider verification status if user is a rider
         if (response.data?.is_rider) {
           try {
-            // Fixed endpoint: admin-riders (with dash, matching router)
             const verificationResponse = await AxiosInstance.get("/admin-riders/check-verification/", {
               headers: { "X-User-Id": storedUserId },
             });
@@ -96,7 +135,6 @@ export default function VerifyPhoneScreen() {
               }
             }
           } catch (e: any) {
-            // If 404, assume pending (endpoint not yet implemented)
             if (e.response?.status === 404) {
               console.log("Verification endpoint not found, assuming pending");
               setRiderVerificationStatus("pending");
@@ -105,9 +143,13 @@ export default function VerifyPhoneScreen() {
             }
           }
         }
+      } else {
+        console.log("No user ID found in any storage");
       }
     } catch (error) {
-      // Silent fail
+      console.error("Error loading user data:", error);
+    } finally {
+      setIsLoadingUser(false);
     }
   };
 
@@ -144,6 +186,24 @@ export default function VerifyPhoneScreen() {
     }
 
     return false;
+  };
+
+  const getCurrentRiderVerificationStatus = async (userId: string): Promise<"pending" | "approved" | "rejected" | null> => {
+    try {
+      const verificationResponse = await AxiosInstance.get("/admin-riders/check-verification/", {
+        headers: { "X-User-Id": userId },
+      });
+      if (verificationResponse.data.success) {
+        return verificationResponse.data.verified ? "approved" : "pending";
+      }
+      return "pending";
+    } catch (e: any) {
+      if (e.response?.status === 404) {
+        console.log("Verification endpoint not found, assuming pending");
+        return "pending";
+      }
+      return "pending";
+    }
   };
 
   const formatPhoneNumber = (text: string) => {
@@ -228,7 +288,12 @@ export default function VerifyPhoneScreen() {
   };
 
   const handleSendOTP = async () => {
-    if (!validatePhoneNumber() || !userId) return;
+    if (!validatePhoneNumber() || !userId) {
+      if (!userId) {
+        Alert.alert("Error", "User session not found. Please restart the app.");
+      }
+      return;
+    }
 
     setLoading(true);
     setErrors({});
@@ -262,8 +327,9 @@ export default function VerifyPhoneScreen() {
   };
 
   const handleVerifyOTP = async () => {
-    if (!validateOtp() || !userId) return;
-
+    if (!validateOtp() || !userId || isVerifying) return;
+    
+    setIsVerifying(true); // Prevent multiple verifications
     setLoading(true);
     setErrors({});
 
@@ -308,6 +374,10 @@ export default function VerifyPhoneScreen() {
 
       await SecureStore.setItemAsync("is_rider", effectiveIsRider ? "true" : "false");
       await SecureStore.setItemAsync("registration_stage", String(newRegistrationStage));
+      
+      // Also update AsyncStorage
+      await AsyncStorage.setItem("registration_stage", String(newRegistrationStage));
+      await AsyncStorage.setItem("is_rider", effectiveIsRider ? "true" : "false");
 
       try {
         await setAuthData(
@@ -341,23 +411,31 @@ export default function VerifyPhoneScreen() {
         // Silent fail
       }
 
-      await SecureStore.deleteItemAsync("temp_user_id");
+      let currentRiderStatus = riderVerificationStatus;
+      
+      if (effectiveIsRider) {
+        currentRiderStatus = await getCurrentRiderVerificationStatus(userId);
+        setRiderVerificationStatus(currentRiderStatus);
+      }
 
+      console.log('Effective isRider:', effectiveIsRider);
+      console.log('Current rider status:', currentRiderStatus);
+      console.log('Registration stage saved:', newRegistrationStage);
+
+      // Dismiss any existing alerts and redirect immediately
       Alert.alert("Success", "Phone number verified successfully!", [
         {
           text: "Continue",
           onPress: () => {
+            // Clear navigation stack to prevent going back
             if (effectiveIsRider) {
-              // Check verification status before redirecting
-              if (riderVerificationStatus === "pending") {
-                // Redirect to pending verification screen (DO NOT go to home)
+              if (currentRiderStatus === "pending") {
                 router.replace("/rider/pending-verification");
-              } else if (riderVerificationStatus === "approved") {
+              } else if (currentRiderStatus === "approved") {
                 router.replace("/rider/home");
-              } else if (riderVerificationStatus === "rejected") {
+              } else if (currentRiderStatus === "rejected") {
                 router.replace("/rider/rejected-verification");
               } else {
-                // If status unknown, go to pending verification
                 router.replace("/rider/pending-verification");
               }
             } else {
@@ -376,6 +454,7 @@ export default function VerifyPhoneScreen() {
       setTimeout(() => otpInputs.current[0]?.focus(), 100);
     } finally {
       setLoading(false);
+      setIsVerifying(false);
     }
   };
 
@@ -438,6 +517,33 @@ export default function VerifyPhoneScreen() {
       }, 100);
     }
   }, [step]);
+
+  // Show loading indicator while user data is being fetched
+  if (isLoadingUser) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#ff6d0b" />
+        <Text style={styles.loadingText}>Loading...</Text>
+      </View>
+    );
+  }
+
+  // Show error if no userId found
+  if (!userId) {
+    return (
+      <View style={styles.loadingContainer}>
+        <MaterialIcons name="error-outline" size={48} color="#ff6d0b" />
+        <Text style={styles.errorTitle}>Session Expired</Text>
+        <Text style={styles.errorSubtitle}>Please restart the registration process.</Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => router.replace("/(auth)/signup")}
+        >
+          <Text style={styles.retryButtonText}>Go to Sign Up</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -554,7 +660,7 @@ export default function VerifyPhoneScreen() {
                     loading && styles.buttonDisabled,
                   ]}
                   onPress={handleVerifyOTP}
-                  disabled={loading || otp.join("").length !== 6}
+                  disabled={loading || otp.join("").length !== 6 || isVerifying}
                 >
                   {loading ? (
                     <ActivityIndicator color="#FFF" />
@@ -766,5 +872,41 @@ const styles = StyleSheet.create({
     color: "#ff6d0b",
     fontSize: 13,
     marginLeft: 8,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    padding: 20,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#666",
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#1a1a1a",
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  errorSubtitle: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    marginBottom: 24,
+  },
+  retryButton: {
+    backgroundColor: "#ff6d0b",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

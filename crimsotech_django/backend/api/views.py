@@ -1214,8 +1214,8 @@ class VerifyNumber(viewsets.ViewSet):
                 print(f"Verification check status: {verification_check.status}")
 
                 if verification_check.status == 'approved':
-                    # Update user registration stage and OTP record
-                    user.registration_stage = 3
+                    # FIX: Update registration stage to 4 (not 3)
+                    user.registration_stage = 4
                     user.save()
                     
                     OTP.objects.filter(user=user).update(
@@ -1239,6 +1239,7 @@ class VerifyNumber(viewsets.ViewSet):
 
         else:
             return Response({"error": "Invalid action type"}, status=400)
+
             
 class RiderRegistration(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='register')
