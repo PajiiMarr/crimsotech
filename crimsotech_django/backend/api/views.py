@@ -1,4 +1,33 @@
+import io
+import string
+from decimal import Decimal
+from datetime import datetime, timedelta
+from django.db.models import Q, Prefetch
+from django.utils import timezone
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from api.models import (
+    Order, Delivery, Rider, Notification, Shop, Checkout, 
+    ProductMedia, Variants, Payment, UserWallet, WalletTransaction,
+    Proof
+)
+from django.conf import settings
 import requests
+import math
+import random
+import string
+import io
+import qrcode
+from django.http import HttpResponse
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.units import inch
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+import requests
+import math
 import requests as http_requests
 from datetime import datetime as dt
 from asyncio.log import logger
@@ -1408,6 +1437,8 @@ class AdminDashboard(viewsets.ViewSet):
     
     def _get_overview_data(self, start_date, end_date):
         try:
+            from decimal import Decimal
+            
             date_range_days = (end_date - start_date).days + 1
             previous_start_date = start_date - timedelta(days=date_range_days)
             previous_end_date = start_date - timedelta(days=1)
@@ -1452,6 +1483,36 @@ class AdminDashboard(viewsets.ViewSet):
             # Calculate platform fees (5% of order total for completed orders)
             current_platform_fees = current_completed_revenue * Decimal('0.05')
 
+            # Calculate VAT collected from successful/completed orders
+            # VAT is calculated as price * (vat_percentage / 100) for each variant in completed orders
+            vat_collected = Decimal('0')
+            
+            # Get all checkouts from completed orders
+            completed_checkouts = Checkout.objects.filter(
+                order__in=current_completed_orders,
+                order__status='completed'
+            ).select_related('cart_item__variant', 'order')
+            
+            for checkout in completed_checkouts:
+                if checkout.cart_item and checkout.cart_item.variant:
+                    variant = checkout.cart_item.variant
+                    # Get variant price and VAT percentage
+                    price = variant.price or Decimal('0')
+                    vat_percentage = variant.value_added_tax or Decimal('12.00')
+                    # Calculate VAT amount: price * (vat_percentage / 100)
+                    vat_amount = price * (vat_percentage / Decimal('100'))
+                    vat_collected += vat_amount * checkout.quantity
+                elif checkout.direct_variant_id:
+                    # Handle direct checkout (product purchased directly without cart)
+                    try:
+                        variant = Variants.objects.get(id=checkout.direct_variant_id)
+                        price = variant.price or Decimal('0')
+                        vat_percentage = variant.value_added_tax or Decimal('12.00')
+                        vat_amount = price * (vat_percentage / Decimal('100'))
+                        vat_collected += vat_amount * checkout.quantity
+                    except Variants.DoesNotExist:
+                        pass
+
             # Previous period metrics
             previous_orders = Order.objects.filter(
                 created_at__date__gte=previous_start_date,
@@ -1478,15 +1539,43 @@ class AdminDashboard(viewsets.ViewSet):
 
             previous_revenue = previous_completed_revenue + previous_pending_revenue
 
+            # Previous period VAT collected
+            previous_vat_collected = Decimal('0')
+            previous_completed_checkouts = Checkout.objects.filter(
+                order__in=previous_completed_orders,
+                order__status='completed'
+            ).select_related('cart_item__variant', 'order')
+            
+            for checkout in previous_completed_checkouts:
+                if checkout.cart_item and checkout.cart_item.variant:
+                    variant = checkout.cart_item.variant
+                    price = variant.price or Decimal('0')
+                    vat_percentage = variant.value_added_tax or Decimal('12.00')
+                    vat_amount = price * (vat_percentage / Decimal('100'))
+                    previous_vat_collected += vat_amount * checkout.quantity
+                elif checkout.direct_variant_id:
+                    try:
+                        variant = Variants.objects.get(id=checkout.direct_variant_id)
+                        price = variant.price or Decimal('0')
+                        vat_percentage = variant.value_added_tax or Decimal('12.00')
+                        vat_amount = price * (vat_percentage / Decimal('100'))
+                        previous_vat_collected += vat_amount * checkout.quantity
+                    except Variants.DoesNotExist:
+                        pass
+
             # Growth calculations
             order_growth = 0
             revenue_growth = 0
+            vat_growth = 0
 
             if previous_orders > 0:
                 order_growth = ((current_orders - previous_orders) / previous_orders) * 100
 
             if float(previous_revenue) > 0:
                 revenue_growth = ((float(current_revenue) - float(previous_revenue)) / float(previous_revenue)) * 100
+
+            if float(previous_vat_collected) > 0:
+                vat_growth = ((float(vat_collected) - float(previous_vat_collected)) / float(previous_vat_collected)) * 100
 
             # Active customers
             active_customers = User.objects.filter(
@@ -1521,11 +1610,35 @@ class AdminDashboard(viewsets.ViewSet):
                 created_at__date__lte=end_date
             ).count()
 
+            # Lifetime VAT collected
+            lifetime_vat_collected = Decimal('0')
+            all_completed_checkouts = Checkout.objects.filter(
+                order__status='completed'
+            ).select_related('cart_item__variant', 'order')
+            
+            for checkout in all_completed_checkouts:
+                if checkout.cart_item and checkout.cart_item.variant:
+                    variant = checkout.cart_item.variant
+                    price = variant.price or Decimal('0')
+                    vat_percentage = variant.value_added_tax or Decimal('12.00')
+                    vat_amount = price * (vat_percentage / Decimal('100'))
+                    lifetime_vat_collected += vat_amount * checkout.quantity
+                elif checkout.direct_variant_id:
+                    try:
+                        variant = Variants.objects.get(id=checkout.direct_variant_id)
+                        price = variant.price or Decimal('0')
+                        vat_percentage = variant.value_added_tax or Decimal('12.00')
+                        vat_amount = price * (vat_percentage / Decimal('100'))
+                        lifetime_vat_collected += vat_amount * checkout.quantity
+                    except Variants.DoesNotExist:
+                        pass
+
             return {
                 'total_revenue': float(total_revenue),
                 'total_completed_revenue': float(total_completed_revenue),
                 'total_pending_revenue': float(total_pending_revenue),
                 'total_orders': total_orders,
+                'total_vat_collected': float(lifetime_vat_collected),
                 'active_customers': active_customers,
                 'active_shops': active_shops,
                 'current_period_orders': current_orders,
@@ -1534,12 +1647,15 @@ class AdminDashboard(viewsets.ViewSet):
                 'current_period_revenue': float(current_revenue),
                 'current_period_shipping_fees': float(current_shipping_fees),
                 'current_period_platform_fees': float(current_platform_fees),
+                'current_period_vat_collected': float(vat_collected),
                 'previous_period_orders': previous_orders,
                 'previous_period_revenue': float(previous_revenue),
+                'previous_period_vat_collected': float(previous_vat_collected),
                 'order_growth': round(order_growth, 1),
                 'revenue_growth': round(revenue_growth, 1),
+                'vat_growth': round(vat_growth, 1),
                 'date_range_days': date_range_days,
-                'breakdown_note': 'Platform fees calculated as 5% of completed order total only. Pending revenue represents incoming balance from ongoing transactions.',
+                'breakdown_note': 'Platform fees calculated as 5% of completed order total only. Pending revenue represents incoming balance from ongoing transactions. VAT is calculated as 12% of product prices (or variant-specific VAT rate) from completed orders.',
             }
         except Exception as e:
             print(f"Error in _get_overview_data: {str(e)}")
@@ -1549,6 +1665,8 @@ class AdminDashboard(viewsets.ViewSet):
 
     def _get_sales_analytics_data(self, start_date, end_date, range_type='weekly'):
         try:
+            from decimal import Decimal
+            
             sales_data = []
             date_range_days = (end_date - start_date).days + 1
 
@@ -1577,6 +1695,30 @@ class AdminDashboard(viewsets.ViewSet):
                     ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
                     
                     day_platform_fees = day_completed_revenue * Decimal('0.05')
+                    
+                    # Calculate VAT collected for the day
+                    day_vat_collected = Decimal('0')
+                    day_checkouts = Checkout.objects.filter(
+                        order__in=day_completed,
+                        order__status='completed'
+                    ).select_related('cart_item__variant')
+                    
+                    for checkout in day_checkouts:
+                        if checkout.cart_item and checkout.cart_item.variant:
+                            variant = checkout.cart_item.variant
+                            price = variant.price or Decimal('0')
+                            vat_percentage = variant.value_added_tax or Decimal('12.00')
+                            vat_amount = price * (vat_percentage / Decimal('100'))
+                            day_vat_collected += vat_amount * checkout.quantity
+                        elif checkout.direct_variant_id:
+                            try:
+                                variant = Variants.objects.get(id=checkout.direct_variant_id)
+                                price = variant.price or Decimal('0')
+                                vat_percentage = variant.value_added_tax or Decimal('12.00')
+                                vat_amount = price * (vat_percentage / Decimal('100'))
+                                day_vat_collected += vat_amount * checkout.quantity
+                            except Variants.DoesNotExist:
+                                pass
 
                     sales_data.append({
                         'date': current_date.isoformat(),
@@ -1589,6 +1731,7 @@ class AdminDashboard(viewsets.ViewSet):
                         'pending_orders': day_pending.count(),
                         'shipping_fees': float(day_shipping),
                         'platform_fees': float(day_platform_fees),
+                        'vat_collected': float(day_vat_collected),
                     })
 
                     current_date += timedelta(days=1)
@@ -1636,6 +1779,30 @@ class AdminDashboard(viewsets.ViewSet):
                         ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
                         
                         month_platform_fees = month_completed_revenue * Decimal('0.05')
+                        
+                        # Calculate VAT collected for the month
+                        month_vat_collected = Decimal('0')
+                        month_checkouts = Checkout.objects.filter(
+                            order__in=month_completed,
+                            order__status='completed'
+                        ).select_related('cart_item__variant')
+                        
+                        for checkout in month_checkouts:
+                            if checkout.cart_item and checkout.cart_item.variant:
+                                variant = checkout.cart_item.variant
+                                price = variant.price or Decimal('0')
+                                vat_percentage = variant.value_added_tax or Decimal('12.00')
+                                vat_amount = price * (vat_percentage / Decimal('100'))
+                                month_vat_collected += vat_amount * checkout.quantity
+                            elif checkout.direct_variant_id:
+                                try:
+                                    variant = Variants.objects.get(id=checkout.direct_variant_id)
+                                    price = variant.price or Decimal('0')
+                                    vat_percentage = variant.value_added_tax or Decimal('12.00')
+                                    vat_amount = price * (vat_percentage / Decimal('100'))
+                                    month_vat_collected += vat_amount * checkout.quantity
+                                except Variants.DoesNotExist:
+                                    pass
 
                         sales_data.append({
                             'date': month_data['month'].strftime('%Y-%m-%d'),
@@ -1648,6 +1815,7 @@ class AdminDashboard(viewsets.ViewSet):
                             'pending_orders': month_pending.count(),
                             'shipping_fees': float(month_shipping),
                             'platform_fees': float(month_platform_fees),
+                            'vat_collected': float(month_vat_collected),
                         })
                 grouping = 'monthly'
 
@@ -1680,6 +1848,30 @@ class AdminDashboard(viewsets.ViewSet):
                     ).aggregate(shipping=Sum('delivery_fee'))['shipping'] or Decimal('0')
                     
                     week_platform_fees = week_completed_revenue * Decimal('0.05')
+                    
+                    # Calculate VAT collected for the week
+                    week_vat_collected = Decimal('0')
+                    week_checkouts = Checkout.objects.filter(
+                        order__in=week_completed,
+                        order__status='completed'
+                    ).select_related('cart_item__variant')
+                    
+                    for checkout in week_checkouts:
+                        if checkout.cart_item and checkout.cart_item.variant:
+                            variant = checkout.cart_item.variant
+                            price = variant.price or Decimal('0')
+                            vat_percentage = variant.value_added_tax or Decimal('12.00')
+                            vat_amount = price * (vat_percentage / Decimal('100'))
+                            week_vat_collected += vat_amount * checkout.quantity
+                        elif checkout.direct_variant_id:
+                            try:
+                                variant = Variants.objects.get(id=checkout.direct_variant_id)
+                                price = variant.price or Decimal('0')
+                                vat_percentage = variant.value_added_tax or Decimal('12.00')
+                                vat_amount = price * (vat_percentage / Decimal('100'))
+                                week_vat_collected += vat_amount * checkout.quantity
+                            except Variants.DoesNotExist:
+                                pass
 
                     sales_data.append({
                         'date': current_date.isoformat(),
@@ -1692,6 +1884,7 @@ class AdminDashboard(viewsets.ViewSet):
                         'pending_orders': week_pending.count(),
                         'shipping_fees': float(week_shipping),
                         'platform_fees': float(week_platform_fees),
+                        'vat_collected': float(week_vat_collected),
                     })
 
                     current_date = week_end + timedelta(days=1)
@@ -1811,6 +2004,8 @@ class AdminDashboard(viewsets.ViewSet):
 
     def _get_product_analytics_data(self, start_date, end_date):
         try:
+            from decimal import Decimal
+            
             product_stats = Checkout.objects.filter(
                 created_at__gte=start_date,
                 created_at__lte=end_date,
@@ -1830,6 +2025,23 @@ class AdminDashboard(viewsets.ViewSet):
                 
                 product_revenue = float(stat['total_revenue'] or 0)
                 platform_fee = product_revenue * 0.05
+                
+                # Calculate VAT collected for this product
+                product_vat_collected = Decimal('0')
+                product_checkouts = Checkout.objects.filter(
+                    created_at__gte=start_date,
+                    created_at__lte=end_date,
+                    cart_item__product__id=product_id,
+                    order__status='completed'
+                ).select_related('cart_item__variant')
+                
+                for checkout in product_checkouts:
+                    if checkout.cart_item and checkout.cart_item.variant:
+                        variant = checkout.cart_item.variant
+                        price = variant.price or Decimal('0')
+                        vat_percentage = variant.value_added_tax or Decimal('12.00')
+                        vat_amount = price * (vat_percentage / Decimal('100'))
+                        product_vat_collected += vat_amount * checkout.quantity
 
                 product_performance.append({
                     'name': product_name[:30] + ('...' if len(product_name) > 30 else ''),
@@ -1838,7 +2050,8 @@ class AdminDashboard(viewsets.ViewSet):
                     'orders': stat['order_count'],
                     'revenue': product_revenue,
                     'platform_fee': round(platform_fee, 2),
-                    'calculation_note': 'Platform fee = 5% of product revenue from orders in this period',
+                    'vat_collected': float(product_vat_collected),
+                    'calculation_note': 'Platform fee = 5% of product revenue from orders in this period. VAT = 12% (or variant-specific rate) of product price from completed orders.',
                 })
 
             return {
@@ -1852,6 +2065,8 @@ class AdminDashboard(viewsets.ViewSet):
 
     def _get_shop_analytics_data(self, start_date, end_date):
         try:
+            from decimal import Decimal
+            
             shop_stats = Checkout.objects.filter(
                 created_at__gte=start_date,
                 created_at__lte=end_date,
@@ -1875,6 +2090,32 @@ class AdminDashboard(viewsets.ViewSet):
                     shop = Shop.objects.get(id=shop_id)
                     
                     platform_fee = shop_sales * 0.05
+                    
+                    # Calculate VAT collected for this shop
+                    shop_vat_collected = Decimal('0')
+                    shop_checkouts = Checkout.objects.filter(
+                        created_at__gte=start_date,
+                        created_at__lte=end_date,
+                        cart_item__product__shop=shop,
+                        order__status='completed'
+                    ).select_related('cart_item__variant')
+                    
+                    for checkout in shop_checkouts:
+                        if checkout.cart_item and checkout.cart_item.variant:
+                            variant = checkout.cart_item.variant
+                            price = variant.price or Decimal('0')
+                            vat_percentage = variant.value_added_tax or Decimal('12.00')
+                            vat_amount = price * (vat_percentage / Decimal('100'))
+                            shop_vat_collected += vat_amount * checkout.quantity
+                        elif checkout.direct_variant_id:
+                            try:
+                                variant = Variants.objects.get(id=checkout.direct_variant_id)
+                                price = variant.price or Decimal('0')
+                                vat_percentage = variant.value_added_tax or Decimal('12.00')
+                                vat_amount = price * (vat_percentage / Decimal('100'))
+                                shop_vat_collected += vat_amount * checkout.quantity
+                            except Variants.DoesNotExist:
+                                pass
 
                     avg_rating = Review.objects.filter(
                         shop=shop,
@@ -1896,11 +2137,12 @@ class AdminDashboard(viewsets.ViewSet):
                         'sales': shop_sales,
                         'orders': shop_orders,
                         'platform_fee': round(platform_fee, 2),
+                        'vat_collected': float(shop_vat_collected),
                         'average_order_value': round(shop_sales / shop_orders, 2) if shop_orders > 0 else 0,
                         'rating': round(float(avg_rating), 1),
                         'followers': follower_count,
                         'products': product_count,
-                        'calculation_note': 'Platform fee = 5% of total sales from this shop in the selected period',
+                        'calculation_note': 'Platform fee = 5% of total sales from this shop in the selected period. VAT = 12% (or variant-specific rate) of product prices from completed orders.',
                     })
                 except Shop.DoesNotExist:
                     continue
@@ -1916,6 +2158,8 @@ class AdminDashboard(viewsets.ViewSet):
 
     def _get_operational_data(self, start_date, end_date):
         try:
+            from decimal import Decimal
+            
             # Active Boosts (from products being boosted)
             active_boosts = Boost.objects.filter(
                 start_date__date__lte=end_date,
@@ -8069,6 +8313,33 @@ class AdminRiders(viewsets.ViewSet):
         
         return start_date, end_date
     
+    def get_rider_address(self, rider):
+        """Get full address for a rider from their User model"""
+        user = rider.rider
+        address_parts = []
+        
+        if user.street:
+            address_parts.append(user.street)
+        if user.barangay:
+            address_parts.append(user.barangay)
+        if user.city:
+            address_parts.append(user.city)
+        if user.province:
+            address_parts.append(user.province)
+        if user.zip_code:
+            address_parts.append(user.zip_code)
+        
+        return {
+            'street': user.street or '',
+            'barangay': user.barangay or '',
+            'city': user.city or '',
+            'province': user.province or '',
+            'zip_code': user.zip_code or '',
+            'full_address': ', '.join(filter(None, address_parts)) or 'No address provided',
+            'latitude': float(user.latitude) if user.latitude else None,
+            'longitude': float(user.longitude) if user.longitude else None
+        }
+    
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """Get rider metrics and analytics data for admin dashboard with date range support"""
@@ -8130,7 +8401,6 @@ class AdminRiders(viewsets.ViewSet):
                 success_rate_in_period = (completed_deliveries_in_period / total_deliveries_in_period) * 100
             
             # Calculate average rating - using placeholder since we can't link reviews to riders directly
-            # If you have a way to link reviews to riders (through orders/deliveries), implement it here
             average_rating_in_period = Decimal('4.5')  # Placeholder
             
             # Calculate total earnings - placeholder
@@ -8158,7 +8428,7 @@ class AdminRiders(viewsets.ViewSet):
                 'all_time_completed_deliveries': all_time_completed_deliveries
             }
             
-            # Get analytics data with date range (simplified to avoid Review model issues)
+            # Get analytics data with date range
             analytics_data = self._get_analytics_data(start_date, end_date)
             
             # Get riders data within date range
@@ -8319,7 +8589,7 @@ class AdminRiders(viewsets.ViewSet):
         }
     
     def _get_riders_data(self, start_date=None, end_date=None, limit=100):
-        """Get riders with all related data with date range support"""
+        """Get riders with all related data including addresses with date range support"""
         riders_qs = Rider.objects.select_related(
             'rider',
             'approved_by'
@@ -8369,6 +8639,9 @@ class AdminRiders(viewsets.ViewSet):
             last_name = rider.rider.last_name or ''
             full_name = f"{first_name} {last_name}".strip()
             
+            # Get rider address
+            rider_address = self.get_rider_address(rider)
+            
             rider_data = {
                 'rider': {
                     'id': str(rider.rider.id),
@@ -8376,11 +8649,12 @@ class AdminRiders(viewsets.ViewSet):
                     'email': rider.rider.email,
                     'first_name': first_name,
                     'last_name': last_name,
-                    'full_name': full_name,  # Add computed full_name for easy display
+                    'full_name': full_name,
                     'contact_number': rider.rider.contact_number,
                     'created_at': rider.rider.created_at.isoformat() if rider.rider.created_at else None,
                     'is_rider': rider.rider.is_rider,
                 },
+                'address': rider_address,  # Add address information
                 'vehicle_type': rider.vehicle_type,
                 'plate_number': rider.plate_number,
                 'vehicle_brand': rider.vehicle_brand,
@@ -8394,23 +8668,26 @@ class AdminRiders(viewsets.ViewSet):
                     'username': rider.approved_by.username,
                 } if rider.approved_by else None,
                 'approval_date': rider.approval_date.isoformat() if rider.approval_date else None,
+                'availability_status': rider.availability_status,
+                'is_accepting_deliveries': rider.is_accepting_deliveries,
+                'failed_deliveries_count': rider.failed_deliveries_count,
+                'declined_order_count': rider.declined_order_count,
                 # Computed fields for frontend
                 'total_deliveries': total_deliveries,
                 'completed_deliveries': completed_deliveries,
                 'average_rating': float(average_rating),
                 'total_earnings': float(total_earnings),
                 'rider_status': rider_status,
-                'riderName': full_name,  # Add riderName at root level for easy access in table
+                'riderName': full_name,
             }
             
             rider_list.append(rider_data)
         
         return rider_list
-        
-
+    
     @action(detail=False, methods=['get'])
     def get_rider_details(self, request):
-        """Get detailed rider information"""
+        """Get detailed rider information including address"""
         rider_id = request.query_params.get('rider_id')
         start_date_str = request.GET.get('start_date')
         end_date_str = request.GET.get('end_date')
@@ -8457,11 +8734,17 @@ class AdminRiders(viewsets.ViewSet):
                     'id': str(delivery.id),
                     'order_id': str(delivery.order.order),
                     'status': delivery.status,
+                    'distance_km': float(delivery.distance_km) if delivery.distance_km else None,
+                    'delivery_fee': float(delivery.delivery_fee) if delivery.delivery_fee else None,
+                    'estimated_minutes': delivery.estimated_minutes,
                     'picked_at': delivery.picked_at.isoformat() if delivery.picked_at else None,
                     'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at else None,
                     'created_at': delivery.created_at.isoformat(),
                 }
                 delivery_history.append(delivery_data)
+            
+            # Get rider address
+            rider_address = self.get_rider_address(rider)
             
             # Calculate performance metrics with date range
             total_deliveries = deliveries.count()
@@ -8474,6 +8757,13 @@ class AdminRiders(viewsets.ViewSet):
             # Calculate total earnings - placeholder
             total_earnings = Decimal('0')
             
+            # Get rider's current location if available
+            current_location = {
+                'latitude': float(rider.rider.latitude) if rider.rider.latitude else None,
+                'longitude': float(rider.rider.longitude) if rider.rider.longitude else None,
+                'last_updated': rider.last_status_update.isoformat() if rider.last_status_update else None
+            }
+            
             rider_details = {
                 'rider': {
                     'id': str(rider.rider.id),
@@ -8481,10 +8771,13 @@ class AdminRiders(viewsets.ViewSet):
                     'email': rider.rider.email,
                     'first_name': rider.rider.first_name,
                     'last_name': rider.rider.last_name,
+                    'full_name': f"{rider.rider.first_name} {rider.rider.last_name}".strip(),
                     'contact_number': rider.rider.contact_number,
                     'created_at': rider.rider.created_at.isoformat(),
                     'is_rider': rider.rider.is_rider,
                 },
+                'address': rider_address,  # Add address information
+                'current_location': current_location,  # Add current location if available
                 'vehicle_info': {
                     'type': rider.vehicle_type,
                     'plate_number': rider.plate_number,
@@ -8500,6 +8793,13 @@ class AdminRiders(viewsets.ViewSet):
                     'verified': rider.verified,
                     'approved_by': rider.approved_by.username if rider.approved_by else None,
                     'approval_date': rider.approval_date.isoformat() if rider.approval_date else None,
+                },
+                'status_info': {
+                    'availability_status': rider.availability_status,
+                    'is_accepting_deliveries': rider.is_accepting_deliveries,
+                    'failed_deliveries_count': rider.failed_deliveries_count,
+                    'declined_order_count': rider.declined_order_count,
+                    'last_status_update': rider.last_status_update.isoformat() if rider.last_status_update else None,
                 },
                 'performance': {
                     'total_deliveries': total_deliveries,
@@ -8530,6 +8830,44 @@ class AdminRiders(viewsets.ViewSet):
                 'success': False,
                 'error': 'Rider not found'
             }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'], url_path='rider-locations')
+    def get_rider_locations(self, request):
+        """Get all riders with their current locations for mapping"""
+        try:
+            riders = Rider.objects.filter(
+                verified=True,
+                is_accepting_deliveries=True
+            ).select_related('rider')
+            
+            rider_locations = []
+            for rider in riders:
+                if rider.rider.latitude and rider.rider.longitude:
+                    rider_locations.append({
+                        'rider_id': str(rider.id),
+                        'user_id': str(rider.rider.id),
+                        'name': f"{rider.rider.first_name} {rider.rider.last_name}".strip() or rider.rider.username,
+                        'username': rider.rider.username,
+                        'latitude': float(rider.rider.latitude),
+                        'longitude': float(rider.rider.longitude),
+                        'availability_status': rider.availability_status,
+                        'vehicle_type': rider.vehicle_type,
+                        'plate_number': rider.plate_number,
+                        'last_status_update': rider.last_status_update.isoformat() if rider.last_status_update else None,
+                        'address': self.get_rider_address(rider)
+                    })
+            
+            return Response({
+                'success': True,
+                'riders': rider_locations,
+                'count': len(rider_locations)
+            })
+            
         except Exception as e:
             return Response({
                 'success': False,
@@ -8570,12 +8908,12 @@ class AdminRiders(viewsets.ViewSet):
             if action_type == 'approve':
                 rider.verified = True
                 rider.approval_date = timezone.now()
-                rider.approved_by = admin_user  # Use the fetched user, not request.user
+                rider.approved_by = admin_user
                 message = 'Rider approved successfully'
             elif action_type == 'reject':
                 rider.verified = False
                 rider.approval_date = timezone.now()
-                rider.approved_by = admin_user  # Use the fetched user, not request.user
+                rider.approved_by = admin_user
                 message = 'Rider rejected successfully'
             else:
                 return Response({
@@ -8648,7 +8986,8 @@ class AdminRiders(viewsets.ViewSet):
                     'last_name': rider.rider.last_name,
                     'delivery_count': rider.delivery_count,
                     'completed_deliveries': rider.completed_deliveries,
-                    'success_rate': float(success_rate)
+                    'success_rate': float(success_rate),
+                    'address': self.get_rider_address(rider)  # Add address to top riders
                 })
             
             # Vehicle type statistics within date range
@@ -8708,7 +9047,8 @@ class AdminRiders(viewsets.ViewSet):
                     'success': True,
                     'verified': rider.verified,
                     'approval_date': rider.approval_date.isoformat() if rider.approval_date else None,
-                    'rider_status': 'approved' if rider.verified else 'pending'
+                    'rider_status': 'approved' if rider.verified else 'pending',
+                    'address': self.get_rider_address(rider)  # Add address to response
                 })
             except Rider.DoesNotExist:
                 return Response({
@@ -8723,7 +9063,7 @@ class AdminRiders(viewsets.ViewSet):
                 'success': False,
                 'error': 'User not found'
             }, status=status.HTTP_404_NOT_FOUND)
-        
+
 class AdminVouchers(viewsets.ViewSet):
     
     @action(detail=False, methods=['post'])
@@ -23910,6 +24250,66 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
         })
 
 class SellerOrderList(viewsets.ViewSet):
+    
+    def _calculate_driving_distance(self, origin_lat, origin_lng, dest_lat, dest_lng):
+        """Calculate driving distance using Google Maps API"""
+        GOOGLE_MAPS_API_KEY = getattr(settings, 'GOOGLE_MAPS_API_KEY', None)
+        
+        if not GOOGLE_MAPS_API_KEY:
+            return self._haversine_distance(origin_lat, origin_lng, dest_lat, dest_lng)
+        
+        try:
+            url = "https://maps.googleapis.com/maps/api/distancematrix/json"
+            params = {
+                'origins': f"{origin_lat},{origin_lng}",
+                'destinations': f"{dest_lat},{dest_lng}",
+                'key': GOOGLE_MAPS_API_KEY,
+                'units': 'metric'
+            }
+            
+            response = requests.get(url, params=params, timeout=5)
+            data = response.json()
+            
+            if data.get('status') == 'OK':
+                rows = data.get('rows', [])
+                if rows:
+                    elements = rows[0].get('elements', [])
+                    if elements and elements[0].get('status') == 'OK':
+                        distance_meters = elements[0].get('distance', {}).get('value', 0)
+                        if distance_meters > 0:
+                            return distance_meters / 1000
+            
+            return self._haversine_distance(origin_lat, origin_lng, dest_lat, dest_lng)
+        except Exception:
+            return self._haversine_distance(origin_lat, origin_lng, dest_lat, dest_lng)
+    
+    def _haversine_distance(self, lat1, lng1, lat2, lng2):
+        """Calculate straight-line distance using Haversine formula"""
+        R = 6371
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        delta_lat = math.radians(lat2 - lat1)
+        delta_lng = math.radians(lng2 - lng1)
+        
+        a = math.sin(delta_lat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lng / 2) ** 2
+        c = 2 * math.asin(math.sqrt(a))
+        
+        return R * c
+    
+    def _calculate_delivery_fee(self, distance_km):
+        """Calculate delivery fee based on distance (₱40/km, capped at ₱300)"""
+        if distance_km <= 0:
+            return 40.00
+        fee = distance_km * 40.00
+        return min(fee, 300.00)
+    
+    def _calculate_estimated_time(self, distance_km):
+        """Calculate estimated delivery time in minutes"""
+        if distance_km <= 0:
+            return 15
+        time_minutes = distance_km / 0.5
+        return max(15, int(time_minutes))
+    
     @action(detail=True, methods=['post'])
     def rider_response(self, request, pk=None):
         try:
@@ -23917,19 +24317,24 @@ class SellerOrderList(viewsets.ViewSet):
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
                 return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+            
             rider_id = request.data.get('rider_id')
             if not rider_id:
                 return Response({"success": False, "message": "Rider ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+            
             try:
                 rider = Rider.objects.get(id=rider_id)
             except Rider.DoesNotExist:
                 return Response({"success": False, "message": "Rider not found"}, status=status.HTTP_404_NOT_FOUND)
+            
             response_type = request.data.get('response')
             if response_type not in ['accept', 'reject']:
                 return Response({"success": False, "message": "Response must be 'accept' or 'reject'"}, status=status.HTTP_400_BAD_REQUEST)
-            delivery = Delivery.objects.filter(order=order, rider=rider, status='pending').first()
+            
+            delivery = Delivery.objects.filter(order=order, rider=rider, status='pending_offer').first()
             if not delivery:
                 return Response({"success": False, "message": "No pending delivery found for this rider"}, status=status.HTTP_404_NOT_FOUND)
+            
             if response_type == 'accept':
                 delivery.status = 'accepted'
                 delivery.save()
@@ -23949,6 +24354,7 @@ class SellerOrderList(viewsets.ViewSet):
                 delivery.status = 'rejected'
                 delivery.save()
                 message = "Delivery rejected"
+            
             return Response({
                 "success": True,
                 "message": message,
@@ -23956,86 +24362,239 @@ class SellerOrderList(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+    
     @action(detail=False, methods=['post'])
     def assign_deliveries(self, request):
         try:
             order_id = request.GET.get('order_id')
             if not order_id:
                 return Response({"success": False, "message": "Order ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+            
             try:
                 order = Order.objects.get(order=order_id)
             except Order.DoesNotExist:
                 return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+            
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
-                                                      for keyword in ['pickup', 'store', 'collect'])
+                                                    for keyword in ['pickup', 'store', 'collect'])
             if is_pickup:
                 return Response({"success": False, "message": "Order is for pickup, not delivery"}, status=status.HTTP_400_BAD_REQUEST)
+            
             existing_delivery = Delivery.objects.filter(
-                order=order, status__in=['pending', 'accepted', 'picked_up', 'in_progress']
+                order=order, status__in=['pending', 'pending_offer', 'accepted', 'picked_up', 'in_progress']
             ).exists()
             if existing_delivery:
                 return Response({"success": False, "message": "Order already has an active or pending delivery"}, status=status.HTTP_400_BAD_REQUEST)
+            
             available_riders = Rider.objects.filter(
-                verified=True, availability_status='available', is_accepting_deliveries=True
+                verified=True, 
+                availability_status='available', 
+                is_accepting_deliveries=True
             ).select_related('rider')
+            
             if not available_riders.exists():
                 return Response({"success": False, "message": "No available riders found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            checkout_item = order.checkout_set.first()
+            if not checkout_item:
+                return Response({"success": False, "message": "Cannot find order items"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            pickup_lat = None
+            pickup_lng = None
+            pickup_name = None
+            
+            if checkout_item.direct_shop_id:
+                try:
+                    shop = Shop.objects.get(id=checkout_item.direct_shop_id)
+                    if shop.latitude and shop.longitude:
+                        pickup_lat = float(shop.latitude)
+                        pickup_lng = float(shop.longitude)
+                        pickup_name = shop.name
+                except Shop.DoesNotExist:
+                    pass
+            elif checkout_item.cart_item and checkout_item.cart_item.product:
+                product = checkout_item.cart_item.product
+                if product.shop and product.shop.latitude and product.shop.longitude:
+                    pickup_lat = float(product.shop.latitude)
+                    pickup_lng = float(product.shop.longitude)
+                    pickup_name = product.shop.name
+            
+            if not pickup_lat or not pickup_lng:
+                return Response({"success": False, "message": "Shop has no coordinates. Please update shop address."}, status=status.HTTP_400_BAD_REQUEST)
+            
+            dest_lat = None
+            dest_lng = None
+            
+            if order.shipping_address and order.shipping_address.latitude and order.shipping_address.longitude:
+                dest_lat = float(order.shipping_address.latitude)
+                dest_lng = float(order.shipping_address.longitude)
+            elif order.user.latitude and order.user.longitude:
+                dest_lat = float(order.user.latitude)
+                dest_lng = float(order.user.longitude)
+            
+            if not dest_lat or not dest_lng:
+                return Response({"success": False, "message": "Customer has no shipping address coordinates"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            rider_distances = []
+            rider_comparison = []
+            
+            for rider in available_riders:
+                if not (rider.rider.latitude and rider.rider.longitude):
+                    continue
+                
+                rider_lat = float(rider.rider.latitude)
+                rider_lng = float(rider.rider.longitude)
+                
+                rejected_before = Delivery.objects.filter(
+                    order=order,
+                    rider=rider,
+                    status='rejected'
+                ).exists()
+                
+                if rejected_before:
+                    continue
+                
+                distance_to_pickup = self._calculate_driving_distance(rider_lat, rider_lng, pickup_lat, pickup_lng)
+                distance_pickup_to_dest = self._calculate_driving_distance(pickup_lat, pickup_lng, dest_lat, dest_lng)
+                total_distance = distance_to_pickup + distance_pickup_to_dest
+                
+                rider_distances.append({
+                    'rider': rider,
+                    'total_distance': total_distance,
+                    'distance_to_pickup': distance_to_pickup,
+                    'distance_pickup_to_dest': distance_pickup_to_dest,
+                    'rider_lat': rider_lat,
+                    'rider_lng': rider_lng
+                })
+                
+                rider_name = f"{rider.rider.first_name} {rider.rider.last_name}".strip() or rider.rider.username
+                rider_comparison.append({
+                    'rider_name': rider_name,
+                    'rider_username': rider.rider.username,
+                    'vehicle_type': rider.vehicle_type,
+                    'plate_number': rider.plate_number,
+                    'distance_to_pickup_km': round(distance_to_pickup, 2),
+                    'distance_pickup_to_dest_km': round(distance_pickup_to_dest, 2),
+                    'total_distance_km': round(total_distance, 2)
+                })
+            
+            if not rider_distances:
+                order.status = 'pending_rider'
+                order.save()
+                return Response({
+                    "success": True, 
+                    "message": "No eligible riders with location data available",
+                    "data": {
+                        "order_id": str(order.order),
+                        "status": "pending_rider",
+                        "riders_checked": len(rider_comparison),
+                        "all_riders_compared": rider_comparison
+                    }
+                }, status=status.HTTP_200_OK)
+            
+            rider_distances.sort(key=lambda x: x['total_distance'])
+            rider_comparison.sort(key=lambda x: x['total_distance_km'])
+            
+            top_riders = rider_distances
             deliveries_created = []
-            for rider in available_riders[:5]:
+            
+            for rider_data in top_riders:
+                rider = rider_data['rider']
+                total_distance = rider_data['total_distance']
+                distance_to_pickup = rider_data['distance_to_pickup']
+                distance_pickup_to_dest = rider_data['distance_pickup_to_dest']
+                
+                delivery_fee = self._calculate_delivery_fee(total_distance)
+                estimated_minutes = self._calculate_estimated_time(total_distance)
+                
                 delivery = Delivery.objects.create(
-                    order=order, rider=rider, status='pending',
-                    delivery_fee=50, distance_km=5.0, estimated_minutes=30
+                    order=order,
+                    rider=rider,
+                    status='pending_offer',
+                    distance_km=Decimal(str(total_distance)),
+                    estimated_minutes=estimated_minutes,
+                    delivery_fee=Decimal(str(delivery_fee)),
+                    metadata={
+                        'distance_to_pickup': distance_to_pickup,
+                        'distance_pickup_to_dest': distance_pickup_to_dest,
+                        'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
+                        'destination_location': {'lat': dest_lat, 'lng': dest_lng}
+                    }
                 )
                 deliveries_created.append(str(delivery.id))
+                
                 Notification.objects.create(
                     user=rider.rider,
                     title='New Delivery Assignment',
                     type='delivery',
-                    message=f'You have a new delivery assignment for order #{str(order.order)[:8]}',
+                    message=f'You have a new delivery assignment for order #{str(order.order)[:8]}. '
+                            f'Distance: {total_distance:.1f}km, Fee: ₱{delivery_fee:.2f}',
                     is_read=False
                 )
-            assign_deliveries_task.delay()
-            check_delivery_responses_task.delay()
+            
+            # Store rider comparison data in the first delivery's metadata
+            if deliveries_created:
+                first_delivery = Delivery.objects.get(id=deliveries_created[0])
+                first_delivery.metadata['all_riders_compared'] = rider_comparison
+                first_delivery.save()
+            
+            order.status = 'rider_assigned'
+            order.save()
+            
+            nearest_rider = rider_distances[0]
+            nearest_rider_name = f"{nearest_rider['rider'].rider.first_name} {nearest_rider['rider'].rider.last_name}".strip() or nearest_rider['rider'].rider.username
+            
             return Response({
                 "success": True,
-                "message": f"Delivery assignments created for {len(deliveries_created)} riders",
+                "message": f"Assigned {len(deliveries_created)} nearest riders. Nearest: {nearest_rider_name} ({nearest_rider['total_distance']:.2f} km)",
                 "data": {
-                    "order_id": str(order_id),
+                    "order_id": str(order.order),
                     "deliveries_created": deliveries_created,
-                    "rider_count": len(deliveries_created)
+                    "rider_count": len(deliveries_created),
+                    "pickup_location": pickup_name,
+                    "nearest_rider": {
+                        "name": nearest_rider_name,
+                        "username": nearest_rider['rider'].rider.username,
+                        "total_distance_km": round(nearest_rider['total_distance'], 2),
+                        "delivery_fee": self._calculate_delivery_fee(nearest_rider['total_distance']),
+                        "estimated_minutes": self._calculate_estimated_time(nearest_rider['total_distance'])
+                    },
+                    "all_riders_compared": rider_comparison
                 }
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+    
     @action(detail=False, methods=['post'])
     def check_delivery_responses(self, request):
         try:
             order_id = request.GET.get('order_id')
             if not order_id:
                 return Response({"success": False, "message": "Order ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+            
             try:
                 order = Order.objects.get(order=order_id)
             except Order.DoesNotExist:
                 return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
-            pending_deliveries = Delivery.objects.filter(order=order, status='pending').select_related('rider__rider')
+            
+            pending_deliveries = Delivery.objects.filter(order=order, status='pending_offer').select_related('rider__rider')
             responses = []
             accepted_delivery = None
+            
             for delivery in pending_deliveries:
                 response_info = {
                     "delivery_id": str(delivery.id),
                     "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery.rider else None,
                     "status": delivery.status,
-                    "has_responded": delivery.status != 'pending'
+                    "has_responded": delivery.status != 'pending_offer'
                 }
                 if delivery.status == 'accepted':
                     accepted_delivery = delivery
                 responses.append(response_info)
+            
             if accepted_delivery:
-                # order.status = 'ready_to_ship'
-                # order.save()
-                Delivery.objects.filter(order=order, status='pending').exclude(id=accepted_delivery.id).update(status='cancelled')
+                Delivery.objects.filter(order=order, status='pending_offer').exclude(id=accepted_delivery.id).update(status='cancelled')
+            
             return Response({
                 "success": True,
                 "message": "Delivery responses checked",
@@ -24047,7 +24606,7 @@ class SellerOrderList(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+    
     def _get_product_media(self, product):
         media_files = []
         try:
@@ -24063,34 +24622,36 @@ class SellerOrderList(viewsets.ViewSet):
         except Exception as e:
             print(f"Error getting product media: {e}")
         return media_files
-
+    
     def _get_variant_media(self, variant):
         if variant and variant.image:
             return convert_s3_to_public_url(variant.image.url)
         return None
-
+    
     def _prepare_order_response(self, order, shop):
         latest_delivery = Delivery.objects.filter(order=order).select_related('rider__rider').order_by('-created_at').first()
         delivery_info = None
         if latest_delivery:
-            is_pending_offer = latest_delivery.status == 'pending'
+            is_pending_offer = latest_delivery.status == 'pending_offer'
             delivery_info = {
                 "delivery_id": str(latest_delivery.id),
                 "status": latest_delivery.status,
-                "rider_name": f"{latest_delivery.rider.rider.first_name} {latest_delivery.rider.rider.last_name}" if latest_delivery.rider else None,
+                "rider_name": f"{latest_delivery.rider.rider.first_name} {latest_delivery.rider.rider.last_name}".strip() or latest_delivery.rider.rider.username if latest_delivery.rider else None,
+                "rider_phone": latest_delivery.rider.rider.contact_number if latest_delivery.rider else None,
                 "tracking_number": f"TRK-{str(latest_delivery.id)[:10]}" if not is_pending_offer else None,
                 "estimated_delivery": self._get_estimated_delivery(latest_delivery),
                 "submitted_at": latest_delivery.created_at.isoformat(),
                 "is_pending_offer": is_pending_offer
             }
+        
         shipping_status = self._get_shipping_status(
             order.status,
             latest_delivery.status if latest_delivery else None
         )
+        
         is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                   for keyword in ['pickup', 'store', 'collect'])
         
-        # Get checkouts for this shop (both cart_item and direct)
         shop_checkouts = Checkout.objects.filter(
             order=order
         ).filter(
@@ -24103,7 +24664,6 @@ class SellerOrderList(viewsets.ViewSet):
         total_amount = float(order.total_amount) 
         
         for checkout in shop_checkouts:
-            # Handle direct product checkout (no cart_item)
             if checkout.direct_product_id and not checkout.cart_item:
                 price = float(checkout.direct_product_price or 0)
                 product_data = {
@@ -24137,10 +24697,8 @@ class SellerOrderList(viewsets.ViewSet):
                     "shipping_method": None,
                     "estimated_delivery": None
                 })
-                # total_amount += float(checkout.total_amount)
                 continue
             
-            # Handle normal cart_item checkout
             cart_item = checkout.cart_item
             if not cart_item or not cart_item.product:
                 continue
@@ -24152,16 +24710,19 @@ class SellerOrderList(viewsets.ViewSet):
                 price = float(variant.price)
             elif hasattr(product, 'price'):
                 price = float(product.price)
+            
             variant_title = variant.title if variant else str(product.condition)
             product_media = self._get_product_media(product)
             variant_image_url = self._get_variant_media(variant)
             tracking_number = None
             shipping_method = None
             estimated_delivery = None
+            
             if latest_delivery:
-                tracking_number = f"TRK-{str(latest_delivery.id)[:10]}" if latest_delivery.status != 'pending' else None
+                tracking_number = f"TRK-{str(latest_delivery.id)[:10]}" if latest_delivery.status != 'pending_offer' else None
                 shipping_method = "Standard Shipping" if not is_pickup else "Store Pickup"
                 estimated_delivery = self._get_estimated_delivery(latest_delivery)
+            
             product_data = {
                 "id": str(product.id),
                 "name": product.name,
@@ -24173,6 +24734,7 @@ class SellerOrderList(viewsets.ViewSet):
             }
             if variant_image_url:
                 product_data["variant_image"] = variant_image_url
+            
             order_items.append({
                 "id": str(checkout.id),
                 "cart_item": {
@@ -24200,6 +24762,16 @@ class SellerOrderList(viewsets.ViewSet):
         elif order.delivery_address_text:
             delivery_address = order.delivery_address_text
         
+        # Extract rider comparison data from the latest delivery's metadata
+        rider_comparison_data = None
+        nearest_rider_data = None
+        
+        if latest_delivery and latest_delivery.metadata:
+            if 'all_riders_compared' in latest_delivery.metadata:
+                rider_comparison_data = latest_delivery.metadata.get('all_riders_compared', [])
+            if 'nearest_rider' in latest_delivery.metadata:
+                nearest_rider_data = latest_delivery.metadata.get('nearest_rider')
+        
         order_data = {
             "order_id": str(order.order),
             "user": {
@@ -24222,22 +24794,32 @@ class SellerOrderList(viewsets.ViewSet):
             "is_pickup": is_pickup,
             "pickup_date": order.pickup_date.isoformat() if order.pickup_date else None,
         }
+        
         if delivery_info:
             order_data["delivery_info"] = delivery_info
+        
+        # Add rider comparison data to metadata if available
+        if rider_comparison_data or nearest_rider_data or order.metadata:
+            order_data["metadata"] = order.metadata or {}
+            if rider_comparison_data:
+                order_data["metadata"]["all_riders_compared"] = rider_comparison_data
+            if nearest_rider_data:
+                order_data["metadata"]["nearest_rider"] = nearest_rider_data
+        
         return order_data
-
+    
     @action(detail=False, methods=['get'])
     def order_list(self, request):
         try:
             shop_id = request.GET.get('shop_id')
             if not shop_id:
                 return Response({"success": False, "message": "Shop ID is required", "data": []}, status=status.HTTP_400_BAD_REQUEST)
+            
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found", "data": []}, status=status.HTTP_404_NOT_FOUND)
             
-            # Get ALL orders that have checkouts with cart_item (normal flow) OR direct product data
             orders = Order.objects.filter(
                 Q(checkout__cart_item__product__shop=shop) |
                 Q(checkout__direct_shop_id=str(shop.id))
@@ -24253,10 +24835,6 @@ class SellerOrderList(viewsets.ViewSet):
             
             orders_data = [self._prepare_order_response(order, shop) for order in orders]
             
-            # Log for debugging
-            print(f"Total orders found for shop {shop.name}: {orders.count()}")
-            print(f"Orders by status: {orders.values_list('status', flat=True)}")
-            
             return Response({
                 "success": True,
                 "message": "Orders retrieved successfully",
@@ -24269,7 +24847,7 @@ class SellerOrderList(viewsets.ViewSet):
             import traceback
             traceback.print_exc()
             return Response({"success": False, "message": f"Error retrieving orders: {str(e)}", "data": []}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+    
     def _get_shipping_status(self, order_status, delivery_status=None):
         status_mapping = {
             'pending': 'pending_shipment',
@@ -24287,21 +24865,19 @@ class SellerOrderList(viewsets.ViewSet):
             'ready_for_pickup': 'ready_for_pickup',
             'picked_up': 'picked_up',
         }
-
-        # Both 'pending' (API) and 'pending_offer' (management command) mean waiting for rider
-        if delivery_status in ('pending', 'pending_offer'):
+        
+        if delivery_status in ('pending_offer', 'pending'):
             return 'waiting_for_rider'
-
+        
         if delivery_status:
             delivery_map = {
-                # 'accepted': 'rider_accepted',
                 'picked_up': 'to_deliver',
                 'delivered': 'delivered',
             }
             return delivery_map.get(delivery_status, status_mapping.get(order_status, 'pending_shipment'))
-
+        
         return status_mapping.get(order_status, 'pending_shipment')
-
+    
     def _get_estimated_delivery(self, delivery):
         if delivery.delivered_at:
             return delivery.delivered_at.strftime('%Y-%m-%d')
@@ -24309,7 +24885,7 @@ class SellerOrderList(viewsets.ViewSet):
             return (delivery.picked_at + timedelta(days=2)).strftime('%Y-%m-%d')
         else:
             return (timezone.now() + timedelta(days=3)).strftime('%Y-%m-%d')
-
+    
     @action(detail=True, methods=['get'])
     def available_actions(self, request, pk=None):
         try:
@@ -24317,16 +24893,16 @@ class SellerOrderList(viewsets.ViewSet):
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
                 return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
-
+            
             shop_id = request.GET.get('shop_id')
             if not shop_id:
                 return Response({"success": False, "message": "Shop ID is required"}, status=status.HTTP_400_BAD_REQUEST)
-
+            
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
-
+            
             has_shop_items = Checkout.objects.filter(
                 Q(order=order, cart_item__product__shop=shop) |
                 Q(order=order, direct_shop_id=str(shop.id))
@@ -24334,8 +24910,8 @@ class SellerOrderList(viewsets.ViewSet):
             
             if not has_shop_items:
                 return Response({"success": False, "message": "Order not found or doesn't belong to your shop"}, status=status.HTTP_403_FORBIDDEN)
-
-            has_pending_offer = Delivery.objects.filter(order=order, status__in=['pending', 'pending_offer']).exists()
+            
+            has_pending_offer = Delivery.objects.filter(order=order, status__in=['pending_offer', 'pending']).exists()
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                     for keyword in ['pickup', 'store', 'collect'])
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
@@ -24343,12 +24919,11 @@ class SellerOrderList(viewsets.ViewSet):
                 order.status,
                 latest_delivery.status if latest_delivery else None
             )
-
-            # Payment gate - For Maya orders, the seller can only confirm once payment is verified.
+            
             is_maya = order.payment_method and order.payment_method.lower() == 'maya'
             is_paid = Payment.objects.filter(order=order, status='success').exists()
             can_confirm = not is_maya or is_paid
-
+            
             available_actions = []
             
             if current_shipping_status == 'pending_shipment':
@@ -24363,14 +24938,13 @@ class SellerOrderList(viewsets.ViewSet):
                     available_actions = ['ready_for_pickup']
                 else:
                     available_actions = ['arrange_shipment']
-
+                    
             elif current_shipping_status == 'rider_assigned' or current_shipping_status == 'rider_accepted':
                 if not is_pickup:
                     available_actions = ['ready_to_ship']
-                    # Add print_waybill when delivery is accepted
                     if latest_delivery and latest_delivery.status == 'accepted':
                         available_actions.append('print_waybill')
-
+                        
             elif current_shipping_status == 'pending_rider':
                 if not is_pickup:
                     available_actions = ['arrange_shipment']
@@ -24381,7 +24955,7 @@ class SellerOrderList(viewsets.ViewSet):
                     available_actions.append('view_offer')
                     
             elif current_shipping_status == 'waiting_for_rider':
-                available_actions = ['ready_to_ship']  # Add this line
+                available_actions = ['ready_to_ship']
                 if has_pending_offer:
                     available_actions.append('view_offer')
                     
@@ -24399,15 +24973,15 @@ class SellerOrderList(viewsets.ViewSet):
                 
             elif current_shipping_status == 'picked_up':
                 available_actions = ['complete']
-
+            
             if order.status == 'ready_to_ship' and latest_delivery and latest_delivery.status == 'accepted':
                 available_actions.append('print_waybill')
-
+            
             if current_shipping_status not in ['completed', 'cancelled', 'picked_up', 'delivered']:
                 available_actions.append('cancel')
-
+            
             available_actions.append('view_details')
-
+            
             return Response({
                 "success": True,
                 "data": {
@@ -24422,20 +24996,23 @@ class SellerOrderList(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+    
     @action(detail=True, methods=['patch'])
     def update_status(self, request, pk=None):
         try:
             action_type = request.data.get('action_type')
             if not action_type:
                 return Response({"success": False, "message": "action_type is required"}, status=status.HTTP_400_BAD_REQUEST)
+            
             try:
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
                 return Response({"success": False, "message": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+            
             shop_id = request.GET.get('shop_id')
             if not shop_id:
                 return Response({"success": False, "message": "Shop ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+            
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
@@ -24452,7 +25029,8 @@ class SellerOrderList(viewsets.ViewSet):
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                       for keyword in ['pickup', 'store', 'collect'])
             original_status = order.status
-
+            message = ""
+            
             if action_type == 'confirm':
                 stock_errors = self._decrease_stock_for_order(order, shop)
                 if stock_errors:
@@ -24462,17 +25040,11 @@ class SellerOrderList(viewsets.ViewSet):
                         "details": stock_errors
                     }, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'processing'
-                # Set refund_expire_date to 3 days from now
-                # order.refund_expire_date = timezone.now() + timedelta(days=3)
                 message = "Pickup order confirmed" if is_pickup else "Order confirmed"
-
-                # ✅ CREATE WALLET TRANSACTION FOR SELLER
+                
                 try:
-                    from decimal import Decimal
-                    
                     seller_user = shop.customer.customer if shop.customer else None
                     if seller_user:
-                        # Calculate total amount for items from this shop
                         checkouts = Checkout.objects.filter(
                             Q(order=order, cart_item__product__shop=shop) |
                             Q(order=order, direct_shop_id=str(shop.id))
@@ -24483,12 +25055,8 @@ class SellerOrderList(viewsets.ViewSet):
                         
                         if total_amount > 0:
                             wallet, _ = UserWallet.objects.get_or_create(user=seller_user)
-                            
-                            # Add to pending balance
                             wallet.pending_balance += total_amount
                             wallet.save()
-                            
-                            # Create transaction record
                             WalletTransaction.objects.create(
                                 wallet=wallet,
                                 user=seller_user,
@@ -24503,8 +25071,7 @@ class SellerOrderList(viewsets.ViewSet):
                             print(f"✅ Wallet credited: ₱{total_amount} to {seller_user.username}")
                 except Exception as e:
                     print(f"Error creating wallet transaction: {e}")
-
-                # PICKUP DATE: only for Cash on Pickup orders
+                
                 is_cash_on_pickup = (
                     is_pickup and
                     order.payment_method and
@@ -24513,84 +25080,266 @@ class SellerOrderList(viewsets.ViewSet):
                 pickup_date_str = request.data.get('pickup_date')
                 if is_cash_on_pickup and pickup_date_str:
                     try:
-                        from datetime import datetime as dt
-                        pickup_dt = dt.fromisoformat(pickup_date_str)
+                        pickup_dt = datetime.fromisoformat(pickup_date_str)
                         order.metadata = order.metadata or {}
                         order.metadata['pickup_date'] = pickup_date_str
                         message = f"Pickup order confirmed. Customer pickup scheduled for {pickup_dt.strftime('%b %d, %Y %I:%M %p')}."
                     except (ValueError, TypeError):
                         pass
-                        
-            elif action_type == 'ready_to_ship':
-                if is_pickup:
-                    return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
-                
-                # Check current status to determine which action to take
-                if original_status == 'rider_assigned' or original_status == 'rider_accepted':
-                    # Coming from rider_assigned/rider_accepted - move to waiting_for_rider
-                    order.status = 'waiting_for_rider'
-                    message = "Order marked as ready to ship - waiting for rider to accept"
-                else:
-                    # Regular ready_to_ship action
-                    order.status = 'ready_to_ship'
-                    message = "Order marked as ready to ship"
-                    
+            
             elif action_type == 'arrange_shipment':
+                import logging
+                logger = logging.getLogger(__name__)
+                
                 if is_pickup:
                     return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Create delivery assignments for available riders
+                logger.info("=" * 80)
+                logger.info(f"📦 ARRANGE SHIPMENT - Order: {order.order}")
+                logger.info("=" * 80)
+                
                 available_riders = Rider.objects.filter(
                     verified=True, 
                     availability_status='available', 
                     is_accepting_deliveries=True
                 ).select_related('rider')
                 
-                if available_riders.exists():
-                    # Riders found - set status to rider_assigned
-                    order.status = 'rider_assigned'
-                    message = "Rider assigned successfully"
-                    
-                    for rider in available_riders[:5]:
-                        delivery = Delivery.objects.create(
-                            order=order, 
-                            rider=rider, 
-                            status='pending',
-                            delivery_fee=50, 
-                            distance_km=5.0, 
-                            estimated_minutes=30
-                        )
-                        Notification.objects.create(
-                            user=rider.rider,
-                            title='New Delivery Assignment',
-                            type='delivery',
-                            message=f'You have a new delivery assignment for order #{str(order.order)[:8]}',
-                            is_read=False
-                        )
-                else:
-                    # No riders available - set status to pending_rider
-                    order.status = 'pending_rider'
-                    message = "No riders available. Order is pending rider assignment."
+                logger.info(f"📋 Total available riders found: {available_riders.count()}")
                 
+                if not available_riders.exists():
+                    return Response({"success": False, "message": "No available riders found"}, status=status.HTTP_404_NOT_FOUND)
+                
+                checkout_item = order.checkout_set.first()
+                if not checkout_item:
+                    return Response({"success": False, "message": "Cannot find order items"}, status=status.HTTP_400_BAD_REQUEST)
+                
+                pickup_lat = None
+                pickup_lng = None
+                pickup_name = None
+                
+                if checkout_item.direct_shop_id:
+                    try:
+                        shop_obj = Shop.objects.get(id=checkout_item.direct_shop_id)
+                        if shop_obj.latitude and shop_obj.longitude:
+                            pickup_lat = float(shop_obj.latitude)
+                            pickup_lng = float(shop_obj.longitude)
+                            pickup_name = shop_obj.name
+                            logger.info(f"📍 Pickup Shop: {pickup_name} - Coordinates: ({pickup_lat}, {pickup_lng})")
+                    except Shop.DoesNotExist:
+                        pass
+                elif checkout_item.cart_item and checkout_item.cart_item.product:
+                    product = checkout_item.cart_item.product
+                    if product.shop and product.shop.latitude and product.shop.longitude:
+                        pickup_lat = float(product.shop.latitude)
+                        pickup_lng = float(product.shop.longitude)
+                        pickup_name = product.shop.name
+                        logger.info(f"📍 Pickup Shop: {pickup_name} - Coordinates: ({pickup_lat}, {pickup_lng})")
+                
+                if not pickup_lat or not pickup_lng:
+                    return Response({"success": False, "message": "Shop has no coordinates. Please update shop address."}, status=status.HTTP_400_BAD_REQUEST)
+                
+                dest_lat = None
+                dest_lng = None
+                
+                if order.shipping_address and order.shipping_address.latitude and order.shipping_address.longitude:
+                    dest_lat = float(order.shipping_address.latitude)
+                    dest_lng = float(order.shipping_address.longitude)
+                    logger.info(f"📍 Destination (Shipping Address): ({dest_lat}, {dest_lng})")
+                elif order.user.latitude and order.user.longitude:
+                    dest_lat = float(order.user.latitude)
+                    dest_lng = float(order.user.longitude)
+                    logger.info(f"📍 Destination (User Profile): ({dest_lat}, {dest_lng})")
+                
+                if not dest_lat or not dest_lng:
+                    return Response({"success": False, "message": "Customer has no shipping address coordinates"}, status=status.HTTP_400_BAD_REQUEST)
+                
+                logger.info("-" * 80)
+                logger.info("📊 LIST OF AVAILABLE RIDERS WITH DISTANCES:")
+                logger.info("-" * 80)
+                
+                rider_distances = []
+                rider_comparison = []
+                
+                for rider in available_riders:
+                    if not (rider.rider.latitude and rider.rider.longitude):
+                        continue
+                    
+                    rider_lat = float(rider.rider.latitude)
+                    rider_lng = float(rider.rider.longitude)
+                    
+                    rejected_before = Delivery.objects.filter(
+                        order=order,
+                        rider=rider,
+                        status='rejected'
+                    ).exists()
+                    
+                    if rejected_before:
+                        continue
+                    
+                    distance_to_pickup = self._calculate_driving_distance(rider_lat, rider_lng, pickup_lat, pickup_lng)
+                    distance_pickup_to_dest = self._calculate_driving_distance(pickup_lat, pickup_lng, dest_lat, dest_lng)
+                    total_distance = distance_to_pickup + distance_pickup_to_dest
+                    
+                    rider_distances.append({
+                        'rider': rider,
+                        'total_distance': total_distance,
+                        'distance_to_pickup': distance_to_pickup,
+                        'distance_pickup_to_dest': distance_pickup_to_dest
+                    })
+                    
+                    rider_name = f"{rider.rider.first_name} {rider.rider.last_name}".strip() or rider.rider.username
+                    rider_comparison.append({
+                        'rider_name': rider_name,
+                        'rider_username': rider.rider.username,
+                        'vehicle_type': rider.vehicle_type or 'N/A',
+                        'plate_number': rider.plate_number or 'N/A',
+                        'distance_to_pickup_km': round(distance_to_pickup, 2),
+                        'distance_pickup_to_dest_km': round(distance_pickup_to_dest, 2),
+                        'total_distance_km': round(total_distance, 2)
+                    })
+                    
+                    logger.info(f"📍 {rider_name}")
+                    logger.info(f"   Rider Location: ({rider_lat}, {rider_lng})")
+                    logger.info(f"   Distance to Pickup: {distance_to_pickup:.2f} km")
+                    logger.info(f"   Pickup to Destination: {distance_pickup_to_dest:.2f} km")
+                    logger.info(f"   TOTAL DISTANCE: {total_distance:.2f} km")
+                    logger.info(f"   Vehicle: {rider.vehicle_type or 'N/A'} | Plate: {rider.plate_number or 'N/A'}")
+                    logger.info("-" * 40)
+                
+                if not rider_distances:
+                    order.status = 'pending_rider'
+                    order.save()
+                    message = "No eligible riders with location data available"
+                    return Response({
+                        "success": True, 
+                        "message": message,
+                        "data": {
+                            "order_id": str(order.order),
+                            "status": "pending_rider",
+                            "riders_checked": len(rider_comparison),
+                            "all_riders_compared": rider_comparison
+                        }
+                    }, status=status.HTTP_200_OK)
+                
+                rider_distances.sort(key=lambda x: x['total_distance'])
+                rider_comparison.sort(key=lambda x: x['total_distance_km'])
+                
+                logger.info("=" * 80)
+                logger.info("🏆 RIDER RANKING (Nearest to Farthest):")
+                logger.info("=" * 80)
+                for idx, rd in enumerate(rider_distances, 1):
+                    rider_name = f"{rd['rider'].rider.first_name} {rd['rider'].rider.last_name}".strip() or rd['rider'].rider.username
+                    medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
+                    logger.info(f"{medal} {rider_name} - {rd['total_distance']:.2f} km total")
+                logger.info("=" * 80)
+                
+                top_riders = rider_distances
+                deliveries_created = []
+                
+                for rider_data in top_riders:
+                    rider = rider_data['rider']
+                    total_distance = rider_data['total_distance']
+                    distance_to_pickup = rider_data['distance_to_pickup']
+                    distance_pickup_to_dest = rider_data['distance_pickup_to_dest']
+                    
+                    delivery_fee = self._calculate_delivery_fee(total_distance)
+                    estimated_minutes = self._calculate_estimated_time(total_distance)
+                    
+                    delivery = Delivery.objects.create(
+                        order=order,
+                        rider=rider,
+                        status='pending_offer',
+                        distance_km=Decimal(str(total_distance)),
+                        estimated_minutes=estimated_minutes,
+                        delivery_fee=Decimal(str(delivery_fee)),
+                        metadata={
+                            'distance_to_pickup': distance_to_pickup,
+                            'distance_pickup_to_dest': distance_pickup_to_dest,
+                            'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
+                            'destination_location': {'lat': dest_lat, 'lng': dest_lng}
+                        }
+                    )
+                    deliveries_created.append(str(delivery.id))
+                    
+                    logger.info(f"✅ Assigned to {rider.rider.username} - {total_distance:.2f}km, Fee: ₱{delivery_fee:.2f}")
+                    
+                    Notification.objects.create(
+                        user=rider.rider,
+                        title='New Delivery Assignment',
+                        type='delivery',
+                        message=f'You have a new delivery assignment for order #{str(order.order)[:8]}. '
+                                f'Distance: {total_distance:.1f}km, Fee: ₱{delivery_fee:.2f}',
+                        is_read=False
+                    )
+                
+                # Store rider comparison data in the first delivery's metadata
+                if deliveries_created:
+                    first_delivery = Delivery.objects.get(id=deliveries_created[0])
+                    first_delivery.metadata['all_riders_compared'] = rider_comparison
+                    first_delivery.save()
+                
+                order.status = 'rider_assigned'
+                order.save()
+                
+                nearest_rider = rider_distances[0]
+                nearest_rider_name = f"{nearest_rider['rider'].rider.first_name} {nearest_rider['rider'].rider.last_name}".strip() or nearest_rider['rider'].rider.username
+                
+                logger.info("=" * 80)
+                logger.info(f"✅ SUCCESS: Assigned {len(deliveries_created)} nearest riders")
+                logger.info(f"   Nearest Rider: {nearest_rider_name} - {nearest_rider['total_distance']:.2f} km")
+                logger.info("=" * 80)
+                
+                message = f"Assigned {len(deliveries_created)} nearest riders. Nearest: {nearest_rider_name} ({nearest_rider['total_distance']:.2f} km)"
+                
+                return Response({
+                    "success": True,
+                    "message": message,
+                    "data": {
+                        "order_id": str(order.order),
+                        "deliveries_created": deliveries_created,
+                        "rider_count": len(deliveries_created),
+                        "pickup_location": pickup_name,
+                        "nearest_rider": {
+                            "name": nearest_rider_name,
+                            "username": nearest_rider['rider'].rider.username,
+                            "total_distance_km": round(nearest_rider['total_distance'], 2),
+                            "delivery_fee": self._calculate_delivery_fee(nearest_rider['total_distance']),
+                            "estimated_minutes": self._calculate_estimated_time(nearest_rider['total_distance'])
+                        },
+                        "all_riders_compared": rider_comparison
+                    }
+                }, status=status.HTTP_200_OK)
+            
+            elif action_type == 'ready_to_ship':
+                if is_pickup:
+                    return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
+                
+                if original_status == 'rider_assigned' or original_status == 'rider_accepted':
+                    order.status = 'waiting_for_rider'
+                    message = "Order marked as ready to ship - waiting for rider to accept"
+                else:
+                    order.status = 'ready_to_ship'
+                    message = "Order marked as ready to ship"
+            
             elif action_type == 'shipped':
                 if is_pickup:
                     return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'shipped'
                 Delivery.objects.filter(order=order).update(status='accepted', picked_at=timezone.now())
                 message = "Order marked as shipped"
-                
+            
             elif action_type == 'to_deliver':
                 if is_pickup:
                     return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'to_deliver'
                 message = "Order is out for delivery"
-                
+            
             elif action_type == 'delivered':
                 if is_pickup:
                     return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'delivered'
                 message = "Order marked as delivered"
-                
+            
             elif action_type == 'complete':
                 if is_pickup and order.status != 'picked_up':
                     return Response({"success": False, "message": "Pickup order must be marked as picked up first"}, status=status.HTTP_400_BAD_REQUEST)
@@ -24599,85 +25348,67 @@ class SellerOrderList(viewsets.ViewSet):
                     Delivery.objects.filter(order=order).update(status='delivered', delivered_at=timezone.now())
                 order.completed_at = timezone.now()
                 message = "Order completed"
-                
+            
             elif action_type == 'ready_for_pickup':
                 if not is_pickup:
                     return Response({"success": False, "message": "This action is only for pickup orders"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'ready_for_pickup'
-                
                 order.pickup_expire_date = timezone.now() + timedelta(days=3)
-                
-                # Generate pickup code (6 characters: letters and numbers)
-                import random
-                import string
                 pickup_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-                
-                # Store in metadata
                 if not order.metadata:
                     order.metadata = {}
                 order.metadata['pickup_code'] = pickup_code
-                
                 message = f"Order ready for pickup. Pickup code: {pickup_code}"
-                
+            
             elif action_type == 'picked_up':
                 if not is_pickup:
                     return Response({"success": False, "message": "This action is only for pickup orders"}, status=status.HTTP_400_BAD_REQUEST)
                 order.status = 'picked_up'
                 order.completed_at = timezone.now()
-                order.pickup_date = timezone.now()  # Store directly in pickup_date field
-                
+                order.pickup_date = timezone.now()
                 message = "Order picked up"
-                
+            
             elif action_type == 'cancel':
-                # Check if this is a cancel shipment (rider_assigned status) or cancel order
                 latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
-                is_rider_assigned = order.status == 'rider_assigned' or (latest_delivery and latest_delivery.status in ['pending', 'pending_offer'])
+                is_rider_assigned = order.status == 'rider_assigned' or (latest_delivery and latest_delivery.status in ['pending_offer', 'pending'])
                 
                 if is_rider_assigned:
-                    # Cancel Shipment - cancel the delivery, revert order to processing
                     order.status = 'processing'
-                    
-                    # Cancel all pending deliveries
                     deliveries = Delivery.objects.filter(order=order)
                     for delivery in deliveries:
-                        if delivery.status in ['pending', 'pending_offer', 'accepted']:
+                        if delivery.status in ['pending_offer', 'pending', 'accepted']:
                             delivery.status = 'cancelled'
                             delivery.save()
-                            # Update rider availability if they had no other active deliveries
                             if delivery.rider:
                                 other_active = Delivery.objects.filter(
                                     rider=delivery.rider,
-                                    status__in=['pending', 'pending_offer', 'accepted']
+                                    status__in=['pending_offer', 'pending', 'accepted']
                                 ).exclude(id=delivery.id).exists()
                                 if not other_active:
                                     delivery.rider.availability_status = 'available'
                                     delivery.rider.is_accepting_deliveries = True
                                     delivery.rider.save()
-                    
                     message = "Shipment cancelled. Order reverted to processing."
                 else:
-                    # Cancel Order - cancel the entire order
                     order.status = 'cancelled'
-                    
-                    # Cancel any active deliveries
                     deliveries = Delivery.objects.filter(order=order)
                     for delivery in deliveries:
-                        if delivery.status in ['pending', 'pending_offer', 'accepted']:
+                        if delivery.status in ['pending_offer', 'pending', 'accepted']:
                             delivery.status = 'cancelled'
                             delivery.save()
-                    
                     message = "Order cancelled"
-
+            
+            else:
+                return Response({"success": False, "message": f"Unknown action type: {action_type}"}, status=status.HTTP_400_BAD_REQUEST)
+            
             order.updated_at = timezone.now()
             order.save()
             order.refresh_from_db()
-
-            # Notify customer
+            
             notif_message = f'Your order status has been updated to: {order.status}'
             if action_type == 'confirm' and order.metadata and order.metadata.get('pickup_date'):
                 try:
-                    from datetime import datetime as dt
-                    pickup_dt = dt.fromisoformat(order.metadata['pickup_date'])
+                    pickup_dt = datetime.fromisoformat(order.metadata['pickup_date'])
                     notif_message = (
                         f'Your order has been confirmed. '
                         f'Please pick up at the shop on {pickup_dt.strftime("%b %d, %Y")} '
@@ -24685,7 +25416,7 @@ class SellerOrderList(viewsets.ViewSet):
                     )
                 except (ValueError, TypeError):
                     pass
-
+            
             Notification.objects.create(
                 user=order.user,
                 title=f'Order {str(order.order)[:8]} Updated',
@@ -24693,14 +25424,14 @@ class SellerOrderList(viewsets.ViewSet):
                 message=notif_message,
                 is_read=False
             )
-
+            
             updated_order_data = self._prepare_order_response(order, shop)
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
             current_shipping_status = self._get_shipping_status(
                 order.status,
                 latest_delivery.status if latest_delivery else None
             )
-            has_pending_offer = Delivery.objects.filter(order=order, status='pending').exists()
+            has_pending_offer = Delivery.objects.filter(order=order, status='pending_offer').exists()
             updated_available_actions = []
             
             if current_shipping_status == 'pending_shipment':
@@ -24724,7 +25455,7 @@ class SellerOrderList(viewsets.ViewSet):
                 updated_available_actions = ['picked_up']
             elif current_shipping_status == 'picked_up':
                 updated_available_actions = ['complete']
-                
+            
             if current_shipping_status not in ['completed', 'cancelled', 'picked_up', 'delivered']:
                 updated_available_actions.append('cancel')
             updated_available_actions.append('view_details')
@@ -24744,12 +25475,9 @@ class SellerOrderList(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": f"Error updating order: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+    
     def _decrease_stock_for_order(self, order, shop):
         """Decrease stock for items in this order that belong to the shop"""
-        from decimal import Decimal
-        
-        # Get checkouts for this shop
         checkouts = Checkout.objects.filter(
             Q(order=order, cart_item__product__shop=shop) |
             Q(order=order, direct_shop_id=str(shop.id))
@@ -24758,7 +25486,6 @@ class SellerOrderList(viewsets.ViewSet):
         stock_errors = []
         
         for checkout in checkouts:
-            # Handle direct product checkout (Buy Now)
             if checkout.direct_variant_id and not checkout.cart_item:
                 try:
                     variant = Variants.objects.get(id=checkout.direct_variant_id)
@@ -24769,12 +25496,9 @@ class SellerOrderList(viewsets.ViewSet):
                     variant.save()
                 except Variants.DoesNotExist:
                     stock_errors.append(f"Variant not found for checkout item {checkout.id}")
-                    
-            # Handle cart checkout
+            
             elif checkout.cart_item:
                 cart_item = checkout.cart_item
-                
-                # Mark cart item as ordered (remove from cart)
                 cart_item.is_ordered = True
                 cart_item.save()
                 
@@ -24794,17 +25518,19 @@ class SellerOrderList(viewsets.ViewSet):
                     product.save()
         
         return stock_errors
-
+    
     @action(detail=True, methods=['post'])
     def prepare_shipment(self, request, pk=None):
         try:
             shop_id = request.GET.get('shop_id')
             if not shop_id:
                 return Response({"success": False, "message": "Shop ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+            
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+            
             try:
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
@@ -24821,10 +25547,12 @@ class SellerOrderList(viewsets.ViewSet):
             current_shipping_status = self._get_shipping_status(order.status)
             if current_shipping_status != 'ready_to_ship':
                 return Response({"success": False, "message": "Order is not ready to ship"}, status=status.HTTP_400_BAD_REQUEST)
+            
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                       for keyword in ['pickup', 'store', 'collect'])
             if is_pickup:
                 return Response({"success": False, "message": "This order is for pickup, not delivery"}, status=status.HTTP_400_BAD_REQUEST)
+            
             original_status = order.status
             order.status = 'waiting_for_rider'
             order.updated_at = timezone.now()
@@ -24845,8 +25573,10 @@ class SellerOrderList(viewsets.ViewSet):
                 message=f'Your order {pk} is being prepared for shipment.',
                 is_read=False
             )
+            
             updated_order_data = self._prepare_order_response(order, shop)
-            updated_available_actions = ['view_offer', 'cancel', 'view_details'] if Delivery.objects.filter(order=order, status='pending').exists() else ['arrange_shipment_nav', 'cancel', 'view_details']
+            updated_available_actions = ['view_offer', 'cancel', 'view_details'] if Delivery.objects.filter(order=order, status='pending_offer').exists() else ['arrange_shipment_nav', 'cancel', 'view_details']
+            
             return Response({
                 "success": True,
                 "message": "Order prepared for shipment successfully",
@@ -24860,13 +25590,14 @@ class SellerOrderList(viewsets.ViewSet):
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"success": False, "message": f"Error preparing shipment: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+    
     @action(detail=False, methods=['get'])
     def seller_view_order(self, request):
         order_id = request.GET.get('order_id')
         shop_id = request.GET.get('shop_id')
         if not order_id or not shop_id:
             return Response({'success': False, 'message': 'Missing order_id or shop_id'}, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             shop = Shop.objects.get(id=shop_id)
             order = Order.objects.select_related('user', 'shipping_address').get(order=order_id)
@@ -24886,15 +25617,14 @@ class SellerOrderList(viewsets.ViewSet):
                 if delivery:
                     delivery_info = {
                         'delivery_id': str(delivery.id),
-                        'rider_name': f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery.rider else None,
+                        'rider_name': f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}".strip() or delivery.rider.rider.username if delivery.rider else None,
                         'rider_phone': delivery.rider.rider.contact_number if delivery.rider else None,
                         'status': delivery.status,
                         'estimated_delivery': self._get_estimated_delivery(delivery),
                         'submitted_at': delivery.created_at.isoformat() if delivery.created_at else None,
-                        'tracking_number': f"TRK-{str(delivery.id)[:10]}" if delivery.status != 'pending' else None
+                        'tracking_number': f"TRK-{str(delivery.id)[:10]}" if delivery.status != 'pending_offer' else None
                     }
                     
-                    # Fetch proof images for delivered orders
                     if delivery.status == 'delivered':
                         proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
                         for proof in proofs:
@@ -24908,17 +25638,14 @@ class SellerOrderList(viewsets.ViewSet):
                                 })
             except Delivery.DoesNotExist:
                 pass
-                
+            
             items = []
-            # ✅ USE ORDER'S TOTAL_AMOUNT DIRECTLY
             total_amount = float(order.total_amount)
             
             for checkout in checkouts:
-                # Handle direct product checkout
                 if checkout.direct_product_id and not checkout.cart_item:
                     price = float(checkout.direct_product_price or 0)
                     item_total = price * checkout.quantity
-                    # ✅ DON'T add to total_amount here
                     items.append({
                         'id': str(checkout.id),
                         'cart_item': {
@@ -24941,10 +25668,10 @@ class SellerOrderList(viewsets.ViewSet):
                     })
                     continue
                 
-                # Handle normal cart_item checkout
                 cart_item = checkout.cart_item
                 if not cart_item or not cart_item.product:
                     continue
+                
                 product = cart_item.product
                 variant = cart_item.variant
                 price = float(variant.price) if variant and variant.price else 0
@@ -24956,8 +25683,8 @@ class SellerOrderList(viewsets.ViewSet):
                         variant_image_url = convert_s3_to_public_url(variant.image.url)
                     except Exception as e:
                         print(f"Error getting variant image: {e}")
+                
                 item_total = price * checkout.quantity
-                # ✅ DON'T add to total_amount here
                 product_data = {
                     "id": str(product.id),
                     "name": product.name,
@@ -24969,6 +25696,7 @@ class SellerOrderList(viewsets.ViewSet):
                 }
                 if variant_image_url:
                     product_data["variant_image"] = variant_image_url
+                
                 items.append({
                     'id': str(checkout.id),
                     'cart_item': {
@@ -24988,7 +25716,17 @@ class SellerOrderList(viewsets.ViewSet):
                 latest_delivery.status if latest_delivery else None
             )
             
-            return Response({
+            # Extract rider comparison data from the latest delivery's metadata
+            rider_comparison_data = None
+            nearest_rider_data = None
+            
+            if latest_delivery and latest_delivery.metadata:
+                if 'all_riders_compared' in latest_delivery.metadata:
+                    rider_comparison_data = latest_delivery.metadata.get('all_riders_compared', [])
+                if 'nearest_rider' in latest_delivery.metadata:
+                    nearest_rider_data = latest_delivery.metadata.get('nearest_rider')
+            
+            response_data = {
                 'success': True,
                 'data': {
                     'order_id': str(order.order),
@@ -25001,7 +25739,7 @@ class SellerOrderList(viewsets.ViewSet):
                         'contact_number': order.user.contact_number,
                     },
                     'status': shipping_status,
-                    'total_amount': total_amount,  # ✅ Now using order.total_amount
+                    'total_amount': total_amount,
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
@@ -25019,38 +25757,36 @@ class SellerOrderList(viewsets.ViewSet):
                     'delivery_info': delivery_info,
                     'proof_images': proof_images,
                     'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
-                    'metadata': order.metadata,
+                    'metadata': order.metadata or {},
                 }
-            }, status=status.HTTP_200_OK)
+            }
+            
+            # Add rider comparison data to metadata if available
+            if rider_comparison_data:
+                response_data['data']['metadata']['all_riders_compared'] = rider_comparison_data
+            if nearest_rider_data:
+                response_data['data']['metadata']['nearest_rider'] = nearest_rider_data
+            
+            return Response(response_data, status=status.HTTP_200_OK)
         except Shop.DoesNotExist:
             return Response({'success': False, 'message': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Order.DoesNotExist:
             return Response({'success': False, 'message': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'success': False, 'message': f'Error retrieving order: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @action(detail=True, methods=['get'])
     def generate_waybill(self, request, pk=None):
-        import io
-        import qrcode
-        from django.http import HttpResponse
-        from reportlab.lib import colors
-        from reportlab.lib.pagesizes import letter
-        from reportlab.lib.units import inch
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-        """
-        Generate compact Shopee-style waybill sticker (J&T/Shopee format, 1/4 bondpaper size)
-        GET /seller-order-list/{order_id}/generate_waybill/?shop_id={shop_id}
-        """
         try:
             try:
                 order = Order.objects.get(order=pk)
             except Order.DoesNotExist:
                 return Response({"success": False, "message": "Order not found"}, status=404)
+            
             shop_id = request.GET.get('shop_id')
             if not shop_id:
                 return Response({"success": False, "message": "Shop ID required"}, status=400)
+            
             try:
                 shop = Shop.objects.get(id=shop_id)
             except Shop.DoesNotExist:
@@ -25082,12 +25818,11 @@ class SellerOrderList(viewsets.ViewSet):
             )
             elements = []
             styles = getSampleStyleSheet()
-            title_style = ParagraphStyle('Title', parent=styles['Normal'], fontSize=14, alignment=TA_CENTER, spaceAfter=4, textColor=colors.HexColor('#2c3e50'), fontName='Helvetica-Bold')
-            header_style = ParagraphStyle('Header', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER, spaceAfter=4, textColor=colors.HexColor('#34495e'), fontName='Helvetica-Bold')
-            section_header = ParagraphStyle('SectionHeader', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Bold', textColor=colors.HexColor('#2980b9'), spaceAfter=2)
             normal_style = ParagraphStyle('Normal', parent=styles['Normal'], fontSize=8, leading=10, spaceAfter=2)
             small_style = ParagraphStyle('Small', parent=styles['Normal'], fontSize=7, leading=9, textColor=colors.HexColor('#7f8c8d'))
             bold_small = ParagraphStyle('BoldSmall', parent=styles['Normal'], fontSize=8, leading=10, fontName='Helvetica-Bold')
+            section_header = ParagraphStyle('SectionHeader', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Bold', textColor=colors.HexColor('#2980b9'), spaceAfter=2)
+            
             waybill_num = f"WB-{str(order.order)[:8].upper()}"
             order_info_data = [[
                 Paragraph(f"<b>Order:</b> #{str(order.order)[:8]}", normal_style),
@@ -25104,6 +25839,7 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(order_info_table)
             elements.append(Spacer(1, 0.05*inch))
+            
             qr = qrcode.QRCode(version=2, box_size=4, border=1)
             qr_data = f"ORDER:{order.order}|SHOP:{shop.id}"
             if delivery and delivery.rider:
@@ -25115,6 +25851,7 @@ class SellerOrderList(viewsets.ViewSet):
             qr_img.save(img_buffer, 'PNG')
             img_buffer.seek(0)
             qr_img_rl = Image(img_buffer, width=1.2*inch, height=1.2*inch)
+            
             left_info_data = [
                 [Paragraph("<b>SHIPPING INFO</b>", bold_small)],
                 [Paragraph(f"<b>Payment:</b> {order.payment_method or 'N/A'}", small_style)],
@@ -25122,6 +25859,7 @@ class SellerOrderList(viewsets.ViewSet):
             ]
             if delivery and delivery.delivery_fee:
                 left_info_data.append([Paragraph(f"<b>Delivery Fee:</b> ₱{float(delivery.delivery_fee):,.0f}", small_style)])
+            
             left_info_table = Table(left_info_data, colWidths=[2.5*inch])
             left_info_table.setStyle(TableStyle([
                 ('ALIGN', (0,0), (-1,-1), 'LEFT'),
@@ -25130,6 +25868,7 @@ class SellerOrderList(viewsets.ViewSet):
                 ('BOTTOMPADDING', (0,0), (-1,-1), 2),
                 ('BACKGROUND', (0,0), (0,0), colors.HexColor('#f8f9fa')),
             ]))
+            
             qr_table = Table([[left_info_table, qr_img_rl]], colWidths=[2.7*inch, 1.2*inch])
             qr_table.setStyle(TableStyle([
                 ('ALIGN', (0,0), (0,0), 'LEFT'),
@@ -25138,13 +25877,16 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(qr_table)
             elements.append(Spacer(1, 0.05*inch))
+            
             customer = order.user
             sender_text = f"<b>FROM:</b><br/>{shop.name}<br/><font size=6>{shop.street}, {shop.barangay}<br/>{shop.city}</font><br/><font size=6><b>Tel:</b> {shop.contact_number or 'N/A'}</font>"
+            
             if order.shipping_address:
                 addr = order.shipping_address
                 receiver_text = f"<b>TO:</b><br/>{addr.recipient_name}<br/><font size=6>{addr.get_full_address()}<br/></font><font size=6><b>Tel:</b> {addr.recipient_phone}</font>"
             else:
                 receiver_text = f"<b>TO:</b><br/>{customer.first_name} {customer.last_name}<br/><font size=6>{order.delivery_address_text or 'N/A'}<br/></font><font size=6><b>Tel:</b> {customer.contact_number or 'N/A'}</font>"
+            
             address_table = Table(
                 [[Paragraph(sender_text, normal_style), Paragraph(receiver_text, normal_style)]],
                 colWidths=[STICKER_WIDTH/2-0.15*inch, STICKER_WIDTH/2-0.15*inch]
@@ -25161,11 +25903,13 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(address_table)
             elements.append(Spacer(1, 0.05*inch))
+            
             if delivery and delivery.rider:
                 rider = delivery.rider.rider
                 rider_text = f"🚀 <b>RIDER:</b> {rider.first_name} {rider.last_name} | <b>📞</b> {rider.contact_number or 'N/A'}"
             else:
                 rider_text = "🚀 <b>AWAITING RIDER ASSIGNMENT</b>"
+            
             rider_bg = colors.HexColor('#d4edda') if delivery and delivery.rider else colors.HexColor('#fff3cd')
             rider_table = Table([[Paragraph(rider_text, normal_style)]], colWidths=[STICKER_WIDTH-0.2*inch])
             rider_table.setStyle(TableStyle([
@@ -25178,11 +25922,13 @@ class SellerOrderList(viewsets.ViewSet):
             elements.append(rider_table)
             elements.append(Spacer(1, 0.05*inch))
             elements.append(Paragraph("ORDER ITEMS", section_header))
+            
             items_data = [[
                 Paragraph("<b>Item</b>", bold_small),
                 Paragraph("<b>Qty</b>", bold_small),
                 Paragraph("<b>Price</b>", bold_small)
             ]]
+            
             for checkout in checkout_items[:3]:
                 if checkout.direct_product_id and not checkout.cart_item:
                     name = (checkout.direct_product_name or "Unknown Product")[:18] + '..' if len(checkout.direct_product_name or "") > 18 else (checkout.direct_product_name or "Unknown Product")
@@ -25204,8 +25950,10 @@ class SellerOrderList(viewsets.ViewSet):
                         Paragraph(str(checkout.quantity), small_style),
                         Paragraph(f"₱{price:,.0f}", small_style)
                     ])
+            
             if len(checkout_items) > 3:
                 items_data.append([Paragraph(f"+{len(checkout_items)-3} more items", small_style), Paragraph("", small_style), Paragraph("", small_style)])
+            
             items_table = Table(items_data, colWidths=[2.2*inch, 0.5*inch, 0.8*inch])
             items_table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#3498db')),
@@ -25222,9 +25970,11 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(items_table)
             elements.append(Spacer(1, 0.05*inch))
+            
             delivery_fee = float(delivery.delivery_fee if delivery and delivery.delivery_fee else 0)
             subtotal = sum(float(c.total_amount or 0) for c in checkout_items)
             grand_total = subtotal + delivery_fee
+            
             totals_table = Table([
                 [Paragraph("Subtotal:", normal_style), Paragraph(f"₱{subtotal:,.0f}", normal_style)],
                 [Paragraph("Delivery Fee:", normal_style), Paragraph(f"₱{delivery_fee:,.0f}", normal_style)],
@@ -25238,6 +25988,7 @@ class SellerOrderList(viewsets.ViewSet):
             ]))
             elements.append(totals_table)
             elements.append(Spacer(1, 0.05*inch))
+            
             sig_table = Table([[
                 Paragraph("Seller Sig: _________________", small_style),
                 Paragraph("Receiver Sig: _________________", small_style),
@@ -25249,9 +26000,11 @@ class SellerOrderList(viewsets.ViewSet):
                 ('TOPPADDING', (0,0), (-1,-1), 8),
             ]))
             elements.append(sig_table)
+            
             doc.build(elements)
             pdf_bytes = buffer.getvalue()
             buffer.close()
+            
             response = HttpResponse(pdf_bytes, content_type='application/pdf')
             response['Content-Disposition'] = f'attachment; filename="waybill_{waybill_num}.pdf"'
             response['Content-Length'] = len(pdf_bytes)
@@ -25263,7 +26016,7 @@ class SellerOrderList(viewsets.ViewSet):
         except Exception as e:
             import traceback
             print(traceback.format_exc())
-            return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)
+            return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)    
 
 class CheckoutOrder(viewsets.ViewSet):
     

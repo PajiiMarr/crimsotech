@@ -44,6 +44,8 @@ import {
   Award,
   BarChart3,
   PhilippinePeso,
+  Navigation2,
+  Home,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -76,12 +78,30 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
+interface RiderAddress {
+  street: string;
+  barangay: string;
+  city: string;
+  province: string;
+  zip_code: string;
+  full_address: string;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+interface CurrentLocation {
+  latitude: number | null;
+  longitude: number | null;
+  last_updated: string | null;
+}
+
 interface RiderUser {
   id: string;
   username: string | null;
   email: string | null;
   first_name: string;
   last_name: string;
+  full_name: string;
   contact_number: string;
   created_at: string;
   is_rider: boolean;
@@ -106,6 +126,14 @@ interface VerificationInfo {
   approval_date: string | null;
 }
 
+interface StatusInfo {
+  availability_status: string;
+  is_accepting_deliveries: boolean;
+  failed_deliveries_count: number;
+  declined_order_count: number;
+  last_status_update: string | null;
+}
+
 interface PerformanceData {
   total_deliveries: number;
   completed_deliveries: number;
@@ -119,6 +147,9 @@ interface DeliveryHistory {
   id: string;
   order_id: string;
   status: string;
+  distance_km?: number;
+  delivery_fee?: number;
+  estimated_minutes?: number;
   picked_at: string | null;
   delivered_at: string | null;
   created_at: string;
@@ -126,9 +157,12 @@ interface DeliveryHistory {
 
 interface RiderDetails {
   rider: RiderUser;
+  address: RiderAddress;
+  current_location: CurrentLocation;
   vehicle_info: VehicleInfo;
   license_info: LicenseInfo;
   verification_info: VerificationInfo;
+  status_info: StatusInfo;
   performance: PerformanceData;
   delivery_history: DeliveryHistory[];
   date_range?: {
@@ -187,6 +221,21 @@ const getInitials = (firstName: string, lastName: string, username?: string | nu
   if (firstName) return firstName[0].toUpperCase();
   if (username) return username[0].toUpperCase();
   return "R";
+};
+
+const getStatusBadge = (status: string) => {
+  switch (status) {
+    case "available":
+      return { label: "Available", className: "bg-green-100 text-green-700 border-green-200" };
+    case "busy":
+      return { label: "Busy", className: "bg-red-100 text-red-700 border-red-200" };
+    case "offline":
+      return { label: "Offline", className: "bg-gray-100 text-gray-700 border-gray-200" };
+    case "break":
+      return { label: "On Break", className: "bg-yellow-100 text-yellow-700 border-yellow-200" };
+    default:
+      return { label: status || "Unknown", className: "bg-gray-100 text-gray-700" };
+  }
 };
 
 export default function ViewRider({ loaderData }: { loaderData: LoaderData }) {
@@ -354,10 +403,9 @@ export default function ViewRider({ loaderData }: { loaderData: LoaderData }) {
   const currentAction = activeAction ? actionConfigs[activeAction] : null;
   const availableActions = getAvailableActions();
   const isVerified = rider?.verification_info.verified;
+  const statusBadge = rider ? getStatusBadge(rider.status_info.availability_status) : null;
 
-  const fullName = rider
-    ? `${rider.rider.first_name} ${rider.rider.last_name}`.trim() || rider.rider.username || "Unknown"
-    : "Unknown";
+  const fullName = rider?.rider.full_name || rider?.rider.username || "Unknown";
   const userInitials = rider
     ? getInitials(rider.rider.first_name, rider.rider.last_name, rider.rider.username)
     : "R";
@@ -429,6 +477,11 @@ export default function ViewRider({ loaderData }: { loaderData: LoaderData }) {
                   Pending Verification
                 </Badge>
               )}
+              {statusBadge && (
+                <Badge className={statusBadge.className}>
+                  {statusBadge.label}
+                </Badge>
+              )}
             </div>
             <p className="text-muted-foreground mt-1">@{rider.rider.username || "No username"}</p>
           </div>
@@ -479,6 +532,11 @@ export default function ViewRider({ loaderData }: { loaderData: LoaderData }) {
                     ) : (
                       <Badge className="text-xs bg-yellow-100 text-yellow-700">Pending</Badge>
                     )}
+                    {statusBadge && (
+                      <Badge className={`text-xs ${statusBadge.className}`}>
+                        {statusBadge.label}
+                      </Badge>
+                    )}
                   </div>
                   <p className="text-sm text-muted-foreground mt-2">@{rider.rider.username || "No username"}</p>
                 </div>
@@ -499,6 +557,69 @@ export default function ViewRider({ loaderData }: { loaderData: LoaderData }) {
                     <span>Joined {formatDate(rider.rider.created_at)}</span>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Address Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Home className="w-5 h-5" />
+                  Home Address
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-start gap-2">
+                  <MapPin className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm">{rider.address.full_address || "No address provided"}</p>
+                    {rider.address.latitude && rider.address.longitude && (
+                      <div className="flex items-center gap-2 mt-2">
+                        <Navigation2 className="w-3 h-3 text-muted-foreground" />
+                        <p className="text-xs text-muted-foreground">
+                          {rider.address.latitude.toFixed(6)}, {rider.address.longitude.toFixed(6)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Current Location Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Navigation className="w-5 h-5" />
+                  Current Location
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {rider.current_location.latitude && rider.current_location.longitude ? (
+                  <>
+                    <div className="flex items-start gap-2">
+                      <Navigation2 className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm font-mono">
+                          {rider.current_location.latitude.toFixed(6)}, {rider.current_location.longitude.toFixed(6)}
+                        </p>
+                        {rider.current_location.last_updated && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Last updated: {formatDateTime(rider.current_location.last_updated)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-blue-50 rounded-lg p-3">
+                      <p className="text-xs text-blue-700 flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        Location updates when rider is online
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No location data available</p>
+                )}
               </CardContent>
             </Card>
 
@@ -561,6 +682,42 @@ export default function ViewRider({ loaderData }: { loaderData: LoaderData }) {
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Approval Date</span>
                     <span className="font-medium">{formatDate(rider.verification_info.approval_date)}</span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Status Info Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Clock className="w-5 h-5" />
+                  Status Information
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Availability</span>
+                  <span className="font-medium capitalize">{rider.status_info.availability_status}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Accepting Deliveries</span>
+                  <span className="font-medium">
+                    {rider.status_info.is_accepting_deliveries ? "Yes" : "No"}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Failed Deliveries</span>
+                  <span className="font-medium text-red-600">{rider.status_info.failed_deliveries_count}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Declined Orders</span>
+                  <span className="font-medium text-orange-600">{rider.status_info.declined_order_count}</span>
+                </div>
+                {rider.status_info.last_status_update && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Last Status Update</span>
+                    <span className="font-medium text-sm">{formatDateTime(rider.status_info.last_status_update)}</span>
                   </div>
                 )}
               </CardContent>
@@ -662,7 +819,7 @@ export default function ViewRider({ loaderData }: { loaderData: LoaderData }) {
                     {rider.delivery_history.map((delivery) => (
                       <div key={delivery.id} className="border rounded-lg p-4 hover:bg-muted/50 transition-colors">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <div>
+                          <div className="flex-1">
                             <div className="flex items-center gap-2">
                               <Package className="w-4 h-4 text-muted-foreground" />
                               <span className="font-medium">Order #{delivery.order_id.slice(0, 8)}...</span>
@@ -670,6 +827,16 @@ export default function ViewRider({ loaderData }: { loaderData: LoaderData }) {
                             <div className="text-sm text-muted-foreground mt-1">
                               Requested: {formatDateTime(delivery.created_at)}
                             </div>
+                            {delivery.distance_km && (
+                              <div className="text-sm text-muted-foreground">
+                                Distance: {delivery.distance_km.toFixed(1)} km
+                              </div>
+                            )}
+                            {delivery.delivery_fee && (
+                              <div className="text-sm text-muted-foreground">
+                                Fee: {formatCurrency(delivery.delivery_fee)}
+                              </div>
+                            )}
                             {delivery.picked_at && (
                               <div className="text-sm text-muted-foreground">
                                 Picked up: {formatDateTime(delivery.picked_at)}
@@ -689,10 +856,12 @@ export default function ViewRider({ loaderData }: { loaderData: LoaderData }) {
                                   ? "bg-green-100 text-green-700"
                                   : delivery.status === "cancelled"
                                   ? "bg-red-100 text-red-700"
+                                  : delivery.status === "in_progress"
+                                  ? "bg-blue-100 text-blue-700"
                                   : "bg-yellow-100 text-yellow-700"
                               }`}
                             >
-                              {delivery.status}
+                              {delivery.status.replace("_", " ")}
                             </Badge>
                           </div>
                         </div>
