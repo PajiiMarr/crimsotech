@@ -641,9 +641,15 @@ export default function CreateProductForm({
         deprRate,
       );
       const filledDep = { ...updatedDep, calculatedPrice: cp };
-      // Calculate price with VAT (12%) and store as the selling price
-      const priceWithVAT = calculatePriceWithVAT(cp);
-      return { ...v, depreciation: filledDep, price: priceWithVAT };
+      // cp is the depreciated base price (without VAT)
+      const priceWithVAT = calculatePriceWithVAT(cp);  // Selling price (includes VAT)
+      return { 
+        ...v, 
+        depreciation: filledDep, 
+        price: priceWithVAT
+        // value_added_tax_amount is NOT stored in frontend state
+        // It will be calculated on the backend
+      };
     }
     return { ...v, depreciation: updatedDep };
   };
@@ -1503,9 +1509,12 @@ export default function CreateProductForm({
           </View>
           {variants.map((variant, index) => {
             const variantPrice =
-              typeof variant.price === "number" ? variant.price : 0;
-            const variantVAT = calculateVAT(variantPrice);
-            const variantTotalWithVAT = calculatePriceWithVAT(variantPrice);
+            typeof variant.price === "number" ? variant.price : 0;
+          // Get the depreciated base price (without VAT)
+          const depreciatedBasePrice = variant.depreciation.calculatedPrice || 0;
+          // Calculate VAT from the depreciated base price, NOT from the selling price
+          const variantVAT = calculateVAT(depreciatedBasePrice);
+          const variantTotalWithVAT = variantPrice; // This is already the selling price with VAT
             return (
               <View key={variant.id} style={styles.variantCard}>
                 <TouchableOpacity
@@ -1547,18 +1556,7 @@ export default function CreateProductForm({
                 </TouchableOpacity>
                 {/* VAT Display in Variant Header */}
                 {/* VAT Display in Variant Header - Simplified */}
-{variant.price && (
-  <View style={styles.variantHeaderVAT}>
-    <View style={styles.variantHeaderVATRow}>
-      <Text style={styles.variantHeaderVATLabel}>
-        VAT (12%):
-      </Text>
-      <Text style={styles.variantHeaderVATValue}>
-        ₱{formatPrice(variantVAT)}
-      </Text>
-    </View>
-  </View>
-)}
+
                 {expandedVariants[variant.id] && (
                   <View style={styles.variantContent}>
                     <View style={styles.formGroup}>
@@ -1692,10 +1690,10 @@ export default function CreateProductForm({
 <View style={styles.variantVATSection}>
 <Text style={styles.variantVATSectionTitle}>VAT Details</Text>
 <View style={styles.variantVATRow}>
-  <Text style={styles.variantVATLabel}>VAT (12%):</Text>
-  <Text style={styles.variantVATValue}>
-    ₱{formatPrice(variant.depreciation.calculatedPrice ? calculateVAT(Number(variant.depreciation.calculatedPrice)) : 0)}
-  </Text>
+<Text style={styles.variantVATLabel}>VAT (12%):</Text>
+<Text style={styles.variantVATValue}>
+  ₱{formatPrice(variant.price ? (variant.price * 0.12 / 1.12) : 0)}
+</Text>
 </View>
 <View style={styles.variantVATRow}>
   <Text style={styles.variantVATLabel}>Depreciated Base Price:</Text>
