@@ -252,11 +252,33 @@ const VoucherModal = ({
             </TouchableOpacity>
           </View>
 
+          {/* View All Vouchers Button */}
+          <TouchableOpacity
+            style={styles.viewAllVouchersButton}
+            onPress={() => {
+              onClose();
+              router.push("/customer/voucher-list");
+            }}
+          >
+            <MaterialIcons name="local-offer" size={20} color="#F97316" />
+            <Text style={styles.viewAllVouchersText}>View All Vouchers</Text>
+            <MaterialIcons name="chevron-right" size={20} color="#F97316" />
+          </TouchableOpacity>
+
           <View style={styles.modalBody}>
             {availableVouchers.length === 0 ? (
               <View style={styles.noVouchersContainer}>
                 <MaterialIcons name="local-offer" size={48} color="#D1D5DB" />
                 <Text style={styles.noVouchersText}>No vouchers available</Text>
+                <TouchableOpacity
+                  style={styles.browseVouchersButton}
+                  onPress={() => {
+                    onClose();
+                    router.push("/customer/voucher-list");
+                  }}
+                >
+                  <Text style={styles.browseVouchersText}>Browse All Vouchers</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               <ScrollView 
@@ -1623,6 +1645,27 @@ const styles = StyleSheet.create({
   modalCloseButton: {
     padding: 4,
   },
+  viewAllVouchersButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#FFF7ED",
+    marginHorizontal: 20,
+    marginTop: 12,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#FED7AA",
+  },
+  viewAllVouchersText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#F97316",
+    marginLeft: 8,
+  },
   modalBody: {
     padding: 20,
     gap: 16,
@@ -1635,6 +1678,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#6B7280",
     marginTop: 12,
+  },
+  browseVouchersButton: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: "#F97316",
+    borderRadius: 8,
+  },
+  browseVouchersText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
   vouchersListModal: {
     maxHeight: 500,
