@@ -33030,28 +33030,60 @@ class RefundViewSet(viewsets.ViewSet):
                 # ========== End file validation ==========
 
                 # ========== Create Refund Items with quantity and amount ==========
+                # ========== Create Refund Items with quantity and amount ==========
                 total_refund_amount = Decimal('0.00')
                 created_items = []
+
+                # First, calculate total order value to get proportions
+                order_total = Decimal(str(order.total_amount))
+                total_items_subtotal = Decimal('0.00')
+                for item_data in items_data:
+                    checkout_id = item_data.get('checkout_id')
+                    try:
+                        checkout = Checkout.objects.get(id=checkout_id, order=order)
+                        # Use checkout.total_amount for the item's value in the order
+                        total_items_subtotal += checkout.total_amount
+                    except Checkout.DoesNotExist:
+                        pass
+
+                # Now create refund items with proportional amounts
                 for item_data in items_data:
                     checkout_id = item_data.get('checkout_id')
                     quantity = item_data.get('quantity')
-                    amount = item_data.get('amount')
-                    if not checkout_id or quantity is None or amount is None:
-                        return JsonResponse({'error': 'Each refund item must have checkout_id, quantity, and amount'}, status=400)
+                    frontend_amount = Decimal(str(item_data.get('amount', 0)))
+                    
+                    if not checkout_id or quantity is None:
+                        return JsonResponse({'error': 'Each refund item must have checkout_id and quantity'}, status=400)
+                    
                     try:
                         checkout = Checkout.objects.get(id=checkout_id, order=order)
                     except Checkout.DoesNotExist:
                         return JsonResponse({'error': f'Checkout {checkout_id} not found in this order'}, status=400)
-                    total_refund_amount += Decimal(str(amount))
+                    
+                    # Calculate proportional amount based on order total
+                    # Use checkout.total_amount (actual paid amount for this item)
+                    if total_items_subtotal > 0:
+                        # Proportional amount = (item's checkout total / all items total) * order total
+                        item_proportion = checkout.total_amount / total_items_subtotal
+                        proportional_amount = order_total * item_proportion
+                    else:
+                        proportional_amount = frontend_amount
+                    
+                    # Adjust for partial quantity if needed
+                    if quantity < checkout.quantity:
+                        proportional_amount = proportional_amount * Decimal(str(quantity)) / Decimal(str(checkout.quantity))
+                    
+                    total_refund_amount += proportional_amount
+                    
                     RefundItem.objects.create(
                         refund=refund,
                         checkout=checkout,
                         quantity=quantity,
-                        amount=Decimal(str(amount))
+                        amount=proportional_amount
                     )
                     created_items.append(str(checkout.id))
 
-                # Update refund total amount (overwrites any frontend-sent total)
+                # Update refund total amount
                 refund.total_refund_amount = total_refund_amount
                 refund.save(update_fields=['total_refund_amount'])
 
