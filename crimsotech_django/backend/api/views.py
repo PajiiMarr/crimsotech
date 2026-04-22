@@ -19313,9 +19313,18 @@ class SellerProducts(viewsets.ModelViewSet):
                 
                 # Calculate and store the VAT amount (price * VAT percentage / 100)
                 # This is the actual tax amount that will be added to the price
-                vat_percentage = variant_fields['value_added_tax']
-                vat_amount_calculated = (price * vat_percentage) / Decimal('100')
+                selling_price = variant_fields.get('price', Decimal('0'))
+                vat_percentage = variant_fields['value_added_tax']  # Should be 12 for 12%
+
+                # Formula: VAT = selling_price × (vat_percentage/100) / (1 + vat_percentage/100)
+                # Simplified for 12%: VAT = selling_price × 0.12 / 1.12
+                vat_amount_calculated = (selling_price * vat_percentage / Decimal('100')) / (Decimal('1') + vat_percentage / Decimal('100'))
+
+                # Alternative simplified calculation for 12% VAT:
+                # vat_amount_calculated = selling_price * Decimal('0.12') / Decimal('1.12')
+
                 variant_fields['value_added_tax_amount'] = vat_amount_calculated
+                logger.info(f"VAT calculated using formula: selling_price {selling_price} × {vat_percentage}% / 1.{vat_percentage} = {vat_amount_calculated}")
                 
                 # Also set the price_with_vat property will be calculated by the model's property
                 # No need to store it separately
@@ -26770,11 +26779,33 @@ class CheckoutOrder(viewsets.ViewSet):
                 line_total = price * cart_item.quantity
                 subtotal += line_total
 
+                base_price = Decimal('0')
+                vat_amount = Decimal('0')
+                price_with_vat = Decimal('0')
+
+                if variant and variant.price is not None:
+                    price_with_vat = Decimal(str(variant.price))
+                    # Get the depreciated base price from the variant's stored value
+                    # The base price should be stored in original_price or calculated from depreciation
+                    # Use the variant's value_added_tax_amount which is 12% of the depreciated base price
+                    if variant.value_added_tax_amount and variant.value_added_tax_amount > 0:
+                        # VAT amount is already stored (12% of depreciated base price)
+                        vat_amount = Decimal(str(variant.value_added_tax_amount))
+                        # Calculate base price: selling price - VAT amount
+                        base_price = price_with_vat - vat_amount
+                    else:
+                        # Fallback calculation
+                        base_price = price_with_vat / Decimal('1.12')
+                        vat_amount = price_with_vat - base_price
+
                 item_data = {
                     "id": str(cart_item.id) if hasattr(cart_item, 'id') else cart_item.id,
                     "product_id": str(product.id) if product else None,
                     "name": product.name if product else "Unknown Product",
-                    "price": float(price),
+                    "price": float(price_with_vat),  # This is the price with VAT already
+                    "base_price": float(base_price),  # Price without VAT
+                    "vat_amount": float(vat_amount),  # VAT amount
+                    "vat_percentage": "12%",  # Fixed VAT percentage
                     "quantity": cart_item.quantity,
                     "shop_name": shop.name if shop else (product.customer.customer.username if product and product.customer else "Personal Seller"),
                     "shop_id": str(shop.id) if shop else None,
@@ -26804,7 +26835,10 @@ class CheckoutOrder(viewsets.ViewSet):
                     item_data['variant'] = {
                         'id': str(variant.id),
                         'title': variant.title,
-                        'price': float(price),
+                        'price': float(price_with_vat),
+                        'base_price': float(base_price),
+                        'vat_amount': float(vat_amount),
+                        'vat_percentage': "12%",
                         'quantity': variant.quantity,
                         'sku_code': variant.sku_code,
                         'option_title': variant.option_title,

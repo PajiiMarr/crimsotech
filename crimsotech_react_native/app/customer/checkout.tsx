@@ -41,6 +41,9 @@ interface CartItem {
   product_id: string;
   name: string;
   price: number;
+  base_price?: number;  
+  vat_amount?: number; 
+  vat_percentage?: string; 
   quantity: number;
   shop_name: string;
   shop_id: string;
@@ -1025,74 +1028,67 @@ export default function CheckoutPage() {
             <Text style={styles.sectionTitleCompact}>Order Summary</Text>
           </View>
           <View style={styles.itemsListCompact}>
-            {checkoutData.checkout_items.map((item) => (
-              <View key={item.id} style={styles.itemCardCompact}>
-                {item.image ? (
-                  <Image
-                    source={{ uri: item.image }}
-                    style={styles.itemImageCompact}
-                  />
-                ) : (
-                  <View
-                    style={[
-                      styles.itemImageCompact,
-                      styles.itemImagePlaceholder,
-                    ]}
-                  >
-                    <MaterialIcons name="image" size={16} color="#9CA3AF" />
-                  </View>
-                )}
-                <View style={styles.itemDetailsCompact}>
-                  <Text style={styles.itemNameCompact} numberOfLines={2}>
-                    {item.name}
-                  </Text>
-                  <Text style={styles.itemShopCompact}>{item.shop_name}</Text>
+          {checkoutData.checkout_items.map((item) => (
+  <View key={item.id} style={styles.itemCardCompact}>
+    {item.image ? (
+      <Image
+        source={{ uri: item.image }}
+        style={styles.itemImageCompact}
+      />
+    ) : (
+      <View
+        style={[
+          styles.itemImageCompact,
+          styles.itemImagePlaceholder,
+        ]}
+      >
+        <MaterialIcons name="image" size={16} color="#9CA3AF" />
+      </View>
+    )}
+    <View style={styles.itemDetailsCompact}>
+      <Text style={styles.itemNameCompact} numberOfLines={2}>
+        {item.name}
+      </Text>
+      {item.variant?.title && (
+        <Text style={styles.itemVariantCompact}>
+          Variant: {item.variant.title}
+        </Text>
+      )}
+      <Text style={styles.itemShopCompact}>{item.shop_name}</Text>
 
-                  {/* Price Display with VAT amount from variant */}
-                  <View style={styles.itemPriceBreakdown}>
-                    <View style={styles.itemPriceRow}>
-                      <Text style={styles.itemPriceLabel}>Base Price:</Text>
-                      <Text style={styles.itemBasePrice}>
-                        ₱{formatNumber(item.price)}
-                      </Text>
-                    </View>
-                    {item.variant?.value_added_tax_amount ? (
-                      <>
-                        <View style={styles.itemPriceRow}>
-                          <Text style={styles.itemPriceLabel}>VAT Amount:</Text>
-                          <Text style={styles.itemVatPrice}>
-                            ₱{formatNumber(item.variant.value_added_tax_amount)}
-                          </Text>
-                        </View>
-                        <View style={styles.itemPriceTotalRow}>
-                          <Text style={styles.itemTotalLabel}>
-                            Total with VAT:
-                          </Text>
-                          <Text style={styles.itemTotalPrice}>
-                            ₱{formatNumber(
-                              item.price + item.variant.value_added_tax_amount
-                            )}
-                          </Text>
-                        </View>
-                      </>
-                    ) : (
-                      <View style={styles.itemPriceTotalRow}>
-                        <Text style={styles.itemTotalLabel}>Total:</Text>
-                        <Text style={styles.itemTotalPrice}>
-                          ₱{formatNumber(item.price)}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
+      {/* Price Breakdown with VAT */}
+      <View style={styles.itemPriceBreakdown}>
+        <View style={styles.itemPriceRow}>
+          <Text style={styles.itemPriceLabel}>Base Price (excl. VAT):</Text>
+          <Text style={styles.itemBasePrice}>
+            ₱{formatNumber(item.base_price || item.price / 1.12)}
+          </Text>
+        </View>
+        <View style={styles.itemPriceRow}>
+          <Text style={styles.itemPriceLabel}>VAT ({item.vat_percentage || '12%'}):</Text>
+          <Text style={styles.itemVatPrice}>
+            ₱{formatNumber(item.vat_amount || (item.price - (item.base_price || item.price / 1.12)))}
+          </Text>
+        </View>
+        <View style={styles.itemPriceTotalRow}>
+          <Text style={styles.itemTotalLabel}>Selling Price (incl. VAT):</Text>
+          <Text style={styles.itemTotalPrice}>
+            ₱{formatNumber(item.price)}
+          </Text>
+        </View>
+      </View>
 
-                  <View style={styles.itemBottomRowCompact}>
-                    <Text style={styles.quantityTextCompact}>
-                      x{item.quantity}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            ))}
+      <View style={styles.itemBottomRowCompact}>
+        <Text style={styles.quantityTextCompact}>
+          Quantity: x{item.quantity}
+        </Text>
+        <Text style={styles.itemSubtotalCompact}>
+          Subtotal: ₱{formatNumber(item.price * item.quantity)}
+        </Text>
+      </View>
+    </View>
+  </View>
+))}
           </View>
         </View>
 
@@ -2338,5 +2334,16 @@ const styles = StyleSheet.create({
     color: "#92400E",
     flex: 1,
     lineHeight: 16,
+  },
+  itemVariantCompact: {
+    fontSize: 11,
+    color: "#EA580C",
+    fontWeight: "500",
+    marginBottom: 2,
+  },
+  itemSubtotalCompact: {
+    fontSize: 11,
+    color: "#374151",
+    fontWeight: "500",
   },
 });
