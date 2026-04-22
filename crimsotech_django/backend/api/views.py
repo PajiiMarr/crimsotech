@@ -47910,6 +47910,31 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             'transaction': serializer.data
         })
 
+    @action(detail=False, methods=['get'], url_path='my-shops')
+    def my_shops(self, request):
+        """
+        Get all shops owned by the authenticated user.
+        """
+        user, error_response = self.get_user_from_header(request)
+        if error_response:
+            return error_response
+        
+        # Get shops owned by the user
+        shops = Shop.objects.filter(customer__customer=user)
+        
+        shops_data = []
+        for shop in shops:
+            shops_data.append({
+                'id': str(shop.id),
+                'name': shop.name,
+                'shop_picture': get_media_url(shop.shop_picture),
+            })
+        
+        return Response({
+            'success': True,
+            'shops': shops_data
+        })
+
 
 class WithdrawalRequestViewSet(viewsets.ModelViewSet):
     """

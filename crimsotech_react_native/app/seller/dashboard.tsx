@@ -27,6 +27,9 @@ interface DashboardSummary {
   period_earnings?: number;
   draft_count?: number;
   pending_sales?: number; 
+  available_balance?: number; 
+  total_sales?: number;     
+  deductions?: number;   
 }
 
 interface ShopPerformance {
@@ -93,10 +96,45 @@ function BreakdownModal({ visible, onClose, title, data }: BreakdownModalProps) 
           return (
             <>
               {renderBreakdownItem('Pending Balance', `₱${(data.pending_sales || 0).toLocaleString('en-PH')}`, 'hourglass-outline')}
-              {renderBreakdownItem('Awaiting Release', '3-day hold period', 'calendar-outline')}
-              {renderBreakdownItem('Will be available after', data.release_date || 'refund period expires', 'time-outline')}
+              {renderBreakdownItem('Awaiting Release', '3-day hold period for refund eligibility', 'calendar-outline')}
+              {renderBreakdownItem('Release Date', (() => {
+                const today = new Date();
+                const releaseDate = new Date(today);
+                releaseDate.setDate(today.getDate() + 3);
+                return releaseDate.toLocaleDateString();
+              })(), 'time-outline')}
+              {renderBreakdownItem('Will be available after', 'refund period expires', 'clock-outline')}
             </>
           );
+          case 'Available Balance':
+  return (
+    <>
+      {renderBreakdownItem('Available Balance', `₱${(data.available_balance || 0).toLocaleString('en-PH')}`, 'wallet-outline')}
+      {renderBreakdownItem('Ready to withdraw', 'Funds that have passed the 3-day hold period', 'checkmark-circle-outline')}
+      {renderBreakdownItem('No refunds pending', 'These funds are fully available', 'shield-checkmark-outline')}
+    </>
+  );
+
+case 'Total Sales':
+  return (
+    <>
+      {renderBreakdownItem('Total Sales', `₱${(data.total_sales || 0).toLocaleString('en-PH')}`, 'trending-up')}
+      {renderBreakdownItem('Available Balance', `₱${(data.available_balance || 0).toLocaleString('en-PH')}`, 'wallet-outline')}
+      {renderBreakdownItem('Pending Sales', `₱${(data.pending_sales || 0).toLocaleString('en-PH')}`, 'hourglass-outline')}
+      {renderBreakdownItem('Deductions', `₱${(data.deductions || 0).toLocaleString('en-PH')}`, 'trending-down')}
+      {renderBreakdownItem('Lifetime Earnings', `₱${(data.total_sales || 0).toLocaleString('en-PH')}`, 'cash-outline')}
+    </>
+  );
+
+case 'Deductions':
+  return (
+    <>
+      {renderBreakdownItem('Total Deductions', `₱${(data.deductions || 0).toLocaleString('en-PH')}`, 'trending-down')}
+      {renderBreakdownItem('Withdrawals', 'Funds that have been withdrawn', 'arrow-upward-outline')}
+      {renderBreakdownItem('Refunds', 'Amount refunded to customers', 'refresh-outline')}
+      {renderBreakdownItem('Fees', 'Processing and service fees', 'receipt-outline')}
+    </>
+  );
       
       case 'Low Stock':
         const lowStockItems = data.low_stock || [];
@@ -224,14 +262,21 @@ export default function Dashboard() {
       });
   
       if (response.data.success) {
-        // Fetch pending balance from wallet
-        let pendingSales = 0;
+        // Fetch wallet balance for available and pending
+        let availableBalance = 0;
+        let pendingBalance = 0;
+        let totalSales = 0;
+        let deductions = 0;
+        
         try {
           const walletRes = await AxiosInstance.get('/wallet/balance/', {
             headers: { 'X-User-Id': userId || '' }
           });
           if (walletRes.data.success) {
-            pendingSales = walletRes.data.pending_balance || 0;
+            availableBalance = walletRes.data.available_balance || 0;
+            pendingBalance = walletRes.data.pending_balance || 0;
+            totalSales = (walletRes.data.lifetime_earnings || 0);
+            deductions = (walletRes.data.lifetime_withdrawals || 0);
           }
         } catch (walletError) {
           console.error('Error fetching wallet balance:', walletError);
@@ -240,7 +285,10 @@ export default function Dashboard() {
         setData({
           summary: {
             ...response.data.summary,
-            pending_sales: pendingSales,  // ← ADD THIS
+            pending_sales: pendingBalance,
+            available_balance: availableBalance,
+            total_sales: totalSales,
+            deductions: deductions,
           },
           shop_performance: response.data.shop_performance || {},
           latest_orders: response.data.latest_orders || [],
@@ -257,7 +305,6 @@ export default function Dashboard() {
       setRefreshing(false);
     }
   };
-
   const onRefresh = () => {
     setRefreshing(true);
     fetchDashboardData();
@@ -338,22 +385,23 @@ export default function Dashboard() {
             </View>
           ) : (
             <>
-              {/* Quick Stats */}
-              {/* Quick Stats */}
+            {/* Quick Stats */}
 <Text style={styles.sectionLabel}>Overview</Text>
 <View style={styles.statsGrid}>
+  {/* Available Balance */}
   <TouchableOpacity 
     style={styles.statCard} 
-    onPress={() => showBreakdown('Total Sales', 'summary')}
+    onPress={() => showBreakdown('Available Balance', 'wallet')}
     activeOpacity={0.7}
   >
     <View style={[styles.statIcon, { backgroundColor: '#EEF2FF' }]}>
-      <Ionicons name="cash-outline" size={20} color="#4F46E5" />
+      <Ionicons name="wallet-outline" size={20} color="#4F46E5" />
     </View>
-    <Text style={styles.statValue}>{formatCurrency(summary.period_sales)}</Text>
-    <Text style={styles.statLabel}>Total Sales</Text>
+    <Text style={styles.statValue}>{formatCurrency(summary.available_balance || 0)}</Text>
+    <Text style={styles.statLabel}>Available Balance</Text>
   </TouchableOpacity>
 
+  {/* Pending Sales */}
   <TouchableOpacity 
     style={styles.statCard} 
     onPress={() => showBreakdown('Pending Sales', 'wallet')}
@@ -366,28 +414,30 @@ export default function Dashboard() {
     <Text style={styles.statLabel}>Pending Sales</Text>
   </TouchableOpacity>
 
+  {/* Total Sales */}
   <TouchableOpacity 
     style={styles.statCard} 
-    onPress={() => showBreakdown('Orders', 'summary')}
+    onPress={() => showBreakdown('Total Sales', 'wallet')}
     activeOpacity={0.7}
   >
-    <View style={[styles.statIcon, { backgroundColor: '#F0F9FF' }]}>
-      <Ionicons name="cart-outline" size={20} color="#0284C7" />
+    <View style={[styles.statIcon, { backgroundColor: '#D1FAE5' }]}>
+      <Ionicons name="trending-up" size={20} color="#059669" />
     </View>
-    <Text style={styles.statValue}>{summary.period_orders || 0}</Text>
-    <Text style={styles.statLabel}>Orders</Text>
+    <Text style={styles.statValue}>{formatCurrency(summary.total_sales || 0)}</Text>
+    <Text style={styles.statLabel}>Total Sales</Text>
   </TouchableOpacity>
 
+  {/* Deductions */}
   <TouchableOpacity 
     style={styles.statCard} 
-    onPress={() => showBreakdown('Refunds', 'refunds')}
+    onPress={() => showBreakdown('Deductions', 'wallet')}
     activeOpacity={0.7}
   >
-    <View style={[styles.statIcon, { backgroundColor: '#FEF2F2' }]}>
-      <Ionicons name="refresh-outline" size={20} color="#DC2626" />
+    <View style={[styles.statIcon, { backgroundColor: '#FEE2E2' }]}>
+      <Ionicons name="trending-down" size={20} color="#DC2626" />
     </View>
-    <Text style={styles.statValue}>{summary.refund_requests || 0}</Text>
-    <Text style={styles.statLabel}>Refunds</Text>
+    <Text style={styles.statValue}>{formatCurrency(summary.deductions || 0)}</Text>
+    <Text style={styles.statLabel}>Deductions</Text>
   </TouchableOpacity>
 </View>
 
