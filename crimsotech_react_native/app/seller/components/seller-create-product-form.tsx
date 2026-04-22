@@ -550,7 +550,7 @@ export default function CreateProductForm({
       dimension_unit: "cm",
       is_active: true,
       refundable: true,
-      value_added_tax: 0,
+      value_added_tax: 12,  // Changed from 0 to 12 (12% default)
       depreciation: {
         originalPrice: "",
         usagePeriod: "",
@@ -628,13 +628,11 @@ export default function CreateProductForm({
     return Math.round(Math.max(0, depreciatedValue) * 100) / 100;
   };
 
-  // ── FIX: accept current variant `v` directly instead of looking it up
-  //         from stale closure via variants.find()
   const calcAndUpdate = (v: Variant, updatedDep: Depreciation): Variant => {
     const origPrice = Number(updatedDep.originalPrice);
     const usagePeriod = Number(updatedDep.usagePeriod);
     const deprRate = Number(updatedDep.depreciationRate);
-
+  
     if (origPrice > 0 && usagePeriod > 0 && deprRate > 0) {
       const cp = calculateDepreciatedPrice(
         origPrice,
@@ -643,7 +641,9 @@ export default function CreateProductForm({
         deprRate,
       );
       const filledDep = { ...updatedDep, calculatedPrice: cp };
-      return { ...v, depreciation: filledDep, price: cp };
+      // Calculate price with VAT (12%) and store as the selling price
+      const priceWithVAT = calculatePriceWithVAT(cp);
+      return { ...v, depreciation: filledDep, price: priceWithVAT };
     }
     return { ...v, depreciation: updatedDep };
   };
@@ -860,7 +860,7 @@ export default function CreateProductForm({
         dimension_unit: "cm",
         is_active: true,
         refundable: productRefundable,
-        value_added_tax: 0,
+        value_added_tax: 12,  // Changed from 0 to 12 (12% default)
         depreciation: {
           originalPrice: "",
           usagePeriod: "",
@@ -1066,44 +1066,29 @@ export default function CreateProductForm({
       });
       const variantsPayload = variants.map((v) => ({
         id: v.id,
-        title: v.title,
+        title: v.title, 
         price: v.price,
         compare_price: v.compare_price,
         quantity: v.quantity,
-        length:
-          v.length !== undefined && v.length !== "" ? Number(v.length) : null,
+        length: v.length !== undefined && v.length !== "" ? Number(v.length) : null,
         width: v.width !== undefined && v.width !== "" ? Number(v.width) : null,
-        height:
-          v.height !== undefined && v.height !== "" ? Number(v.height) : null,
+        height: v.height !== undefined && v.height !== "" ? Number(v.height) : null,
         dimension_unit: v.dimension_unit || "cm",
-        weight:
-          v.weight !== undefined && v.weight !== "" ? Number(v.weight) : null,
+        weight: v.weight !== undefined && v.weight !== "" ? Number(v.weight) : null,
         weight_unit: v.weight_unit || "g",
         sku_code: v.sku_code,
         critical_trigger: v.critical_trigger || null,
         refundable: v.refundable ?? productRefundable,
         is_refundable: v.refundable ?? productRefundable,
         is_active: v.is_active ?? true,
-        original_price:
-          v.depreciation.originalPrice !== ""
-            ? Number(v.depreciation.originalPrice)
-            : null,
-        usage_period:
-          v.depreciation.usagePeriod !== ""
-            ? Number(v.depreciation.usagePeriod)
-            : null,
+        original_price: v.depreciation.originalPrice !== "" ? Number(v.depreciation.originalPrice) : null,
+        usage_period: v.depreciation.usagePeriod !== "" ? Number(v.depreciation.usagePeriod) : null,
         usage_unit: v.depreciation.usageUnit || "months",
-        depreciation_rate:
-          v.depreciation.depreciationRate !== ""
-            ? Number(v.depreciation.depreciationRate)
-            : null,
-        purchase_date: v.depreciation.purchaseDate
-          ? v.depreciation.purchaseDate.toISOString()
-          : null,
+        depreciation_rate: v.depreciation.depreciationRate !== "" ? Number(v.depreciation.depreciationRate) : null,
+        purchase_date: v.depreciation.purchaseDate ? v.depreciation.purchaseDate.toISOString() : null,
         attributes: v.attributes || {},
-        value_added_tax: v.value_added_tax
-          ? Number(v.value_added_tax)
-          : calculateVAT(typeof v.price === "number" ? v.price : 0),
+        // IMPORTANT: value_added_tax should be the PERCENTAGE (12 for 12%), not the calculated amount
+        value_added_tax: v.value_added_tax !== undefined && v.value_added_tax !== "" ? Number(v.value_added_tax) : 12,
       }));
       formData.append("variants", JSON.stringify(variantsPayload));
       variants.forEach((v) => {
@@ -1536,10 +1521,10 @@ export default function CreateProductForm({
                         {variant.title || `Variant ${index + 1}`}
                       </Text>
                       {variant.price ? (
-                        <Text style={styles.variantPrice}>
-                          ₱{formatPrice(variant.price)}
-                        </Text>
-                      ) : null}
+  <Text style={styles.variantPrice}>
+    ₱{formatPrice(variantPrice)}
+  </Text>
+) : null}
                     </View>
                   </View>
                   <View style={styles.variantHeaderRight}>
@@ -1561,26 +1546,19 @@ export default function CreateProductForm({
                   </View>
                 </TouchableOpacity>
                 {/* VAT Display in Variant Header */}
-                {variant.price && (
-                  <View style={styles.variantHeaderVAT}>
-                    <View style={styles.variantHeaderVATRow}>
-                      <Text style={styles.variantHeaderVATLabel}>
-                        VAT (12%):
-                      </Text>
-                      <Text style={styles.variantHeaderVATValue}>
-                        ₱{formatPrice(variantVAT)}
-                      </Text>
-                    </View>
-                    <View style={styles.variantHeaderVATTotalRow}>
-                      <Text style={styles.variantHeaderVATTotalLabel}>
-                        Total with VAT:
-                      </Text>
-                      <Text style={styles.variantHeaderVATTotalValue}>
-                        ₱{formatPrice(variantTotalWithVAT)}
-                      </Text>
-                    </View>
-                  </View>
-                )}
+                {/* VAT Display in Variant Header - Simplified */}
+{variant.price && (
+  <View style={styles.variantHeaderVAT}>
+    <View style={styles.variantHeaderVATRow}>
+      <Text style={styles.variantHeaderVATLabel}>
+        VAT (12%):
+      </Text>
+      <Text style={styles.variantHeaderVATValue}>
+        ₱{formatPrice(variantVAT)}
+      </Text>
+    </View>
+  </View>
+)}
                 {expandedVariants[variant.id] && (
                   <View style={styles.variantContent}>
                     <View style={styles.formGroup}>
@@ -1647,49 +1625,48 @@ export default function CreateProductForm({
                       />
                     </View>
                     <View style={styles.row}>
-                      <View
-                        style={[styles.formGroup, { flex: 1, marginRight: 8 }]}
-                      >
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 6,
-                            marginBottom: 6,
-                          }}
-                        >
-                          <Text style={styles.label}>
-                            Selling Price <Text style={styles.required}>*</Text>
-                          </Text>
-                          {variant.depreciation.calculatedPrice ? (
-                            <View style={styles.autoBadgeInline}>
-                              <Text style={styles.autoBadgeInlineText}>
-                                Auto
-                              </Text>
-                            </View>
-                          ) : null}
-                        </View>
-                        <View style={styles.priceInputContainer}>
-                          <Text style={styles.currencySymbol}>₱</Text>
-                          <TextInput
-                            style={[
-                              styles.priceInput,
-                              {
-                                backgroundColor: "#F9FAFB",
-                                color: variant.depreciation.calculatedPrice
-                                  ? "#EA580C"
-                                  : "#9CA3AF",
-                              },
-                            ]}
-                            value={
-                              variant.price ? variant.price.toString() : ""
-                            }
-                            editable={false}
-                            placeholder="Auto-calculated"
-                            placeholderTextColor="#9CA3AF"
-                          />
-                        </View>
-                      </View>
+                    <View style={[styles.formGroup, { flex: 1, marginRight: 8 }]}>
+  <View
+    style={{
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      marginBottom: 6,
+    }}
+  >
+    <Text style={styles.label}>
+      Selling Price (incl. VAT) <Text style={styles.required}>*</Text>
+    </Text>
+    {variant.depreciation.calculatedPrice ? (
+      <View style={styles.autoBadgeInline}>
+        <Text style={styles.autoBadgeInlineText}>Auto</Text>
+      </View>
+    ) : null}
+  </View>
+  <View style={styles.priceInputContainer}>
+    <Text style={styles.currencySymbol}>₱</Text>
+    <TextInput
+  style={[
+    styles.priceInput,
+    {
+      backgroundColor: "#F9FAFB",
+      color: variant.depreciation.calculatedPrice
+        ? "#EA580C"
+        : "#9CA3AF",
+    },
+  ]}
+  value={
+    variant.price ? formatPrice(variantPrice) : ""
+  }
+  editable={false}
+  placeholder="Auto-calculated"
+  placeholderTextColor="#9CA3AF"
+/>
+  </View>
+  <Text style={styles.basePriceNote}>
+  Base price (excl. VAT): ₱{formatPrice(variant.depreciation.calculatedPrice || 0)}
+</Text>
+</View>
                       <View style={[styles.formGroup, { flex: 1 }]}>
                         <Text style={[styles.label, { marginBottom: 6 }]}>
                           Stock <Text style={styles.required}>*</Text>
@@ -1711,28 +1688,25 @@ export default function CreateProductForm({
                       </View>
                     </View>
                     {/* VAT Display for this variant */}
-                    <View style={styles.variantVATSection}>
-                      <Text style={styles.variantVATSectionTitle}>
-                        VAT Details
-                      </Text>
-                      <View style={styles.variantVATRow}>
-                        <Text style={styles.variantVATLabel}>VAT (12%):</Text>
-                        <Text style={styles.variantVATValue}>
-                          ₱{formatPrice(variantVAT)}
-                        </Text>
-                      </View>
-                      <View style={styles.variantVATTotalRow}>
-                        <Text style={styles.variantVATTotalLabel}>
-                          Total with VAT:
-                        </Text>
-                        <Text style={styles.variantVATTotalValue}>
-                          ₱{formatPrice(variantTotalWithVAT)}
-                        </Text>
-                      </View>
-                      <Text style={styles.variantVATNote}>
-                        * VAT will be applied at checkout
-                      </Text>
-                    </View>
+                    {/* VAT Display for this variant */}
+<View style={styles.variantVATSection}>
+<Text style={styles.variantVATSectionTitle}>VAT Details</Text>
+<View style={styles.variantVATRow}>
+  <Text style={styles.variantVATLabel}>VAT (12%):</Text>
+  <Text style={styles.variantVATValue}>
+    ₱{formatPrice(variant.depreciation.calculatedPrice ? calculateVAT(Number(variant.depreciation.calculatedPrice)) : 0)}
+  </Text>
+</View>
+<View style={styles.variantVATRow}>
+  <Text style={styles.variantVATLabel}>Depreciated Base Price:</Text>
+  <Text style={styles.variantVATValue}>
+    ₱{formatPrice(variant.depreciation.calculatedPrice || 0)}
+  </Text>
+</View>
+<Text style={styles.variantVATNote}>
+  * Selling Price = Depreciated Base Price + 12% VAT
+</Text>
+</View>
                     {/* ── DEPRECIATION SECTION ── */}
                     <View style={styles.depreciationSection}>
                       <View style={styles.depreciationHeader}>
@@ -2270,60 +2244,54 @@ export default function CreateProductForm({
                     Variant Details:
                   </Text>
                   {variants.map((variant, idx) => {
-                    const variantPrice =
-                      typeof variant.price === "number" ? variant.price : 0;
-                    const variantVAT = calculateVAT(variantPrice);
-                    const variantTotalWithVAT =
-                      calculatePriceWithVAT(variantPrice);
-                    return (
-                      <View key={variant.id} style={styles.allVariantsItem}>
-                        <View style={styles.allVariantsItemHeader}>
-                          <Text style={styles.allVariantsItemNumber}>
-                            {idx + 1}
-                          </Text>
-                          <Text style={styles.allVariantsItemTitle}>
-                            {variant.title || `Variant ${idx + 1}`}
-                          </Text>
-                        </View>
-                        <View style={styles.allVariantsItemDetails}>
-                          <View style={styles.allVariantsItemPriceRow}>
-                            <Text style={styles.allVariantsItemLabel}>
-                              Price:
-                            </Text>
-                            <Text style={styles.allVariantsItemPrice}>
-                              ₱{formatPrice(variantPrice)}
-                            </Text>
-                          </View>
-                          <View style={styles.allVariantsItemStockRow}>
-                            <Text style={styles.allVariantsItemLabel}>
-                              Stock:
-                            </Text>
-                            <Text style={styles.allVariantsItemStock}>
-                              {variant.quantity || 0} units
-                            </Text>
-                          </View>
-                        </View>
-                        <View style={styles.variantVATDetails}>
-                          <View style={styles.variantVATRow}>
-                            <Text style={styles.variantVATLabel}>
-                              VAT (12%):
-                            </Text>
-                            <Text style={styles.variantVATValue}>
-                              ₱{formatPrice(variantVAT)}
-                            </Text>
-                          </View>
-                          <View style={styles.variantVATTotalRow}>
-                            <Text style={styles.variantVATTotalLabel}>
-                              Total with VAT:
-                            </Text>
-                            <Text style={styles.variantVATTotalValue}>
-                              ₱{formatPrice(variantTotalWithVAT)}
-                            </Text>
-                          </View>
-                        </View>
-                      </View>
-                    );
-                  })}
+  // variant.price already includes VAT (selling price)
+  const sellingPrice = typeof variant.price === "number" ? variant.price : 0;
+  // Get the depreciated base price (without VAT)
+  const basePrice = variant.depreciation.calculatedPrice || 0;
+  // Calculate VAT amount from base price
+  const vatAmount = calculateVAT(basePrice);
+  
+  return (
+    <View key={variant.id} style={styles.allVariantsItem}>
+      <View style={styles.allVariantsItemHeader}>
+        <Text style={styles.allVariantsItemNumber}>
+          {idx + 1}
+        </Text>
+        <Text style={styles.allVariantsItemTitle}>
+          {variant.title || `Variant ${idx + 1}`}
+        </Text>
+      </View>
+      <View style={styles.allVariantsItemDetails}>
+        <View style={styles.allVariantsItemPriceRow}>
+          <Text style={styles.allVariantsItemLabel}>Selling Price (incl. VAT):</Text>
+          <Text style={styles.allVariantsItemPrice}>
+            ₱{formatPrice(sellingPrice)}
+          </Text>
+        </View>
+        <View style={styles.allVariantsItemBasePriceRow}>
+          <Text style={styles.allVariantsItemBasePriceLabel}>Depreciated Base Price:</Text>
+          <Text style={styles.allVariantsItemBasePrice}>
+            ₱{formatPrice(basePrice)}
+          </Text>
+        </View>
+        <View style={styles.allVariantsItemStockRow}>
+          <Text style={styles.allVariantsItemLabel}>Stock:</Text>
+          <Text style={styles.allVariantsItemStock}>
+            {variant.quantity || 0} units
+          </Text>
+        </View>
+      </View>
+      <View style={styles.variantVATDetails}>
+        <View style={styles.variantVATRow}>
+          <Text style={styles.variantVATLabel}>VAT Amount (12% of Base Price):</Text>
+          <Text style={styles.variantVATValue}>
+            ₱{formatPrice(vatAmount)}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+})}
                 </View>
                 <View style={styles.allVariantsStats}>
                   <View style={styles.allVariantsStat}>
@@ -3461,6 +3429,26 @@ const styles = StyleSheet.create({
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
+  },
+  basePriceNote: {
+    fontSize: 10,
+    color: "#6B7280",
+    marginTop: 4,
+    fontStyle: "italic",
+  },
+  allVariantsItemBasePriceRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  allVariantsItemBasePriceLabel: {
+    fontSize: 11,
+    color: "#6B7280",
+  },
+  allVariantsItemBasePrice: {
+    fontSize: 11,
+    color: "#9CA3AF",
   },
   modalItemText: { fontSize: 15, color: "#374151" },
 });

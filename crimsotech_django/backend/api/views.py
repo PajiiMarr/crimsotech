@@ -19246,6 +19246,10 @@ class SellerProducts(viewsets.ModelViewSet):
                 
                 # --- VAT HANDLING ---
                 # Get price for VAT calculation
+                                # --- VAT HANDLING ---
+                # Get price for VAT calculation
+                                # --- VAT HANDLING ---
+                # Get price for VAT calculation
                 price = variant_fields.get('price', Decimal('0'))
                 
                 # Check if VAT value is provided in the variant data
@@ -19258,7 +19262,8 @@ class SellerProducts(viewsets.ModelViewSet):
                         if vat_value < 0:
                             raise ValidationError("VAT cannot be negative")
                         if vat_value > 100:
-                            raise ValidationError("VAT cannot exceed 100%")
+                            logger.warning(f"VAT value {vat_value}% exceeds 100%, capping at 100%")
+                            vat_value = Decimal('100.00')
                         variant_fields['value_added_tax'] = vat_value
                         logger.info(f"Using provided VAT: {vat_value}% for variant")
                     except (ValueError, TypeError, InvalidOperation):
@@ -19271,8 +19276,13 @@ class SellerProducts(viewsets.ModelViewSet):
                 
                 # Calculate and store the VAT amount (price * VAT percentage / 100)
                 # This is the actual tax amount that will be added to the price
-                variant_fields['value_added_tax_amount'] = (price * variant_fields['value_added_tax']) / Decimal('100')
-                logger.info(f"VAT amount calculated: {variant_fields['value_added_tax_amount']} (price: {price}, VAT%: {variant_fields['value_added_tax']})")
+                vat_percentage = variant_fields['value_added_tax']
+                vat_amount_calculated = (price * vat_percentage) / Decimal('100')
+                variant_fields['value_added_tax_amount'] = vat_amount_calculated
+                
+                # Also set the price_with_vat property will be calculated by the model's property
+                # No need to store it separately
+                logger.info(f"VAT calculated: {vat_percentage}% of {price} = {vat_amount_calculated}")
                 
                 # Handle variant image
                 provided_id = variant_data.get('id')
@@ -19334,9 +19344,8 @@ class SellerProducts(viewsets.ModelViewSet):
                 "dimension_unit": variant.dimension_unit,
                 # VAT field at variant level
                 "value_added_tax": str(variant.value_added_tax) if variant.value_added_tax else "12.00",
-                "value_added_tax_amount": str(variant.value_added_tax_amount) if variant.value_added_tax_amount else "0.00",
+                "value_added_tax_amount": str(variant.vat_amount) if variant.price else "0.00",
                 "price_with_vat": str(variant.price_with_vat) if variant.price else None,
-                "price_with_vat": str(variant.price_with_vat) if variant.price and variant.value_added_tax else None,
                 "is_active": variant.is_active,
                 "is_refundable": variant.is_refundable,
                 "refund_days": variant.refund_days,
@@ -19452,7 +19461,8 @@ class SellerProducts(viewsets.ModelViewSet):
                         "dimension_unit": variant.dimension_unit,
                         # VAT field at variant level
                         "value_added_tax": str(variant.value_added_tax) if variant.value_added_tax else "12.00",
-                        "price_with_vat": str(variant.price_with_vat) if variant.price and variant.value_added_tax else None,
+                        "value_added_tax_amount": str(variant.vat_amount) if variant.price else "0.00",
+                        "price_with_vat": str(variant.price_with_vat) if variant.price else None,
                         "is_active": variant.is_active,
                         "is_refundable": variant.is_refundable,
                         "refund_days": variant.refund_days,
@@ -19744,7 +19754,8 @@ class SellerProducts(viewsets.ModelViewSet):
                     "dimension_unit": variant.dimension_unit,
                     # VAT field at variant level
                     "value_added_tax": str(variant.value_added_tax) if variant.value_added_tax else "12.00",
-                    "price_with_vat": str(variant.price_with_vat) if variant.price and variant.value_added_tax else None,
+                    "value_added_tax_amount": str(variant.vat_amount) if variant.price else "0.00",
+                    "price_with_vat": str(variant.price_with_vat) if variant.price else None,
                     "weight": str(variant.weight) if variant.weight else None,
                     "weight_unit": variant.weight_unit,
                     "critical_trigger": variant.critical_trigger,
@@ -20106,6 +20117,7 @@ class SellerProducts(viewsets.ModelViewSet):
                             errors.append({'id': variant_id, 'field': field, 'error': f'Invalid decimal value for {field}'})
 
             # VAT field at variant level
+                        # VAT field at variant level
             if 'value_added_tax' in v_data:
                 vat_val = v_data['value_added_tax']
                 if vat_val is None or vat_val == '':
@@ -20118,7 +20130,9 @@ class SellerProducts(viewsets.ModelViewSet):
                         if vat_decimal < 0:
                             errors.append({'id': variant_id, 'field': 'value_added_tax', 'error': 'VAT cannot be negative'})
                         elif vat_decimal > 100:
-                            errors.append({'id': variant_id, 'field': 'value_added_tax', 'error': 'VAT cannot exceed 100%'})
+                            logger.warning(f"VAT value {vat_decimal}% exceeds 100%, capping at 100%")
+                            variant.value_added_tax = Decimal('100.00')
+                            update_fields.append('value_added_tax')
                         else:
                             variant.value_added_tax = vat_decimal
                             update_fields.append('value_added_tax')
@@ -20203,7 +20217,8 @@ class SellerProducts(viewsets.ModelViewSet):
                 'dimension_unit': variant.dimension_unit,
                 # VAT field
                 'value_added_tax': str(variant.value_added_tax) if variant.value_added_tax else "12.00",
-                'price_with_vat': str(variant.price_with_vat) if variant.price and variant.value_added_tax else None,
+                'value_added_tax_amount': str(variant.vat_amount) if variant.price else "0.00",
+                'price_with_vat': str(variant.price_with_vat) if variant.price else None,
                 'is_active': variant.is_active,
                 'original_price': str(variant.original_price) if variant.original_price else None,
                 'usage_period': variant.usage_period,
