@@ -580,9 +580,31 @@ export default function RequestRefundPage() {
 
   const calculateRefundAmounts = () => {
     if (!order || selectedItems.length === 0) return { fullAmount: 0, maxPartialAmount: 0 };
-    const fullAmount = selectedItemsDetails.reduce((sum, item) => 
+    
+    // Calculate the actual paid amount based on order.total_amount
+    // First, calculate the proportion of selected items relative to total order
+    const selectedSubtotal = selectedItemsDetails.reduce((sum, item) => 
       sum + (parseFloat(item.price) * item.refundQuantity), 0
     );
+    
+    // Get total order amount (this is what the buyer actually paid)
+    const orderTotal = parseFloat(order.total_amount);
+    
+    // Get total subtotal of all items in the order
+    const totalItemsSubtotal = order.items.reduce((sum, item) => 
+      sum + parseFloat(item.subtotal), 0
+    );
+    
+    // Calculate the actual refund amount based on the proportion of the order total
+    // This accounts for shipping fees, discounts, and vouchers
+    let fullAmount = 0;
+    if (totalItemsSubtotal > 0) {
+      // Use proportion: (selected items value / total items value) * order total
+      fullAmount = (selectedSubtotal / totalItemsSubtotal) * orderTotal;
+    } else {
+      fullAmount = selectedSubtotal;
+    }
+    
     const maxPartialAmount = fullAmount * 0.7;
     return { fullAmount, maxPartialAmount };
   };
@@ -590,25 +612,39 @@ export default function RequestRefundPage() {
   const { fullAmount, maxPartialAmount } = calculateRefundAmounts();
 
   const computeRefundBreakdown = () => {
-    const selectedTotal = selectedItemsDetails.reduce((sum, item) => 
+    // Calculate the actual paid amount based on order.total_amount
+    const selectedSubtotal = selectedItemsDetails.reduce((sum, item) => 
       sum + (parseFloat(item.price) * item.refundQuantity), 0
     );
-    let baseAmount = selectedTotal;
+    
+    // Get total order amount (what the buyer actually paid)
+    const orderTotal = parseFloat(order?.total_amount || '0');
+    
+    // Get total subtotal of all items in the order
+    const totalItemsSubtotal = order?.items?.reduce((sum, item) => 
+      sum + parseFloat(item.subtotal), 0
+    ) || 0;
+    
+    // Calculate the actual refund base amount using proportion of order total
+    let baseAmount = selectedSubtotal;
+    if (totalItemsSubtotal > 0) {
+      baseAmount = (selectedSubtotal / totalItemsSubtotal) * orderTotal;
+    }
+    
     if (selectedRefundType && selectedRefundType.id === 'keep_item') {
       baseAmount = partialAmount ? parseFloat(partialAmount) : maxPartialAmount;
     } else if (selectedRefundType && (selectedRefundType.id === 'return_item' || selectedRefundType.id === 'replacement')) {
-      baseAmount = selectedTotal;
+      // Keep the calculated baseAmount
     }
-  
+    
     let fee = 0;
     const methodType = selectedRefundMethod?.type;
     if (selectedRefundMethod?.id === 'cash_on_hand') fee = 0;
     else if (methodType === 'moneyback') fee = 50;
     else if (methodType === 'bank') fee = 50;
-    // REMOVED: else if (methodType === 'wallet') fee = 10;
-    else if (methodType === 'wallet') fee = 0;  // ← CHANGE THIS - wallet fee is now 0
-    else if (methodType === 'replace') fee = 0;  // Replacement has no fee
-  
+    else if (methodType === 'wallet') fee = 0;
+    else if (methodType === 'replace') fee = 0;
+    
     const finalAmount = Math.max(0, baseAmount - fee);
     return { baseAmount, fee, finalAmount };
   };
@@ -710,7 +746,7 @@ export default function RequestRefundPage() {
       const items = selectedItemsDetails.map(item => ({
         checkout_id: item.checkout_id,
         quantity: item.refundQuantity,
-        amount: parseFloat(item.price) * item.refundQuantity,
+        amount: (parseFloat(item.price) * item.refundQuantity), 
       }));
 
       const breakdown = computeRefundBreakdown();

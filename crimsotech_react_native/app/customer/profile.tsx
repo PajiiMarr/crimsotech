@@ -888,7 +888,7 @@ export default function ProfileScreen() {
                   </View>
                 ) : profile?.user?.profile_picture_url ? (
                   <Image
-                    source={{ uri: getFullImageUrl(profile.user.profile_picture_url) }}
+                    source={{ uri: getFullImageUrl(profile.user.profile_picture_url) ?? undefined }}
                     style={styles.avatarImage}
                   />
                 ) : (
