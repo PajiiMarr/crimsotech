@@ -67,8 +67,6 @@ import {
   Wallet,
   Save,
   X,
-  BarChart3,
-  PieChart,
   TrendingDown
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';

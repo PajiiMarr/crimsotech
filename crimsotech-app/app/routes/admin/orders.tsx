@@ -1,3 +1,4 @@
+// app/routes/admin/orders.tsx
 import { toast } from 'sonner';
 import type { Route } from './+types/orders';
 import SidebarLayout from '~/components/layouts/sidebar'
@@ -608,46 +609,9 @@ export default function Checkouts() {
     });
   };
 
-  const updateOrderStatus = async (orderId: string, itemId: string, actionType: string, reason?: string) => {
-    setIsLoading(true);
-    try {
-      const payload = {
-        order_id: orderId,
-        order_item_id: itemId,
-        action_type: actionType,
-        user_id: user?.id,
-        ...(reason && { reason })
-      };
-
-      const response = await AxiosInstance.put('/admin-orders/update_order_status/', payload, {
-        headers: {
-          "X-User-Id": user?.id || ''
-        }
-      });
-
-      if (response.data.success || response.data.message) {
-        toast.success(response.data.message || 'Order status updated successfully');
-        window.location.reload();
-        return true;
-      } else {
-        toast.error(response.data.error || 'Failed to update order status');
-        return false;
-      }
-    } catch (error: any) {
-      console.error('Error updating order status:', error);
-      
-      if (error.response?.data?.error) {
-        toast.error(error.response.data.error);
-      } else if (error.response?.data?.message) {
-        toast.error(error.response.data.message);
-      } else {
-        toast.error('Failed to update order status');
-      }
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Admin only has view-only access - no order status updates
+  // All order status updates are handled by sellers and riders
+  // This function is kept for reference but admin cannot modify orders
 
   useEffect(() => {
     setIsLoading(false);
@@ -959,7 +923,7 @@ export default function Checkouts() {
             )}
           </div>
 
-          {/* Orders Table */}
+          {/* Orders Table - Admin View Only (No Actions) */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-lg sm:text-xl">All Order Items</CardTitle>
@@ -999,6 +963,7 @@ export default function Checkouts() {
   );
 }
 
+// Admin View-Only Columns - No Action Buttons
 const columns: ColumnDef<any>[] = [
   {
     accessorKey: "order_id",
@@ -1136,98 +1101,11 @@ const columns: ColumnDef<any>[] = [
     },
   },
   {
-    id: "actions",
+    id: "view",
+    header: "View",
     cell: ({ row }) => {
-      const orderItem = row.original;
-      const itemId = orderItem.id;
-      const orderId = orderItem.order_id;
-      const itemStatus = normalizeOrderStatus(orderItem.status);
+      const orderId = row.original.order_id;
       
-      const handleAction = async (actionType: string) => {
-        let reason = '';
-
-        if (actionType === 'cancel' || actionType === 'reject' || actionType === 'refund') {
-          reason = prompt(`Enter reason for ${actionType}:`) || '';
-          if (!reason) {
-            toast.error('Reason is required');
-            return;
-          }
-        }
-
-        try {
-          const sessionUserId = localStorage.getItem('userId') || 
-                               (window as any).user?.id || 
-                               '';
-          
-          const payload = {
-            order_id: orderId,
-            order_item_id: itemId,
-            action_type: actionType,
-            user_id: sessionUserId,
-            ...(reason && { reason })
-          };
-
-          const response = await AxiosInstance.put('/admin-orders/update_order_status/', payload);
-          
-          if (response.data.success || response.data.message) {
-            toast.success(response.data.message || 'Order status updated successfully');
-            window.location.reload();
-          } else {
-            toast.error(response.data.error || 'Failed to update order status');
-          }
-        } catch (error: any) {
-          console.error('Error updating order status:', error);
-          toast.error(error.response?.data?.error || 'Failed to update order status');
-        }
-      };
-
-      const getAvailableActions = () => {
-        const actions = [];
-        
-        if (itemStatus === 'Pending') {
-          actions.push({ label: 'Accept Order', action: 'accept', variant: 'default' as const });
-          actions.push({ label: 'Reject Order', action: 'reject', variant: 'destructive' as const });
-          actions.push({ label: 'Put On Hold', action: 'hold', variant: 'secondary' as const });
-        }
-        
-        if (itemStatus === 'Awaiting Payment') {
-          actions.push({ label: 'Mark as Paid', action: 'mark_paid', variant: 'default' as const });
-          actions.push({ label: 'Cancel Order', action: 'cancel', variant: 'destructive' as const });
-        }
-        
-        if (itemStatus === 'Paid' || itemStatus === 'Completed') {
-          actions.push({ label: 'Mark as Shipped', action: 'ship', variant: 'default' as const });
-          actions.push({ label: 'Refund Order', action: 'refund', variant: 'destructive' as const });
-        }
-        
-        if (itemStatus === 'Shipped') {
-          actions.push({ label: 'Mark as Delivered', action: 'deliver', variant: 'default' as const });
-          actions.push({ label: 'Mark as Failed', action: 'fail_delivery', variant: 'destructive' as const });
-        }
-        
-        if (itemStatus === 'On Hold') {
-          actions.push({ label: 'Resume Order', action: 'resume', variant: 'default' as const });
-          actions.push({ label: 'Cancel Order', action: 'cancel', variant: 'destructive' as const });
-        }
-        
-        if (itemStatus === 'Cancelled') {
-          actions.push({ label: 'Restore Order', action: 'restore', variant: 'default' as const });
-        }
-        
-        if (itemStatus === 'Failed') {
-          actions.push({ label: 'Retry Order', action: 'retry', variant: 'default' as const });
-          actions.push({ label: 'Refund Order', action: 'refund', variant: 'destructive' as const });
-        }
-        
-        if (orderItem.is_removed || orderItem.order_is_removed) {
-          actions.push({ label: 'Restore Order', action: 'restore_removed', variant: 'default' as const });
-        }
-        
-        return actions;
-      };
-
-      const actions = getAvailableActions();
-
       return (
         <div className="flex items-center gap-2 px-2 sm:px-4 py-2">
           <Link 
@@ -1236,22 +1114,8 @@ const columns: ColumnDef<any>[] = [
             title="View Order Details"
           >
             <Eye className="w-3 h-3 sm:w-4 sm:h-4" />
+            <span className="hidden sm:inline">View</span>
           </Link>
-          
-          {actions.length > 0 && (
-            <Select onValueChange={(value) => handleAction(value)}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue placeholder="Actions" />
-              </SelectTrigger>
-              <SelectContent>
-                {actions.map((action) => (
-                  <SelectItem key={action.action} value={action.action}>
-                    {action.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
         </div>
       );
     },
