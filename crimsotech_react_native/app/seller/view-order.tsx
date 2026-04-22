@@ -66,6 +66,15 @@ interface OrderItem {
   shipping_status?: string;
   waybill_url?: string;
 }
+interface RiderAssignment {
+  rider_name: string;
+  rider_username: string;
+  vehicle_type: string;
+  plate_number: string;
+  distance_to_pickup_km: number;
+  distance_pickup_to_dest_km: number;
+  total_distance_km: number;
+}
 interface DeliveryInfo {
   delivery_id?: string;
   rider_name?: string;
@@ -107,13 +116,18 @@ interface OrderDetails {
   pickup_date?: string;
   pickup_expire_date?: string; 
   proof_images?: ProofImage[]; 
-  metadata?: {  // Add this
+  metadata?: {
     pickup_code?: string;
-  }; 
+    all_riders_compared?: RiderAssignment[];
+    nearest_rider?: {
+      name: string;
+      username: string;
+      total_distance_km: number;
+      delivery_fee: number;
+      estimated_minutes: number;
+    };
+  };
 }
-
-
-
 
 // Status configuration — covers full delivery + pickup flow
 const getStatusConfig = (status: string) => {
@@ -220,14 +234,14 @@ export default function SellerViewOrder() {
   const [availableActions, setAvailableActions] = useState<string[]>([]);
   const [processing, setProcessing] = useState(false);
   const [proofImages, setProofImages] = useState<ProofImage[]>([]);
-const [loadingProofs, setLoadingProofs] = useState(false);
-const [previewVisible, setPreviewVisible] = useState(false);
-const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [loadingProofs, setLoadingProofs] = useState(false);
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [selectedAction, setSelectedAction] = useState<{
-    
     type: string; title: string; description: string;
   } | null>(null);
+  const [showRidersModal, setShowRidersModal] = useState(false);
 
   useEffect(() => {
     if (orderId && shopId) {
@@ -244,7 +258,6 @@ const [selectedImage, setSelectedImage] = useState<string | null>(null);
       });
       
       if (response.data.success) {
-        // DEBUG: Log the pickup_date
         console.log('=== PICKUP DATE FROM API ===');
         console.log('pickup_date:', response.data.data.pickup_date);
         console.log('Full response data:', response.data.data);
@@ -266,87 +279,58 @@ const [selectedImage, setSelectedImage] = useState<string | null>(null);
     }
   };
 
-  const generatePickupCode = async () => {
+  const fetchAvailableActions = async () => {
     if (!orderId || !shopId) return;
-    
     try {
-      setProcessing(true);
-      const response = await AxiosInstance.post(
-        `/seller-order-list/${orderId}/generate_pickup_code/`,
-        { shop_id: shopId }
+      const response = await AxiosInstance.get(
+        `/seller-order-list/${orderId}/available_actions/`,
+        { params: { shop_id: shopId } },
       );
-      
       if (response.data.success) {
-        Alert.alert('Success', 'Pickup code generated successfully');
-        await fetchOrderDetails(); // Refresh to get the new code
+        console.log('Available actions from backend:', response.data.data.available_actions);
+        setAvailableActions(response.data.data.available_actions || []);
+      }
+    } catch (error) {
+      console.error('Error fetching available actions:', error);
+    }
+  };
+
+  const handleUpdateStatus = async (actionType: string) => {
+    setProcessing(true);
+    try {
+      const response = await AxiosInstance.patch(
+        `/seller-order-list/${orderId}/update_status/`,
+        { action_type: actionType },
+        { params: { shop_id: shopId } },
+      );
+      if (response.data.success) {
+        await fetchOrderDetails();
+        await fetchAvailableActions();
+        setShowConfirmation(false);
+        
+        // If this was an arrange_shipment action, show the rider comparison modal
+        if (actionType === 'arrange_shipment' && response.data.data?.all_riders_compared) {
+          // Update order with rider data
+          setOrder(prev => prev ? {
+            ...prev,
+            metadata: {
+              ...prev.metadata,
+              all_riders_compared: response.data.data.all_riders_compared,
+              nearest_rider: response.data.data.nearest_rider
+            }
+          } : prev);
+          setShowRidersModal(true);
+        }
       } else {
-        Alert.alert('Error', response.data.message || 'Failed to generate pickup code');
+        Alert.alert('Error', response.data.message || 'Failed to update order');
       }
     } catch (error: any) {
-      console.error('Error generating pickup code:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to generate pickup code');
+      console.error('Error updating order:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to update order');
     } finally {
       setProcessing(false);
     }
   };
-
-  const fetchProofImages = async (deliveryId: string) => {
-  if (!deliveryId) return;
-  try {
-    setLoadingProofs(true);
-    const response = await AxiosInstance.get(
-      `/rider-proof/delivery/${deliveryId}/proofs/`,
-      { headers: { "X-User-Id": userId } }
-    );
-    if (response.data?.success) {
-      setProofImages(response.data.proofs || []);
-    }
-  } catch (error) {
-    console.error('Error fetching proofs:', error);
-  } finally {
-    setLoadingProofs(false);
-  }
-};
-
-const fetchAvailableActions = async () => {
-  if (!orderId || !shopId) return;
-  try {
-    const response = await AxiosInstance.get(
-      `/seller-order-list/${orderId}/available_actions/`,
-      { params: { shop_id: shopId } },
-    );
-    if (response.data.success) {
-      console.log('Available actions from backend:', response.data.data.available_actions);
-      setAvailableActions(response.data.data.available_actions || []);
-    }
-  } catch (error) {
-    console.error('Error fetching available actions:', error);
-  }
-};
-
-const handleUpdateStatus = async (actionType: string) => {
-  setProcessing(true);
-  try {
-    const response = await AxiosInstance.patch(
-      `/seller-order-list/${orderId}/update_status/`,
-      { action_type: actionType },
-      { params: { shop_id: shopId } },
-    );
-    if (response.data.success) {
-      // Remove the Alert.alert - just close modal and refresh
-      await fetchOrderDetails();
-      await fetchAvailableActions();
-      setShowConfirmation(false);
-    } else {
-      Alert.alert('Error', response.data.message || 'Failed to update order');
-    }
-  } catch (error: any) {
-    console.error('Error updating order:', error);
-    Alert.alert('Error', error.response?.data?.message || 'Failed to update order');
-  } finally {
-    setProcessing(false);
-  }
-};
 
   const showActionConfirmation = (actionType: string, title: string, description: string) => {
     setSelectedAction({ type: actionType, title, description });
@@ -359,36 +343,35 @@ const handleUpdateStatus = async (actionType: string) => {
   };
 
   // Purely driven by availableActions from backend
-  // Purely driven by availableActions from backend
-const getActionButtons = () => {
-  if (!order) return {
-    showConfirm: false,
-    showCancel: false,
-    showReadyToShip: false,
-    showArrangeShipment: false,
-    showReadyForPickup: false,
-    showPickedUp: false,
-    showToDeliver: false,
-    showDelivered: false,
-    showComplete: false,
-  };
+  const getActionButtons = () => {
+    if (!order) return {
+      showConfirm: false,
+      showCancel: false,
+      showReadyToShip: false,
+      showArrangeShipment: false,
+      showReadyForPickup: false,
+      showPickedUp: false,
+      showToDeliver: false,
+      showDelivered: false,
+      showComplete: false,
+    };
 
-  // Check if cancel should be hidden (when rider has accepted)
-  const isRiderAccepted = order?.delivery_info?.status === 'accepted';
-  const shouldHideCancel = isRiderAccepted;
+    // Check if cancel should be hidden (when rider has accepted)
+    const isRiderAccepted = order?.delivery_info?.status === 'accepted';
+    const shouldHideCancel = isRiderAccepted;
 
-  return {
-    showConfirm:          availableActions.includes('confirm'),
-    showCancel:           availableActions.includes('cancel') && !shouldHideCancel,
-    showReadyToShip:      availableActions.includes('ready_to_ship'),
-    showArrangeShipment:  availableActions.includes('arrange_shipment'),
-    showReadyForPickup:   availableActions.includes('ready_for_pickup'),
-    showPickedUp:         availableActions.includes('picked_up'),
-    showToDeliver:        availableActions.includes('to_deliver'),
-    showDelivered:        availableActions.includes('delivered'),
-    showComplete:         availableActions.includes('complete'),
+    return {
+      showConfirm:          availableActions.includes('confirm'),
+      showCancel:           availableActions.includes('cancel') && !shouldHideCancel,
+      showReadyToShip:      availableActions.includes('ready_to_ship'),
+      showArrangeShipment:  availableActions.includes('arrange_shipment'),
+      showReadyForPickup:   availableActions.includes('ready_for_pickup'),
+      showPickedUp:         availableActions.includes('picked_up'),
+      showToDeliver:        availableActions.includes('to_deliver'),
+      showDelivered:        availableActions.includes('delivered'),
+      showComplete:         availableActions.includes('complete'),
+    };
   };
-};
 
   const formatCurrency = (amount: number) =>
     `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
@@ -416,7 +399,6 @@ const getActionButtons = () => {
   const renderStatusCard = () => {
     if (!order) return null;
     
-    // DEBUG: Log the actual values
     console.log('=== STATUS DEBUG ===');
     console.log('Order status:', order.status);
     console.log('Delivery info status:', order?.delivery_info?.status);
@@ -460,21 +442,18 @@ const getActionButtons = () => {
       customIcon = 'package-outline';
     }
     // For ready_for_pickup status
-    // For ready_for_pickup status
-else if (displayStatus === 'ready_for_pickup') {
-  customDescription = 'Order is ready at your store. Customer has been notified.';
-  customIcon = 'storefront-outline';
-  
-  // Add pickup code display inside the status card
-  const pickupCode = order?.metadata?.pickup_code;
-  if (pickupCode) {
-    customDescription = `Order is ready at your store. Customer has been notified.\n\nPickup Code: ${pickupCode}`;
-  }
-}
+    else if (displayStatus === 'ready_for_pickup') {
+      customDescription = 'Order is ready at your store. Customer has been notified.';
+      customIcon = 'storefront-outline';
+      
+      const pickupCode = order?.metadata?.pickup_code;
+      if (pickupCode) {
+        customDescription = `Order is ready at your store. Customer has been notified.\n\nPickup Code: ${pickupCode}`;
+      }
+    }
     
     const config = getStatusConfig(displayStatus);
     
-    // Use custom values if available, otherwise use config values
     const finalLabel = customLabel || config.label;
     const finalDescription = customDescription || config.description;
     const finalIcon = customIcon || config.icon;
@@ -499,18 +478,28 @@ else if (displayStatus === 'ready_for_pickup') {
   };
 
   const renderRiderInfo = () => {
-    // Check delivery_info from order response
     const riderName = order?.delivery_info?.rider_name;
     const riderPhone = order?.delivery_info?.rider_phone;
     const deliveryStatus = order?.delivery_info?.status;
+    const allRiders = order?.metadata?.all_riders_compared;
+    const nearestRider = order?.metadata?.nearest_rider;
     
-    if (!riderName && !deliveryStatus) return null;
+    if (!riderName && !deliveryStatus && !allRiders) return null;
     
     return (
       <View style={styles.infoCard}>
         <View style={styles.cardHeader}>
           <MaterialCommunityIcons name="motorbike" size={20} color="#111827" />
           <Text style={styles.cardTitle}>Rider Information</Text>
+          {allRiders && allRiders.length > 0 && (
+            <TouchableOpacity 
+              style={styles.viewAllButton}
+              onPress={() => setShowRidersModal(true)}
+            >
+              <Text style={styles.viewAllButtonText}>View All</Text>
+              <Ionicons name="chevron-forward" size={14} color="#F97316" />
+            </TouchableOpacity>
+          )}
         </View>
         <View style={styles.cardContent}>
           {riderName ? (
@@ -524,6 +513,27 @@ else if (displayStatus === 'ready_for_pickup') {
                   <Ionicons name="call-outline" size={16} color="#6B7280" />
                   <Text style={styles.riderPhone}>{riderPhone}</Text>
                 </View>
+              )}
+            </>
+          ) : allRiders && allRiders.length > 0 ? (
+            <>
+              <Text style={styles.riderSubtitle}>Riders notified for this delivery:</Text>
+              {allRiders.slice(0, 3).map((rider, index) => (
+                <View key={index} style={styles.riderListItem}>
+                  <View style={styles.riderListLeft}>
+                    <MaterialCommunityIcons name="motorbike" size={16} color="#6B7280" />
+                    <Text style={styles.riderListName}>{rider.rider_name}</Text>
+                  </View>
+                  <Text style={styles.riderListDistance}>{rider.total_distance_km} km</Text>
+                </View>
+              ))}
+              {allRiders.length > 3 && (
+                <TouchableOpacity 
+                  style={styles.viewMoreButton}
+                  onPress={() => setShowRidersModal(true)}
+                >
+                  <Text style={styles.viewMoreText}>+{allRiders.length - 3} more riders</Text>
+                </TouchableOpacity>
               )}
             </>
           ) : (
@@ -540,338 +550,382 @@ else if (displayStatus === 'ready_for_pickup') {
               </Text>
             </View>
           )}
+          {nearestRider && !riderName && (
+            <View style={styles.nearestRiderInfo}>
+              <MaterialCommunityIcons name="star" size={14} color="#F59E0B" />
+              <Text style={styles.nearestRiderText}>
+                Nearest: {nearestRider.name} ({nearestRider.total_distance_km} km)
+              </Text>
+            </View>
+          )}
         </View>
       </View>
     );
   };
 
-  
-const renderProofOfDelivery = () => {
-  if (order?.status !== 'delivered') return null;
-  
-  const proofs = order?.proof_images || [];
-  if (proofs.length === 0) return null;
-
-  return (
-    <View style={styles.infoCard}>
-      <View style={styles.cardHeader}>
-        <MaterialIcons name="photo-camera" size={20} color="#111827" />
-        <Text style={styles.cardTitle}>Proof of Delivery</Text>
-      </View>
-      <View style={styles.cardContent}>
-        <View style={styles.proofGrid}>
-          {proofs.map((proof) => (
-            <TouchableOpacity
-              key={proof.id}
-              onPress={() => {
-                setSelectedImage(proof.file_url);
-                setPreviewVisible(true);
-              }}
-            >
-              <Image source={{ uri: proof.file_url }} style={styles.proofImage} />
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-    </View>
-  );
-};
-
-const renderPickupInfo = () => {
-  if (!isPickupOrder()) return null;
-  
-  // Note: You need to have pickup_expire_date in your OrderDetails interface
-  // Add this to your OrderDetails interface if not already there
-  const pickupExpireDate = (order as any)?.pickup_expire_date;
-  if (!pickupExpireDate) return null;
-  
-  const expireDate = new Date(pickupExpireDate);
-  const now = new Date();
-  const isExpired = now > expireDate;
-  
-  return (
-    <View style={styles.infoCard}>
-      <View style={styles.cardHeader}>
-        <MaterialIcons name="schedule" size={20} color="#111827" />
-        <Text style={styles.cardTitle}>Pickup Information</Text>
-      </View>
-      <View style={styles.cardContent}>
-        <View style={styles.pickupInfoRow}>
-          <Ionicons name="calendar-outline" size={16} color="#6B7280" />
-          <Text style={styles.pickupExpireText}>
-            {isExpired ? 'Expired on: ' : 'Expires on: '}
-            {expireDate.toLocaleDateString('en-PH', {
-              month: 'short', day: 'numeric', year: 'numeric',
-              hour: '2-digit', minute: '2-digit'
-            })}
-          </Text>
-        </View>
-        {isExpired && (
-          <View style={styles.expiredWarning}>
-            <Ionicons name="warning-outline" size={16} color="#EF4444" />
-            <Text style={styles.expiredWarningText}>
-              This pickup order has expired. Please contact the customer.
-            </Text>
+  const renderRidersModal = () => {
+    const allRiders = order?.metadata?.all_riders_compared;
+    const nearestRider = order?.metadata?.nearest_rider;
+    
+    if (!allRiders || allRiders.length === 0) return null;
+    
+    return (
+      <Modal
+        visible={showRidersModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowRidersModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.ridersModalContainer}>
+            <View style={styles.ridersModalHeader}>
+              <Text style={styles.ridersModalTitle}>Rider Assignments</Text>
+              <TouchableOpacity onPress={() => setShowRidersModal(false)}>
+                <Ionicons name="close" size={24} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.ridersModalContent}>
+              {nearestRider && (
+                <View style={styles.nearestRiderCard}>
+                  <View style={styles.nearestRiderHeader}>
+                    <MaterialCommunityIcons name="star-circle" size={24} color="#F59E0B" />
+                    <Text style={styles.nearestRiderCardTitle}>Nearest Rider</Text>
+                  </View>
+                  <View style={styles.nearestRiderDetails}>
+                    <Text style={styles.nearestRiderName}>{nearestRider.name}</Text>
+                    <Text style={styles.nearestRiderUsername}>@{nearestRider.username}</Text>
+                    <View style={styles.nearestRiderStats}>
+                      <View style={styles.nearestRiderStat}>
+                        <MaterialCommunityIcons name="map-marker-distance" size={14} color="#6B7280" />
+                        <Text style={styles.nearestRiderStatText}>{nearestRider.total_distance_km} km</Text>
+                      </View>
+                      <View style={styles.nearestRiderStat}>
+                        <MaterialIcons name="attach-money" size={14} color="#6B7280" />
+                        <Text style={styles.nearestRiderStatText}>₱{nearestRider.delivery_fee?.toFixed(2)}</Text>
+                      </View>
+                      <View style={styles.nearestRiderStat}>
+                        <MaterialIcons name="access-time" size={14} color="#6B7280" />
+                        <Text style={styles.nearestRiderStatText}>{nearestRider.estimated_minutes} min</Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              )}
+              
+              <Text style={styles.allRidersTitle}>All Assigned Riders ({allRiders.length})</Text>
+              
+              {allRiders.map((rider, index) => (
+                <View key={index} style={styles.riderModalItem}>
+                  <View style={styles.riderModalRank}>
+                    <Text style={styles.riderModalRankText}>{index + 1}</Text>
+                  </View>
+                  <View style={styles.riderModalInfo}>
+                    <Text style={styles.riderModalName}>{rider.rider_name}</Text>
+                    <Text style={styles.riderModalUsername}>@{rider.rider_username}</Text>
+                    <View style={styles.riderModalDetails}>
+                      <View style={styles.riderModalDetail}>
+                        <MaterialCommunityIcons name="motorbike" size={12} color="#6B7280" />
+                        <Text style={styles.riderModalDetailText}>{rider.vehicle_type || 'N/A'}</Text>
+                      </View>
+                      <View style={styles.riderModalDetail}>
+                        <MaterialIcons name="confirmation-number" size={12} color="#6B7280" />
+                        <Text style={styles.riderModalDetailText}>{rider.plate_number || 'N/A'}</Text>
+                      </View>
+                    </View>
+                  </View>
+                  <View style={styles.riderModalDistance}>
+                    <Text style={styles.riderModalDistanceValue}>{rider.total_distance_km} km</Text>
+                    <Text style={styles.riderModalDistanceLabel}>total</Text>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+            
+            <View style={styles.ridersModalFooter}>
+              <Text style={styles.ridersModalFooterText}>
+                First rider to accept gets the delivery
+              </Text>
+            </View>
           </View>
-        )}
-      </View>
-    </View>
-  );
-};
-const renderActionButtons = () => {
-  const isCompleted = order?.status === 'completed';
-  const isCancelled = order?.status === 'cancelled';
-  if (isCompleted || isCancelled) return null;
-
-  const {
-    showConfirm, showCancel, showReadyToShip, showArrangeShipment,
-    showReadyForPickup, showPickedUp, showToDeliver, showDelivered, showComplete,
-  } = getActionButtons();
-
-  // Check for print_waybill in available actions
-  const showPrintWaybill = availableActions.includes('print_waybill');
-
-  // Get current order status
-  const currentStatus = order?.status?.toLowerCase() || '';
-  const isProcessing = currentStatus === 'processing';
-  const isReadyToShip = currentStatus === 'ready_to_ship';
-  const isPickup = isPickupOrder();
-
-  const hasAnyAction = showConfirm || showCancel || showReadyToShip ||
-    showArrangeShipment || showReadyForPickup || showPickedUp ||
-    showToDeliver || showDelivered || showComplete || showPrintWaybill;
-
-  if (!hasAnyAction) return null;
-
-  // Handle print waybill - Open in browser
-  const handlePrintWaybill = async () => {
-    try {
-      setProcessing(true);
-      
-      // Construct the URL
-      const waybillUrl = `${AxiosInstance.defaults.baseURL}/seller-order-list/${orderId}/generate_waybill/?shop_id=${shopId}`;
-      
-      // Open in browser - the browser will handle PDF display and printing
-      const { Linking } = await import('react-native');
-      await Linking.openURL(waybillUrl);
-      
-      Alert.alert('Success', 'Waybill opened in browser. You can print from there.');
-    } catch (error: any) {
-      console.error('Error generating waybill:', error);
-      Alert.alert('Error', error?.message || 'Failed to generate waybill');
-    } finally {
-      setProcessing(false);
-    }
+        </View>
+      </Modal>
+    );
   };
 
-  return (
-    <View style={styles.stickyFooter}>
-      <View style={styles.buttonContainer}>
-        {/* Print Waybill Button - for delivery orders only */}
-        {!isPickup && showPrintWaybill && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.printWaybillButton]}
-            onPress={handlePrintWaybill}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Print Waybill</Text>
-          </TouchableOpacity>
-        )}
+  const renderProofOfDelivery = () => {
+    if (order?.status !== 'delivered') return null;
+    
+    const proofs = order?.proof_images || [];
+    if (proofs.length === 0) return null;
 
-        {/* Confirm Order Button */}
-        {showConfirm && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.confirmButton]}
-            onPress={() => showActionConfirmation(
-              'confirm', 'Confirm Order', 'Confirm this order and start processing?'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Confirm Order</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* For processing status: Show Arrange Shipment */}
-        {isProcessing && showArrangeShipment && !isPickup && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.readyToShipButton]}
-            onPress={() => showActionConfirmation(
-              'arrange_shipment', 'Arrange Shipment',
-              'Assign riders for this delivery? Nearby riders will be notified.'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Arrange Shipment</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* For waiting_for_pickup status: Show Ready to Ship button (disabled until rider accepts) */}
-        {currentStatus === 'waiting_for_pickup' && showReadyToShip && !isPickup && (
-          <TouchableOpacity
-            style={[
-              styles.actionButton, 
-              styles.readyToShipButton,
-              (order?.delivery_info?.status !== 'accepted') && styles.readyToShipButtonDisabled
-            ]}
-            onPress={() => showActionConfirmation(
-              'ready_to_ship', 'Ready to Ship', 
-              'Mark order as ready to ship? Rider will be notified to pick up.'
-            )}
-            disabled={processing || order?.delivery_info?.status !== 'accepted'}
-          >
-            <Text style={styles.actionButtonText}>Ready to Ship</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* For rider_accepted status OR when delivery.status === 'accepted': Show Ready to Ship button */}
-        {(currentStatus === 'rider_accepted' || (currentStatus === 'rider_assigned' && order?.delivery_info?.status === 'accepted')) && showReadyToShip && !isPickup && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.readyToShipButton]}
-            onPress={() => showActionConfirmation(
-              'ready_to_ship', 'Ready to Ship', 
-              'Mark order as ready to ship? Rider will be notified to pick up.'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Ready to Ship</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* For pending_rider status: Show Arrange Shipment */}
-        {currentStatus === 'pending_rider' && showArrangeShipment && !isPickup && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.readyToShipButton]}
-            onPress={() => showActionConfirmation(
-              'arrange_shipment', 'Arrange Shipment',
-              'No riders available. Try assigning riders again?'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Retry Arrange Shipment</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* For ready_to_ship status: Show Ready to Ship button */}
-        {isReadyToShip && showReadyToShip && !isPickup && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.readyToShipButton]}
-            onPress={() => showActionConfirmation(
-              'ready_to_ship', 'Ready to Ship', 'Mark this order as ready to ship?'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Ready to Ship</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* For other statuses that need Arrange Shipment */}
-        {!isProcessing && !isReadyToShip && showArrangeShipment && !isPickup && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.readyToShipButton]}
-            onPress={() => showActionConfirmation(
-              'arrange_shipment', 'Arrange Shipment',
-              'Assign riders for this delivery? Nearby riders will be notified.'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Arrange Shipment</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Out for Delivery Button */}
-        {showToDeliver && !isPickup && (
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: '#8B5CF6' }]}
-            onPress={() => showActionConfirmation(
-              'to_deliver', 'Out for Delivery', 'Mark this order as out for delivery?'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Out for Delivery</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Ready for Pickup Button (Pickup orders) */}
-        {showReadyForPickup && isPickup && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.readyToShipButton]}
-            onPress={() => showActionConfirmation(
-              'ready_for_pickup', 'Ready for Pickup',
-              'Notify the customer their order is ready for pickup?'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Ready for Pickup</Text>
-          </TouchableOpacity>
-        )}
-
-        
-        {/* Picked Up Button (Pickup orders) */}
-        {showPickedUp && isPickup && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.confirmButton]}
-            onPress={() => showActionConfirmation(
-              'picked_up', 'Order Picked Up', 'Confirm the customer has collected the order?'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Mark Picked Up</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Delivered Button */}
-        {/* {showDelivered && !isPickup && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.confirmButton]}
-            onPress={() => showActionConfirmation(
-              'delivered', 'Mark as Delivered', 'Mark this order as delivered?'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Mark as Delivered</Text>
-          </TouchableOpacity>
-        )} */}
-
-        {/* Complete Button */}
-        {/* {showComplete && (
-          <TouchableOpacity
-            style={[styles.actionButton, styles.confirmButton]}
-            onPress={() => showActionConfirmation(
-              'complete', 'Complete Order', 'Mark this order as completed?'
-            )}
-            disabled={processing}
-          >
-            <Text style={styles.actionButtonText}>Complete Order</Text>
-          </TouchableOpacity>
-        )} */}
-
-        {/* Cancel Order Button */}
-        {/* Cancel Order Button */}
-{showCancel && (
-  <TouchableOpacity
-    style={[styles.actionButton, styles.cancelButton]}
-    onPress={() => {
-      // Determine if this is a shipment cancellation or order cancellation
-      const isShipmentCancel = order?.status === 'rider_assigned' || 
-                               order?.status === 'waiting_for_rider' ||
-                               (order?.delivery_info?.status === 'pending');
-      
-      const title = isShipmentCancel ? 'Cancel Shipment' : 'Cancel Order';
-      const description = isShipmentCancel 
-        ? 'Are you sure you want to cancel this shipment? The order will be reverted to processing.'
-        : 'Are you sure you want to cancel this order? This cannot be undone.';
-      
-      showActionConfirmation('cancel', title, description);
-    }}
-    disabled={processing}
-  >
-    <Text style={styles.actionButtonText}>Cancel Order</Text>
-  </TouchableOpacity>
-)}
+    return (
+      <View style={styles.infoCard}>
+        <View style={styles.cardHeader}>
+          <MaterialIcons name="photo-camera" size={20} color="#111827" />
+          <Text style={styles.cardTitle}>Proof of Delivery</Text>
+        </View>
+        <View style={styles.cardContent}>
+          <View style={styles.proofGrid}>
+            {proofs.map((proof) => (
+              <TouchableOpacity
+                key={proof.id}
+                onPress={() => {
+                  setSelectedImage(proof.file_url);
+                  setPreviewVisible(true);
+                }}
+              >
+                <Image source={{ uri: proof.file_url }} style={styles.proofImage} />
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
       </View>
-    </View>
-  );
-};
+    );
+  };
+
+  const renderPickupInfo = () => {
+    if (!isPickupOrder()) return null;
+    
+    const pickupExpireDate = (order as any)?.pickup_expire_date;
+    if (!pickupExpireDate) return null;
+    
+    const expireDate = new Date(pickupExpireDate);
+    const now = new Date();
+    const isExpired = now > expireDate;
+    
+    return (
+      <View style={styles.infoCard}>
+        <View style={styles.cardHeader}>
+          <MaterialIcons name="schedule" size={20} color="#111827" />
+          <Text style={styles.cardTitle}>Pickup Information</Text>
+        </View>
+        <View style={styles.cardContent}>
+          <View style={styles.pickupInfoRow}>
+            <Ionicons name="calendar-outline" size={16} color="#6B7280" />
+            <Text style={styles.pickupExpireText}>
+              {isExpired ? 'Expired on: ' : 'Expires on: '}
+              {expireDate.toLocaleDateString('en-PH', {
+                month: 'short', day: 'numeric', year: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+              })}
+            </Text>
+          </View>
+          {isExpired && (
+            <View style={styles.expiredWarning}>
+              <Ionicons name="warning-outline" size={16} color="#EF4444" />
+              <Text style={styles.expiredWarningText}>
+                This pickup order has expired. Please contact the customer.
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  const renderActionButtons = () => {
+    const isCompleted = order?.status === 'completed';
+    const isCancelled = order?.status === 'cancelled';
+    if (isCompleted || isCancelled) return null;
+
+    const {
+      showConfirm, showCancel, showReadyToShip, showArrangeShipment,
+      showReadyForPickup, showPickedUp, showToDeliver, showDelivered, showComplete,
+    } = getActionButtons();
+
+    const showPrintWaybill = availableActions.includes('print_waybill');
+    const currentStatus = order?.status?.toLowerCase() || '';
+    const isProcessing = currentStatus === 'processing';
+    const isReadyToShip = currentStatus === 'ready_to_ship';
+    const isPickup = isPickupOrder();
+
+    const hasAnyAction = showConfirm || showCancel || showReadyToShip ||
+      showArrangeShipment || showReadyForPickup || showPickedUp ||
+      showToDeliver || showDelivered || showComplete || showPrintWaybill;
+
+    if (!hasAnyAction) return null;
+
+    const handlePrintWaybill = async () => {
+      try {
+        setProcessing(true);
+        const waybillUrl = `${AxiosInstance.defaults.baseURL}/seller-order-list/${orderId}/generate_waybill/?shop_id=${shopId}`;
+        const { Linking } = await import('react-native');
+        await Linking.openURL(waybillUrl);
+        Alert.alert('Success', 'Waybill opened in browser. You can print from there.');
+      } catch (error: any) {
+        console.error('Error generating waybill:', error);
+        Alert.alert('Error', error?.message || 'Failed to generate waybill');
+      } finally {
+        setProcessing(false);
+      }
+    };
+
+    return (
+      <View style={styles.stickyFooter}>
+        <View style={styles.buttonContainer}>
+          {!isPickup && showPrintWaybill && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.printWaybillButton]}
+              onPress={handlePrintWaybill}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Print Waybill</Text>
+            </TouchableOpacity>
+          )}
+
+          {showConfirm && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.confirmButton]}
+              onPress={() => showActionConfirmation(
+                'confirm', 'Confirm Order', 'Confirm this order and start processing?'
+              )}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Confirm Order</Text>
+            </TouchableOpacity>
+          )}
+
+          {isProcessing && showArrangeShipment && !isPickup && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.readyToShipButton]}
+              onPress={() => showActionConfirmation(
+                'arrange_shipment', 'Arrange Shipment',
+                'Assign riders for this delivery? Nearby riders will be notified.'
+              )}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Arrange Shipment</Text>
+            </TouchableOpacity>
+          )}
+
+          {currentStatus === 'waiting_for_pickup' && showReadyToShip && !isPickup && (
+            <TouchableOpacity
+              style={[
+                styles.actionButton, 
+                styles.readyToShipButton,
+                (order?.delivery_info?.status !== 'accepted') && styles.readyToShipButtonDisabled
+              ]}
+              onPress={() => showActionConfirmation(
+                'ready_to_ship', 'Ready to Ship', 
+                'Mark order as ready to ship? Rider will be notified to pick up.'
+              )}
+              disabled={processing || order?.delivery_info?.status !== 'accepted'}
+            >
+              <Text style={styles.actionButtonText}>Ready to Ship</Text>
+            </TouchableOpacity>
+          )}
+
+          {(currentStatus === 'rider_accepted' || (currentStatus === 'rider_assigned' && order?.delivery_info?.status === 'accepted')) && showReadyToShip && !isPickup && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.readyToShipButton]}
+              onPress={() => showActionConfirmation(
+                'ready_to_ship', 'Ready to Ship', 
+                'Mark order as ready to ship? Rider will be notified to pick up.'
+              )}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Ready to Ship</Text>
+            </TouchableOpacity>
+          )}
+
+          {currentStatus === 'pending_rider' && showArrangeShipment && !isPickup && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.readyToShipButton]}
+              onPress={() => showActionConfirmation(
+                'arrange_shipment', 'Arrange Shipment',
+                'No riders available. Try assigning riders again?'
+              )}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Retry Arrange Shipment</Text>
+            </TouchableOpacity>
+          )}
+
+          {isReadyToShip && showReadyToShip && !isPickup && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.readyToShipButton]}
+              onPress={() => showActionConfirmation(
+                'ready_to_ship', 'Ready to Ship', 'Mark this order as ready to ship?'
+              )}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Ready to Ship</Text>
+            </TouchableOpacity>
+          )}
+
+          {!isProcessing && !isReadyToShip && showArrangeShipment && !isPickup && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.readyToShipButton]}
+              onPress={() => showActionConfirmation(
+                'arrange_shipment', 'Arrange Shipment',
+                'Assign riders for this delivery? Nearby riders will be notified.'
+              )}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Arrange Shipment</Text>
+            </TouchableOpacity>
+          )}
+
+          {showToDeliver && !isPickup && (
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: '#8B5CF6' }]}
+              onPress={() => showActionConfirmation(
+                'to_deliver', 'Out for Delivery', 'Mark this order as out for delivery?'
+              )}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Out for Delivery</Text>
+            </TouchableOpacity>
+          )}
+
+          {showReadyForPickup && isPickup && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.readyToShipButton]}
+              onPress={() => showActionConfirmation(
+                'ready_for_pickup', 'Ready for Pickup',
+                'Notify the customer their order is ready for pickup?'
+              )}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Ready for Pickup</Text>
+            </TouchableOpacity>
+          )}
+
+          {showPickedUp && isPickup && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.confirmButton]}
+              onPress={() => showActionConfirmation(
+                'picked_up', 'Order Picked Up', 'Confirm the customer has collected the order?'
+              )}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Mark Picked Up</Text>
+            </TouchableOpacity>
+          )}
+
+          {showCancel && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.cancelButton]}
+              onPress={() => {
+                const isShipmentCancel = order?.status === 'rider_assigned' || 
+                                         order?.status === 'waiting_for_rider' ||
+                                         (order?.delivery_info?.status === 'pending');
+                const title = isShipmentCancel ? 'Cancel Shipment' : 'Cancel Order';
+                const description = isShipmentCancel 
+                  ? 'Are you sure you want to cancel this shipment? The order will be reverted to processing.'
+                  : 'Are you sure you want to cancel this order? This cannot be undone.';
+                showActionConfirmation('cancel', title, description);
+              }}
+              disabled={processing}
+            >
+              <Text style={styles.actionButtonText}>Cancel Order</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    );
+  };
 
   const renderConfirmationModal = () => {
     if (!showConfirmation || !selectedAction) return null;
@@ -996,7 +1050,7 @@ const renderActionButtons = () => {
         {/* Status Card */}
         {renderStatusCard()}
 
-        {/* Rider Information - Display if available */}
+        {/* Rider Information */}
         {renderRiderInfo()}
         {renderPickupInfo()}
         {renderProofOfDelivery()} 
@@ -1070,42 +1124,41 @@ const renderActionButtons = () => {
             <Text style={styles.cardTitle}>Items ({order.items.length})</Text>
           </View>
           {order.items.map((item, index) => (
-  <View key={item.id || index} style={[
-    styles.orderItem,
-    item.status === 'cancelled' && styles.cancelledOrderItem  // ← ADD THIS
-  ]}>
-    <Image
-      source={{ uri: getProductImageUrl(item) }}
-      style={[styles.itemImage, item.status === 'cancelled' && styles.cancelledItemImage]}  // ← ADD THIS
-    />
-    <View style={styles.itemDetails}>
-      <Text style={[styles.itemName, item.status === 'cancelled' && styles.cancelledItemText]}>
-        {item.cart_item?.product?.name || 'Product Name'}
-      </Text>
-      <Text style={styles.itemVariant}>
-        {item.cart_item?.product?.variant || 'Standard'}
-      </Text>
-      
-      {/* ADD CANCELLED BADGE */}
-      {item.status === 'cancelled' && (
-        <View style={styles.cancelledBadge}>
-          <MaterialIcons name="cancel" size={12} color="#EF4444" />
-          <Text style={styles.cancelledBadgeText}>CANCELLED</Text>
-        </View>
-      )}
-      
-      <View style={styles.itemPriceRow}>
-        <Text style={styles.itemPrice}>
-          {formatCurrency(item.cart_item?.product?.price || 0)}
-        </Text>
-        <Text style={styles.itemQuantity}>× {item.quantity}</Text>
-      </View>
-    </View>
-    <Text style={[styles.itemTotal, item.status === 'cancelled' && styles.cancelledItemText]}>
-      {formatCurrency(item.total_amount)}
-    </Text>
-  </View>
-))}
+            <View key={item.id || index} style={[
+              styles.orderItem,
+              item.status === 'cancelled' && styles.cancelledOrderItem
+            ]}>
+              <Image
+                source={{ uri: getProductImageUrl(item) }}
+                style={[styles.itemImage, item.status === 'cancelled' && styles.cancelledItemImage]}
+              />
+              <View style={styles.itemDetails}>
+                <Text style={[styles.itemName, item.status === 'cancelled' && styles.cancelledItemText]}>
+                  {item.cart_item?.product?.name || 'Product Name'}
+                </Text>
+                <Text style={styles.itemVariant}>
+                  {item.cart_item?.product?.variant || 'Standard'}
+                </Text>
+                
+                {item.status === 'cancelled' && (
+                  <View style={styles.cancelledBadge}>
+                    <MaterialIcons name="cancel" size={12} color="#EF4444" />
+                    <Text style={styles.cancelledBadgeText}>CANCELLED</Text>
+                  </View>
+                )}
+                
+                <View style={styles.itemPriceRow}>
+                  <Text style={styles.itemPrice}>
+                    {formatCurrency(item.cart_item?.product?.price || 0)}
+                  </Text>
+                  <Text style={styles.itemQuantity}>× {item.quantity}</Text>
+                </View>
+              </View>
+              <Text style={[styles.itemTotal, item.status === 'cancelled' && styles.cancelledItemText]}>
+                {formatCurrency(item.total_amount)}
+              </Text>
+            </View>
+          ))}
         </View>
 
         {/* Order Summary */}
@@ -1133,22 +1186,26 @@ const renderActionButtons = () => {
 
         {/* Extra padding for sticky footer */}
         {hasActions() && <View style={styles.footerPadding} />}
-        
       </ScrollView>
-{/* Image Preview Modal */}
-<Modal visible={previewVisible} transparent animationType="fade">
-  <View style={styles.modalOverlayImage}>
-    <TouchableOpacity
-      style={styles.closeButton}
-      onPress={() => setPreviewVisible(false)}
-    >
-      <Ionicons name="close" size={30} color="#FFFFFF" />
-    </TouchableOpacity>
-    {selectedImage && (
-      <Image source={{ uri: selectedImage }} style={styles.previewImage} />
-    )}
-  </View>
-</Modal>
+
+      {/* Image Preview Modal */}
+      <Modal visible={previewVisible} transparent animationType="fade">
+        <View style={styles.modalOverlayImage}>
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={() => setPreviewVisible(false)}
+          >
+            <Ionicons name="close" size={30} color="#FFFFFF" />
+          </TouchableOpacity>
+          {selectedImage && (
+            <Image source={{ uri: selectedImage }} style={styles.previewImage} />
+          )}
+        </View>
+      </Modal>
+
+      {/* Riders Comparison Modal */}
+      {renderRidersModal()}
+
       {/* Sticky Action Buttons */}
       {renderActionButtons()}
 
@@ -1170,35 +1227,35 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'ios' ? 44 : 40,
   },
   proofGrid: {
-  flexDirection: 'row',
-  flexWrap: 'wrap',
-  gap: 8,
-},
-proofImage: {
-  width: 80,
-  height: 80,
-  borderRadius: 8,
-  borderWidth: 1,
-  borderColor: '#E5E7EB',
-},
-modalOverlayImage: {
-  flex: 1,
-  backgroundColor: 'rgba(0,0,0,0.95)',
-  justifyContent: 'center',
-  alignItems: 'center',
-},
-closeButton: {
-  position: 'absolute',
-  top: 50,
-  right: 20,
-  zIndex: 10,
-  padding: 8,
-},
-previewImage: {
-  width: '90%',
-  height: '70%',
-  resizeMode: 'contain',
-},
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  proofImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  modalOverlayImage: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    padding: 8,
+  },
+  previewImage: {
+    width: '90%',
+    height: '70%',
+    resizeMode: 'contain',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1303,6 +1360,17 @@ previewImage: {
     fontSize: 15,
     fontWeight: '600',
     color: '#111827',
+    flex: 1,
+  },
+  viewAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  viewAllButtonText: {
+    fontSize: 12,
+    color: '#F97316',
+    fontWeight: '500',
   },
   cardContent: { paddingLeft: 28 },
   recipientName: {
@@ -1459,6 +1527,7 @@ previewImage: {
   confirmButton: { backgroundColor: '#10B981' },
   readyToShipButton: { backgroundColor: '#3B82F6' },
   cancelButton: { backgroundColor: '#EF4444' },
+  printWaybillButton: { backgroundColor: '#8B5CF6' },
   actionButtonText: {
     fontSize: 16,
     fontWeight: '600',
@@ -1558,8 +1627,6 @@ previewImage: {
     backgroundColor: '#9CA3AF',
     opacity: 0.7,
   },
-  printWaybillButton: { backgroundColor: '#8B5CF6' },
-  deliveredButton: { backgroundColor: '#10B981' },
   pickupInfoRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1613,5 +1680,194 @@ previewImage: {
     fontSize: 10,
     fontWeight: '600',
     color: '#EF4444',
+  },
+  riderSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  riderListItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#F3F4F6',
+  },
+  riderListLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  riderListName: {
+    fontSize: 13,
+    color: '#374151',
+  },
+  riderListDistance: {
+    fontSize: 12,
+    color: '#F97316',
+    fontWeight: '500',
+  },
+  viewMoreButton: {
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  viewMoreText: {
+    fontSize: 12,
+    color: '#F97316',
+  },
+  nearestRiderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 0.5,
+    borderTopColor: '#F3F4F6',
+  },
+  nearestRiderText: {
+    fontSize: 12,
+    color: '#F59E0B',
+  },
+  ridersModalContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    width: width - 32,
+    maxHeight: '80%',
+    marginHorizontal: 16,
+  },
+  ridersModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  ridersModalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  ridersModalContent: {
+    padding: 16,
+  },
+  ridersModalFooter: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
+    alignItems: 'center',
+  },
+  ridersModalFooterText: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  nearestRiderCard: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  nearestRiderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+  },
+  nearestRiderCardTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#92400E',
+  },
+  nearestRiderDetails: {
+    paddingLeft: 30,
+  },
+  nearestRiderName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  nearestRiderUsername: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  nearestRiderStats: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  nearestRiderStat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  nearestRiderStatText: {
+    fontSize: 12,
+    color: '#374151',
+  },
+  allRidersTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  riderModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#F3F4F6',
+  },
+  riderModalRank: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  riderModalRankText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  riderModalInfo: {
+    flex: 1,
+  },
+  riderModalName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111827',
+  },
+  riderModalUsername: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginBottom: 4,
+  },
+  riderModalDetails: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  riderModalDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  riderModalDetailText: {
+    fontSize: 10,
+    color: '#9CA3AF',
+  },
+  riderModalDistance: {
+    alignItems: 'flex-end',
+  },
+  riderModalDistanceValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#F97316',
+  },
+  riderModalDistanceLabel: {
+    fontSize: 10,
+    color: '#6B7280',
   },
 });

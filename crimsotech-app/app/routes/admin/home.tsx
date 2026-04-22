@@ -52,6 +52,7 @@ import {
   Clock,
   Wallet,
   Printer,
+  Landmark,
 } from 'lucide-react';
 import AxiosInstance from '~/components/axios/Axios';
 
@@ -99,12 +100,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       },
       overview: {
         total_revenue: 0, total_completed_revenue: 0, total_pending_revenue: 0,
-        total_orders: 0, active_customers: 0, active_shops: 0,
+        total_orders: 0, total_vat_collected: 0,
+        active_customers: 0, active_shops: 0,
         current_period_orders: 0, current_period_completed_revenue: 0,
         current_period_pending_revenue: 0, current_period_revenue: 0,
         current_period_shipping_fees: 0, current_period_platform_fees: 0,
+        current_period_vat_collected: 0,
         previous_period_orders: 0, previous_period_revenue: 0,
-        order_growth: 0, revenue_growth: 0, date_range_days: 0
+        previous_period_vat_collected: 0,
+        order_growth: 0, revenue_growth: 0, vat_growth: 0, date_range_days: 0
       },
       operational: {
         active_boosts: 0, boost_revenue: 0, pending_refunds: 0, pending_refund_amount: 0,
@@ -199,10 +203,10 @@ const printStyles = `
       page-break-after: avoid;
     }
 
-    /* Metric grid: 4 across on A4 */
+    /* Metric grid: 5 across on A4 for VAT */
     .print-metric-grid {
       display: grid !important;
-      grid-template-columns: repeat(4, 1fr) !important;
+      grid-template-columns: repeat(5, 1fr) !important;
       gap: 6pt !important;
       margin-bottom: 10pt !important;
       page-break-inside: avoid;
@@ -360,6 +364,35 @@ const BreakdownModal = ({ isOpen, onClose, title, data, type }: any) => {
                   <p className="text-2xl font-bold text-orange-600">{data.platformFees}</p>
                 </div>
               )}
+            </div>
+          )}
+          {type === 'vat' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-emerald-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Current Period VAT Collected</p>
+                  <p className="text-2xl font-bold text-emerald-600">{data.currentPeriodVAT}</p>
+                  <p className="text-xs text-gray-500 mt-1">12% VAT on product prices from completed orders</p>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-600">Previous Period VAT Collected</p>
+                  <p className="text-2xl font-bold text-gray-600">{data.previousPeriodVAT}</p>
+                </div>
+              </div>
+              <div className="p-4 bg-blue-50 rounded-lg">
+                <p className="text-sm text-gray-600">Lifetime VAT Collected</p>
+                <p className="text-2xl font-bold text-blue-600">{data.lifetimeVAT}</p>
+                <p className="text-xs text-gray-500 mt-1">Total VAT collected since platform inception</p>
+              </div>
+              <div className="p-4 bg-yellow-50 rounded-lg">
+                <p className="text-sm text-gray-600">VAT Growth</p>
+                <p className={`text-2xl font-bold ${data.growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>{data.growth}%</p>
+                <p className="text-xs text-gray-500 mt-1">Formula: (Current - Previous) / Previous × 100</p>
+              </div>
+              <div className="p-4 bg-purple-50 rounded-lg">
+                <p className="text-sm text-gray-600">Calculation Method</p>
+                <p className="text-sm text-gray-700">VAT = Price × (VAT% / 100) for each variant in completed orders. Uses variant-specific VAT rates (default 12%).</p>
+              </div>
             </div>
           )}
           {type === 'orders' && (
@@ -628,7 +661,7 @@ const StatCard = ({ title, value, change, icon: Icon, trend, description, loadin
           )}
           {subValue && <p className="text-xs text-muted-foreground mt-1">{subLabel}: {subValue}</p>}
           {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
-          {!loading && change && (
+          {!loading && change !== undefined && change !== null && (
             <div className={`flex items-center gap-1 mt-2 text-sm ${trend === 'up' ? 'text-green-600' : 'text-red-600'}`}>
               {trend === 'up' ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
               <span>{change}</span>
@@ -646,7 +679,7 @@ const StatCard = ({ title, value, change, icon: Icon, trend, description, loadin
 const MetricGrid = ({ title, children }: any) => (
   <div className="space-y-4 metric-grid">
     {title && <h3 className="text-lg font-semibold">{title}</h3>}
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">{children}</div>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">{children}</div>
   </div>
 );
 
@@ -655,7 +688,6 @@ const LoadingSkeleton = ({ className = "" }: { className?: string }) => (
 );
 
 // ── PrintReport ───────────────────────────────────────────────────────────────
-// A self-contained, print-only component that renders a pixel-perfect A4 layout.
 const PrintReport = ({
   overview, operational, salesAnalytics, userAnalytics, productAnalytics, shopAnalytics,
   dateRange, formatCurrency, formatCompactNumber, formatDate,
@@ -675,19 +707,16 @@ const PrintReport = ({
     </div>
   );
 
-  // Build bar-chart data for products
   const maxOrders = Math.max(...(productAnalytics.product_performance || []).map((p: any) => p.orders || 0), 1);
 
   return (
     <div id="print-root" className="print-only hidden" style={{ fontFamily: 'Arial, sans-serif' }}>
-      {/* ── Header ── */}
       <div className="print-header">
         <h1>Admin Dashboard Report</h1>
         <p>Generated: {new Date().toLocaleString('en-PH')}</p>
         <p>Period: {formatDate(dateRange.start)} — {formatDate(dateRange.end)} &nbsp;|&nbsp; {dateRange.rangeType.toUpperCase()}</p>
       </div>
 
-      {/* ── Core Business Metrics ── */}
       <div className="print-section-title">Core Business Metrics</div>
       <div className="print-metric-grid">
         <MetricCard
@@ -705,20 +734,24 @@ const PrintReport = ({
           changeUp={(overview.order_growth || 0) >= 0}
         />
         <MetricCard
+          label="VAT Collected"
+          value={formatCurrency(overview.current_period_vat_collected || 0)}
+          sub={`${formatCurrency(overview.previous_period_vat_collected || 0)} previous period`}
+          change={`${(overview.vat_growth || 0) >= 0 ? '+' : ''}${overview.vat_growth || 0}%`}
+          changeUp={(overview.vat_growth || 0) >= 0}
+        />
+        <MetricCard
           label="Active Customers"
           value={formatCompactNumber(overview.active_customers || 0)}
           sub="Total registered"
-          change="+15.2%" changeUp
         />
         <MetricCard
           label="Active Shops"
           value={formatCompactNumber(overview.active_shops || 0)}
           sub="Total verified"
-          change="+3.5%" changeUp
         />
       </div>
 
-      {/* ── Operational Metrics ── */}
       <div className="print-section-title">Operational Metrics</div>
       <div className="print-metric-grid">
         <MetricCard
@@ -735,24 +768,25 @@ const PrintReport = ({
           label="Pending Refunds"
           value={(operational.pending_refunds || 0).toString()}
           sub={`Amount: ${formatCurrency(operational.pending_refund_amount || 0)}`}
-          change="Needs attention" changeUp={false}
         />
         <MetricCard
           label="Low Stock Alerts"
           value={(operational.low_stock_products || 0).toString()}
           sub="Need restocking"
-          change="Critical" changeUp={false}
+        />
+        <MetricCard
+          label="Active Riders"
+          value={(operational.active_riders || 0).toString()}
+          sub={`Deliveries: ${operational.completed_deliveries || 0}`}
         />
       </div>
 
-      {/* ── Platform Health ── */}
       <div className="print-section-title">Platform Health</div>
       <div className="print-metric-grid">
         <MetricCard
           label="Average Rating"
           value={`${operational.avg_rating || 0} ★`}
           sub={`${operational.total_reviews || 0} reviews`}
-          change="+0.2" changeUp
         />
         <MetricCard
           label="Pending Reports"
@@ -760,64 +794,57 @@ const PrintReport = ({
           sub="Moderation queue"
         />
         <MetricCard
-          label="Active Riders"
-          value={(operational.active_riders || 0).toString()}
-          sub={`Completed deliveries: ${operational.completed_deliveries || 0}`}
-        />
-        <MetricCard
           label="Active Vouchers"
           value={(operational.active_vouchers || 0).toString()}
-          sub={`Used: ${operational.vouchers_used || 0} | Discount: ${formatCurrency(operational.total_voucher_discount || 0)}`}
+          sub={`Used: ${operational.vouchers_used || 0}`}
+        />
+        <MetricCard
+          label="Lifetime VAT"
+          value={formatCurrency(overview.total_vat_collected || 0)}
+          sub="All-time collected"
+        />
+        <MetricCard
+          label="Platform Fees"
+          value={formatCurrency(overview.current_period_platform_fees || 0)}
+          sub="5% of completed orders"
         />
       </div>
 
-      {/* ── Sales Trend + Order Status ── */}
       <div className="print-section-title page-break-avoid">Sales & Order Analytics</div>
       <div className="print-chart-row page-break-avoid">
-        {/* Sales trend as a data table */}
         <div className="print-chart-card">
           <h3>Sales & Revenue Trend</h3>
-          <p>Revenue includes completed + pending (incoming balance)</p>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '7.5pt' }}>
             <thead>
               <tr style={{ background: '#f3f4f6' }}>
-                <th style={{ padding: '3pt 5pt', textAlign: 'left', fontWeight: 600, color: '#374151' }}>Period</th>
-                <th style={{ padding: '3pt 5pt', textAlign: 'right', fontWeight: 600, color: '#374151' }}>Orders</th>
-                <th style={{ padding: '3pt 5pt', textAlign: 'right', fontWeight: 600, color: '#10b981' }}>Completed</th>
-                <th style={{ padding: '3pt 5pt', textAlign: 'right', fontWeight: 600, color: '#f59e0b' }}>Pending</th>
-                <th style={{ padding: '3pt 5pt', textAlign: 'right', fontWeight: 600, color: '#8b5cf6' }}>Shipping</th>
-                <th style={{ padding: '3pt 5pt', textAlign: 'right', fontWeight: 600, color: '#ef4444' }}>Platform Fee</th>
+                <th style={{ padding: '3pt 5pt', textAlign: 'left' }}>Period</th>
+                <th style={{ padding: '3pt 5pt', textAlign: 'right' }}>Orders</th>
+                <th style={{ padding: '3pt 5pt', textAlign: 'right' }}>Completed</th>
+                <th style={{ padding: '3pt 5pt', textAlign: 'right' }}>Pending</th>
+                <th style={{ padding: '3pt 5pt', textAlign: 'right' }}>Platform Fee</th>
+                <th style={{ padding: '3pt 5pt', textAlign: 'right' }}>VAT</th>
               </tr>
             </thead>
             <tbody>
               {(salesAnalytics.sales_data || []).map((row: any, i: number) => (
                 <tr key={i} style={{ borderBottom: '0.5pt solid #f3f4f6' }}>
-                  <td style={{ padding: '3pt 5pt', color: '#374151' }}>{row.name || row.date || '—'}</td>
-                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#3b82f6', fontWeight: 600 }}>{row.orders ?? 0}</td>
-                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#10b981' }}>{formatCurrency(row.completed_revenue ?? 0)}</td>
-                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#f59e0b' }}>{formatCurrency(row.pending_revenue ?? 0)}</td>
-                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#8b5cf6' }}>{formatCurrency(row.shipping_fees ?? 0)}</td>
-                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#ef4444' }}>{formatCurrency(row.platform_fees ?? 0)}</td>
+                  <td style={{ padding: '3pt 5pt' }}>{row.name || row.date || '—'}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right' }}>{row.orders ?? 0}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right' }}>{formatCurrency(row.completed_revenue ?? 0)}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right' }}>{formatCurrency(row.pending_revenue ?? 0)}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right' }}>{formatCurrency(row.platform_fees ?? 0)}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right' }}>{formatCurrency(row.vat_collected ?? 0)}</td>
                 </tr>
               ))}
-              {(salesAnalytics.sales_data || []).length === 0 && (
-                <tr><td colSpan={6} style={{ padding: '6pt', textAlign: 'center', color: '#9ca3af' }}>No data available</td></tr>
-              )}
             </tbody>
-          </table>
+           </table>
         </div>
 
-        {/* Order Status distribution */}
         <div className="print-chart-card">
           <h3>Order Status Distribution</h3>
-          <p>Current period breakdown</p>
           <table className="print-status-table">
             <thead>
-              <tr>
-                <th>Status</th>
-                <th style={{ textAlign: 'right' }}>Count</th>
-                <th style={{ textAlign: 'right' }}>%</th>
-              </tr>
+              <tr><th>Status</th><th style={{ textAlign: 'right' }}>Count</th><th style={{ textAlign: 'right' }}>%</th></tr>
             </thead>
             <tbody>
               {(() => {
@@ -825,67 +852,48 @@ const PrintReport = ({
                 const total = dist.reduce((s: number, d: any) => s + (d.count || 0), 0) || 1;
                 return dist.map((d: any, i: number) => (
                   <tr key={i}>
-                    <td>
-                      <span className="status-dot" style={{ background: d.color || COLORS[i % COLORS.length] }} />
-                      {d.status}
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{d.count || 0}</td>
-                    <td style={{ textAlign: 'right', color: '#6b7280' }}>{((d.count / total) * 100).toFixed(1)}%</td>
+                    <td><span className="status-dot" style={{ background: d.color || COLORS[i % COLORS.length] }} />{d.status}</td>
+                    <td style={{ textAlign: 'right' }}>{d.count || 0}</td>
+                    <td style={{ textAlign: 'right' }}>{((d.count / total) * 100).toFixed(1)}%</td>
                   </tr>
                 ));
               })()}
-              {(salesAnalytics.status_distribution || []).length === 0 && (
-                <tr><td colSpan={3} style={{ textAlign: 'center', color: '#9ca3af' }}>No data</td></tr>
-              )}
             </tbody>
-          </table>
+           </table>
         </div>
       </div>
 
-      {/* ── Customer Growth + Top Products ── */}
       <div className="print-section-title page-break-avoid">Customer & Product Analytics</div>
       <div className="print-chart-row-half page-break-avoid">
-        {/* Customer growth table */}
         <div className="print-chart-card">
           <h3>Customer Growth</h3>
-          <p>New vs returning in selected period</p>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '7.5pt' }}>
-            <thead>
-              <tr style={{ background: '#f3f4f6' }}>
-                <th style={{ padding: '3pt 5pt', textAlign: 'left', fontWeight: 600 }}>Period</th>
-                <th style={{ padding: '3pt 5pt', textAlign: 'right', fontWeight: 600, color: '#3b82f6' }}>New</th>
-                <th style={{ padding: '3pt 5pt', textAlign: 'right', fontWeight: 600, color: '#10b981' }}>Returning</th>
-                <th style={{ padding: '3pt 5pt', textAlign: 'right', fontWeight: 600 }}>Total</th>
-              </tr>
-            </thead>
+            <thead><tr style={{ background: '#f3f4f6' }}>
+              <th style={{ padding: '3pt 5pt', textAlign: 'left' }}>Period</th>
+              <th style={{ padding: '3pt 5pt', textAlign: 'right' }}>New</th>
+              <th style={{ padding: '3pt 5pt', textAlign: 'right' }}>Returning</th>
+            </tr></thead>
             <tbody>
               {(userAnalytics.user_growth || []).map((row: any, i: number) => (
                 <tr key={i} style={{ borderBottom: '0.5pt solid #f3f4f6' }}>
                   <td style={{ padding: '3pt 5pt' }}>{row.period || '—'}</td>
-                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#3b82f6' }}>{row.new_users ?? 0}</td>
-                  <td style={{ padding: '3pt 5pt', textAlign: 'right', color: '#10b981' }}>{row.returning_users ?? 0}</td>
-                  <td style={{ padding: '3pt 5pt', textAlign: 'right', fontWeight: 600 }}>{(row.new_users ?? 0) + (row.returning_users ?? 0)}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right' }}>{row.new_users ?? 0}</td>
+                  <td style={{ padding: '3pt 5pt', textAlign: 'right' }}>{row.returning_users ?? 0}</td>
                 </tr>
               ))}
-              {(userAnalytics.user_growth || []).length === 0 && (
-                <tr><td colSpan={4} style={{ textAlign: 'center', color: '#9ca3af', padding: '6pt' }}>No data</td></tr>
-              )}
             </tbody>
-          </table>
+           </table>
         </div>
 
-        {/* Top products with mini bar */}
         <div className="print-chart-card">
           <h3>Top Products</h3>
-          <p>Best performing by orders</p>
           <table className="print-bar-table">
-            <thead>
-              <tr style={{ background: '#f3f4f6' }}>
-                <th style={{ padding: '3pt 4pt', textAlign: 'left', fontWeight: 600, fontSize: '7pt' }}>Product</th>
-                <th style={{ padding: '3pt 4pt', textAlign: 'right', fontWeight: 600, fontSize: '7pt', color: '#10b981' }}>Orders</th>
-                <th style={{ padding: '3pt 4pt', textAlign: 'right', fontWeight: 600, fontSize: '7pt', color: '#f59e0b' }}>Platform Fee</th>
-              </tr>
-            </thead>
+            <thead><tr style={{ background: '#f3f4f6' }}>
+              <th style={{ padding: '3pt 4pt', textAlign: 'left' }}>Product</th>
+              <th style={{ padding: '3pt 4pt', textAlign: 'right' }}>Orders</th>
+              <th style={{ padding: '3pt 4pt', textAlign: 'right' }}>Platform Fee</th>
+              <th style={{ padding: '3pt 4pt', textAlign: 'right' }}>VAT</th>
+            </tr></thead>
             <tbody>
               {(productAnalytics.product_performance || []).slice(0, 8).map((p: any, i: number) => (
                 <tr key={i} style={{ borderBottom: '0.5pt solid #f3f4f6' }}>
@@ -894,106 +902,21 @@ const PrintReport = ({
                       <div className="bar-bg" style={{ width: '36pt', flexShrink: 0 }}>
                         <div className="bar-fill" style={{ width: `${((p.orders || 0) / maxOrders) * 100}%`, background: COLORS[i % COLORS.length] }} />
                       </div>
-                      <span style={{ fontSize: '6.5pt', color: '#374151' }}>{p.name}</span>
+                      <span style={{ fontSize: '6.5pt' }}>{p.name}</span>
                     </div>
                   </td>
-                  <td style={{ padding: '3pt 4pt', textAlign: 'right', fontWeight: 600, color: '#10b981' }}>{p.orders ?? 0}</td>
-                  <td style={{ padding: '3pt 4pt', textAlign: 'right', color: '#f59e0b' }}>{formatCurrency(p.platform_fee ?? 0)}</td>
+                  <td style={{ padding: '3pt 4pt', textAlign: 'right' }}>{p.orders ?? 0}</td>
+                  <td style={{ padding: '3pt 4pt', textAlign: 'right' }}>{formatCurrency(p.platform_fee ?? 0)}</td>
+                  <td style={{ padding: '3pt 4pt', textAlign: 'right' }}>{formatCurrency(p.vat_collected ?? 0)}</td>
                 </tr>
               ))}
-              {(productAnalytics.product_performance || []).length === 0 && (
-                <tr><td colSpan={3} style={{ textAlign: 'center', color: '#9ca3af', padding: '6pt' }}>No data</td></tr>
-              )}
             </tbody>
-          </table>
+           </table>
         </div>
       </div>
 
-      {/* ── Top Shops + Platform Overview ── */}
-      <div className="print-section-title page-break-avoid">Shop & Platform Summary</div>
-      <div className="print-chart-row-half page-break-avoid">
-        <div className="print-chart-card">
-          <h3>Top Performing Shops</h3>
-          <p>By sales volume and ratings</p>
-          {(shopAnalytics.shop_performance || []).slice(0, 6).map((shop: any, i: number) => (
-            <div className="print-shop-item" key={i}>
-              <div className="shop-avatar" style={{ background: avatarColors[i % avatarColors.length] }}>
-                {shop.name.charAt(0)}
-              </div>
-              <div className="shop-info">
-                <div className="shop-name">{shop.name}</div>
-                <div className="shop-meta">{shop.followers || 0} followers · Avg: {formatCurrency(shop.average_order_value || 0)}</div>
-              </div>
-              <div className="shop-sales">
-                <div className="amount">{formatCurrency(shop.sales || 0)}</div>
-                <div className="rating">{shop.rating || 0}★ · Fee: {formatCurrency(shop.platform_fee || 0)}</div>
-              </div>
-            </div>
-          ))}
-          {(shopAnalytics.shop_performance || []).length === 0 && (
-            <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: '7.5pt', padding: '8pt 0' }}>No shop data available</p>
-          )}
-        </div>
-
-        <div className="print-chart-card">
-          <h3>Platform Overview</h3>
-          <p>Key statistics at a glance</p>
-          <div className="print-platform-grid">
-            <div className="print-platform-item">
-              <div className="platform-val" style={{ color: '#3b82f6' }}>{formatCompactNumber(overview.current_period_orders || 0)}</div>
-              <div className="platform-label">Period Orders</div>
-            </div>
-            <div className="print-platform-item">
-              <div className="platform-val" style={{ color: '#10b981' }}>{formatCompactNumber(overview.active_shops || 0)}</div>
-              <div className="platform-label">Active Shops</div>
-            </div>
-            <div className="print-platform-item">
-              <div className="platform-val" style={{ color: '#8b5cf6' }}>{formatCompactNumber(overview.active_customers || 0)}</div>
-              <div className="platform-label">Customers</div>
-            </div>
-            <div className="print-platform-item">
-              <div className="platform-val" style={{ color: '#f97316' }}>{operational.active_boosts || 0}</div>
-              <div className="platform-label">Active Boosts</div>
-            </div>
-            <div className="print-platform-item">
-              <div className="platform-val" style={{ color: '#ef4444' }}>{operational.pending_refunds || 0}</div>
-              <div className="platform-label">Pending Refunds</div>
-            </div>
-            <div className="print-platform-item">
-              <div className="platform-val" style={{ color: '#6366f1' }}>{operational.active_riders || 0}</div>
-              <div className="platform-label">Active Riders</div>
-            </div>
-          </div>
-
-          {/* Fee summary */}
-          <div style={{ marginTop: '10pt', padding: '7pt', background: '#f0fdf4', borderRadius: '5pt', border: '1pt solid #bbf7d0' }}>
-            <div style={{ fontSize: '7pt', fontWeight: 700, color: '#15803d', marginBottom: '4pt' }}>Revenue Summary</div>
-            <table style={{ width: '100%', fontSize: '7pt', borderCollapse: 'collapse' }}>
-              <tbody>
-                {[
-                  { label: 'Completed Revenue', value: formatCurrency(overview.current_period_completed_revenue || 0), color: '#16a34a' },
-                  { label: 'Pending (Incoming)', value: formatCurrency(overview.current_period_pending_revenue || 0), color: '#ca8a04' },
-                  { label: 'Shipping Fees', value: formatCurrency(overview.current_period_shipping_fees || 0), color: '#7c3aed' },
-                  { label: 'Platform Fees (5%)', value: formatCurrency(overview.current_period_platform_fees || 0), color: '#dc2626' },
-                  { label: 'Boost Revenue', value: formatCurrency(operational.boost_revenue || 0), color: '#0891b2' },
-                ].map((row, i) => (
-                  <tr key={i}>
-                    <td style={{ padding: '2pt 0', color: '#374151' }}>{row.label}</td>
-                    <td style={{ padding: '2pt 0', textAlign: 'right', fontWeight: 600, color: row.color }}>{row.value}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Footer ── */}
       <div className="print-footer">
-        <p>This is a computer-generated report. No signature required.</p>
-        <p style={{ marginTop: '3pt' }}>
-          Printed by Admin Dashboard &nbsp;·&nbsp; {new Date().toLocaleString('en-PH')}
-        </p>
+        <p>Printed by Admin Dashboard &nbsp;·&nbsp; {new Date().toLocaleString('en-PH')}</p>
       </div>
     </div>
   );
@@ -1075,6 +998,13 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           incomingBalance: formatCurrency(overview.current_period_pending_revenue || 0),
           growth: overview.revenue_growth || 0,
         }; break;
+      case 'vat':
+        breakdownData = {
+          currentPeriodVAT: formatCurrency(overview.current_period_vat_collected || 0),
+          previousPeriodVAT: formatCurrency(overview.previous_period_vat_collected || 0),
+          lifetimeVAT: formatCurrency(overview.total_vat_collected || 0),
+          growth: overview.vat_growth || 0,
+        }; break;
       case 'orders':
         breakdownData = {
           currentPeriodOrders: overview.current_period_orders || 0,
@@ -1142,7 +1072,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     <UserProvider user={user}>
       <style>{printStyles}</style>
 
-      {/* ── Print-only report (hidden on screen, shown on print) ── */}
       <PrintReport
         overview={overview}
         operational={operational}
@@ -1158,7 +1087,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
       <SidebarLayout>
         <div ref={dashboardRef} className="space-y-6 no-print">
-          {/* Header */}
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-3xl font-bold">Admin Dashboard</h1>
@@ -1190,50 +1118,57 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               trend={(overview.order_growth||0)>=0?"up":"down"} icon={ShoppingCart}
               description={`Last ${overview.date_range_days||7} days`} loading={isLoading}
               onClick={()=>handleCardClick('orders','Orders Breakdown')} />
+            <StatCard title="VAT Collected" value={isLoading?"...":formatCurrency(overview.current_period_vat_collected||0)}
+              change={overview.vat_growth !== 0 ? `${(overview.vat_growth||0)>=0?'+':''}${overview.vat_growth||0}%` : "0%"}
+              trend={(overview.vat_growth||0)>=0?"up":"down"} icon={Landmark}
+              description={`Lifetime: ${formatCurrency(overview.total_vat_collected||0)}`}
+              subValue={overview.previous_period_vat_collected !== undefined ? formatCurrency(overview.previous_period_vat_collected) : undefined}
+              subLabel="Previous period" loading={isLoading}
+              onClick={()=>handleCardClick('vat','VAT Breakdown')} />
             <StatCard title="Active Customers" value={isLoading?"...":formatCompactNumber(overview.active_customers||0)}
-              change="+15.2%" trend="up" icon={Users} description="Total registered" loading={isLoading}
+              icon={Users} description="Total registered" loading={isLoading}
               onClick={()=>handleCardClick('customers','Customer Breakdown')} />
             <StatCard title="Active Shops" value={isLoading?"...":formatCompactNumber(overview.active_shops||0)}
-              change="+3.5%" trend="up" icon={Store} description="Total verified" loading={isLoading}
+              icon={Store} description="Total verified" loading={isLoading}
               onClick={()=>handleCardClick('shops','Shop Breakdown')} />
           </MetricGrid>
 
           <MetricGrid title="Operational Metrics">
             <StatCard title="Incoming Balance" value={isLoading?"...":formatCurrency(overview.current_period_pending_revenue||0)}
-              change="From pending orders" trend="up" icon={Clock}
-              description="Ongoing transactions not yet completed" loading={isLoading}
+              icon={Clock} description="Ongoing transactions not yet completed" loading={isLoading}
               onClick={()=>handleCardClick('revenue','Revenue Breakdown')} />
             <StatCard title="Active Boosts" value={isLoading?"...":(operational.active_boosts||0).toString()}
-              change="+2 this week" trend="up" icon={Zap}
-              description={`Revenue: ${formatCurrency(operational.boost_revenue||0)}`} loading={isLoading}
+              icon={Zap} description={`Revenue: ${formatCurrency(operational.boost_revenue||0)}`} loading={isLoading}
               onClick={()=>handleCardClick('boosts','Boosts Breakdown')} />
             <StatCard title="Pending Refunds" value={isLoading?"...":(operational.pending_refunds||0).toString()}
-              change="Needs attention" trend="down" icon={RefreshCw}
-              description={`Amount: ${formatCurrency(operational.pending_refund_amount||0)}`} loading={isLoading}
+              icon={RefreshCw} description={`Amount: ${formatCurrency(operational.pending_refund_amount||0)}`} loading={isLoading}
               onClick={()=>handleCardClick('refunds','Refunds Breakdown')} />
             <StatCard title="Low Stock Alerts" value={isLoading?"...":(operational.low_stock_products||0).toString()}
-              change="Critical" trend="down" icon={AlertTriangle} description="Need restocking" loading={isLoading}
+              icon={AlertTriangle} description="Need restocking" loading={isLoading}
               onClick={()=>handleCardClick('lowstock','Low Stock Breakdown')} />
+            <StatCard title="Active Riders" value={isLoading?"...":(operational.active_riders||0).toString()}
+              icon={Truck} description={`Deliveries: ${operational.completed_deliveries||0}`} loading={isLoading}
+              onClick={()=>handleCardClick('riders','Riders Breakdown')} />
           </MetricGrid>
 
           <MetricGrid title="Platform Health">
             <StatCard title="Average Rating" value={isLoading?"...":`${operational.avg_rating||0}★`}
-              change="+0.2" trend="up" icon={Star} description={`${operational.total_reviews||0} reviews`} loading={isLoading}
+              icon={Star} description={`${operational.total_reviews||0} reviews`} loading={isLoading}
               onClick={()=>handleCardClick('rating','Rating Breakdown')} />
             <StatCard title="Pending Reports" value={isLoading?"...":(operational.pending_reports||0).toString()}
-              change="5 new today" trend="up" icon={FileText} description="Moderation queue" loading={isLoading}
+              icon={FileText} description="Moderation queue" loading={isLoading}
               onClick={()=>handleCardClick('reports','Reports Breakdown')} />
-            <StatCard title="Active Riders" value={isLoading?"...":(operational.active_riders||0).toString()}
-              change="92% online" trend="up" icon={Truck}
-              description={`Deliveries: ${operational.completed_deliveries||0}`} loading={isLoading}
-              onClick={()=>handleCardClick('riders','Riders Breakdown')} />
             <StatCard title="Active Vouchers" value={isLoading?"...":(operational.active_vouchers||0).toString()}
-              change="Active campaigns" trend="up" icon={CreditCard}
-              description={`Used: ${operational.vouchers_used||0}`} loading={isLoading}
+              icon={CreditCard} description={`Used: ${operational.vouchers_used||0}`} loading={isLoading}
               onClick={()=>handleCardClick('vouchers','Vouchers Breakdown')} />
+            <StatCard title="Platform Fees (5%)" value={isLoading?"...":formatCurrency(overview.current_period_platform_fees||0)}
+              icon={Calculator} description={`Based on ${formatCurrency(overview.current_period_completed_revenue||0)} completed revenue`} loading={isLoading}
+              onClick={()=>handleCardClick('revenue','Revenue Breakdown')} />
+            <StatCard title="Lifetime VAT" value={isLoading?"...":formatCurrency(overview.total_vat_collected||0)}
+              icon={Receipt} description="Since platform launch" loading={isLoading}
+              onClick={()=>handleCardClick('vat','VAT Breakdown')} />
           </MetricGrid>
 
-          {/* Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -1255,7 +1190,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                       <YAxis yAxisId="right" orientation="right" />
                       <Tooltip
                         formatter={(value:any,name:string)=>[
-                          ['Revenue','Completed Revenue','Pending Revenue','Shipping Fees','Platform Fees'].includes(name)?formatCurrency(value):value,name
+                          ['Revenue','Completed Revenue','Pending Revenue','Shipping Fees','Platform Fees','VAT Collected'].includes(name)?formatCurrency(value):value,name
                         ]}
                         labelFormatter={(label,items)=>{const item=items?.[0]?.payload;return item?.date?new Date(item.date).toLocaleDateString():label;}}
                       />
@@ -1264,6 +1199,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                       <Bar yAxisId="left" dataKey="pending_revenue"   fill="#f59e0b" name="Pending Revenue (Incoming)" />
                       <Bar yAxisId="left" dataKey="shipping_fees"     fill="#8b5cf6" name="Shipping Fees" />
                       <Bar yAxisId="left" dataKey="platform_fees"     fill="#ef4444" name="Platform Fees" />
+                      <Bar yAxisId="left" dataKey="vat_collected"     fill="#10b981" name="VAT Collected" />
                       <Line yAxisId="right" type="monotone" dataKey="orders" stroke="#3b82f6" name="Orders" />
                     </ComposedChart>
                   </ResponsiveContainer>
@@ -1326,10 +1262,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                     <BarChart data={productAnalytics.product_performance||[]} layout="vertical" margin={{left:100}}>
                       <XAxis type="number" />
                       <YAxis type="category" dataKey="name" width={80} tick={{fontSize:12}} />
-                      <Tooltip formatter={(value:any,name:string)=>[name==='Revenue'?formatCurrency(value):value,name]} />
+                      <Tooltip formatter={(value:any,name:string)=>[name==='Revenue'||name==='Platform Fee'||name==='VAT Collected'?formatCurrency(value):value,name]} />
                       <Legend />
                       <Bar dataKey="orders"       fill="#10b981" name="Orders"       radius={[0,4,4,0]} />
                       <Bar dataKey="platform_fee" fill="#f59e0b" name="Platform Fee" radius={[0,4,4,0]} />
+                      <Bar dataKey="vat_collected" fill="#10b981" name="VAT Collected" radius={[0,4,4,0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -1364,6 +1301,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                           <p className="font-bold">{formatCurrency(shop.sales||0)}</p>
                           <p className="text-sm text-muted-foreground">{shop.rating||0}★</p>
                           <p className="text-xs text-orange-500">Fee: {formatCurrency(shop.platform_fee||0)}</p>
+                          <p className="text-xs text-green-600">VAT: {formatCurrency(shop.vat_collected||0)}</p>
                         </div>
                       </div>
                     ))}
