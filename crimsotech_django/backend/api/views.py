@@ -26384,14 +26384,6 @@ class CheckoutOrder(viewsets.ViewSet):
         print(f"[FEE] Transaction fee: ₱{fee:.2f} (5% capped at ₱50) for {payment_method}")
         return fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-    def _calculate_vat(self, amount: Decimal, vat_rate: Decimal = Decimal('0.12')) -> Decimal:
-        """
-        Calculate VAT amount
-        Default VAT rate is 12% (Philippines)
-        """
-        vat_amount = amount * vat_rate
-        return vat_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-
     def _get_customer_coordinates(self, user_id, selected_address_id=None):
         """
         Get customer coordinates from selected shipping address or fallback to user coordinates
@@ -26616,10 +26608,8 @@ class CheckoutOrder(viewsets.ViewSet):
             else:
                 print(f"[COORDS] ❌ No customer coordinates available")
 
-            # Track totals including VAT
-            subtotal_excluding_vat = Decimal('0')
-            total_vat_amount = Decimal('0')
-            subtotal_including_vat = Decimal('0')
+            # Track totals - VAT already included in variant price
+            subtotal = Decimal('0')
 
             for cart_item in cart_items:
                 product = cart_item.product
@@ -26754,71 +26744,28 @@ class CheckoutOrder(viewsets.ViewSet):
                             'distance_text': distance_text
                         }
 
-                resolved_price = Decimal('0')
-                vat_amount = Decimal('0')
-                price_with_vat = Decimal('0')
-                variant_data = None
+                # Get price (already includes VAT from variant)
+                price = Decimal('0')
+                if variant and variant.price is not None:
+                    price = Decimal(str(variant.price))
+                elif product and hasattr(product, 'price') and product.price is not None:
+                    price = Decimal(str(product.price))
 
-                if variant:
-                    try:
-                        if variant.price is not None:
-                            resolved_price = Decimal(str(variant.price))
-                            
-                            # Calculate VAT if variant has VAT
-                            if hasattr(variant, 'value_added_tax') and variant.value_added_tax:
-                                vat_amount = Decimal(str(variant.value_added_tax))
-                                price_with_vat = resolved_price + vat_amount
-                            else:
-                                # Default VAT calculation (12% of price)
-                                vat_amount = self._calculate_vat(resolved_price)
-                                price_with_vat = resolved_price + vat_amount
-                    except Exception as e:
-                        print(f"[VAT] Error calculating variant price: {e}")
-                        resolved_price = Decimal('0')
-
-                    variant_data = {
-                        'id': str(variant.id),
-                        'title': variant.title,
-                        'price': float(resolved_price) if resolved_price else None,
-                        'price_with_vat': float(price_with_vat) if price_with_vat else None,
-                        'vat_amount': float(vat_amount) if vat_amount else None,
-                        'quantity': variant.quantity,
-                        'sku_code': variant.sku_code,
-                        'option_title': variant.option_title,
-                        'option_ids': variant.option_ids,
-                        'option_map': variant.option_map
-                    }
-                else:
-                    resolved_price = Decimal(str(product.price)) if product and product.price else Decimal('0')
-                    # Default VAT for products without variants (12%)
-                    vat_amount = self._calculate_vat(resolved_price)
-                    price_with_vat = resolved_price + vat_amount
-
-                # Calculate line totals
-                line_total_excluding_vat = resolved_price * cart_item.quantity
-                line_vat_amount = vat_amount * cart_item.quantity
-                line_total_including_vat = price_with_vat * cart_item.quantity
-                
-                # Accumulate totals
-                subtotal_excluding_vat += line_total_excluding_vat
-                total_vat_amount += line_vat_amount
-                subtotal_including_vat += line_total_including_vat
+                # Calculate line total
+                line_total = price * cart_item.quantity
+                subtotal += line_total
 
                 item_data = {
                     "id": str(cart_item.id) if hasattr(cart_item, 'id') else cart_item.id,
                     "product_id": str(product.id) if product else None,
                     "name": product.name if product else "Unknown Product",
-                    "price": float(resolved_price),
-                    "price_with_vat": float(price_with_vat),
-                    "vat_amount": float(vat_amount),
+                    "price": float(price),
                     "quantity": cart_item.quantity,
                     "shop_name": shop.name if shop else (product.customer.customer.username if product and product.customer else "Personal Seller"),
                     "shop_id": str(shop.id) if shop else None,
                     "seller_id": str(product.customer.customer.id) if product and product.customer else None,
                     "added_at": cart_item.added_at.isoformat() if hasattr(cart_item, 'added_at') and cart_item.added_at else None,
-                    "subtotal_excluding_vat": float(line_total_excluding_vat),
-                    "subtotal_vat": float(line_vat_amount),
-                    "subtotal_including_vat": float(line_total_including_vat),
+                    "subtotal": float(line_total),
                     "is_ordered": cart_item.is_ordered if hasattr(cart_item, 'is_ordered') else False,
                     "is_personal_listing": shop is None and product and product.customer is not None
                 }
@@ -26838,16 +26785,20 @@ class CheckoutOrder(viewsets.ViewSet):
                         except Exception:
                             item_data["image"] = first_media.file_data.url
 
-                if variant_data:
-                    item_data['variant'] = variant_data
+                if variant:
+                    item_data['variant'] = {
+                        'id': str(variant.id),
+                        'title': variant.title,
+                        'price': float(price),
+                        'quantity': variant.quantity,
+                        'sku_code': variant.sku_code,
+                        'option_title': variant.option_title,
+                        'option_ids': variant.option_ids,
+                        'option_map': variant.option_map
+                    }
 
                 checkout_items.append(item_data)
 
-            # Use subtotal including VAT for the rest of the calculations
-            subtotal = float(subtotal_including_vat)
-            subtotal_ex_vat = float(subtotal_excluding_vat)
-            total_vat = float(total_vat_amount)
-            
             max_distance = 0
             for shop_id, shop_info in shop_addresses.items():
                 distance = shop_info.get('distance_km', 0)
@@ -26864,20 +26815,16 @@ class CheckoutOrder(viewsets.ViewSet):
             print(f"[DISTANCE] Max distance found: {max_distance} km")
             
             delivery_fee = self._calculate_delivery_fee(max_distance)
-            total = subtotal + delivery_fee
+            total = float(subtotal) + delivery_fee
             
             print("=" * 80)
             print("[TOTALS]")
-            print(f"  Subtotal (excl. VAT): ₱{subtotal_ex_vat:.2f}")
-            print(f"  VAT (12%): ₱{total_vat:.2f}")
-            print(f"  Subtotal (incl. VAT): ₱{subtotal:.2f}")
+            print(f"  Subtotal: ₱{subtotal:.2f}")
             print(f"  Delivery Fee: ₱{delivery_fee:.2f}")
             print(f"  Total: ₱{total:.2f}")
             print("=" * 80)
             
-            logger.info(f"💰 Subtotal (excl. VAT): ₱{subtotal_ex_vat:.2f}")
-            logger.info(f"💰 VAT (12%): ₱{total_vat:.2f}")
-            logger.info(f"💰 Subtotal (incl. VAT): ₱{subtotal:.2f}")
+            logger.info(f"💰 Subtotal: ₱{subtotal:.2f}")
             logger.info(f"💰 Delivery Fee: ₱{delivery_fee:.2f} (based on {max_distance:.2f} km distance at ₱40/km, capped at ₱300)")
             logger.info(f"💰 Total: ₱{total:.2f}")
 
@@ -26886,7 +26833,7 @@ class CheckoutOrder(viewsets.ViewSet):
             available_vouchers = self._get_simple_available_vouchers(
                 list(shop_ids),
                 user_id,
-                subtotal,
+                float(subtotal),
                 user_purchase_history
             )
 
@@ -26916,12 +26863,9 @@ class CheckoutOrder(viewsets.ViewSet):
                 "success": True,
                 "checkout_items": checkout_items,
                 "summary": {
-                    "subtotal_excluding_vat": subtotal_ex_vat,
-                    "total_vat_amount": total_vat,
-                    "subtotal": subtotal,
+                    "subtotal": float(subtotal),
                     "delivery": delivery_fee,
                     "total": total,
-                    "vat_rate": "12%",
                     "item_count": len(checkout_items),
                     "shop_count": len(shop_ids),
                     "personal_seller_count": len(personal_seller_addresses),
@@ -27451,14 +27395,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
                 price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
-                # Add VAT if variant has it
-                if hasattr(direct_variant, 'value_added_tax') and direct_variant.value_added_tax:
-                    vat_amount = Decimal(str(direct_variant.value_added_tax))
-                    price_with_vat = price + vat_amount
-                else:
-                    vat_amount = self._calculate_vat(price)
-                    price_with_vat = price + vat_amount
-                subtotal = price_with_vat * direct_quantity
+                subtotal = price * direct_quantity
                 
             else:
                 for cart_item in cart_items:
@@ -27475,22 +27412,13 @@ class CheckoutOrder(viewsets.ViewSet):
                         }, status=status.HTTP_400_BAD_REQUEST)
 
                     price = Decimal('0')
-                    vat_amount = Decimal('0')
-                    price_with_vat = Decimal('0')
                     
                     if cart_item.variant and cart_item.variant.price is not None:
                         price = Decimal(str(cart_item.variant.price))
-                        if hasattr(cart_item.variant, 'value_added_tax') and cart_item.variant.value_added_tax:
-                            vat_amount = Decimal(str(cart_item.variant.value_added_tax))
-                        else:
-                            vat_amount = self._calculate_vat(price)
-                        price_with_vat = price + vat_amount
-                    elif cart_item.product and cart_item.product.price is not None:
+                    elif cart_item.product and hasattr(cart_item.product, 'price') and cart_item.product.price is not None:
                         price = Decimal(str(cart_item.product.price))
-                        vat_amount = self._calculate_vat(price)
-                        price_with_vat = price + vat_amount
 
-                    line_total = price_with_vat * cart_item.quantity
+                    line_total = price * cart_item.quantity
                     subtotal += line_total
 
                     if cart_item.variant:
@@ -27498,7 +27426,7 @@ class CheckoutOrder(viewsets.ViewSet):
                             stock_validation_errors.append(
                                 f"Insufficient stock for {cart_item.variant.title}. Available: {cart_item.variant.quantity}"
                             )
-                    elif cart_item.product:
+                    elif cart_item.product and hasattr(cart_item.product, 'quantity'):
                         if cart_item.quantity > cart_item.product.quantity:
                             stock_validation_errors.append(
                                 f"Insufficient stock for {cart_item.product.name}. Available: {cart_item.product.quantity}"
@@ -27556,18 +27484,28 @@ class CheckoutOrder(viewsets.ViewSet):
                 
                 max_distance = 0
                 if customer_lat and customer_lng:
-                    for cart_item in cart_items:
-                        if cart_item.product and cart_item.product.shop:
-                            shop = cart_item.product.shop
-                            if shop.latitude and shop.longitude:
-                                distance = self._calculate_distance(
-                                    customer_lat,
-                                    customer_lng,
-                                    float(shop.latitude),
-                                    float(shop.longitude)
-                                )
-                                if distance > max_distance:
-                                    max_distance = distance
+                    if is_direct_checkout and direct_product and direct_product.shop:
+                        shop = direct_product.shop
+                        if shop.latitude and shop.longitude:
+                            max_distance = self._calculate_distance(
+                                customer_lat,
+                                customer_lng,
+                                float(shop.latitude),
+                                float(shop.longitude)
+                            )
+                    else:
+                        for cart_item in cart_items:
+                            if cart_item.product and cart_item.product.shop:
+                                shop = cart_item.product.shop
+                                if shop.latitude and shop.longitude:
+                                    distance = self._calculate_distance(
+                                        customer_lat,
+                                        customer_lng,
+                                        float(shop.latitude),
+                                        float(shop.longitude)
+                                    )
+                                    if distance > max_distance:
+                                        max_distance = distance
                 delivery_fee = Decimal(str(self._calculate_delivery_fee(max_distance)))
             
             # Calculate base total (subtotal + delivery fee - discount)
@@ -27610,14 +27548,7 @@ class CheckoutOrder(viewsets.ViewSet):
 
             if is_direct_checkout:
                 unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
-                if hasattr(direct_variant, 'value_added_tax') and direct_variant.value_added_tax:
-                    vat_amount = Decimal(str(direct_variant.value_added_tax))
-                    unit_price_with_vat = unit_price + vat_amount
-                else:
-                    vat_amount = self._calculate_vat(unit_price)
-                    unit_price_with_vat = unit_price + vat_amount
-                    
-                checkout_total = unit_price_with_vat * direct_quantity
+                checkout_total = unit_price * direct_quantity
                 
                 product_image_url = None
                 if direct_product.productmedia_set.exists():
@@ -27642,7 +27573,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     direct_product_id=direct_product.id,
                     direct_variant_id=direct_variant.id,
                     direct_product_name=direct_product.name,
-                    direct_product_price=unit_price_with_vat,
+                    direct_product_price=unit_price,
                     direct_product_image=variant_image_url or product_image_url,
                     direct_shop_id=direct_product.shop.id if direct_product.shop else None,
                     direct_shop_name=direct_product.shop.name if direct_product.shop else None
@@ -27660,8 +27591,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     "shop_name": direct_product.shop.name if direct_product.shop else None,
                     "quantity": direct_quantity,
                     "price": float(unit_price),
-                    "price_with_vat": float(unit_price_with_vat),
-                    "vat_amount": float(vat_amount),
                     "total_amount": float(checkout_total),
                     "status": "pending",
                     "product_image": variant_image_url or product_image_url,
@@ -27672,17 +27601,10 @@ class CheckoutOrder(viewsets.ViewSet):
                 for cart_item in cart_items:
                     if cart_item.variant and cart_item.variant.price is not None:
                         unit_price = Decimal(str(cart_item.variant.price))
-                        if hasattr(cart_item.variant, 'value_added_tax') and cart_item.variant.value_added_tax:
-                            vat_amount = Decimal(str(cart_item.variant.value_added_tax))
-                        else:
-                            vat_amount = self._calculate_vat(unit_price)
-                        unit_price_with_vat = unit_price + vat_amount
                     else:
                         unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
-                        vat_amount = self._calculate_vat(unit_price)
-                        unit_price_with_vat = unit_price + vat_amount
 
-                    checkout_total = unit_price_with_vat * cart_item.quantity
+                    checkout_total = unit_price * cart_item.quantity
 
                     checkout_item = Checkout.objects.create(
                         order=order,
@@ -27706,8 +27628,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         "shop_name": cart_item.product.shop.name if cart_item.product and cart_item.product.shop else None,
                         "quantity": cart_item.quantity,
                         "price": float(unit_price),
-                        "price_with_vat": float(unit_price_with_vat),
-                        "vat_amount": float(vat_amount),
                         "total_amount": float(checkout_total),
                         "status": "pending",
                         "is_refundable": cart_item.variant.is_refundable if cart_item.variant else getattr(cart_item.product, 'is_refundable', False)
@@ -27965,7 +27885,7 @@ class CheckoutOrder(viewsets.ViewSet):
                         unit_price = float(checkout_item.total_amount) / checkout_item.quantity
                     elif variant and variant.price:
                         unit_price = float(variant.price)
-                    elif product and product.price:
+                    elif product and hasattr(product, 'price') and product.price:
                         unit_price = float(product.price)
 
                     items.append({
@@ -28506,7 +28426,7 @@ class CheckoutOrder(viewsets.ViewSet):
                         continue
                     variant.quantity -= checkout_item.quantity
                     variant.save()
-                elif cart_item.product:
+                elif cart_item.product and hasattr(cart_item.product, 'quantity'):
                     product = cart_item.product
                     if checkout_item.quantity > product.quantity:
                         stock_errors.append(f"Insufficient stock for {product.name}")
@@ -28515,7 +28435,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     product.save()
 
         return stock_errors
-
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])

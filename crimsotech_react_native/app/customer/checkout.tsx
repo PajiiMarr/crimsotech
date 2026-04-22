@@ -41,23 +41,17 @@ interface CartItem {
   product_id: string;
   name: string;
   price: number;
-  price_with_vat?: number;
-  vat_amount?: number;
   quantity: number;
   shop_name: string;
   shop_id: string;
   image?: string;
   is_ordered: boolean;
   subtotal: number;
-  subtotal_excluding_vat?: number;
-  subtotal_vat?: number;
-  subtotal_including_vat?: number;
   variant?: {
     id: string;
     title?: string;
     price?: number;
-    price_with_vat?: number;
-    vat_amount?: number;
+    value_added_tax_amount?: number;
   };
 }
 
@@ -129,14 +123,11 @@ interface UserPurchaseStats {
 }
 
 interface CheckoutSummary {
-  subtotal_excluding_vat?: number;
-  total_vat_amount?: number;
   subtotal: number;
   delivery: number;
   total: number;
   item_count: number;
   shop_count: number;
-  vat_rate?: string;
   distance_km?: number;
   distance_text?: string;
 }
@@ -248,7 +239,6 @@ export default function CheckoutPage() {
     useState(false);
   const [centerToastVisible, setCenterToastVisible] = useState(false);
   const [centerToastMessage, setCenterToastMessage] = useState("");
-  const [expandedVAT, setExpandedVAT] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -262,13 +252,10 @@ export default function CheckoutPage() {
   });
   const [processingOrder, setProcessingOrder] = useState(false);
   const [summary, setSummary] = useState({
-    subtotalExcludingVat: 0,
-    totalVat: 0,
     subtotal: 0,
     delivery: 0,
     total: 0,
     discount: 0,
-    vatRate: "12%",
   });
 
   // Calculate transaction fee (5% capped at ₱50 for ALL payment methods)
@@ -374,32 +361,12 @@ export default function CheckoutPage() {
             ...item,
             cartItemId: item.id || item.cartItemId,
             variant: item.variant,
-            subtotal_excluding_vat:
-              item.subtotal_excluding_vat || item.price * item.quantity,
-            subtotal_vat:
-              item.subtotal_vat || (item.vat_amount || 0) * item.quantity,
-            subtotal_including_vat:
-              item.subtotal_including_vat ||
-              (item.price_with_vat || item.price) * item.quantity,
+            subtotal: item.price * item.quantity,
           }),
         );
 
         // Ensure available_vouchers is properly set
         const availableVouchers = response.data.available_vouchers || [];
-
-        // Calculate VAT totals from items
-        const totalExcludingVat = normalizedItems.reduce(
-          (sum: number, item: any) => sum + (item.subtotal_excluding_vat || 0),
-          0,
-        );
-        const totalVat = normalizedItems.reduce(
-          (sum: number, item: any) => sum + (item.subtotal_vat || 0),
-          0,
-        );
-        const totalIncludingVat = normalizedItems.reduce(
-          (sum: number, item: any) => sum + (item.subtotal_including_vat || 0),
-          0,
-        );
 
         setCheckoutData({
           ...response.data,
@@ -410,13 +377,9 @@ export default function CheckoutPage() {
         if (response.data.summary) {
           setSummary((prev) => ({
             ...prev,
-            subtotalExcludingVat:
-              response.data.summary.subtotal_excluding_vat || totalExcludingVat,
-            totalVat: response.data.summary.total_vat_amount || totalVat,
-            subtotal: response.data.summary.subtotal || totalIncludingVat,
+            subtotal: response.data.summary.subtotal || 0,
             delivery: response.data.summary.delivery || 0,
-            total: response.data.summary.total || totalIncludingVat,
-            vatRate: response.data.summary.vat_rate || "12%",
+            total: response.data.summary.total || 0,
           }));
         }
         if (response.data.default_shipping_address) {
@@ -1085,7 +1048,7 @@ export default function CheckoutPage() {
                   </Text>
                   <Text style={styles.itemShopCompact}>{item.shop_name}</Text>
 
-                  {/* Price Breakdown with VAT */}
+                  {/* Price Display with VAT amount from variant */}
                   <View style={styles.itemPriceBreakdown}>
                     <View style={styles.itemPriceRow}>
                       <Text style={styles.itemPriceLabel}>Base Price:</Text>
@@ -1093,18 +1056,33 @@ export default function CheckoutPage() {
                         ₱{formatNumber(item.price)}
                       </Text>
                     </View>
-                    <View style={styles.itemPriceRow}>
-                      <Text style={styles.itemPriceLabel}>VAT (12%):</Text>
-                      <Text style={styles.itemVatPrice}>
-                        ₱{formatNumber(item.vat_amount || 0)}
-                      </Text>
-                    </View>
-                    <View style={styles.itemPriceTotalRow}>
-                      <Text style={styles.itemTotalLabel}>Total with VAT:</Text>
-                      <Text style={styles.itemTotalPrice}>
-                        ₱{formatNumber(item.price_with_vat || item.price)}
-                      </Text>
-                    </View>
+                    {item.variant?.value_added_tax_amount ? (
+                      <>
+                        <View style={styles.itemPriceRow}>
+                          <Text style={styles.itemPriceLabel}>VAT Amount:</Text>
+                          <Text style={styles.itemVatPrice}>
+                            ₱{formatNumber(item.variant.value_added_tax_amount)}
+                          </Text>
+                        </View>
+                        <View style={styles.itemPriceTotalRow}>
+                          <Text style={styles.itemTotalLabel}>
+                            Total with VAT:
+                          </Text>
+                          <Text style={styles.itemTotalPrice}>
+                            ₱{formatNumber(
+                              item.price + item.variant.value_added_tax_amount
+                            )}
+                          </Text>
+                        </View>
+                      </>
+                    ) : (
+                      <View style={styles.itemPriceTotalRow}>
+                        <Text style={styles.itemTotalLabel}>Total:</Text>
+                        <Text style={styles.itemTotalPrice}>
+                          ₱{formatNumber(item.price)}
+                        </Text>
+                      </View>
+                    )}
                   </View>
 
                   <View style={styles.itemBottomRowCompact}>
@@ -1167,60 +1145,6 @@ export default function CheckoutPage() {
             <PickupDisclaimer />
           </View>
         )}
-
-        {/* VAT Summary Section */}
-        <View style={styles.sectionCard}>
-          <TouchableOpacity
-            style={styles.vatHeaderCompact}
-            onPress={() => setExpandedVAT(!expandedVAT)}
-          >
-            <View style={styles.vatHeaderLeft}>
-              <MaterialIcons name="calculate" size={20} color="#EA580C" />
-              <Text style={styles.sectionTitleCompact}>VAT Summary</Text>
-            </View>
-            <MaterialIcons
-              name={expandedVAT ? "keyboard-arrow-up" : "keyboard-arrow-down"}
-              size={20}
-              color="#6B7280"
-            />
-          </TouchableOpacity>
-
-          {expandedVAT && (
-            <View style={styles.vatSummaryCard}>
-              <View style={styles.vatSummaryRow}>
-                <Text style={styles.vatSummaryLabel}>
-                  Subtotal (excl. VAT):
-                </Text>
-                <Text style={styles.vatSummaryValue}>
-                  ₱{formatNumber(summary.subtotalExcludingVat)}
-                </Text>
-              </View>
-              <View style={styles.vatSummaryRow}>
-                <Text style={styles.vatSummaryLabel}>
-                  VAT Amount ({summary.vatRate}):
-                </Text>
-                <Text style={styles.vatSummaryValueHighlight}>
-                  ₱{formatNumber(summary.totalVat)}
-                </Text>
-              </View>
-              <View style={[styles.vatSummaryRow, styles.vatSummaryTotalRow]}>
-                <Text style={styles.vatSummaryTotalLabel}>
-                  Subtotal (incl. VAT):
-                </Text>
-                <Text style={styles.vatSummaryTotalValue}>
-                  ₱{formatNumber(summary.subtotal)}
-                </Text>
-              </View>
-              <View style={styles.vatNote}>
-                <MaterialIcons name="info-outline" size={14} color="#6B7280" />
-                <Text style={styles.vatNoteText}>
-                  VAT is calculated at 12% of the product price as per
-                  Philippine tax regulations.
-                </Text>
-              </View>
-            </View>
-          )}
-        </View>
 
         {/* Shipping Method - Dropdown */}
         <View style={styles.sectionCard}>
@@ -1437,26 +1361,6 @@ export default function CheckoutPage() {
               </Text>
             </View>
 
-            {/* VAT Breakdown - Inside Price Details */}
-            <View style={styles.vatBreakdownCompact}>
-              <View style={styles.summaryRowCompact}>
-                <Text style={styles.vatLabelCompact}>
-                  Subtotal (excl. VAT):
-                </Text>
-                <Text style={styles.vatValueCompact}>
-                  ₱{formatNumber(summary.subtotalExcludingVat)}
-                </Text>
-              </View>
-              <View style={styles.summaryRowCompact}>
-                <Text style={styles.vatLabelCompact}>
-                  VAT ({summary.vatRate}):
-                </Text>
-                <Text style={styles.vatHighlightCompact}>
-                  ₱{formatNumber(summary.totalVat)}
-                </Text>
-              </View>
-            </View>
-
             <View style={styles.summaryRowCompact}>
               <Text style={styles.summaryLabelCompact}>Delivery Fee</Text>
               <Text style={styles.summaryValueCompact}>
@@ -1544,9 +1448,6 @@ export default function CheckoutPage() {
           </View>
           <Text style={styles.footerTransactionFeeNote}>
             Includes ₱{formatNumber(transactionFee)} transaction fee
-          </Text>
-          <Text style={styles.totalVatCompact}>
-            Incl. VAT (₱{formatNumber(summary.totalVat)})
           </Text>
         </View>
         <TouchableOpacity
@@ -1872,76 +1773,6 @@ const styles = StyleSheet.create({
     color: "#EA580C",
   },
 
-  // VAT Header
-  vatHeaderCompact: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 6,
-  },
-  vatHeaderLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  vatSummaryCard: {
-    backgroundColor: "#F0FDF4",
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 8,
-    borderWidth: 0.5,
-    borderColor: "#BBF7D0",
-  },
-  vatSummaryRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  vatSummaryLabel: {
-    fontSize: 12,
-    color: "#374151",
-  },
-  vatSummaryValue: {
-    fontSize: 12,
-    color: "#374151",
-  },
-  vatSummaryValueHighlight: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#059669",
-  },
-  vatSummaryTotalRow: {
-    marginTop: 4,
-    paddingTop: 8,
-    borderTopWidth: 0.5,
-    borderTopColor: "#D1D5DB",
-  },
-  vatSummaryTotalLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#065F46",
-  },
-  vatSummaryTotalValue: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#EA580C",
-  },
-  vatNote: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: 0.5,
-    borderTopColor: "#D1D5DB",
-  },
-  vatNoteText: {
-    flex: 1,
-    fontSize: 10,
-    color: "#6B7280",
-    fontStyle: "italic",
-  },
-
   distanceText: {
     fontSize: 11,
     color: "#F97316",
@@ -2205,12 +2036,6 @@ const styles = StyleSheet.create({
   totalLabelCompact: { fontSize: 14, fontWeight: "600", color: "#111827" },
   totalRightCompact: { alignItems: "flex-end" },
   totalValueCompact: { fontSize: 16, fontWeight: "700", color: "#111827" },
-  totalVatCompact: {
-    fontSize: 9,
-    color: "#6B7280",
-    textAlign: "center",
-    marginTop: 2,
-  },
 
   // Compact Remarks
   remarksInputCompact: {
@@ -2513,27 +2338,5 @@ const styles = StyleSheet.create({
     color: "#92400E",
     flex: 1,
     lineHeight: 16,
-  },
-  vatBreakdownCompact: {
-    backgroundColor: "#F0FDF4",
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 6,
-    marginTop: 2,
-    marginBottom: 4,
-  },
-  vatLabelCompact: {
-    fontSize: 12,
-    color: "#065F46",
-  },
-  vatValueCompact: {
-    fontSize: 12,
-    color: "#374151",
-    fontWeight: "500",
-  },
-  vatHighlightCompact: {
-    fontSize: 12,
-    color: "#059669",
-    fontWeight: "600",
   },
 });
