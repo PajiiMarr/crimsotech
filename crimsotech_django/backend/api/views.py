@@ -4532,6 +4532,20 @@ class AdminShops(viewsets.ViewSet):
                     .values('shop').annotate(followers_count=Count('id'))
             }
 
+            # Followers list (users who follow the shop)
+            followers_list_map = {}
+            for shop_id in shop_ids:
+                followers = ShopFollow.objects.filter(shop_id=shop_id).select_related('customer__customer')
+                followers_list_map[str(shop_id)] = [
+                    {
+                        'customer_id': str(f.customer.customer.id) if f.customer and f.customer.customer else None,
+                        'customer_name': f"{f.customer.customer.first_name} {f.customer.customer.last_name}".strip() or f.customer.customer.username if f.customer and f.customer.customer else "Unknown",
+                        'customer_email': f.customer.customer.email if f.customer and f.customer.customer else None,
+                        'followed_at': f.followed_at.isoformat() if f.followed_at else None,
+                    }
+                    for f in followers
+                ]
+
             # Products count
             products_map = {
                 str(pd['shop']): pd['products_count']
@@ -4617,6 +4631,7 @@ class AdminShops(viewsets.ViewSet):
                 total_favorites = favorites_map.get(shop_id, 0)
                 active_boosts = boosts_map.get(shop_id, 0)
                 active_reports = reports_map.get(shop_id, 0)
+                followers_list = followers_list_map.get(shop_id, [])
 
                 shops_data.append({
                     'id':                    shop_id,
@@ -4633,6 +4648,7 @@ class AdminShops(viewsets.ViewSet):
                     'location':              f"{shop.city}, {shop.province}" if shop.city and shop.province else shop.city or shop.province or 'Unknown',
                     'followers':             followers,
                     'followers_count':       followers,
+                    'followers_list':        followers_list,
                     'favorites_count':       total_favorites,
                     'products':              products_count,
                     'products_count':        products_count,
@@ -4643,7 +4659,7 @@ class AdminShops(viewsets.ViewSet):
                     'verified':              shop.verified,
                     'joinedDate':            shop.created_at.isoformat() if shop.created_at else None,
                     'created_at':            shop.created_at.isoformat() if shop.created_at else None,
-                    'totalSales':            float(shop.total_sales),  # This is the database field
+                    'totalSales':            float(shop.total_sales),
                     'total_sales':           float(shop.total_sales),
                     'activeBoosts':          active_boosts,
                     'active_boosts':         active_boosts,
@@ -4969,6 +4985,20 @@ class AdminShops(viewsets.ViewSet):
                     .values('shop').annotate(followers_count=Count('id'))
             }
 
+            # Followers list
+            followers_list_map = {}
+            for shop_id in shop_ids:
+                followers = ShopFollow.objects.filter(shop_id=shop_id).select_related('customer__customer')
+                followers_list_map[str(shop_id)] = [
+                    {
+                        'customer_id': str(f.customer.customer.id) if f.customer and f.customer.customer else None,
+                        'customer_name': f"{f.customer.customer.first_name} {f.customer.customer.last_name}".strip() or f.customer.customer.username if f.customer and f.customer.customer else "Unknown",
+                        'customer_email': f.customer.customer.email if f.customer and f.customer.customer else None,
+                        'followed_at': f.followed_at.isoformat() if f.followed_at else None,
+                    }
+                    for f in followers
+                ]
+
             # Products
             products_map = {
                 str(pd['shop']): pd['products_count']
@@ -5037,6 +5067,7 @@ class AdminShops(viewsets.ViewSet):
                 total_favorites = favorites_map.get(shop_id, 0)
                 active_boosts = boosts_map.get(shop_id, 0)
                 active_reports = reports_map.get(shop_id, 0)
+                followers_list = followers_list_map.get(shop_id, [])
 
                 shops_data.append({
                     'id':           shop_id,
@@ -5053,6 +5084,7 @@ class AdminShops(viewsets.ViewSet):
                     'location':     f"{shop.city}, {shop.province}" if shop.city and shop.province else shop.city or shop.province or 'Unknown',
                     'followers':         followers,
                     'followers_count':   followers,
+                    'followers_list':    followers_list,
                     'favorites_count':   total_favorites,
                     'products':          products_count,
                     'products_count':    products_count,
@@ -5144,6 +5176,25 @@ class AdminShops(viewsets.ViewSet):
                 }
 
             followers_count = ShopFollow.objects.filter(shop=shop).count()
+            
+            # Get followers list
+            followers_list = []
+            followers = ShopFollow.objects.filter(shop=shop).select_related('customer__customer')
+            for f in followers:
+                if f.customer and f.customer.customer:
+                    followers_list.append({
+                        'customer_id': str(f.customer.customer.id),
+                        'customer_name': f"{f.customer.customer.first_name} {f.customer.customer.last_name}".strip() or f.customer.customer.username,
+                        'customer_email': f.customer.customer.email,
+                        'followed_at': f.followed_at.isoformat(),
+                    })
+                else:
+                    followers_list.append({
+                        'customer_id': None,
+                        'customer_name': 'Unknown',
+                        'customer_email': None,
+                        'followed_at': f.followed_at.isoformat() if f.followed_at else None,
+                    })
 
             shop_products = Product.objects.filter(
                 shop=shop, upload_status='published'
@@ -5174,7 +5225,7 @@ class AdminShops(viewsets.ViewSet):
                 'contact_number': shop.contact_number,
                 'verified':       shop.verified,
                 'status':         shop.status,
-                'total_sales':    float(shop.total_sales),  # This is the database field
+                'total_sales':    float(shop.total_sales),
                 'created_at':     shop.created_at.isoformat() if shop.created_at else None,
                 'updated_at':     shop.updated_at.isoformat() if shop.updated_at else None,
                 'is_suspended':   shop.is_suspended,
@@ -5183,6 +5234,7 @@ class AdminShops(viewsets.ViewSet):
                 'active_report_count': active_reports,
                 'favorites_count':     favorites_count,
                 'followers_count':     followers_count,
+                'followers_list':      followers_list,
                 'categories':          list(categories),
                 # Sales breakdown from calculation
                 'completed_revenue':   sales_breakdown['completed_revenue'],
@@ -6000,7 +6052,8 @@ class AdminShops(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving pending shops: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+
+
 class AdminBoosting(viewsets.ViewSet):
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""
@@ -21730,54 +21783,134 @@ class CartListView(APIView):
             print(f"Error calculating total for cart item {cart_item.id}: {e}")
             return 0
 
+    def get_shop_ids_from_cart(self, cart_items):
+        """Extract unique shop IDs from cart items"""
+        shop_ids = set()
+        for item in cart_items:
+            if item.variant and item.variant.product and item.variant.product.shop:
+                shop_ids.add(str(item.variant.product.shop.id))
+            elif item.product and item.product.shop:
+                shop_ids.add(str(item.product.shop.id))
+        return list(shop_ids)
+
     def get_available_vouchers(self, cart_items, user, applied_voucher_code=None):
         """
         Get all available vouchers that can be applied to the cart
+        Includes:
+        - Global vouchers (no shop restriction)
+        - Shop-specific vouchers for shops in cart
+        - Vouchers with proper date range and usage limits
         """
+        from decimal import Decimal
+        
         now = timezone.now().date()
         cart_total = sum(self.get_item_total(item) for item in cart_items)
         
+        # Get unique shop IDs from cart items
+        shop_ids = self.get_shop_ids_from_cart(cart_items)
+        
+        # Build query for vouchers
         vouchers_qs = Voucher.objects.filter(
             is_active=True,
             start_date__lte=now,
             end_date__gte=now
         )
         
+        # Filter vouchers that are either global OR belong to shops in cart
+        from django.db.models import Q
+        vouchers_qs = vouchers_qs.filter(
+            Q(shop__isnull=True) | Q(shop__id__in=shop_ids)
+        )
+        
+        # Exclude already applied voucher
+        if applied_voucher_code:
+            vouchers_qs = vouchers_qs.exclude(code=applied_voucher_code)
+        
         available_vouchers = []
         
         for voucher in vouchers_qs:
-            if applied_voucher_code and voucher.code == applied_voucher_code:
-                continue
-                
-            if voucher.minimum_spend and cart_total < voucher.minimum_spend:
+            # Check minimum spend
+            if voucher.minimum_spend and cart_total < float(voucher.minimum_spend):
                 continue
             
+            # Check maximum usage limit
             if voucher.maximum_usage > 0:
-                usage_count = Checkout.objects.filter(voucher=voucher).count()
+                usage_count = Checkout.objects.filter(
+                    voucher=voucher,
+                    order__status__in=['delivered', 'completed', 'processing', 'shipped']
+                ).count()
                 if usage_count >= voucher.maximum_usage:
                     continue
             
+            # Calculate discount amount
             discount_amount = 0
             if voucher.discount_type == 'percentage':
                 discount_amount = (cart_total * float(voucher.value)) / 100
+                discount_amount = min(discount_amount, cart_total)  # Can't exceed cart total
             elif voucher.discount_type == 'fixed':
                 discount_amount = min(float(voucher.value), cart_total)
+            
+            # Get shop info
+            shop_info = None
+            if voucher.shop:
+                shop_info = {
+                    'id': str(voucher.shop.id),
+                    'name': voucher.shop.name
+                }
+            
+            # Calculate remaining usage
+            remaining_usage = None
+            if voucher.maximum_usage > 0:
+                usage_count = Checkout.objects.filter(
+                    voucher=voucher,
+                    order__status__in=['delivered', 'completed', 'processing', 'shipped']
+                ).count()
+                remaining_usage = voucher.maximum_usage - usage_count
             
             available_vouchers.append({
                 'id': str(voucher.id),
                 'name': voucher.name,
                 'code': voucher.code,
+                'description': self._get_voucher_description(voucher),
                 'discount_type': voucher.discount_type,
                 'value': float(voucher.value),
                 'discount_amount': float(discount_amount),
                 'minimum_spend': float(voucher.minimum_spend) if voucher.minimum_spend else 0,
-                'shop_id': str(voucher.shop.id) if voucher.shop else None,
-                'shop_name': voucher.shop.name if voucher.shop else 'Global',
-                'voucher_type': voucher.voucher_type
+                'maximum_usage': voucher.maximum_usage,
+                'remaining_usage': remaining_usage,
+                'shop': shop_info,
+                'voucher_type': voucher.voucher_type,
+                'is_global': voucher.shop is None,
+                'start_date': voucher.start_date.isoformat(),
+                'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
+                'valid_until': voucher.end_date.isoformat() if voucher.end_date else None,
             })
         
+        # Sort by discount amount (highest first)
         available_vouchers.sort(key=lambda x: x['discount_amount'], reverse=True)
+        
+        # Also add a "Best Value" tag for vouchers with highest discount
+        for voucher in available_vouchers[:3]:
+            voucher['is_best_value'] = True
+        
         return available_vouchers
+
+    def _get_voucher_description(self, voucher):
+        """Generate a user-friendly description for the voucher"""
+        if voucher.discount_type == 'percentage':
+            desc = f"{voucher.value}% OFF"
+        else:
+            desc = f"₱{voucher.value} OFF"
+        
+        if voucher.minimum_spend and voucher.minimum_spend > 0:
+            desc += f" on min spend ₱{voucher.minimum_spend}"
+        
+        if voucher.shop:
+            desc += f" at {voucher.shop.name}"
+        else:
+            desc += " on all items"
+        
+        return desc
 
     def calculate_cart_totals(self, cart_items, applied_voucher=None):
         """
@@ -21791,6 +21924,7 @@ class CartListView(APIView):
         if applied_voucher:
             if applied_voucher.discount_type == 'percentage':
                 discount = (subtotal * float(applied_voucher.value)) / 100
+                discount = min(discount, subtotal)
             elif applied_voucher.discount_type == 'fixed':
                 discount = min(float(applied_voucher.value), subtotal)
             
@@ -21800,7 +21934,9 @@ class CartListView(APIView):
                 'code': applied_voucher.code,
                 'discount_type': applied_voucher.discount_type,
                 'value': float(applied_voucher.value),
-                'discount_amount': float(discount)
+                'discount_amount': float(discount),
+                'description': self._get_voucher_description(applied_voucher),
+                'savings_message': f"You saved ₱{discount:,.2f}"
             }
         
         total = subtotal - discount
@@ -21809,7 +21945,8 @@ class CartListView(APIView):
             'subtotal': float(subtotal),
             'discount': float(discount),
             'total': float(total),
-            'applied_voucher': applied_voucher_data
+            'applied_voucher': applied_voucher_data,
+            'savings': float(discount)
         }
 
     def get(self, request):
@@ -21826,7 +21963,7 @@ class CartListView(APIView):
 
         try:
             cart_items = CartItem.objects.filter(user=user, is_ordered=False)\
-                .select_related("product", "product__shop", "variant")\
+                .select_related("product", "product__shop", "variant", "variant__product")\
                 .prefetch_related('product__productmedia_set')\
                 .order_by('-added_at')
 
@@ -21835,11 +21972,12 @@ class CartListView(APIView):
             applied_voucher = None
             voucher_error = None
             
+            # Validate and apply voucher if provided
             if voucher_code:
                 try:
                     now = timezone.now().date()
                     voucher = Voucher.objects.get(
-                        code=voucher_code,
+                        code=voucher_code.upper(),
                         is_active=True,
                         start_date__lte=now,
                         end_date__gte=now
@@ -21847,35 +21985,62 @@ class CartListView(APIView):
                     
                     cart_total = sum(self.get_item_total(item) for item in cart_items)
                     
+                    # Check minimum spend
                     if voucher.minimum_spend and cart_total < float(voucher.minimum_spend):
-                        voucher_error = f"Minimum spend of ₱{voucher.minimum_spend} required"
+                        voucher_error = f"Minimum spend of ₱{voucher.minimum_spend:,.2f} required"
+                    # Check maximum usage
                     elif voucher.maximum_usage > 0:
-                        usage_count = Checkout.objects.filter(voucher=voucher).count()
+                        usage_count = Checkout.objects.filter(
+                            voucher=voucher,
+                            order__status__in=['delivered', 'completed', 'processing', 'shipped']
+                        ).count()
                         if usage_count >= voucher.maximum_usage:
                             voucher_error = "Voucher usage limit reached"
+                    # Check if voucher applies to shops in cart
                     else:
-                        applied_voucher = voucher
-                        
+                        shop_ids = self.get_shop_ids_from_cart(cart_items)
+                        if voucher.shop and str(voucher.shop.id) not in shop_ids:
+                            voucher_error = f"This voucher is only valid at {voucher.shop.name}"
+                        else:
+                            applied_voucher = voucher
+                            
                 except Voucher.DoesNotExist:
                     voucher_error = "Invalid or expired voucher code"
             
+            # Calculate totals
             totals = self.calculate_cart_totals(cart_items, applied_voucher)
             
+            # Get available vouchers
             available_vouchers = self.get_available_vouchers(
                 cart_items, 
                 user, 
                 applied_voucher.code if applied_voucher else None
             )
             
+            # Get voucher summary (grouped by type)
+            voucher_summary = {
+                'total_available': len(available_vouchers),
+                'best_discount': available_vouchers[0]['discount_amount'] if available_vouchers else 0,
+                'global_vouchers': [v for v in available_vouchers if v.get('is_global', False)],
+                'shop_vouchers': [v for v in available_vouchers if not v.get('is_global', True)],
+            }
+            
             response_data = {
                 "success": True,
                 "cart_items": serializer.data,
                 "totals": totals,
-                "available_vouchers": available_vouchers
+                "available_vouchers": available_vouchers,
+                "voucher_summary": voucher_summary,
+                "cart_summary": {
+                    "item_count": cart_items.count(),
+                    "shop_count": len(self.get_shop_ids_from_cart(cart_items)),
+                    "has_items": cart_items.exists(),
+                }
             }
             
             if voucher_error:
                 response_data["voucher_error"] = voucher_error
+                # Recalculate totals without the invalid voucher
                 response_data["totals"] = self.calculate_cart_totals(cart_items, None)
             
             return Response(response_data)
@@ -21915,7 +22080,7 @@ class CartListView(APIView):
 
         try:
             # Get the cart item with related product and variant
-            cart_item = CartItem.objects.select_related("product", "variant").get(
+            cart_item = CartItem.objects.select_related("product", "variant", "variant__product").get(
                 id=item_id,
                 user_id=user_id,
                 is_ordered=False
@@ -22048,7 +22213,7 @@ class CartListView(APIView):
             return Response({"error": "User not found"}, status=404)
 
         try:
-            variant = Variants.objects.select_related("product").get(pk=variant_id)
+            variant = Variants.objects.select_related("product", "product__shop").get(pk=variant_id)
         except Variants.DoesNotExist:
             return Response({"error": "Variant not found"}, status=404)
 
@@ -22090,7 +22255,6 @@ class CartListView(APIView):
                     created = False
                 else:
                     # Check if there's an existing item that IS ordered (from a previous order)
-                    # This is the key fix - handle the ordered items
                     ordered_item = CartItem.objects.select_for_update().filter(
                         user=user,
                         variant=variant,
@@ -22099,12 +22263,11 @@ class CartListView(APIView):
                     
                     if ordered_item:
                         # Reuse the ordered cart item - convert it back to active cart
-                        # Update its quantity and set is_ordered=False
                         ordered_item.quantity = quantity
                         ordered_item.is_ordered = False
                         ordered_item.save()
                         cart_item = ordered_item
-                        created = True  # Treat as new for the cart
+                        created = True
                     else:
                         # No existing item at all, create new
                         cart_item = CartItem.objects.create(
@@ -22117,10 +22280,8 @@ class CartListView(APIView):
                         created = True
 
         except IntegrityError as e:
-            # Handle race condition - someone created an item between our checks
             try:
                 with transaction.atomic():
-                    # Try to get or create with a more aggressive approach
                     cart_item, created = CartItem.objects.get_or_create(
                         user=user,
                         variant=variant,
@@ -22132,13 +22293,11 @@ class CartListView(APIView):
                     )
                     
                     if not created:
-                        # If it exists but is_ordered might be True, update it
                         if cart_item.is_ordered:
                             cart_item.is_ordered = False
                             cart_item.quantity = quantity
                             cart_item.save()
                         else:
-                            # Normal case - update quantity
                             new_quantity = cart_item.quantity + quantity
                             if new_quantity > variant.quantity:
                                 return Response({
@@ -22148,7 +22307,7 @@ class CartListView(APIView):
                                 }, status=400)
                             cart_item.quantity = new_quantity
                             cart_item.save()
-                    created = not created  # Adjust flag
+                    created = not created
             except Exception as nested_e:
                 return Response({
                     "success": False,
@@ -24760,18 +24919,17 @@ class CheckoutOrder(viewsets.ViewSet):
 
     def _calculate_transaction_fee(self, amount: Decimal, payment_method: str) -> Decimal:
         """
-        Calculate transaction fee for e-wallet payments
-        5% capped at ₱50
+        Calculate transaction fee for ALL payment methods
+        5% capped at ₱50 for all payment methods
         """
-        if payment_method.lower() in ['maya', 'gcash']:
-            fee = amount * Decimal('0.05')
-            # Cap at ₱50
-            if fee > Decimal('50.00'):
-                fee = Decimal('50.00')
-            logger.info(f"💰 Transaction fee calculated: ₱{fee:.2f} for {payment_method} payment on ₱{amount:.2f}")
-            print(f"[FEE] Transaction fee: ₱{fee:.2f} (5% capped at ₱50)")
-            return fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        return Decimal('0')
+        # Apply transaction fee to ALL payment methods (COD, Maya, GCash, etc.)
+        fee = amount * Decimal('0.05')
+        # Cap at ₱50
+        if fee > Decimal('50.00'):
+            fee = Decimal('50.00')
+        logger.info(f"💰 Transaction fee calculated: ₱{fee:.2f} for {payment_method} payment on ₱{amount:.2f}")
+        print(f"[FEE] Transaction fee: ₱{fee:.2f} (5% capped at ₱50) for {payment_method}")
+        return fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')
     def get_checkout_items(self, request):
@@ -25644,6 +25802,7 @@ class CheckoutOrder(viewsets.ViewSet):
             )
 
         try:
+            from decimal import Decimal
             user = get_object_or_404(User, id=user_id)
 
             shipping_address = None
@@ -25823,7 +25982,7 @@ class CheckoutOrder(viewsets.ViewSet):
             # Calculate base total (subtotal + delivery fee - discount)
             base_total = subtotal + delivery_fee - discount_amount
             
-            # Calculate transaction fee for e-wallet payments (5% capped at ₱50)
+            # Calculate transaction fee for ALL payment methods (5% capped at ₱50)
             transaction_fee = self._calculate_transaction_fee(base_total, payment_method)
             
             # Final total including transaction fee
@@ -25847,6 +26006,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 order.metadata['transaction_fee'] = float(transaction_fee)
                 order.metadata['transaction_fee_percentage'] = 5
                 order.metadata['transaction_fee_cap'] = 50
+                order.metadata['transaction_fee_note'] = f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment"
                 order.save(update_fields=['metadata'])
             
             if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() and pickup_date:
@@ -25944,15 +26104,13 @@ class CheckoutOrder(viewsets.ViewSet):
                         "is_refundable": cart_item.variant.is_refundable if cart_item.variant else getattr(cart_item.product, 'is_refundable', False)
                     })
 
-            if payment_method.lower() == 'maya':
-                payment_status = 'pending'
-            else:
-                Payment.objects.create(
-                    order=order,
-                    amount=total_amount,
-                    method=payment_method,
-                    status='pending'
-                )
+            # Create payment record for ALL payment methods
+            Payment.objects.create(
+                order=order,
+                amount=total_amount,
+                method=payment_method,
+                status='pending'
+            )
 
             # Decrease stock for the order items
             self._decrease_stock_for_order(order)
@@ -25972,12 +26130,9 @@ class CheckoutOrder(viewsets.ViewSet):
                 "status": "pending_shipment",
                 "payment_method": payment_method,
                 "shipping_method": shipping_method,
-                "pickup_date": pickup_date if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() else None
+                "pickup_date": pickup_date if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() else None,
+                "transaction_fee_note": f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment"
             }
-            
-            # Add transaction fee note for e-wallet payments
-            if transaction_fee > 0:
-                response_data["transaction_fee_note"] = f"Transaction fee of ₱{transaction_fee:.2f} (5% capped at ₱50) applied for {payment_method} payment"
             
             return Response(response_data)
 
@@ -26018,10 +26173,10 @@ class CheckoutOrder(viewsets.ViewSet):
                 'pickup_date': order.metadata.get('pickup_date') if order.metadata else None
             }
             
-            # Add transaction fee info if present
+            # Add transaction fee info if present (for ALL payment methods)
             if order.metadata and order.metadata.get('transaction_fee'):
                 order_data['transaction_fee'] = order.metadata['transaction_fee']
-                order_data['transaction_fee_note'] = "5% transaction fee capped at ₱50 applied for e-wallet payment"
+                order_data['transaction_fee_note'] = order.metadata.get('transaction_fee_note', "5% transaction fee capped at ₱50 applied")
 
             if order.shipping_address:
                 order_data['shipping_address'] = {
@@ -26627,12 +26782,12 @@ class CheckoutOrder(viewsets.ViewSet):
                         redirectToApp();
                     }}, 2000);
                     if (window.ReactNativeWebView) {{
-                        window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
-                    }}
-                </script>
-            </body>
-            </html>
-            """
+                            window.ReactNativeWebView.postMessage('redirect:{mobile_redirect_url}');
+                        }}
+                    </script>
+                </body>
+                </html>
+                """
             return HttpResponse(html_content, content_type='text/html')
 
         frontend_url = getattr(settings, 'FRONTEND_URL')
@@ -26742,7 +26897,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     product.save()
 
         return stock_errors
-        
+
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
     def get_shipping_addresses(self, request):
