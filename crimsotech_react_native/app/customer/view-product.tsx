@@ -23,7 +23,10 @@ import {
   findNodeHandle,
   UIManager,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import AxiosInstance from "../../contexts/axios";
@@ -134,7 +137,12 @@ type ProductDetail = {
     customer?: { id: string; username?: string; name?: string };
     created_at?: string;
     variant_title?: string;
-    media?: Array<{ id: string; file_url?: string; file_data?: string; file_type?: string }>;
+    media?: Array<{
+      id: string;
+      file_url?: string;
+      file_data?: string;
+      file_type?: string;
+    }>;
   }>;
   average_rating?: number;
   total_reviews?: number;
@@ -274,7 +282,7 @@ const ToastNotification = ({
   if (!visible) return null;
 
   const bgColor =
-  type === "success" ? "#16A34A" : type === "error" ? "#DC2626" : "#2563EB";
+    type === "success" ? "#16A34A" : type === "error" ? "#DC2626" : "#2563EB";
   const iconName =
     type === "success"
       ? "checkmark-circle"
@@ -330,7 +338,6 @@ const ToastNotification = ({
   );
 };
 
-// ─── Center Toast Notification for Favorites ───────────────────────────────────
 // ─── Center Toast Notification for Favorites ───────────────────────────────────
 const CenterToast = ({
   visible,
@@ -424,7 +431,7 @@ const CenterToast = ({
     </View>
   );
 };
-// ─── Added to Cart Overlay ─────────────────────────────────────────────────────
+
 // ─── Added to Cart Overlay ─────────────────────────────────────────────────────
 const AddedToCartOverlay = ({
   visible,
@@ -853,7 +860,7 @@ const OwnershipInfoCard = ({
   );
 };
 
-// ─── Seller Info Card (Updated with absolute URL for shop picture) ────────────
+// ─── Seller Info Card ─────────────────────────────────────────────────────────
 const SellerInfoCard = ({
   product,
   onPress,
@@ -870,20 +877,19 @@ const SellerInfoCard = ({
   const displayName = product.shop?.name || product.seller_name;
   if (!displayName) return null;
 
-  // Helper function to ensure absolute URL
   const ensureAbsoluteUrl = (url?: string | null) => {
     if (!url) return null;
-    if (url.startsWith('http://') || url.startsWith('https://')) return url;
-    
-    const base = AxiosInstance.defaults?.baseURL?.replace(/\/$/, '') || '';
+    if (url.startsWith("http://") || url.startsWith("https://")) return url;
+    const base = AxiosInstance.defaults?.baseURL?.replace(/\/$/, "") || "";
     if (!base) return url;
-    
-    if (url.startsWith('/')) return `${base}${url}`;
+    if (url.startsWith("/")) return `${base}${url}`;
     return `${base}/${url}`;
   };
 
-  // Convert shop picture to absolute URL
-  const displayAvatar = product.shop_picture_url || product.shop?.shop_picture || product.seller_avatar;
+  const displayAvatar =
+    product.shop_picture_url ||
+    product.shop?.shop_picture ||
+    product.seller_avatar;
 
   const getInitials = (name: string) => {
     if (!name) return "";
@@ -910,7 +916,6 @@ const SellerInfoCard = ({
       }}
     >
       <View style={{ flexDirection: "row", alignItems: "center" }}>
-        {/* Shop Avatar */}
         <View
           style={{
             width: 60,
@@ -927,7 +932,6 @@ const SellerInfoCard = ({
             <Image
               source={{ uri: displayAvatar }}
               style={{ width: 60, height: 60, borderRadius: 30 }}
-              onError={(e) => console.log('Shop image error:', e.nativeEvent.error)}
             />
           ) : (
             <Text style={{ fontSize: 20, fontWeight: "700", color: "#FFFFFF" }}>
@@ -936,37 +940,55 @@ const SellerInfoCard = ({
           )}
         </View>
 
-        {/* Shop Info */}
         <View style={{ flex: 1 }}>
-          {/* Shop Name */}
-          <Text style={{ fontSize: 16, fontWeight: "700", color: "#111827", marginBottom: 4 }}>
+          <Text
+            style={{
+              fontSize: 16,
+              fontWeight: "700",
+              color: "#111827",
+              marginBottom: 4,
+            }}
+          >
             {displayName}
           </Text>
 
-          {/* Shop Address */}
-          {(product.shop?.street || product.shop?.barangay || product.shop?.city || shopInfo?.address) && (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 4 }}>
+          {(product.shop?.street ||
+            product.shop?.barangay ||
+            product.shop?.city ||
+            shopInfo?.address) && (
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 4,
+                marginBottom: 4,
+              }}
+            >
               <Ionicons name="location-outline" size={12} color="#6B7280" />
               <Text style={{ fontSize: 12, color: "#6B7280" }} numberOfLines={1}>
-                {shopInfo?.address || 
-                  [product.shop?.street, product.shop?.barangay, product.shop?.city]
+                {shopInfo?.address ||
+                  [
+                    product.shop?.street,
+                    product.shop?.barangay,
+                    product.shop?.city,
+                  ]
                     .filter(Boolean)
                     .join(", ")}
               </Text>
             </View>
           )}
 
-          {/* Followers and Rating */}
           <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
             {shopInfo?.followers !== undefined && (
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                 <Ionicons name="people-outline" size={12} color="#6B7280" />
                 <Text style={{ fontSize: 12, color: "#4B5563" }}>
-                  {shopInfo.followers} {shopInfo.followers === 1 ? "follower" : "followers"}
+                  {shopInfo.followers}{" "}
+                  {shopInfo.followers === 1 ? "follower" : "followers"}
                 </Text>
               </View>
             )}
-            
+
             {shopInfo?.rating ? (
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                 <Ionicons name="star" size={12} color="#F59E0B" />
@@ -990,9 +1012,6 @@ const SellerInfoCard = ({
 };
 
 // ─── Reviews Section ───────────────────────────────────────────────────────────
-// ─── Enhanced Reviews Section ─────────────────────────────────────────────────
-// ─── Enhanced Reviews Section ─────────────────────────────────────────────────
-// ─── Reviews Section (Updated with actual profile pictures) ───────────────────
 const ReviewsSection = ({
   reviews,
   averageRating,
@@ -1009,15 +1028,12 @@ const ReviewsSection = ({
   const [selectedMedia, setSelectedMedia] = useState<string[]>([]);
   const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
 
-  // Helper function to ensure absolute URL
   const ensureAbsoluteUrl = (url?: string | null) => {
     if (!url) return null;
-    if (url.startsWith('http://') || url.startsWith('https://')) return url;
-    
-    const base = AxiosInstance.defaults?.baseURL?.replace(/\/$/, '') || '';
+    if (url.startsWith("http://") || url.startsWith("https://")) return url;
+    const base = AxiosInstance.defaults?.baseURL?.replace(/\/$/, "") || "";
     if (!base) return url;
-    
-    if (url.startsWith('/')) return `${base}${url}`;
+    if (url.startsWith("/")) return `${base}${url}`;
     return `${base}/${url}`;
   };
 
@@ -1087,8 +1103,10 @@ const ReviewsSection = ({
         </View>
 
         {reviews.map((review) => {
-          const profilePicUrl = ensureAbsoluteUrl(review.customer?.profile_picture);
-          
+          const profilePicUrl = ensureAbsoluteUrl(
+            review.customer?.profile_picture,
+          );
+
           return (
             <View
               key={review.id}
@@ -1098,7 +1116,6 @@ const ReviewsSection = ({
                 paddingVertical: 14,
               }}
             >
-              {/* User info and rating */}
               <View
                 style={{
                   flexDirection: "row",
@@ -1107,13 +1124,17 @@ const ReviewsSection = ({
                   marginBottom: 8,
                 }}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                  {/* Profile Picture or Initials */}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
                   {profilePicUrl ? (
                     <Image
                       source={{ uri: profilePicUrl }}
                       style={{ width: 36, height: 36, borderRadius: 18 }}
-                      onError={(e) => console.log('Profile image error:', e.nativeEvent.error)}
                     />
                   ) : (
                     <View
@@ -1126,68 +1147,160 @@ const ReviewsSection = ({
                         alignItems: "center",
                       }}
                     >
-                      <Text style={{ fontSize: 12, fontWeight: "600", color: "#FFFFFF" }}>
-                        {getInitials(review.customer?.name || review.customer?.username || "User")}
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "600",
+                          color: "#FFFFFF",
+                        }}
+                      >
+                        {getInitials(
+                          review.customer?.name ||
+                            review.customer?.username ||
+                            "User",
+                        )}
                       </Text>
                     </View>
                   )}
                   <View>
-                    <Text style={{ fontSize: 14, fontWeight: "600", color: "#111827" }}>
-                      {review.customer?.name || review.customer?.username || "Anonymous"}
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "600",
+                        color: "#111827",
+                      }}
+                    >
+                      {review.customer?.name ||
+                        review.customer?.username ||
+                        "Anonymous"}
                     </Text>
                     <Text style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>
                       {formatDate(review.created_at)}
                     </Text>
                   </View>
                 </View>
-                <StarRow count={Math.round(review.average_rating || review.rating || 0)} />
+                <StarRow
+                  count={Math.round(
+                    review.average_rating || review.rating || 0,
+                  )}
+                />
               </View>
 
-              {/* Product and Variant */}
               <View style={{ marginBottom: 12, marginTop: 4 }}>
-                <Text style={{ fontSize: 12, color: "#6B7280", marginBottom: 2 }}>Product:</Text>
+                <Text style={{ fontSize: 12, color: "#6B7280", marginBottom: 2 }}>
+                  Product:
+                </Text>
                 <Text style={{ fontSize: 14, fontWeight: "600", color: "#111827" }}>
                   {productName}
-                  {review.variant_title ? ` / ${review.variant_title}` : ''}
+                  {review.variant_title ? ` / ${review.variant_title}` : ""}
                 </Text>
               </View>
 
-              {/* Detailed ratings */}
               <View style={{ marginBottom: 10 }}>
-                {/* Row 1: Condition and Accuracy */}
-                <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    marginBottom: 8,
+                  }}
+                >
                   {review.condition_rating && (
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
-                      <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Condition:</Text>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                        flex: 1,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "500",
+                          color: "#374151",
+                        }}
+                      >
+                        Condition:
+                      </Text>
                       <StarRow count={review.condition_rating} />
                     </View>
                   )}
                   {review.accuracy_rating && (
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, marginLeft: 8 }}>
-                      <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Accuracy:</Text>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                        flex: 1,
+                        marginLeft: 8,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "500",
+                          color: "#374151",
+                        }}
+                      >
+                        Accuracy:
+                      </Text>
                       <StarRow count={review.accuracy_rating} />
                     </View>
                   )}
                 </View>
-                
-                {/* Row 2: Value and Delivery */}
-                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                  }}
+                >
                   {review.value_rating && (
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
-                      <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Value:</Text>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                        flex: 1,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "500",
+                          color: "#374151",
+                        }}
+                      >
+                        Value:
+                      </Text>
                       <StarRow count={review.value_rating} />
                     </View>
                   )}
                   {review.delivery_rating && (
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, marginLeft: 8 }}>
-                      <Text style={{ fontSize: 12, fontWeight: "500", color: "#374151" }}>Delivery:</Text>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                        flex: 1,
+                        marginLeft: 8,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "500",
+                          color: "#374151",
+                        }}
+                      >
+                        Delivery:
+                      </Text>
                       <StarRow count={review.delivery_rating} />
                     </View>
                   )}
                 </View>
               </View>
 
-              {/* Comment */}
               {review.comment && (
                 <Text
                   style={{
@@ -1202,16 +1315,22 @@ const ReviewsSection = ({
                 </Text>
               )}
 
-              {/* Read more button for long comments */}
-              {review.comment && review.comment.length > 150 && expandedReview !== review.id && (
-                <TouchableOpacity onPress={() => setExpandedReview(review.id)}>
-                  <Text style={{ fontSize: 12, color: "#EA580C", fontWeight: "500" }}>
-                    Read more
-                  </Text>
-                </TouchableOpacity>
-              )}
+              {review.comment &&
+                review.comment.length > 150 &&
+                expandedReview !== review.id && (
+                  <TouchableOpacity onPress={() => setExpandedReview(review.id)}>
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        color: "#EA580C",
+                        fontWeight: "500",
+                      }}
+                    >
+                      Read more
+                    </Text>
+                  </TouchableOpacity>
+                )}
 
-              {/* Media images */}
               {review.media && review.media.length > 0 && (
                 <ScrollView
                   horizontal
@@ -1220,7 +1339,9 @@ const ReviewsSection = ({
                   contentContainerStyle={{ gap: 8 }}
                 >
                   {review.media.map((media: any, idx: number) => {
-                    const mediaUrls = review.media.map((m: any) => m.file_url || m.file_data).filter(Boolean);
+                    const mediaUrls = review.media
+                      .map((m: any) => m.file_url || m.file_data)
+                      .filter(Boolean);
                     return (
                       <TouchableOpacity
                         key={media.id}
@@ -1228,7 +1349,12 @@ const ReviewsSection = ({
                       >
                         <Image
                           source={{ uri: media.file_url || media.file_data }}
-                          style={{ width: 70, height: 70, borderRadius: 8, backgroundColor: "#F3F4F6" }}
+                          style={{
+                            width: 70,
+                            height: 70,
+                            borderRadius: 8,
+                            backgroundColor: "#F3F4F6",
+                          }}
                         />
                       </TouchableOpacity>
                     );
@@ -1240,7 +1366,6 @@ const ReviewsSection = ({
         })}
       </View>
 
-      {/* Media Gallery Modal */}
       <Modal
         visible={mediaModalVisible}
         transparent
@@ -1249,7 +1374,13 @@ const ReviewsSection = ({
       >
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.95)" }}>
           <TouchableOpacity
-            style={{ position: "absolute", top: 50, right: 20, zIndex: 10, padding: 8 }}
+            style={{
+              position: "absolute",
+              top: 50,
+              right: 20,
+              zIndex: 10,
+              padding: 8,
+            }}
             onPress={() => setMediaModalVisible(false)}
           >
             <Ionicons name="close" size={30} color="#FFFFFF" />
@@ -1266,8 +1397,18 @@ const ReviewsSection = ({
               index,
             })}
             renderItem={({ item }) => (
-              <View style={{ width: SCREEN_WIDTH, justifyContent: "center", alignItems: "center" }}>
-                <Image source={{ uri: item }} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH * 1.1 }} resizeMode="contain" />
+              <View
+                style={{
+                  width: SCREEN_WIDTH,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Image
+                  source={{ uri: item }}
+                  style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH * 1.1 }}
+                  resizeMode="contain"
+                />
               </View>
             )}
             keyExtractor={(_, index) => index.toString()}
@@ -1305,17 +1446,18 @@ export default function CustomerViewProductScreen() {
   const [proofGalleryImages, setProofGalleryImages] = useState<string[]>([]);
   const [centerToastVisible, setCenterToastVisible] = useState(false);
   const [centerToastMessage, setCenterToastMessage] = useState("");
-  // Add this state with your other useState declarations
-const [shopInfo, setShopInfo] = useState<{
-  followers?: number;
-  rating?: number;
-  address?: string;
-} | null>(null);
-  // Cart badge animation
-const [cartItemCount, setCartItemCount] = useState(0);
-const cartBadgeScale = useRef(new Animated.Value(1)).current;
-const cartIconRef = useRef<View>(null);
-const productImageRef = useRef<View>(null);
+  const [shopInfo, setShopInfo] = useState<{
+    followers?: number;
+    rating?: number;
+    address?: string;
+  } | null>(null);
+  const [cartItemCount, setCartItemCount] = useState(0);
+  const cartBadgeScale = useRef(new Animated.Value(1)).current;
+  const cartIconRef = useRef<View>(null);
+  const productImageRef = useRef<View>(null);
+  
+  // Store selected variant ID in a ref to ensure we always have the latest value
+  const selectedVariantIdRef = useRef<string | null>(null);
 
   // Fly-to-cart animation
   const flyToCartX = useRef(new Animated.Value(0)).current;
@@ -1341,14 +1483,15 @@ const productImageRef = useRef<View>(null);
     setToastType(type);
     setToastVisible(true);
   };
+
   const fetchCartCount = async () => {
     if (!userId) return;
     try {
       const response = await AxiosInstance.get(`/view-cart/?user_id=${userId}`);
       if (response.data.success && response.data.cart_items) {
         const totalItems = response.data.cart_items.reduce(
-          (sum: number, item: any) => sum + item.quantity, 
-          0
+          (sum: number, item: any) => sum + item.quantity,
+          0,
         );
         setCartItemCount(totalItems);
       }
@@ -1356,7 +1499,7 @@ const productImageRef = useRef<View>(null);
       console.error("Error fetching cart count:", error);
     }
   };
-  
+
   const animateCartBadge = () => {
     Animated.sequence([
       Animated.spring(cartBadgeScale, {
@@ -1376,59 +1519,48 @@ const productImageRef = useRef<View>(null);
     ]).start();
   };
 
-  const fetchShopInfo = useCallback(async (shopId: string) => {
-    if (!shopId) return;
-    
-    try {
-      const headers: any = {};
-      if (userId) headers['X-User-Id'] = userId;
-      
-      const response = await AxiosInstance.get(`/shops/${shopId}/`, { headers });
-      const data = response.data;
-      
-      setShopInfo({
-        followers: data.total_followers || 0,
-        rating: data.rating,
-        address: data.address,
-      });
-    } catch (error) {
-      console.error("Error fetching shop info:", error);
-    }
-  }, [userId]);
+  const fetchShopInfo = useCallback(
+    async (shopId: string) => {
+      if (!shopId) return;
+      try {
+        const headers: any = {};
+        if (userId) headers["X-User-Id"] = userId;
+        const response = await AxiosInstance.get(`/shops/${shopId}/`, {
+          headers,
+        });
+        const data = response.data;
+        setShopInfo({
+          followers: data.total_followers || 0,
+          rating: data.rating,
+          address: data.address,
+        });
+      } catch (error) {
+        console.error("Error fetching shop info:", error);
+      }
+    },
+    [userId],
+  );
 
-  // Measure positions and animate fly-to-cart
   const animateFlyToCart = async (imageUri: string) => {
     if (!cartIconRef.current) return;
-
     try {
-      // Reset animation values
       flyToCartX.setValue(0);
       flyToCartY.setValue(0);
       flyToCartScale.setValue(1);
       flyToCartOpacity.setValue(1);
-
       setFlyToCartImageUri(imageUri);
       setFlyToCartVisible(true);
-
-      // Get positions
       const cartHandle = findNodeHandle(cartIconRef.current);
       if (!cartHandle) return;
-
       const cartPos = await new Promise<any>((resolve) => {
         UIManager.measure(cartHandle, (x, y, w, h, px, py) => {
           resolve({ x: px, y: py, width: w, height: h });
         });
       });
-
-      // Animation starts from the middle of the screen
-      const startX = SCREEN_WIDTH / 2 - 40; // 40 is half of original width (80)
+      const startX = SCREEN_WIDTH / 2 - 40;
       const startY = Dimensions.get("window").height / 2 - 40;
-
-      // Calculate deltas to cart icon
       const deltaX = cartPos.x - startX + (cartPos.width - 80) / 2;
       const deltaY = cartPos.y - startY + (cartPos.height - 80) / 2;
-
-      // Animate fly-to-cart
       Animated.parallel([
         Animated.timing(flyToCartX, {
           toValue: deltaX,
@@ -1461,45 +1593,44 @@ const productImageRef = useRef<View>(null);
   };
 
   const fetchProduct = useCallback(async () => {
-  if (!productId) {
-    setLoading(false);
-    return;
-  }
-  try {
-    const headers: any = {};
-    if (userId) headers["X-User-Id"] = userId;
-    const response = await AxiosInstance.get(
-      `/public-products/${productId}/`,
-      { headers },
-    );
-    if (response.data) {
-      setProduct(response.data);
-      
-      // Fetch shop info if product has a shop
-      if (response.data.shop?.id) {
-        await fetchShopInfo(response.data.shop.id);
-      }
-      
-      // Set default variant (in stock preferred)
-      if (response.data.default_variant) {
-        setSelectedVariant(response.data.default_variant);
-      } else if (response.data.variants?.length > 0) {
-        const inStock = response.data.variants.find(
-          (v: Variant) => v.in_stock,
-        );
-        setSelectedVariant(inStock || response.data.variants[0]);
-      }
+    if (!productId) {
+      setLoading(false);
+      return;
     }
-  } catch (error: any) {
-    if (error.response?.status === 404)
-      Alert.alert("Error", "Product not found.");
-    else Alert.alert("Error", "Unable to load product details.");
-    setProduct(null);
-  } finally {
-    setLoading(false);
-    setRefreshing(false);
-  }
-}, [productId, userId, fetchShopInfo]);
+    try {
+      const headers: any = {};
+      if (userId) headers["X-User-Id"] = userId;
+      const response = await AxiosInstance.get(
+        `/public-products/${productId}/`,
+        { headers },
+      );
+      if (response.data) {
+        setProduct(response.data);
+        if (response.data.shop?.id) {
+          await fetchShopInfo(response.data.shop.id);
+        }
+        if (response.data.default_variant) {
+          setSelectedVariant(response.data.default_variant);
+          selectedVariantIdRef.current = response.data.default_variant.id;
+        } else if (response.data.variants?.length > 0) {
+          const inStock = response.data.variants.find(
+            (v: Variant) => v.in_stock,
+          );
+          const defaultVariant = inStock || response.data.variants[0];
+          setSelectedVariant(defaultVariant);
+          selectedVariantIdRef.current = defaultVariant.id;
+        }
+      }
+    } catch (error: any) {
+      if (error.response?.status === 404)
+        Alert.alert("Error", "Product not found.");
+      else Alert.alert("Error", "Unable to load product details.");
+      setProduct(null);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [productId, userId, fetchShopInfo]);
 
   useEffect(() => {
     fetchProduct();
@@ -1544,53 +1675,42 @@ const productImageRef = useRef<View>(null);
       Alert.alert("Sign In Required", "Please sign in to add to favorites");
       return;
     }
-    
     try {
       if (product?.is_favorite) {
-        // Remove from favorites - DELETE request
-        const response = await AxiosInstance.delete('/customer-favorites/', {
+        const response = await AxiosInstance.delete("/customer-favorites/", {
           data: { product: productId, customer: userId },
-          headers: { 
-            'X-User-Id': userId
-          }
+          headers: { "X-User-Id": userId },
         });
-        
         if (response.data.success) {
-          setProduct(prev => prev ? { ...prev, is_favorite: false } : null);
+          setProduct((prev) => (prev ? { ...prev, is_favorite: false } : null));
           setCenterToastMessage("Removed from favorites");
           setCenterToastVisible(true);
         }
       } else {
-        // Add to favorites - POST request
         const response = await AxiosInstance.post(
-          '/customer-favorites/',
-          { 
-            product: productId,
-            customer: userId
-          },
-          { 
-            headers: { 
-              'X-User-Id': userId
-            } 
-          }
+          "/customer-favorites/",
+          { product: productId, customer: userId },
+          { headers: { "X-User-Id": userId } },
         );
-        
         if (response.data.success) {
-          setProduct(prev => prev ? { ...prev, is_favorite: true } : null);
+          setProduct((prev) => (prev ? { ...prev, is_favorite: true } : null));
           setCenterToastMessage("Added to favorites");
           setCenterToastVisible(true);
         }
       }
     } catch (error: any) {
       console.error("Favorite error:", error);
-      
-      // Handle case where product is already in favorites
-      if (error.response?.status === 400 && error.response?.data?.message === "Product is already in favorites") {
+      if (
+        error.response?.status === 400 &&
+        error.response?.data?.message === "Product is already in favorites"
+      ) {
         fetchProduct();
         setCenterToastMessage("Product already in favorites");
         setCenterToastVisible(true);
       } else {
-        setCenterToastMessage(error.response?.data?.message || "Failed to update favorites");
+        setCenterToastMessage(
+          error.response?.data?.message || "Failed to update favorites",
+        );
         setCenterToastVisible(true);
       }
     }
@@ -1610,46 +1730,38 @@ const productImageRef = useRef<View>(null);
       Alert.alert("Out of Stock", "This variant is currently out of stock");
       return;
     }
-    
+
     setAddingToCart(true);
-    
-    // Trigger fly-to-cart animation with product image
-    const imageUri = resolveVariantImageUrl(selectedVariant) || productImages[selectedImageIndex];
+
+    const imageUri =
+      resolveVariantImageUrl(selectedVariant) ||
+      productImages[selectedImageIndex];
     if (imageUri) {
       animateFlyToCart(imageUri);
     }
 
     try {
-      const response = await AxiosInstance.post("/view-cart/", {
+      await AxiosInstance.post("/view-cart/", {
         user_id: userId,
         variant_id: selectedVariant.id,
         quantity,
       });
-      
-      // Show center overlay
       setShowAddedToCartOverlay(true);
-      
-      // Update cart count and animate badge
       await fetchCartCount();
       animateCartBadge();
-      
     } catch (err: any) {
-      // Handle the error without showing "Request failed"
       const errorData = err.response?.data;
-      
-      // Check for max quantity error
-      if (errorData?.error && errorData.error.includes("Only") && errorData.error.includes("available")) {
+      if (
+        errorData?.error &&
+        errorData.error.includes("Only") &&
+        errorData.error.includes("available")
+      ) {
         showToast(errorData.error, "info");
-      } 
-      // Check for other known errors
-      else if (errorData?.error) {
+      } else if (errorData?.error) {
         showToast(errorData.error, "info");
-      }
-      else if (errorData?.detail) {
+      } else if (errorData?.detail) {
         showToast(errorData.detail, "info");
-      }
-      // Don't show anything for generic errors - just log
-      else {
+      } else {
         console.log("Add to cart error:", err);
       }
     } finally {
@@ -1658,29 +1770,36 @@ const productImageRef = useRef<View>(null);
   };
 
   // ── Buy Now ───────────────────────────────────────────────────────────────
-  const buyNow = () => {
+  const buyNow = useCallback(() => {
+    // Use selectedVariant from state or fallback to the ID from ref
+    const variantToUse = selectedVariant || (selectedVariantIdRef.current ? product?.variants?.find(v => v.id === selectedVariantIdRef.current) : null);
+    
+    console.log("🔍 buyNow called - selectedVariant:", variantToUse?.id, variantToUse?.title);
+    
     if (!userId) {
       Alert.alert("Sign In Required", "Please sign in to purchase");
       return;
     }
-    if (!selectedVariant) {
+    if (!variantToUse) {
       Alert.alert("Error", "Please select a variant");
       return;
     }
-    if (!selectedVariant.in_stock) {
+    if (!variantToUse.in_stock) {
       Alert.alert("Out of Stock", "This variant is currently out of stock");
       return;
     }
 
+    console.log("🚀 Navigating to checkout with variantId:", variantToUse.id);
+    
     router.push({
       pathname: "/customer/checkout",
       params: {
-        productId,
-        variantId: selectedVariant.id,
+        productId: productId,
+        variantId: variantToUse.id,
         quantity: String(quantity),
       },
     });
-  };
+  }, [userId, selectedVariant, productId, quantity, product?.variants]);
 
   if (loading) {
     return (
@@ -1738,8 +1857,10 @@ const productImageRef = useRef<View>(null);
   const isInStock = selectedVariant?.in_stock ?? product.has_stock;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F9FAFB" }} edges={['bottom', 'left', 'right']}>
-      {/* Toast */}
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: "#F9FAFB" }}
+      edges={["bottom", "left", "right"]}
+    >
       <ToastNotification
         visible={toastVisible}
         message={toastMessage}
@@ -1747,13 +1868,12 @@ const productImageRef = useRef<View>(null);
         onHide={() => setToastVisible(false)}
       />
 
-    <CenterToast
-            visible={centerToastVisible}
-            message={centerToastMessage}
-            onHide={() => setCenterToastVisible(false)}
-          />
-      
-      {/* Added to Cart Overlay */}
+      <CenterToast
+        visible={centerToastVisible}
+        message={centerToastMessage}
+        onHide={() => setCenterToastVisible(false)}
+      />
+
       <AddedToCartOverlay
         visible={showAddedToCartOverlay}
         onHide={() => setShowAddedToCartOverlay(false)}
@@ -1783,34 +1903,36 @@ const productImageRef = useRef<View>(null);
           Product Details
         </Text>
         <View ref={cartIconRef}>
-  <TouchableOpacity
-    onPress={() => router.push("/customer/cart")}
-    style={{ padding: 8, position: 'relative' }}
-  >
-    <Ionicons name="cart-outline" size={24} color="#111827" />
-    {cartItemCount > 0 && (
-      <Animated.View
-        style={{
-          position: 'absolute',
-          top: 2,
-          right: 2,
-          backgroundColor: '#F97316',
-          borderRadius: 10,
-          minWidth: 18,
-          height: 18,
-          justifyContent: 'center',
-          alignItems: 'center',
-          paddingHorizontal: 4,
-          transform: [{ scale: cartBadgeScale }],
-        }}
-      >
-        <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#FFFFFF' }}>
-          {cartItemCount > 99 ? '99+' : cartItemCount}
-        </Text>
-      </Animated.View>
-    )}
-  </TouchableOpacity>
-</View>
+          <TouchableOpacity
+            onPress={() => router.push("/customer/cart")}
+            style={{ padding: 8, position: "relative" }}
+          >
+            <Ionicons name="cart-outline" size={24} color="#111827" />
+            {cartItemCount > 0 && (
+              <Animated.View
+                style={{
+                  position: "absolute",
+                  top: 2,
+                  right: 2,
+                  backgroundColor: "#F97316",
+                  borderRadius: 10,
+                  minWidth: 18,
+                  height: 18,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  paddingHorizontal: 4,
+                  transform: [{ scale: cartBadgeScale }],
+                }}
+              >
+                <Text
+                  style={{ fontSize: 10, fontWeight: "bold", color: "#FFFFFF" }}
+                >
+                  {cartItemCount > 99 ? "99+" : cartItemCount}
+                </Text>
+              </Animated.View>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -1904,51 +2026,56 @@ const productImageRef = useRef<View>(null);
           )}
 
           <View style={{ padding: 16, marginTop: 12 }}>
-          {/* Product Name Row */}
-<View
-  style={{
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    marginBottom: 8,
-    minWidth: 0,
-  }}
->
-  <Text
-    style={{
-      flex: 1,
-      minWidth: 0,
-      fontSize: 20,
-      fontWeight: "700",
-      color: "#111827",
-      lineHeight: 28,
-    }}
-  >
-    {product.name}
-  </Text>
-  <TouchableOpacity
-    onPress={toggleFavorite}
-    style={{ padding: 8, marginRight: 4, flexShrink: 0 }}
-  >
-    <Ionicons
-      name={product.is_favorite ? "heart" : "heart-outline"}
-      size={22}
-      color={product.is_favorite ? "#EF4444" : "#6B7280"}
-    />
-  </TouchableOpacity>
-</View>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                marginBottom: 8,
+                minWidth: 0,
+              }}
+            >
+              <Text
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 20,
+                  fontWeight: "700",
+                  color: "#111827",
+                  lineHeight: 28,
+                }}
+              >
+                {product.name}
+              </Text>
+              <TouchableOpacity
+                onPress={toggleFavorite}
+                style={{ padding: 8, marginRight: 4, flexShrink: 0 }}
+              >
+                <Ionicons
+                  name={product.is_favorite ? "heart" : "heart-outline"}
+                  size={22}
+                  color={product.is_favorite ? "#EF4444" : "#6B7280"}
+                />
+              </TouchableOpacity>
+            </View>
 
-{/* Rating below product name */}
-{product.average_rating && (
-  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
-    <StarRow count={Math.round(product.average_rating)} />
-    <Text style={{ fontSize: 13, color: "#6B7280" }}>
-      {product.average_rating.toFixed(1)} ({product.total_reviews || 0} reviews)
-    </Text>
-  </View>
-)}
+            {product.average_rating && (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 12,
+                }}
+              >
+                <StarRow count={Math.round(product.average_rating)} />
+                <Text style={{ fontSize: 13, color: "#6B7280" }}>
+                  {product.average_rating.toFixed(1)} (
+                  {product.total_reviews || 0} reviews)
+                </Text>
+              </View>
+            )}
 
-            
             {product.condition && (
               <View
                 style={{
@@ -1971,34 +2098,42 @@ const productImageRef = useRef<View>(null);
                 "Uncategorized"}
             </Text>
             <View style={{ marginTop: 8 }}>
-  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-    <Text
-      style={{
-        fontSize: 26,
-        fontWeight: "700",
-        color: "#EA580C",
-      }}
-    >
-      {selectedVariant
-        ? (formatCurrency(selectedVariant.price) ?? "₱0.00")
-        : product.price_range?.min === product.price_range?.max
-          ? (formatCurrency(product.price_range?.min) ?? "₱0.00")
-          : `${formatCurrency(product.price_range?.min) ?? "₱0.00"} – ${formatCurrency(product.price_range?.max) ?? "₱0.00"}`}
-    </Text>
-    {selectedVariant?.original_price && 
-     parseFloat(selectedVariant.original_price) > parseFloat(selectedVariant.price || "0") && (
-      <Text
-        style={{
-          fontSize: 16,
-          color: "#9CA3AF",
-          textDecorationLine: "line-through",
-        }}
-      >
-        {formatCurrency(selectedVariant.original_price)}
-      </Text>
-    )}
-  </View>
-</View>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 26,
+                    fontWeight: "700",
+                    color: "#EA580C",
+                  }}
+                >
+                  {selectedVariant
+                    ? (formatCurrency(selectedVariant.price) ?? "₱0.00")
+                    : product.price_range?.min === product.price_range?.max
+                      ? (formatCurrency(product.price_range?.min) ?? "₱0.00")
+                      : `${formatCurrency(product.price_range?.min) ?? "₱0.00"} – ${formatCurrency(product.price_range?.max) ?? "₱0.00"}`}
+                </Text>
+                {selectedVariant?.original_price &&
+                  parseFloat(selectedVariant.original_price) >
+                    parseFloat(selectedVariant.price || "0") && (
+                    <Text
+                      style={{
+                        fontSize: 16,
+                        color: "#9CA3AF",
+                        textDecorationLine: "line-through",
+                      }}
+                    >
+                      {formatCurrency(selectedVariant.original_price)}
+                    </Text>
+                  )}
+              </View>
+            </View>
             <View
               style={{
                 marginTop: 10,
@@ -2029,7 +2164,6 @@ const productImageRef = useRef<View>(null);
               )}
             </View>
 
-            {/* Description */}
             <View
               style={{
                 marginTop: 16,
@@ -2055,25 +2189,23 @@ const productImageRef = useRef<View>(null);
           </View>
         </View>
 
-        {/* Seller Info */}
-        {/* Seller Info */}
-<SellerInfoCard
-  product={product}
-  shopInfo={shopInfo || undefined}
-  onPress={() => {
-    const shopId = product.shop?.id ?? product.seller_id;
-    if (shopId) {
-      router.push({
-        pathname: "/customer/view-shop",
-        params: { shopId },
-      });
-    } else {
-      Alert.alert("Error", "Shop not found");
-    }
-  }}
-/>
+        <SellerInfoCard
+          product={product}
+          shopInfo={shopInfo || undefined}
+          onPress={() => {
+            const shopId = product.shop?.id ?? product.seller_id;
+            if (shopId) {
+              router.push({
+                pathname: "/customer/view-shop",
+                params: { shopId },
+              });
+            } else {
+              Alert.alert("Error", "Shop not found");
+            }
+          }}
+        />
 
-        {/* Variant Selection - OLD UI STYLE */}
+        {/* Variant Selection */}
         {product.variants && product.variants.length > 0 && (
           <View
             style={{
@@ -2101,7 +2233,9 @@ const productImageRef = useRef<View>(null);
               <TouchableOpacity
                 key={variant.id}
                 onPress={() => {
+                  console.log("📦 Variant selected:", variant.id, variant.title);
                   setSelectedVariant(variant);
+                  selectedVariantIdRef.current = variant.id;
                   setQuantity(1);
                 }}
                 disabled={!variant.in_stock}
@@ -2161,24 +2295,52 @@ const productImageRef = useRef<View>(null);
                     >
                       {variant.title || variant.sku_code || "Variant"}
                     </Text>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-  <Text style={{ fontSize: 14, color: "#EA580C", fontWeight: "700" }}>
-    {formatCurrency(variant.price) ?? "₱0.00"}
-  </Text>
-  {variant.original_price && parseFloat(variant.original_price) > parseFloat(variant.price || "0") && (
-    <Text style={{ fontSize: 12, color: "#9CA3AF", textDecorationLine: "line-through" }}>
-      {formatCurrency(variant.original_price)}
-    </Text>
-  )}
-</View>
-{variant.original_price && (
-  <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
-    <Ionicons name="time-outline" size={10} color="#6B7280" />
-    <Text style={{ fontSize: 10, color: "#6B7280" }}>
-      Pre-owned
-    </Text>
-  </View>
-)}
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 14,
+                          color: "#EA580C",
+                          fontWeight: "700",
+                        }}
+                      >
+                        {formatCurrency(variant.price) ?? "₱0.00"}
+                      </Text>
+                      {variant.original_price &&
+                        parseFloat(variant.original_price) >
+                          parseFloat(variant.price || "0") && (
+                          <Text
+                            style={{
+                              fontSize: 12,
+                              color: "#9CA3AF",
+                              textDecorationLine: "line-through",
+                            }}
+                          >
+                            {formatCurrency(variant.original_price)}
+                          </Text>
+                        )}
+                    </View>
+                    {variant.original_price && (
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 4,
+                          marginTop: 2,
+                        }}
+                      >
+                        <Ionicons name="time-outline" size={10} color="#6B7280" />
+                        <Text style={{ fontSize: 10, color: "#6B7280" }}>
+                          Pre-owned
+                        </Text>
+                      </View>
+                    )}
                     <Text
                       style={{
                         fontSize: 11,
@@ -2220,11 +2382,7 @@ const productImageRef = useRef<View>(null);
                       </Text>
                     </View>
                   ) : selectedVariant?.id === variant.id ? (
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={24}
-                      color="#EA580C"
-                    />
+                    <Ionicons name="checkmark-circle" size={24} color="#EA580C" />
                   ) : null}
                 </View>
               </TouchableOpacity>
@@ -2232,7 +2390,6 @@ const productImageRef = useRef<View>(null);
           </View>
         )}
 
-        {/* Ownership Info for selected variant */}
         {selectedVariant && (
           <OwnershipInfoCard
             variant={selectedVariant}
@@ -2240,7 +2397,6 @@ const productImageRef = useRef<View>(null);
           />
         )}
 
-        {/* Quantity Selector - single-line layout */}
         {selectedVariant && selectedVariant.in_stock && (
           <View
             style={{
@@ -2264,12 +2420,20 @@ const productImageRef = useRef<View>(null);
               Quantity
             </Text>
 
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
               <Text style={{ fontSize: 13, color: "#6B7280" }}>
                 {selectedVariant.available_quantity ?? 0} available
               </Text>
 
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View
+                style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+              >
                 <TouchableOpacity
                   onPress={() => setQuantity(Math.max(1, quantity - 1))}
                   style={{
@@ -2284,7 +2448,15 @@ const productImageRef = useRef<View>(null);
                   <Ionicons name="remove" size={18} color="#374151" />
                 </TouchableOpacity>
 
-                <Text style={{ fontSize: 16, fontWeight: "600", color: "#111827", minWidth: 28, textAlign: "center" }}>
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontWeight: "600",
+                    color: "#111827",
+                    minWidth: 28,
+                    textAlign: "center",
+                  }}
+                >
                   {quantity}
                 </Text>
 
@@ -2313,18 +2485,23 @@ const productImageRef = useRef<View>(null);
           </View>
         )}
 
-        {/* Reviews */}
         <ReviewsSection
           reviews={product.reviews}
           averageRating={product.average_rating}
           totalReviews={product.total_reviews}
-          productName={product.name} 
+          productName={product.name}
         />
-        {/* Divider below reviews */}
-        <View style={{ height: 1, backgroundColor: '#E5E7EB', marginTop: 12, marginBottom: 8 }} />
+        <View
+          style={{
+            height: 1,
+            backgroundColor: "#E5E7EB",
+            marginTop: 12,
+            marginBottom: 8,
+          }}
+        />
       </ScrollView>
 
-      {/* ── Footer Action Bar ─────────────────────────────────────────────── */}
+      {/* Footer Action Bar */}
       {isInStock ? (
         <View
           style={{
@@ -2342,7 +2519,6 @@ const productImageRef = useRef<View>(null);
             gap: 10,
           }}
         >
-          {/* Add to Cart */}
           <TouchableOpacity
             onPress={addToCart}
             disabled={addingToCart}
@@ -2366,7 +2542,6 @@ const productImageRef = useRef<View>(null);
             </Text>
           </TouchableOpacity>
 
-          {/* Buy Now */}
           <TouchableOpacity
             onPress={buyNow}
             disabled={addingToCart}
@@ -2419,7 +2594,6 @@ const productImageRef = useRef<View>(null);
         </View>
       )}
 
-      {/* Product photo gallery */}
       <ImageGalleryModal
         visible={galleryVisible}
         images={galleryImages}
@@ -2427,7 +2601,6 @@ const productImageRef = useRef<View>(null);
         onClose={() => setGalleryVisible(false)}
       />
 
-      {/* Proof image gallery */}
       <ImageGalleryModal
         visible={proofGalleryVisible}
         images={proofGalleryImages}
@@ -2435,7 +2608,6 @@ const productImageRef = useRef<View>(null);
         onClose={() => setProofGalleryVisible(false)}
       />
 
-      {/* Fly-to-cart animation */}
       {flyToCartVisible && flyToCartImageUri && (
         <Animated.View
           style={{

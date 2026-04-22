@@ -21062,7 +21062,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
 
     def get_queryset(self):
-        from django.db.models import Avg, Count, Q, Min, Max, Sum, OuterRef, Subquery, FloatField, IntegerField
+        from django.db.models import Avg, Count, Q, Min, Max, Sum, OuterRef, Subquery, FloatField, IntegerField, DecimalField, F, ExpressionWrapper
+        from decimal import Decimal
 
         
         user_id = self.request.headers.get('X-User-Id')
@@ -21097,9 +21098,24 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             active_variant_count=Count('variants', filter=Q(variants__is_active=True)),
             # Count variants with stock > 0
             in_stock_variant_count=Count('variants', filter=Q(variants__is_active=True, variants__quantity__gt=0)),
-            # ADD THESE TWO LINES FOR RATINGS
+            # Add ratings
             average_rating=Subquery(avg_rating_subquery, output_field=FloatField()),
             review_count=Subquery(review_count_subquery, output_field=IntegerField()),
+            # Calculate VAT inclusive prices
+            min_variant_price_with_vat=Min(
+                ExpressionWrapper(
+                    F('variants__price') + (F('variants__price') * F('variants__value_added_tax') / 100),
+                    output_field=DecimalField(max_digits=12, decimal_places=2)
+                ),
+                filter=Q(variants__is_active=True)
+            ),
+            max_variant_price_with_vat=Max(
+                ExpressionWrapper(
+                    F('variants__price') + (F('variants__price') * F('variants__value_added_tax') / 100),
+                    output_field=DecimalField(max_digits=12, decimal_places=2)
+                ),
+                filter=Q(variants__is_active=True)
+            ),
         ).select_related(
             'shop',
             'shop__customer__customer',
@@ -21132,6 +21148,9 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
     def get_detail_queryset(self):
         """Detail view with all variants for single product page"""
+        from django.db.models import Min, Max, Sum, Count, F, ExpressionWrapper, DecimalField
+        from django.db.models import Q
+        
         user_id = self.request.headers.get('X-User-Id')
         
         return Product.objects.filter(
@@ -21141,7 +21160,22 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             min_variant_price=Min('variants__price', filter=Q(variants__is_active=True)),
             max_variant_price=Max('variants__price', filter=Q(variants__is_active=True)),
             total_variant_stock=Sum('variants__quantity', filter=Q(variants__is_active=True)),
-            active_variant_count=Count('variants', filter=Q(variants__is_active=True))
+            active_variant_count=Count('variants', filter=Q(variants__is_active=True)),
+            # Calculate VAT inclusive prices
+            min_variant_price_with_vat=Min(
+                ExpressionWrapper(
+                    F('variants__price') + (F('variants__price') * F('variants__value_added_tax') / 100),
+                    output_field=DecimalField(max_digits=12, decimal_places=2)
+                ),
+                filter=Q(variants__is_active=True)
+            ),
+            max_variant_price_with_vat=Max(
+                ExpressionWrapper(
+                    F('variants__price') + (F('variants__price') * F('variants__value_added_tax') / 100),
+                    output_field=DecimalField(max_digits=12, decimal_places=2)
+                ),
+                filter=Q(variants__is_active=True)
+            ),
         ).select_related(
             'shop',
             'shop__customer__customer',
@@ -21232,8 +21266,22 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             print(f"Error checking favorite: {e}")
             return False
     
+    def _get_variant_data_with_vat(self, variant):
+        """Helper method to get variant data including VAT calculations"""
+        price = float(variant.price) if variant.price else 0
+        vat_percentage = float(variant.value_added_tax) if variant.value_added_tax else 12.0
+        vat_amount = (price * vat_percentage) / 100
+        price_with_vat = price + vat_amount
+        
+        return {
+            'price': price,
+            'vat_percentage': vat_percentage,
+            'vat_amount': round(vat_amount, 2),
+            'price_with_vat': round(price_with_vat, 2),
+        }
+    
     def list(self, request, *args, **kwargs):
-        """Return list of products with all necessary info for display"""
+        """Return list of products with all necessary info for display including VAT"""
         queryset = self.get_queryset()
         
         # Debug logging
@@ -21249,16 +21297,15 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         data = serializer.data
         
-        # Transform data to show variant-based pricing and availability
+        # Transform data to show variant-based pricing and availability including VAT
         for item in data:
             product_id = item.get('id')
             
             # Check if product is in user's favorites
             item['is_favorite'] = self._check_if_favorite(product_id, user_id)
 
-                # ADD THESE LINES FOR RATINGS
             # Get rating values from the annotated queryset
-            product_obj = queryset.get(id=product_id) if hasattr(queryset, 'get') else None
+            product_obj = queryset.filter(id=product_id).first()
             if product_obj:
                 item['average_rating'] = getattr(product_obj, 'average_rating', None)
                 item['review_count'] = getattr(product_obj, 'review_count', 0)
@@ -21267,6 +21314,39 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             else:
                 item['average_rating'] = None
                 item['review_count'] = 0
+            
+            # Get VAT inclusive prices from annotations
+            if product_obj:
+                min_price_with_vat = getattr(product_obj, 'min_variant_price_with_vat', None)
+                max_price_with_vat = getattr(product_obj, 'max_variant_price_with_vat', None)
+                
+                if min_price_with_vat and max_price_with_vat:
+                    if min_price_with_vat == max_price_with_vat:
+                        item['price_display_with_vat'] = f"₱{min_price_with_vat:,.2f}"
+                    else:
+                        item['price_display_with_vat'] = f"₱{min_price_with_vat:,.2f} - ₱{max_price_with_vat:,.2f}"
+                else:
+                    # Fallback to calculating from variants
+                    variants = item.get('variants', [])
+                    if variants:
+                        prices_with_vat = []
+                        for variant in variants:
+                            price = variant.get('price', 0) or 0
+                            vat_percentage = variant.get('value_added_tax', 12) or 12
+                            price_with_vat = price + (price * vat_percentage / 100)
+                            prices_with_vat.append(price_with_vat)
+                        
+                        min_price_with_vat = min(prices_with_vat)
+                        max_price_with_vat = max(prices_with_vat)
+                        
+                        if min_price_with_vat == max_price_with_vat:
+                            item['price_display_with_vat'] = f"₱{min_price_with_vat:,.2f}"
+                        else:
+                            item['price_display_with_vat'] = f"₱{min_price_with_vat:,.2f} - ₱{max_price_with_vat:,.2f}"
+                    else:
+                        item['price_display_with_vat'] = item.get('price_display', 'Price unavailable')
+            else:
+                item['price_display_with_vat'] = item.get('price_display', 'Price unavailable')
             
             # Use price_display from serializer (already correctly formatted)
             item['display_price'] = item.get('price_display', 'Price unavailable')
@@ -21281,7 +21361,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             available_stock = max(0, total_stock - ordered_quantity)
             
             # Set stock fields
-            item['total_stock'] = total_stock  # This is the sum of all variant quantities from model property
+            item['total_stock'] = total_stock
             item['available_stock'] = available_stock
             item['ordered_quantity'] = ordered_quantity
             
@@ -21300,7 +21380,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 item['seller_avatar'] = self._convert_to_public_url(item['shop'].get('shop_picture'))
             elif item.get('customer'):
                 item['listing_type'] = 'personal'
-                # Get customer user info
                 if 'customer' in item and item['customer']:
                     customer_data = item['customer']
                     if isinstance(customer_data, dict):
@@ -21334,7 +21413,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             if item.get('primary_image') and item['primary_image'].get('url'):
                 item['primary_image_url'] = self._convert_to_public_url(item['primary_image']['url'])
             elif item.get('media_files') and len(item['media_files']) > 0:
-                # Use first media file as primary
                 first_media = item['media_files'][0]
                 if first_media.get('file_data'):
                     item['primary_image_url'] = self._convert_to_public_url(first_media['file_data'])
@@ -21345,24 +21423,29 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             else:
                 item['primary_image_url'] = None
 
+            # Keep minimal variant info including VAT
             if item.get('variants'):
-                # Keep only necessary fields for price display
                 minimal_variants = []
                 for variant in item['variants']:
+                    price = variant.get('price', 0) or 0
+                    vat_percentage = variant.get('value_added_tax', 12) or 12
+                    vat_amount = price * vat_percentage / 100
+                    price_with_vat = price + vat_amount
+                    
                     minimal_variants.append({
-                        'price': variant.get('price'),
+                        'price': price,
                         'original_price': variant.get('original_price'),
                         'compare_price': variant.get('compare_price'),
+                        'vat_percentage': vat_percentage,
+                        'vat_amount': round(vat_amount, 2),
+                        'price_with_vat': round(price_with_vat, 2),
                     })
                 item['variants'] = minimal_variants
-            
-            # Remove variant details from list view to keep it light
-            # item.pop('variants', None)
         
         return Response(data)
     
     def retrieve(self, request, pk=None):
-        """Return a single product with all variant details including ownership info"""
+        """Return a single product with all variant details including VAT and ownership info"""
         try:
             product = self.get_detail_queryset().get(pk=pk)
         except Product.DoesNotExist:
@@ -21375,9 +21458,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         serializer = ProductSerializer(product, context={'request': request})
         data = serializer.data
 
-
         # Calculate average rating and review count from the Review model
-        
         reviews_aggregate = Review.objects.filter(
             product=product,
             average_rating__isnull=False
@@ -21400,7 +21481,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 first = review.customer.customer.first_name or ''
                 last = review.customer.customer.last_name or ''
                 customer_name = f"{first} {last}".strip() or review.customer.customer.username
-                # Use get_media_url helper for profile picture
                 profile_picture = get_media_url(review.customer.customer.profile_picture)
             
             # Get media
@@ -21445,7 +21525,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             data['shop_picture_url'] = get_media_url(product.shop.shop_picture) if product.shop else None
         elif data.get('customer'):
             data['listing_type'] = 'personal'
-            # Get customer user info
             customer_data = data['customer']
             if isinstance(customer_data, dict):
                 data['seller_id'] = customer_data.get('customer_id')
@@ -21460,7 +21539,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             data['seller_id'] = None
             data['seller_name'] = 'Unknown Seller'
         
-        # Process variants
+        # Process variants with VAT calculations
         if 'variants' in data and data['variants']:
             # Sort variants by price
             data['variants'] = sorted(data['variants'], key=lambda x: float(x.get('price', 0) or 0))
@@ -21471,12 +21550,13 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             # Get ordered quantities for these variants
             ordered_quantities = self._get_variant_ordered_quantities(variant_ids)
             
-            # Add variant count and stock info with available quantities
+            # Add variant count and stock info with available quantities and VAT
             data['variant_count'] = len(data['variants'])
             
-            # Calculate available stock for each variant and overall
+            # Calculate available stock and VAT inclusive prices
             total_available_stock = 0
             in_stock_variants = []
+            all_prices_with_vat = []
             
             for variant in data['variants']:
                 variant_id = variant.get('id')
@@ -21484,11 +21564,21 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 ordered_qty = ordered_quantities.get(variant_id, 0)
                 available_qty = max(0, total_qty - ordered_qty)
                 
-                # Ownership fields - include original_price, purchase_date, proof_image
+                # Calculate VAT values
+                price = float(variant.get('price', 0) or 0)
+                vat_percentage = float(variant.get('value_added_tax', 12) or 12)
+                vat_amount = (price * vat_percentage) / 100
+                price_with_vat = price + vat_amount
+                all_prices_with_vat.append(price_with_vat)
+                
+                # Ownership fields
                 variant['total_quantity'] = total_qty
                 variant['ordered_quantity'] = ordered_qty
                 variant['available_quantity'] = available_qty
                 variant['in_stock'] = available_qty > 0
+                variant['vat_percentage'] = vat_percentage
+                variant['vat_amount'] = round(vat_amount, 2)
+                variant['price_with_vat'] = round(price_with_vat, 2)
                 
                 # Ownership information
                 variant['original_price'] = variant.get('original_price')
@@ -21517,6 +21607,16 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 if variant.get('image_url'):
                     variant['image_url'] = self._convert_to_public_url(variant['image_url'])
             
+            # Add price range with VAT
+            if all_prices_with_vat:
+                min_price_with_vat = min(all_prices_with_vat)
+                max_price_with_vat = max(all_prices_with_vat)
+                
+                if min_price_with_vat == max_price_with_vat:
+                    data['price_display_with_vat'] = f"₱{min_price_with_vat:,.2f}"
+                else:
+                    data['price_display_with_vat'] = f"₱{min_price_with_vat:,.2f} - ₱{max_price_with_vat:,.2f}"
+            
             data['in_stock_variant_count'] = len(in_stock_variants)
             data['has_stock'] = len(in_stock_variants) > 0
             data['total_stock'] = sum(v.get('quantity', 0) for v in data['variants'])
@@ -21534,6 +21634,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             data['has_stock'] = False
             data['total_stock'] = 0
             data['total_available_stock'] = 0
+            data['price_display_with_vat'] = data.get('price_display', 'Price unavailable')
         
         # Add availability message based on available stock
         if data.get('total_available_stock', 0) > 0:
@@ -21576,7 +21677,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'])
     def get_variant_for_options(self, request):
-        """Get variant details for specific selected options including ownership info"""
+        """Get variant details for specific selected options including VAT and ownership info"""
         product_id = request.query_params.get('product_id')
         option_ids = request.query_params.getlist('option_ids[]') or []
         
@@ -21610,7 +21711,13 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             total_qty = matching_variant.quantity or 0
             available_qty = max(0, total_qty - ordered_qty)
             
-            # Build response with variant details including ownership fields
+            # Calculate VAT values
+            price = float(matching_variant.price) if matching_variant.price else 0
+            vat_percentage = float(matching_variant.value_added_tax) if matching_variant.value_added_tax else 12.0
+            vat_amount = (price * vat_percentage) / 100
+            price_with_vat = price + vat_amount
+            
+            # Build response with variant details including ownership fields and VAT
             image_url = self._convert_to_public_url(matching_variant.image.url) if matching_variant.image else None
             proof_image_url = self._convert_to_public_url(matching_variant.proof_image.url) if matching_variant.proof_image else None
             
@@ -21618,18 +21725,18 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'id': str(matching_variant.id),
                 'title': matching_variant.title,
                 'sku_code': matching_variant.sku_code,
-                'price': float(matching_variant.price) if matching_variant.price else None,
+                'price': price,
                 'compare_price': float(matching_variant.compare_price) if matching_variant.compare_price else None,
                 'total_quantity': total_qty,
                 'ordered_quantity': ordered_qty,
                 'available_quantity': available_qty,
-                'quantity': matching_variant.quantity,  # Keep for backward compatibility
+                'quantity': matching_variant.quantity,
                 'in_stock': available_qty > 0,
                 'stock_status': 'in_stock' if available_qty > 0 else 'out_of_stock',
                 'image': image_url,
-                'proof_image': proof_image_url,  # Added proof image URL
-                'original_price': float(matching_variant.original_price) if matching_variant.original_price else None,  # Added original price
-                'purchase_date': matching_variant.purchase_date.isoformat() if matching_variant.purchase_date else None,  # Added purchase date
+                'proof_image': proof_image_url,
+                'original_price': float(matching_variant.original_price) if matching_variant.original_price else None,
+                'purchase_date': matching_variant.purchase_date.isoformat() if matching_variant.purchase_date else None,
                 'usage_period': matching_variant.usage_period,
                 'usage_unit': matching_variant.usage_unit,
                 'depreciation_rate': matching_variant.depreciation_rate,
@@ -21646,6 +21753,10 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'width': float(matching_variant.width) if matching_variant.width else None,
                 'height': float(matching_variant.height) if matching_variant.height else None,
                 'dimension_unit': matching_variant.dimension_unit,
+                # VAT fields
+                'vat_percentage': vat_percentage,
+                'vat_amount': round(vat_amount, 2),
+                'price_with_vat': round(price_with_vat, 2),
             }
             return Response(response_data)
         
@@ -21692,14 +21803,14 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                     "total_quantity": total_qty,
                     "ordered_quantity": ordered_qty,
                     "available_quantity": available_qty,
-                    "quantity": variant.quantity  # Keep for backward compatibility
+                    "quantity": variant.quantity
                 })
 
         return Response({"variant_id": None, "message": "No matching variant found"}, status=404)
 
     @action(detail=True, methods=['get'])
     def variants(self, request, pk=None):
-        """Get all active variants for a product including ownership info"""
+        """Get all active variants for a product including VAT and ownership info"""
         try:
             product = Product.objects.get(id=pk, is_removed=False, upload_status='published')
         except Product.DoesNotExist:
@@ -21720,6 +21831,12 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             ordered_qty = ordered_quantities.get(variant_id, 0)
             available_qty = max(0, total_qty - ordered_qty)
             
+            # Calculate VAT values
+            price = float(variant.price) if variant.price else 0
+            vat_percentage = float(variant.value_added_tax) if variant.value_added_tax else 12.0
+            vat_amount = (price * vat_percentage) / 100
+            price_with_vat = price + vat_amount
+            
             image_url = self._convert_to_public_url(variant.image.url) if variant.image else None
             proof_image_url = self._convert_to_public_url(variant.proof_image.url) if variant.proof_image else None
             
@@ -21727,18 +21844,18 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'id': variant_id,
                 'title': variant.title,
                 'sku_code': variant.sku_code,
-                'price': float(variant.price) if variant.price else None,
+                'price': price,
                 'compare_price': float(variant.compare_price) if variant.compare_price else None,
                 'total_quantity': total_qty,
                 'ordered_quantity': ordered_qty,
                 'available_quantity': available_qty,
-                'quantity': variant.quantity,  # Keep for backward compatibility
+                'quantity': variant.quantity,
                 'in_stock': available_qty > 0,
                 'stock_status': 'in_stock' if available_qty > 0 else 'out_of_stock',
                 'image': image_url,
-                'proof_image': proof_image_url,  # Added proof image URL
-                'original_price': float(variant.original_price) if variant.original_price else None,  # Added original price
-                'purchase_date': variant.purchase_date.isoformat() if variant.purchase_date else None,  # Added purchase date
+                'proof_image': proof_image_url,
+                'original_price': float(variant.original_price) if variant.original_price else None,
+                'purchase_date': variant.purchase_date.isoformat() if variant.purchase_date else None,
                 'usage_period': variant.usage_period,
                 'usage_unit': variant.usage_unit,
                 'depreciation_rate': variant.depreciation_rate,
@@ -21753,13 +21870,17 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                 'width': float(variant.width) if variant.width else None,
                 'height': float(variant.height) if variant.height else None,
                 'dimension_unit': variant.dimension_unit,
+                # VAT fields
+                'vat_percentage': vat_percentage,
+                'vat_amount': round(vat_amount, 2),
+                'price_with_vat': round(price_with_vat, 2),
             })
         
         return Response(variant_data)
 
     @action(detail=True, methods=['get'])
     def check_availability(self, request, pk=None):
-        """Check if a product has any available variants"""
+        """Check if a product has any available variants including VAT info"""
         try:
             product = Product.objects.get(id=pk, is_removed=False, upload_status='published')
         except Product.DoesNotExist:
@@ -21781,8 +21902,9 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         # Count in-stock variants based on available quantity
         in_stock_variants = []
         variants_data = []
+        all_prices_with_vat = []
         
-        for variant in active_variants[:5]:  # Limit to first 5 for performance
+        for variant in active_variants[:5]:
             variant_ordered_qty = CartItem.objects.filter(
                 variant=variant,
                 is_ordered=True,
@@ -21791,19 +21913,39 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             
             variant_available = max(0, (variant.quantity or 0) - variant_ordered_qty)
             
+            # Calculate VAT values
+            price = float(variant.price) if variant.price else 0
+            vat_percentage = float(variant.value_added_tax) if variant.value_added_tax else 12.0
+            vat_amount = (price * vat_percentage) / 100
+            price_with_vat = price + vat_amount
+            all_prices_with_vat.append(price_with_vat)
+            
             if variant_available > 0:
                 in_stock_variants.append(variant)
             
             variants_data.append({
                 'id': str(variant.id),
                 'title': variant.title,
-                'price': float(variant.price) if variant.price else None,
+                'price': price,
                 'total_quantity': variant.quantity,
                 'ordered_quantity': variant_ordered_qty,
                 'available_quantity': variant_available,
                 'in_stock': variant_available > 0,
                 'original_price': float(variant.original_price) if variant.original_price else None,
+                'vat_percentage': vat_percentage,
+                'vat_amount': round(vat_amount, 2),
+                'price_with_vat': round(price_with_vat, 2),
             })
+        
+        # Calculate price range with VAT
+        price_range_with_vat = None
+        if all_prices_with_vat:
+            min_price_with_vat = min(all_prices_with_vat)
+            max_price_with_vat = max(all_prices_with_vat)
+            if min_price_with_vat == max_price_with_vat:
+                price_range_with_vat = f"₱{min_price_with_vat:,.2f}"
+            else:
+                price_range_with_vat = f"₱{min_price_with_vat:,.2f} - ₱{max_price_with_vat:,.2f}"
         
         return Response({
             'product_id': str(pk),
@@ -21817,6 +21959,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             'available_stock': available_stock,
             'min_price': float(product.min_price) if product.min_price else None,
             'max_price': float(product.max_price) if product.max_price else None,
+            'price_range_with_vat': price_range_with_vat,
             'variants': variants_data
         })
 
@@ -21829,8 +21972,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
         try:
             # Simplified queryset to avoid complex joins
             product = Product.objects.select_related(
-                'customer',  # This gets the Customer model
-                'customer__customer',  # This gets the User model through Customer
+                'customer',
+                'customer__customer',
                 'shop'
             ).get(
                 id=pk, 
@@ -21865,7 +22008,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             # If product has a customer (personal listing), return customer info
             elif product.customer:
                 customer = product.customer
-                # Get the User model through the customer field
                 user = customer.customer if hasattr(customer, 'customer') else None
                 
                 # Build address from User model fields
@@ -21881,12 +22023,11 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
                         address_parts.append(user.province)
                 address = ', '.join(address_parts) if address_parts else None
                 
-                # Customers don't have profile pictures in the current model
                 profile_picture_url = None
                 
                 seller_data = {
                     'type': 'seller',
-                    'id': str(customer.customer_id) if customer.customer_id else None,  # This is the User ID
+                    'id': str(customer.customer_id) if customer.customer_id else None,
                     'username': user.username if user else None,
                     'email': user.email if user else None,
                     'full_name': f"{user.first_name} {user.last_name}".strip() if user else None,
@@ -21906,7 +22047,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             import traceback
             traceback.print_exc()
             return Response({"error": str(e)}, status=500)
-
         
 class AddToCartView(APIView):
     """
