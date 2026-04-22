@@ -9193,34 +9193,24 @@ class AdminVouchers(viewsets.ViewSet):
             scheduled_filter['start_date__gt'] = now
             scheduled_vouchers = Voucher.objects.filter(**scheduled_filter).count()
             
-            # Calculate total usage from Checkout model with date range
+            # Calculate total usage from UserVoucherUsage model
             usage_filter = {}
             if start_date_str:
                 start_date = parse_date(start_date_str)
                 if start_date:
-                    usage_filter['created_at__gte'] = start_date
+                    usage_filter['used_at__gte'] = start_date
                     
             if end_date_str:
                 end_date = parse_date(end_date_str)
                 if end_date:
-                    usage_filter['created_at__lte'] = end_date
+                    usage_filter['used_at__lte'] = end_date
             
-            # Get checkouts that used vouchers
-            checkouts_with_voucher = Checkout.objects.filter(
-                voucher__isnull=False,
-                **usage_filter
-            )
-            total_usage = checkouts_with_voucher.count()
+            total_usage = UserVoucherUsage.objects.filter(**usage_filter).count()
             
-            # Calculate total discount from checkouts
-            total_discount = 0
-            for checkout in checkouts_with_voucher:
-                if checkout.voucher:
-                    if checkout.voucher.discount_type == 'percentage':
-                        discount = (checkout.voucher.value / 100) * checkout.total_amount
-                        total_discount += float(discount)
-                    else:
-                        total_discount += float(checkout.voucher.value)
+            # Calculate total discount from usages
+            total_discount = UserVoucherUsage.objects.filter(**usage_filter).aggregate(
+                total=models.Sum('discount_amount')
+            )['total'] or 0
             
             metrics = {
                 'total_vouchers': total_vouchers,
@@ -9228,7 +9218,7 @@ class AdminVouchers(viewsets.ViewSet):
                 'expired_vouchers': expired_vouchers,
                 'scheduled_vouchers': scheduled_vouchers,
                 'total_usage': total_usage,
-                'total_discount': round(total_discount, 2),
+                'total_discount': float(total_discount),
             }
             
             return Response({
@@ -9288,8 +9278,10 @@ class AdminVouchers(viewsets.ViewSet):
                     Q(code__icontains=search)
                 )
             
-            # Apply status filter
+            # Get current date for status calculation
             now = timezone.now().date()
+            
+            # Apply status filter based on actual conditions
             if status_filter:
                 if status_filter == 'active':
                     vouchers_qs = vouchers_qs.filter(
@@ -9303,6 +9295,7 @@ class AdminVouchers(viewsets.ViewSet):
                     )
                 elif status_filter == 'scheduled':
                     vouchers_qs = vouchers_qs.filter(
+                        is_active=True,
                         start_date__gt=now
                     )
                 elif status_filter == 'inactive':
@@ -9351,18 +9344,53 @@ class AdminVouchers(viewsets.ViewSet):
                         'last_name': voucher.created_by.last_name
                     }
                 
-                # Determine status
-                if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
-                    status_value = 'active'
-                elif voucher.end_date and voucher.end_date < now:
-                    status_value = 'expired'
-                elif not voucher.is_active and voucher.start_date > now:
-                    status_value = 'scheduled'
+                # FIXED: Convert dates properly for comparison
+                # Convert start_date to date if it's a datetime
+                start_date = voucher.start_date
+                end_date = voucher.end_date
+                
+                # Ensure we're comparing dates, not datetimes
+                if start_date and hasattr(start_date, 'date'):
+                    start_date = start_date.date()
+                if end_date and hasattr(end_date, 'date'):
+                    end_date = end_date.date()
+                
+                current_date = now
+                
+                # Debug print to see what's happening
+                print(f"Voucher: {voucher.code}")
+                print(f"  is_active: {voucher.is_active}")
+                print(f"  start_date: {start_date} (type: {type(start_date)})")
+                print(f"  end_date: {end_date} (type: {type(end_date)})")
+                print(f"  current_date: {current_date} (type: {type(current_date)})")
+                print(f"  start_date <= current_date: {start_date <= current_date if start_date else True}")
+                print(f"  end_date >= current_date: {end_date >= current_date if end_date else True}")
+                
+                # Determine status with explicit date checks
+                if voucher.is_active:
+                    # Check if voucher has started
+                    has_started = start_date <= current_date if start_date else True
+                    # Check if voucher has expired
+                    has_expired = end_date < current_date if end_date else False
+                    # Check if voucher is scheduled (future start date)
+                    is_scheduled = start_date > current_date if start_date else False
+                    
+                    if is_scheduled:
+                        status_value = 'scheduled'
+                    elif has_expired:
+                        status_value = 'expired'
+                    elif has_started and not has_expired:
+                        status_value = 'active'
+                    else:
+                        status_value = 'inactive'
                 else:
                     status_value = 'inactive'
                 
-                # Calculate usage count
-                usage_count = Checkout.objects.filter(voucher=voucher).count()
+                print(f"  determined status: {status_value}")
+                print("-" * 40)
+                
+                # Calculate usage count - unique users count
+                usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
                 
                 voucher_data = {
                     'id': str(voucher.id),
@@ -9411,7 +9439,7 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
     @action(detail=True, methods=['get'])
     def voucher(self, request, pk=None):
         """
@@ -9447,18 +9475,29 @@ class AdminVouchers(viewsets.ViewSet):
                     'last_name': voucher.created_by.last_name
                 }
             
+            # FIXED: Determine status correctly
+            start_date = voucher.start_date
+            end_date = voucher.end_date
+            current_date = now
+            
+            # Handle date/timezone conversion
+            if hasattr(start_date, 'date'):
+                start_date = start_date.date()
+            if hasattr(end_date, 'date'):
+                end_date = end_date.date()
+            
             # Determine status
-            if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
+            if voucher.is_active and start_date <= current_date and (not end_date or end_date >= current_date):
                 status_value = 'active'
-            elif voucher.end_date and voucher.end_date < now:
+            elif end_date and end_date < current_date:
                 status_value = 'expired'
-            elif not voucher.is_active and voucher.start_date > now:
+            elif voucher.is_active and start_date > current_date:
                 status_value = 'scheduled'
             else:
                 status_value = 'inactive'
             
-            # Calculate usage count
-            usage_count = Checkout.objects.filter(voucher=voucher).count()
+            # Calculate usage count - unique users
+            usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
             
             voucher_data = {
                 'id': str(voucher.id),
@@ -9479,29 +9518,26 @@ class AdminVouchers(viewsets.ViewSet):
                 'usage_count': usage_count,
             }
             
-            # Get usage history
-            checkouts = Checkout.objects.filter(
+            # Get usage history - UserVoucherUsage
+            usages = UserVoucherUsage.objects.filter(
                 voucher=voucher
-            ).select_related('order__user').order_by('-created_at')
+            ).select_related('user', 'order').order_by('-used_at')
             
-            usages = []
-            for checkout in checkouts:
-                user = checkout.order.user if checkout.order else None
-                usages.append({
-                    'id': str(checkout.id),
-                    'order_id': str(checkout.order.order) if checkout.order else None,
-                    'user_id': str(user.id) if user else None,
-                    'user_name': f"{user.first_name} {user.last_name}".strip() or user.username if user else 'Unknown User',
-                    'discount_amount': float(checkout.voucher.value) if checkout.voucher else 0,
-                    'used_at': checkout.created_at.isoformat(),
-                    'order_total': float(checkout.total_amount) if checkout.total_amount else 0,
-                    'final_total': float(checkout.total_amount) - (float(checkout.voucher.value) if checkout.voucher else 0)
+            usage_list = []
+            for usage in usages:
+                usage_list.append({
+                    'id': str(usage.id),
+                    'order_id': str(usage.order.order) if usage.order else None,
+                    'user_id': str(usage.user.id) if usage.user else None,
+                    'user_name': f"{usage.user.first_name} {usage.user.last_name}".strip() or usage.user.username if usage.user else 'Unknown User',
+                    'discount_amount': float(usage.discount_amount),
+                    'used_at': usage.used_at.isoformat(),
                 })
             
             return Response({
                 'success': True,
                 'voucher': voucher_data,
-                'usages': usages
+                'usages': usage_list
             })
             
         except Exception as e:
@@ -9512,7 +9548,7 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
     @action(detail=True, methods=['put', 'patch'])
     def update_voucher(self, request, pk=None):
         """
@@ -9607,7 +9643,7 @@ class AdminVouchers(viewsets.ViewSet):
                 }, status=status.HTTP_404_NOT_FOUND)
             
             # Check if voucher has been used
-            usage_count = Checkout.objects.filter(voucher=voucher).count()
+            usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
             if usage_count > 0:
                 # Instead of deleting, just deactivate it
                 voucher.is_active = False
@@ -9633,7 +9669,8 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+            
+             
 class AdminRefunds(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'])
@@ -26809,14 +26846,21 @@ class CheckoutOrder(viewsets.ViewSet):
 
             voucher_list = []
             for voucher in unique_vouchers:
-                # Check usage count - only include if maximum_usage is not reached
-                usage_count = Checkout.objects.filter(
-                    voucher=voucher,
-                    order__status__in=['delivered', 'completed', 'processing', 'shipped']
-                ).count()
+                # Check if user has already used this voucher
+                user = User.objects.filter(id=user_id).first()
+                user_has_used = False
+                if user:
+                    user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
+                
+                # Skip if user has already used this voucher
+                if user_has_used:
+                    continue
+                
+                # Check global usage count - only include if maximum_usage is not reached
+                total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
                 
                 # Skip if maximum usage reached (0 means unlimited)
-                if voucher.maximum_usage > 0 and usage_count >= voucher.maximum_usage:
+                if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
                     continue
                 
                 potential_savings = self._calculate_discount(voucher, Decimal(str(current_subtotal)))
@@ -26824,7 +26868,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 # Get remaining usage
                 remaining_usage = None
                 if voucher.maximum_usage > 0:
-                    remaining_usage = voucher.maximum_usage - usage_count
+                    remaining_usage = voucher.maximum_usage - total_usage_count
 
                 voucher_data = {
                     "id": str(voucher.id),
@@ -26834,7 +26878,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
                     "maximum_usage": voucher.maximum_usage,
-                    "usage_count": usage_count,
+                    "usage_count": total_usage_count,
                     "remaining_usage": remaining_usage,
                     "shop_name": voucher.shop.name if voucher.shop else "All Shops",
                     "shop_id": str(voucher.shop.id) if voucher.shop else None,
@@ -26842,7 +26886,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     "potential_savings": float(potential_savings),
                     "customer_tier": "all",
                     "voucher_type": voucher.voucher_type,
-                    "is_general": voucher.shop is None
+                    "is_general": voucher.shop is None,
+                    "user_has_used": user_has_used
                 }
                 voucher_list.append(voucher_data)
 
@@ -27029,13 +27074,20 @@ class CheckoutOrder(viewsets.ViewSet):
                         "error": "Invalid voucher code or voucher not applicable"
                     }, status=status.HTTP_404_NOT_FOUND)
 
-            # Check usage count
-            usage_count = Checkout.objects.filter(
-                voucher=voucher,
-                order__status__in=['delivered', 'completed', 'processing', 'shipped']
-            ).count()
+            # Check if user has already used this voucher
+            user = User.objects.get(id=user_id)
+            user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
             
-            if voucher.maximum_usage > 0 and usage_count >= voucher.maximum_usage:
+            if user_has_used:
+                return Response({
+                    "valid": False,
+                    "error": "You have already used this voucher. Each voucher can only be used once per user."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check global usage count
+            total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
+            
+            if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
                 return Response({
                     "valid": False,
                     "error": f"This voucher has reached its maximum usage limit ({voucher.maximum_usage} uses)"
@@ -27045,7 +27097,7 @@ class CheckoutOrder(viewsets.ViewSet):
             
             remaining_usage = None
             if voucher.maximum_usage > 0:
-                remaining_usage = voucher.maximum_usage - usage_count
+                remaining_usage = voucher.maximum_usage - total_usage_count
 
             return Response({
                 "valid": True,
@@ -27057,15 +27109,18 @@ class CheckoutOrder(viewsets.ViewSet):
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
                     "maximum_usage": voucher.maximum_usage,
-                    "usage_count": usage_count,
+                    "usage_count": total_usage_count,
                     "remaining_usage": remaining_usage,
                     "shop_name": voucher.shop.name if voucher.shop else "All Shops",
                     "discount_amount": float(discount_amount),
                     "customer_tier": "all",
-                    "is_general": voucher.shop is None
+                    "is_general": voucher.shop is None,
+                    "user_has_used": user_has_used
                 }
             })
 
+        except User.DoesNotExist:
+            return Response({"valid": False, "error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Error validating voucher: {str(e)}")
             return Response(
@@ -27281,13 +27336,18 @@ class CheckoutOrder(viewsets.ViewSet):
                         minimum_spend__lte=subtotal
                     )
                     
-                    # Check usage count before applying
-                    usage_count = Checkout.objects.filter(
-                        voucher=voucher,
-                        order__status__in=['delivered', 'completed', 'processing', 'shipped']
-                    ).count()
+                    # Check if user has already used this voucher
+                    user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
+                    if user_has_used:
+                        return Response(
+                            {"error": "You have already used this voucher. Each voucher can only be used once per user."},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
                     
-                    if voucher.maximum_usage > 0 and usage_count >= voucher.maximum_usage:
+                    # Check global usage count before applying
+                    total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
+                    
+                    if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
                         return Response(
                             {"error": "This voucher has reached its maximum usage limit"},
                             status=status.HTTP_400_BAD_REQUEST
@@ -27472,6 +27532,15 @@ class CheckoutOrder(viewsets.ViewSet):
                 method=payment_method,
                 status='pending'
             )
+
+            # Record voucher usage if voucher was applied
+            if voucher:
+                UserVoucherUsage.objects.create(
+                    user=user,
+                    voucher=voucher,
+                    order=order,
+                    discount_amount=discount_amount
+                )
 
             # Decrease stock for the order items
             self._decrease_stock_for_order(order)
@@ -28258,6 +28327,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     product.save()
 
         return stock_errors
+
 
 class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
