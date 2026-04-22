@@ -558,12 +558,12 @@ export default function PurchasesPage() {
         )}
         {/* Cancelled Badge for individual cancelled items */}
 {/* Cancelled Badge for individual cancelled items */}
-{item.status === 'cancelled' && (
+{/* {item.status === 'cancelled' && (
   <View style={styles.cancelledItemBadge}>
     <MaterialIcons name="cancel" size={12} color="#EF4444" />
     <Text style={styles.cancelledItemText}>Item Cancelled</Text>
   </View>
-)}
+)} */}
 
         {/* Shop Header */}
         <View style={styles.shopHeader}>
