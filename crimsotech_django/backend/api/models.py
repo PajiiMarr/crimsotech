@@ -66,6 +66,9 @@ class User(models.Model):
     def total_report_count(self):
         return self.reports_against.count()
 
+# Add this to your models.py
+
+
 class Customer(models.Model):
     customer = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     product_limit = models.IntegerField(default=500)
@@ -910,6 +913,28 @@ class Voucher(models.Model):
     def __str__(self):
         return f"{self.name} ({self.code})"
         
+class UserVoucherUsage(models.Model):
+    """
+    Track voucher usage per user to enforce one-time use per user
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='voucher_usages')
+    voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='user_usages')
+    order = models.ForeignKey('Order', on_delete=models.CASCADE, null=True, blank=True, related_name='voucher_usages')
+    used_at = models.DateTimeField(auto_now_add=True)
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    
+    class Meta:
+        unique_together = ['user', 'voucher']  # Ensures a user can only use a voucher once
+        indexes = [
+            models.Index(fields=['user', 'voucher']),
+            models.Index(fields=['used_at']),
+            models.Index(fields=['order']),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.username} used {self.voucher.code} on {self.used_at}"
+
 class RefundPolicy(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
     main_title = models.CharField(max_length=100)

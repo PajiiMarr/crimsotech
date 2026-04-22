@@ -9193,34 +9193,24 @@ class AdminVouchers(viewsets.ViewSet):
             scheduled_filter['start_date__gt'] = now
             scheduled_vouchers = Voucher.objects.filter(**scheduled_filter).count()
             
-            # Calculate total usage from Checkout model with date range
+            # Calculate total usage from UserVoucherUsage model
             usage_filter = {}
             if start_date_str:
                 start_date = parse_date(start_date_str)
                 if start_date:
-                    usage_filter['created_at__gte'] = start_date
+                    usage_filter['used_at__gte'] = start_date
                     
             if end_date_str:
                 end_date = parse_date(end_date_str)
                 if end_date:
-                    usage_filter['created_at__lte'] = end_date
+                    usage_filter['used_at__lte'] = end_date
             
-            # Get checkouts that used vouchers
-            checkouts_with_voucher = Checkout.objects.filter(
-                voucher__isnull=False,
-                **usage_filter
-            )
-            total_usage = checkouts_with_voucher.count()
+            total_usage = UserVoucherUsage.objects.filter(**usage_filter).count()
             
-            # Calculate total discount from checkouts
-            total_discount = 0
-            for checkout in checkouts_with_voucher:
-                if checkout.voucher:
-                    if checkout.voucher.discount_type == 'percentage':
-                        discount = (checkout.voucher.value / 100) * checkout.total_amount
-                        total_discount += float(discount)
-                    else:
-                        total_discount += float(checkout.voucher.value)
+            # Calculate total discount from usages
+            total_discount = UserVoucherUsage.objects.filter(**usage_filter).aggregate(
+                total=models.Sum('discount_amount')
+            )['total'] or 0
             
             metrics = {
                 'total_vouchers': total_vouchers,
@@ -9228,7 +9218,7 @@ class AdminVouchers(viewsets.ViewSet):
                 'expired_vouchers': expired_vouchers,
                 'scheduled_vouchers': scheduled_vouchers,
                 'total_usage': total_usage,
-                'total_discount': round(total_discount, 2),
+                'total_discount': float(total_discount),
             }
             
             return Response({
@@ -9288,8 +9278,10 @@ class AdminVouchers(viewsets.ViewSet):
                     Q(code__icontains=search)
                 )
             
-            # Apply status filter
+            # Get current date for status calculation
             now = timezone.now().date()
+            
+            # Apply status filter based on actual conditions
             if status_filter:
                 if status_filter == 'active':
                     vouchers_qs = vouchers_qs.filter(
@@ -9303,6 +9295,7 @@ class AdminVouchers(viewsets.ViewSet):
                     )
                 elif status_filter == 'scheduled':
                     vouchers_qs = vouchers_qs.filter(
+                        is_active=True,
                         start_date__gt=now
                     )
                 elif status_filter == 'inactive':
@@ -9351,18 +9344,53 @@ class AdminVouchers(viewsets.ViewSet):
                         'last_name': voucher.created_by.last_name
                     }
                 
-                # Determine status
-                if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
-                    status_value = 'active'
-                elif voucher.end_date and voucher.end_date < now:
-                    status_value = 'expired'
-                elif not voucher.is_active and voucher.start_date > now:
-                    status_value = 'scheduled'
+                # FIXED: Convert dates properly for comparison
+                # Convert start_date to date if it's a datetime
+                start_date = voucher.start_date
+                end_date = voucher.end_date
+                
+                # Ensure we're comparing dates, not datetimes
+                if start_date and hasattr(start_date, 'date'):
+                    start_date = start_date.date()
+                if end_date and hasattr(end_date, 'date'):
+                    end_date = end_date.date()
+                
+                current_date = now
+                
+                # Debug print to see what's happening
+                print(f"Voucher: {voucher.code}")
+                print(f"  is_active: {voucher.is_active}")
+                print(f"  start_date: {start_date} (type: {type(start_date)})")
+                print(f"  end_date: {end_date} (type: {type(end_date)})")
+                print(f"  current_date: {current_date} (type: {type(current_date)})")
+                print(f"  start_date <= current_date: {start_date <= current_date if start_date else True}")
+                print(f"  end_date >= current_date: {end_date >= current_date if end_date else True}")
+                
+                # Determine status with explicit date checks
+                if voucher.is_active:
+                    # Check if voucher has started
+                    has_started = start_date <= current_date if start_date else True
+                    # Check if voucher has expired
+                    has_expired = end_date < current_date if end_date else False
+                    # Check if voucher is scheduled (future start date)
+                    is_scheduled = start_date > current_date if start_date else False
+                    
+                    if is_scheduled:
+                        status_value = 'scheduled'
+                    elif has_expired:
+                        status_value = 'expired'
+                    elif has_started and not has_expired:
+                        status_value = 'active'
+                    else:
+                        status_value = 'inactive'
                 else:
                     status_value = 'inactive'
                 
-                # Calculate usage count
-                usage_count = Checkout.objects.filter(voucher=voucher).count()
+                print(f"  determined status: {status_value}")
+                print("-" * 40)
+                
+                # Calculate usage count - unique users count
+                usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
                 
                 voucher_data = {
                     'id': str(voucher.id),
@@ -9411,7 +9439,7 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
     @action(detail=True, methods=['get'])
     def voucher(self, request, pk=None):
         """
@@ -9447,18 +9475,29 @@ class AdminVouchers(viewsets.ViewSet):
                     'last_name': voucher.created_by.last_name
                 }
             
+            # FIXED: Determine status correctly
+            start_date = voucher.start_date
+            end_date = voucher.end_date
+            current_date = now
+            
+            # Handle date/timezone conversion
+            if hasattr(start_date, 'date'):
+                start_date = start_date.date()
+            if hasattr(end_date, 'date'):
+                end_date = end_date.date()
+            
             # Determine status
-            if voucher.is_active and voucher.start_date <= now and (not voucher.end_date or voucher.end_date >= now):
+            if voucher.is_active and start_date <= current_date and (not end_date or end_date >= current_date):
                 status_value = 'active'
-            elif voucher.end_date and voucher.end_date < now:
+            elif end_date and end_date < current_date:
                 status_value = 'expired'
-            elif not voucher.is_active and voucher.start_date > now:
+            elif voucher.is_active and start_date > current_date:
                 status_value = 'scheduled'
             else:
                 status_value = 'inactive'
             
-            # Calculate usage count
-            usage_count = Checkout.objects.filter(voucher=voucher).count()
+            # Calculate usage count - unique users
+            usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
             
             voucher_data = {
                 'id': str(voucher.id),
@@ -9479,29 +9518,26 @@ class AdminVouchers(viewsets.ViewSet):
                 'usage_count': usage_count,
             }
             
-            # Get usage history
-            checkouts = Checkout.objects.filter(
+            # Get usage history - UserVoucherUsage
+            usages = UserVoucherUsage.objects.filter(
                 voucher=voucher
-            ).select_related('order__user').order_by('-created_at')
+            ).select_related('user', 'order').order_by('-used_at')
             
-            usages = []
-            for checkout in checkouts:
-                user = checkout.order.user if checkout.order else None
-                usages.append({
-                    'id': str(checkout.id),
-                    'order_id': str(checkout.order.order) if checkout.order else None,
-                    'user_id': str(user.id) if user else None,
-                    'user_name': f"{user.first_name} {user.last_name}".strip() or user.username if user else 'Unknown User',
-                    'discount_amount': float(checkout.voucher.value) if checkout.voucher else 0,
-                    'used_at': checkout.created_at.isoformat(),
-                    'order_total': float(checkout.total_amount) if checkout.total_amount else 0,
-                    'final_total': float(checkout.total_amount) - (float(checkout.voucher.value) if checkout.voucher else 0)
+            usage_list = []
+            for usage in usages:
+                usage_list.append({
+                    'id': str(usage.id),
+                    'order_id': str(usage.order.order) if usage.order else None,
+                    'user_id': str(usage.user.id) if usage.user else None,
+                    'user_name': f"{usage.user.first_name} {usage.user.last_name}".strip() or usage.user.username if usage.user else 'Unknown User',
+                    'discount_amount': float(usage.discount_amount),
+                    'used_at': usage.used_at.isoformat(),
                 })
             
             return Response({
                 'success': True,
                 'voucher': voucher_data,
-                'usages': usages
+                'usages': usage_list
             })
             
         except Exception as e:
@@ -9512,7 +9548,7 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
     @action(detail=True, methods=['put', 'patch'])
     def update_voucher(self, request, pk=None):
         """
@@ -9607,7 +9643,7 @@ class AdminVouchers(viewsets.ViewSet):
                 }, status=status.HTTP_404_NOT_FOUND)
             
             # Check if voucher has been used
-            usage_count = Checkout.objects.filter(voucher=voucher).count()
+            usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
             if usage_count > 0:
                 # Instead of deleting, just deactivate it
                 voucher.is_active = False
@@ -9633,7 +9669,8 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+            
+             
 class AdminRefunds(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'])
@@ -22163,75 +22200,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
 
         return Response({"variant_id": None, "message": "No matching variant found"}, status=404)
 
-    @action(detail=True, methods=['get'])
-    def variants(self, request, pk=None):
-        """Get all active variants for a product including VAT and ownership info"""
-        try:
-            product = Product.objects.get(id=pk, is_removed=False, upload_status='published')
-        except Product.DoesNotExist:
-            return Response({"error": "Product not found"}, status=404)
-        
-        variants = product.variants.filter(is_active=True).order_by('price')
-        
-        # Get variant IDs
-        variant_ids = [str(v.id) for v in variants]
-        
-        # Get ordered quantities for these variants
-        ordered_quantities = self._get_variant_ordered_quantities(variant_ids)
-        
-        variant_data = []
-        for variant in variants:
-            variant_id = str(variant.id)
-            total_qty = variant.quantity or 0
-            ordered_qty = ordered_quantities.get(variant_id, 0)
-            available_qty = max(0, total_qty - ordered_qty)
-            
-            # Calculate VAT values
-            price = float(variant.price) if variant.price else 0
-            vat_percentage = float(variant.value_added_tax) if variant.value_added_tax else 12.0
-            vat_amount = (price * vat_percentage) / 100
-            price_with_vat = price + vat_amount
-            
-            image_url = self._convert_to_public_url(variant.image.url) if variant.image else None
-            proof_image_url = self._convert_to_public_url(variant.proof_image.url) if variant.proof_image else None
-            
-            variant_data.append({
-                'id': variant_id,
-                'title': variant.title,
-                'sku_code': variant.sku_code,
-                'price': price,
-                'compare_price': float(variant.compare_price) if variant.compare_price else None,
-                'total_quantity': total_qty,
-                'ordered_quantity': ordered_qty,
-                'available_quantity': available_qty,
-                'quantity': variant.quantity,
-                'in_stock': available_qty > 0,
-                'stock_status': 'in_stock' if available_qty > 0 else 'out_of_stock',
-                'image': image_url,
-                'proof_image': proof_image_url,
-                'original_price': float(variant.original_price) if variant.original_price else None,
-                'purchase_date': variant.purchase_date.isoformat() if variant.purchase_date else None,
-                'usage_period': variant.usage_period,
-                'usage_unit': variant.usage_unit,
-                'depreciation_rate': variant.depreciation_rate,
-                'option_ids': variant.option_ids,
-                'option_map': variant.option_map,
-                'weight': float(variant.weight) if variant.weight else None,
-                'weight_unit': variant.weight_unit,
-                'swap_type': variant.swap_type,
-                'minimum_additional_payment': float(variant.minimum_additional_payment) if variant.minimum_additional_payment else None,
-                'maximum_additional_payment': float(variant.maximum_additional_payment) if variant.maximum_additional_payment else None,
-                'length': float(variant.length) if variant.length else None,
-                'width': float(variant.width) if variant.width else None,
-                'height': float(variant.height) if variant.height else None,
-                'dimension_unit': variant.dimension_unit,
-                # VAT fields
-                'vat_percentage': vat_percentage,
-                'vat_amount': round(vat_amount, 2),
-                'price_with_vat': round(price_with_vat, 2),
-            })
-        
-        return Response(variant_data)
 
     @action(detail=True, methods=['get'])
     def check_availability(self, request, pk=None):
@@ -22587,6 +22555,34 @@ class CartListView(APIView):
                 shop_ids.add(str(item.product.shop.id))
         return list(shop_ids)
 
+    def _get_voucher_status(self, voucher, current_date):
+        """Determine the actual status of a voucher based on dates and active flag"""
+        # Convert dates to date objects if they are datetime
+        start_date = voucher.start_date
+        end_date = voucher.end_date
+        
+        if start_date and hasattr(start_date, 'date'):
+            start_date = start_date.date()
+        if end_date and hasattr(end_date, 'date'):
+            end_date = end_date.date()
+        
+        # Determine status
+        if voucher.is_active:
+            has_started = start_date <= current_date if start_date else True
+            has_expired = end_date < current_date if end_date else False
+            is_scheduled = start_date > current_date if start_date else False
+            
+            if is_scheduled:
+                return 'scheduled'
+            elif has_expired:
+                return 'expired'
+            elif has_started and not has_expired:
+                return 'active'
+            else:
+                return 'inactive'
+        else:
+            return 'inactive'
+
     def get_available_vouchers(self, cart_items, user, applied_voucher_code=None):
         """
         Get all available vouchers that can be applied to the cart
@@ -22594,6 +22590,7 @@ class CartListView(APIView):
         - Global vouchers (no shop restriction)
         - Shop-specific vouchers for shops in cart
         - Vouchers with proper date range and usage limits
+        - Proper status determination
         """
         from decimal import Decimal
         
@@ -22603,12 +22600,8 @@ class CartListView(APIView):
         # Get unique shop IDs from cart items
         shop_ids = self.get_shop_ids_from_cart(cart_items)
         
-        # Build query for vouchers
-        vouchers_qs = Voucher.objects.filter(
-            is_active=True,
-            start_date__lte=now,
-            end_date__gte=now
-        )
+        # Get all active vouchers (filter by is_active first)
+        vouchers_qs = Voucher.objects.filter(is_active=True)
         
         # Filter vouchers that are either global OR belong to shops in cart
         from django.db.models import Q
@@ -22623,18 +22616,27 @@ class CartListView(APIView):
         available_vouchers = []
         
         for voucher in vouchers_qs:
+            # Get voucher status using the helper method
+            voucher_status = self._get_voucher_status(voucher, now)
+            
+            # Only include active vouchers
+            if voucher_status != 'active':
+                continue
+            
             # Check minimum spend
             if voucher.minimum_spend and cart_total < float(voucher.minimum_spend):
                 continue
             
-            # Check maximum usage limit
+            # Check global maximum usage limit
             if voucher.maximum_usage > 0:
-                usage_count = Checkout.objects.filter(
-                    voucher=voucher,
-                    order__status__in=['delivered', 'completed', 'processing', 'shipped']
-                ).count()
-                if usage_count >= voucher.maximum_usage:
+                total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
+                if total_usage_count >= voucher.maximum_usage:
                     continue
+            
+            # Check if user has already used this voucher (per-user limit)
+            user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
+            if user_has_used:
+                continue
             
             # Calculate discount amount
             discount_amount = 0
@@ -22655,11 +22657,12 @@ class CartListView(APIView):
             # Calculate remaining usage
             remaining_usage = None
             if voucher.maximum_usage > 0:
-                usage_count = Checkout.objects.filter(
-                    voucher=voucher,
-                    order__status__in=['delivered', 'completed', 'processing', 'shipped']
-                ).count()
-                remaining_usage = voucher.maximum_usage - usage_count
+                total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
+                remaining_usage = voucher.maximum_usage - total_usage_count
+            
+            # Get start and end dates as strings
+            start_date_str = voucher.start_date.isoformat() if voucher.start_date else None
+            end_date_str = voucher.end_date.isoformat() if voucher.end_date else None
             
             available_vouchers.append({
                 'id': str(voucher.id),
@@ -22675,15 +22678,16 @@ class CartListView(APIView):
                 'shop': shop_info,
                 'voucher_type': voucher.voucher_type,
                 'is_global': voucher.shop is None,
-                'start_date': voucher.start_date.isoformat(),
-                'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
-                'valid_until': voucher.end_date.isoformat() if voucher.end_date else None,
+                'start_date': start_date_str,
+                'end_date': end_date_str,
+                'status': voucher_status,
+                'user_has_used': user_has_used
             })
         
         # Sort by discount amount (highest first)
         available_vouchers.sort(key=lambda x: x['discount_amount'], reverse=True)
         
-        # Also add a "Best Value" tag for vouchers with highest discount
+        # Add "Best Value" tag for vouchers with highest discount
         for voucher in available_vouchers[:3]:
             voucher['is_best_value'] = True
         
@@ -22770,34 +22774,35 @@ class CartListView(APIView):
             if voucher_code:
                 try:
                     now = timezone.now().date()
-                    voucher = Voucher.objects.get(
-                        code=voucher_code.upper(),
-                        is_active=True,
-                        start_date__lte=now,
-                        end_date__gte=now
-                    )
+                    voucher = Voucher.objects.get(code=voucher_code.upper())
                     
-                    cart_total = sum(self.get_item_total(item) for item in cart_items)
+                    # Check voucher status using the same logic
+                    voucher_status = self._get_voucher_status(voucher, now)
                     
-                    # Check minimum spend
-                    if voucher.minimum_spend and cart_total < float(voucher.minimum_spend):
-                        voucher_error = f"Minimum spend of ₱{voucher.minimum_spend:,.2f} required"
-                    # Check maximum usage
-                    elif voucher.maximum_usage > 0:
-                        usage_count = Checkout.objects.filter(
-                            voucher=voucher,
-                            order__status__in=['delivered', 'completed', 'processing', 'shipped']
-                        ).count()
-                        if usage_count >= voucher.maximum_usage:
-                            voucher_error = "Voucher usage limit reached"
-                    # Check if voucher applies to shops in cart
+                    if voucher_status != 'active':
+                        voucher_error = "Voucher is not active"
                     else:
-                        shop_ids = self.get_shop_ids_from_cart(cart_items)
-                        if voucher.shop and str(voucher.shop.id) not in shop_ids:
-                            voucher_error = f"This voucher is only valid at {voucher.shop.name}"
+                        cart_total = sum(self.get_item_total(item) for item in cart_items)
+                        
+                        # Check minimum spend
+                        if voucher.minimum_spend and cart_total < float(voucher.minimum_spend):
+                            voucher_error = f"Minimum spend of ₱{voucher.minimum_spend:,.2f} required"
+                        # Check maximum usage limit
+                        elif voucher.maximum_usage > 0:
+                            total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
+                            if total_usage_count >= voucher.maximum_usage:
+                                voucher_error = "Voucher usage limit reached"
+                        # Check if user has already used this voucher
+                        elif UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists():
+                            voucher_error = "You have already used this voucher"
+                        # Check if voucher applies to shops in cart
                         else:
-                            applied_voucher = voucher
-                            
+                            shop_ids = self.get_shop_ids_from_cart(cart_items)
+                            if voucher.shop and str(voucher.shop.id) not in shop_ids:
+                                voucher_error = f"This voucher is only valid at {voucher.shop.name}"
+                            else:
+                                applied_voucher = voucher
+                                
                 except Voucher.DoesNotExist:
                     voucher_error = "Invalid or expired voucher code"
             
@@ -23126,6 +23131,226 @@ class CartListView(APIView):
             "cart_item": serializer.data,
             "created": created
         }, status=201 if created else 200)
+
+    def get_customer_vouchers(self, request):
+        """
+        Get available vouchers for customer view (My Vouchers page)
+        GET /api/view-cart/vouchers/?user_id={user_id}
+        """
+        try:
+            user_id = request.GET.get('user_id')
+            if not user_id:
+                return Response({
+                    'success': False,
+                    'error': 'user_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Verify user exists
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'User not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get current date for status calculation
+            now = timezone.now().date()
+            
+            # Get all active vouchers
+            vouchers_qs = Voucher.objects.filter(
+                is_active=True,
+                start_date__lte=now,
+                end_date__gte=now
+            ).select_related('shop')
+            
+            # Get user's cart items to determine which shop vouchers are applicable
+            cart_items = CartItem.objects.filter(user=user, is_ordered=False).select_related(
+                'variant__product__shop', 'product__shop'
+            )
+            
+            # Get unique shop IDs from cart
+            shop_ids = set()
+            for item in cart_items:
+                if item.variant and item.variant.product and item.variant.product.shop:
+                    shop_ids.add(str(item.variant.product.shop.id))
+                elif item.product and item.product.shop:
+                    shop_ids.add(str(item.product.shop.id))
+            
+            # Calculate cart total for minimum spend validation
+            cart_total = sum(self.get_item_total(item) for item in cart_items)
+            
+            available_vouchers = []
+            global_vouchers = []
+            shop_vouchers = []
+            
+            for voucher in vouchers_qs:
+                # Check if voucher is global or belongs to a shop in cart
+                is_global = voucher.shop is None
+                
+                if not is_global and str(voucher.shop.id) not in shop_ids:
+                    continue
+                
+                # Check minimum spend
+                if voucher.minimum_spend and cart_total < float(voucher.minimum_spend):
+                    continue
+                
+                # Check maximum usage limit (global)
+                if voucher.maximum_usage > 0:
+                    total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
+                    if total_usage_count >= voucher.maximum_usage:
+                        continue
+                
+                # Check if user has already used this voucher
+                user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
+                if user_has_used:
+                    continue
+                
+                # Calculate discount amount
+                discount_amount = 0
+                if voucher.discount_type == 'percentage':
+                    discount_amount = (cart_total * float(voucher.value)) / 100
+                    discount_amount = min(discount_amount, cart_total)
+                elif voucher.discount_type == 'fixed':
+                    discount_amount = min(float(voucher.value), cart_total)
+                
+                # Calculate remaining usage
+                remaining_usage = None
+                if voucher.maximum_usage > 0:
+                    total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
+                    remaining_usage = voucher.maximum_usage - total_usage_count
+                
+                voucher_data = {
+                    'id': str(voucher.id),
+                    'name': voucher.name,
+                    'code': voucher.code,
+                    'discount_type': voucher.discount_type,
+                    'value': float(voucher.value),
+                    'discount_amount': float(discount_amount),
+                    'minimum_spend': float(voucher.minimum_spend) if voucher.minimum_spend else 0,
+                    'maximum_usage': voucher.maximum_usage,
+                    'remaining_usage': remaining_usage,
+                    'shop_id': str(voucher.shop.id) if voucher.shop else None,
+                    'shop_name': voucher.shop.name if voucher.shop else "All Shops",
+                    'voucher_type': voucher.voucher_type,
+                    'start_date': voucher.start_date.isoformat(),
+                    'end_date': voucher.end_date.isoformat(),
+                    'valid_until': voucher.end_date.isoformat(),
+                    'is_active': voucher.is_active,
+                    'is_global': is_global,
+                    'is_best_value': False,
+                    'description': self._get_voucher_description(voucher),
+                    'user_has_used': user_has_used,
+                }
+                
+                available_vouchers.append(voucher_data)
+                
+                if is_global:
+                    global_vouchers.append(voucher_data)
+                else:
+                    shop_vouchers.append(voucher_data)
+            
+            # Sort by discount amount (highest first)
+            available_vouchers.sort(key=lambda x: x['discount_amount'], reverse=True)
+            global_vouchers.sort(key=lambda x: x['discount_amount'], reverse=True)
+            shop_vouchers.sort(key=lambda x: x['discount_amount'], reverse=True)
+            
+            # Mark top 3 as best value
+            for i, voucher in enumerate(available_vouchers[:3]):
+                voucher['is_best_value'] = True
+            
+            voucher_summary = {
+                'total_available': len(available_vouchers),
+                'best_discount': available_vouchers[0]['discount_amount'] if available_vouchers else 0,
+                'global_vouchers': global_vouchers,
+                'shop_vouchers': shop_vouchers,
+            }
+            
+            return Response({
+                'success': True,
+                'available_vouchers': available_vouchers,
+                'voucher_summary': voucher_summary,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in get_customer_vouchers: {e}")
+            print(traceback.format_exc())
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    @action(detail=True, methods=['get'])
+    def variants(self, request, pk=None):
+        """Get all active variants for a product including VAT and ownership info"""
+        try:
+            product = Product.objects.get(id=pk, is_removed=False, upload_status='published')
+        except Product.DoesNotExist:
+            return Response({"error": "Product not found"}, status=404)
+        
+        variants = product.variants.filter(is_active=True).order_by('price')
+        
+        # Get variant IDs
+        variant_ids = [str(v.id) for v in variants]
+        
+        # Get ordered quantities for these variants
+        ordered_quantities = self._get_variant_ordered_quantities(variant_ids)
+        
+        variant_data = []
+        for variant in variants:
+            variant_id = str(variant.id)
+            total_qty = variant.quantity or 0
+            ordered_qty = ordered_quantities.get(variant_id, 0)
+            available_qty = max(0, total_qty - ordered_qty)
+            
+            # Calculate VAT values
+            price = float(variant.price) if variant.price else 0
+            vat_percentage = float(variant.value_added_tax) if variant.value_added_tax else 12.0
+            vat_amount = (price * vat_percentage) / 100
+            price_with_vat = price + vat_amount
+            
+            image_url = self._convert_to_public_url(variant.image.url) if variant.image else None
+            proof_image_url = self._convert_to_public_url(variant.proof_image.url) if variant.proof_image else None
+            
+            variant_data.append({
+                'id': variant_id,
+                'title': variant.title,
+                'sku_code': variant.sku_code,
+                'price': price,
+                'compare_price': float(variant.compare_price) if variant.compare_price else None,
+                'total_quantity': total_qty,
+                'ordered_quantity': ordered_qty,
+                'available_quantity': available_qty,
+                'quantity': variant.quantity,
+                'in_stock': available_qty > 0,
+                'stock_status': 'in_stock' if available_qty > 0 else 'out_of_stock',
+                'image': image_url,
+                'proof_image': proof_image_url,
+                'original_price': float(variant.original_price) if variant.original_price else None,
+                'purchase_date': variant.purchase_date.isoformat() if variant.purchase_date else None,
+                'usage_period': variant.usage_period,
+                'usage_unit': variant.usage_unit,
+                'depreciation_rate': variant.depreciation_rate,
+                'option_ids': variant.option_ids,
+                'option_map': variant.option_map,
+                'weight': float(variant.weight) if variant.weight else None,
+                'weight_unit': variant.weight_unit,
+                'swap_type': variant.swap_type,
+                'minimum_additional_payment': float(variant.minimum_additional_payment) if variant.minimum_additional_payment else None,
+                'maximum_additional_payment': float(variant.maximum_additional_payment) if variant.maximum_additional_payment else None,
+                'length': float(variant.length) if variant.length else None,
+                'width': float(variant.width) if variant.width else None,
+                'height': float(variant.height) if variant.height else None,
+                'dimension_unit': variant.dimension_unit,
+                # VAT fields
+                'vat_percentage': vat_percentage,
+                'vat_amount': round(vat_amount, 2),
+                'price_with_vat': round(price_with_vat, 2),
+            })
+        
+        return Response(variant_data)
 
 class CartBulkUpdateView(APIView):
     """
@@ -26174,14 +26399,6 @@ class CheckoutOrder(viewsets.ViewSet):
         print(f"[FEE] Transaction fee: ₱{fee:.2f} (5% capped at ₱50) for {payment_method}")
         return fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-    def _calculate_vat(self, amount: Decimal, vat_rate: Decimal = Decimal('0.12')) -> Decimal:
-        """
-        Calculate VAT amount
-        Default VAT rate is 12% (Philippines)
-        """
-        vat_amount = amount * vat_rate
-        return vat_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-
     def _get_customer_coordinates(self, user_id, selected_address_id=None):
         """
         Get customer coordinates from selected shipping address or fallback to user coordinates
@@ -26406,10 +26623,8 @@ class CheckoutOrder(viewsets.ViewSet):
             else:
                 print(f"[COORDS] ❌ No customer coordinates available")
 
-            # Track totals including VAT
-            subtotal_excluding_vat = Decimal('0')
-            total_vat_amount = Decimal('0')
-            subtotal_including_vat = Decimal('0')
+            # Track totals - VAT already included in variant price
+            subtotal = Decimal('0')
 
             for cart_item in cart_items:
                 product = cart_item.product
@@ -26544,71 +26759,28 @@ class CheckoutOrder(viewsets.ViewSet):
                             'distance_text': distance_text
                         }
 
-                resolved_price = Decimal('0')
-                vat_amount = Decimal('0')
-                price_with_vat = Decimal('0')
-                variant_data = None
+                # Get price (already includes VAT from variant)
+                price = Decimal('0')
+                if variant and variant.price is not None:
+                    price = Decimal(str(variant.price))
+                elif product and hasattr(product, 'price') and product.price is not None:
+                    price = Decimal(str(product.price))
 
-                if variant:
-                    try:
-                        if variant.price is not None:
-                            resolved_price = Decimal(str(variant.price))
-                            
-                            # Calculate VAT if variant has VAT
-                            if hasattr(variant, 'value_added_tax') and variant.value_added_tax:
-                                vat_amount = Decimal(str(variant.value_added_tax))
-                                price_with_vat = resolved_price + vat_amount
-                            else:
-                                # Default VAT calculation (12% of price)
-                                vat_amount = self._calculate_vat(resolved_price)
-                                price_with_vat = resolved_price + vat_amount
-                    except Exception as e:
-                        print(f"[VAT] Error calculating variant price: {e}")
-                        resolved_price = Decimal('0')
-
-                    variant_data = {
-                        'id': str(variant.id),
-                        'title': variant.title,
-                        'price': float(resolved_price) if resolved_price else None,
-                        'price_with_vat': float(price_with_vat) if price_with_vat else None,
-                        'vat_amount': float(vat_amount) if vat_amount else None,
-                        'quantity': variant.quantity,
-                        'sku_code': variant.sku_code,
-                        'option_title': variant.option_title,
-                        'option_ids': variant.option_ids,
-                        'option_map': variant.option_map
-                    }
-                else:
-                    resolved_price = Decimal(str(product.price)) if product and product.price else Decimal('0')
-                    # Default VAT for products without variants (12%)
-                    vat_amount = self._calculate_vat(resolved_price)
-                    price_with_vat = resolved_price + vat_amount
-
-                # Calculate line totals
-                line_total_excluding_vat = resolved_price * cart_item.quantity
-                line_vat_amount = vat_amount * cart_item.quantity
-                line_total_including_vat = price_with_vat * cart_item.quantity
-                
-                # Accumulate totals
-                subtotal_excluding_vat += line_total_excluding_vat
-                total_vat_amount += line_vat_amount
-                subtotal_including_vat += line_total_including_vat
+                # Calculate line total
+                line_total = price * cart_item.quantity
+                subtotal += line_total
 
                 item_data = {
                     "id": str(cart_item.id) if hasattr(cart_item, 'id') else cart_item.id,
                     "product_id": str(product.id) if product else None,
                     "name": product.name if product else "Unknown Product",
-                    "price": float(resolved_price),
-                    "price_with_vat": float(price_with_vat),
-                    "vat_amount": float(vat_amount),
+                    "price": float(price),
                     "quantity": cart_item.quantity,
                     "shop_name": shop.name if shop else (product.customer.customer.username if product and product.customer else "Personal Seller"),
                     "shop_id": str(shop.id) if shop else None,
                     "seller_id": str(product.customer.customer.id) if product and product.customer else None,
                     "added_at": cart_item.added_at.isoformat() if hasattr(cart_item, 'added_at') and cart_item.added_at else None,
-                    "subtotal_excluding_vat": float(line_total_excluding_vat),
-                    "subtotal_vat": float(line_vat_amount),
-                    "subtotal_including_vat": float(line_total_including_vat),
+                    "subtotal": float(line_total),
                     "is_ordered": cart_item.is_ordered if hasattr(cart_item, 'is_ordered') else False,
                     "is_personal_listing": shop is None and product and product.customer is not None
                 }
@@ -26628,16 +26800,20 @@ class CheckoutOrder(viewsets.ViewSet):
                         except Exception:
                             item_data["image"] = first_media.file_data.url
 
-                if variant_data:
-                    item_data['variant'] = variant_data
+                if variant:
+                    item_data['variant'] = {
+                        'id': str(variant.id),
+                        'title': variant.title,
+                        'price': float(price),
+                        'quantity': variant.quantity,
+                        'sku_code': variant.sku_code,
+                        'option_title': variant.option_title,
+                        'option_ids': variant.option_ids,
+                        'option_map': variant.option_map
+                    }
 
                 checkout_items.append(item_data)
 
-            # Use subtotal including VAT for the rest of the calculations
-            subtotal = float(subtotal_including_vat)
-            subtotal_ex_vat = float(subtotal_excluding_vat)
-            total_vat = float(total_vat_amount)
-            
             max_distance = 0
             for shop_id, shop_info in shop_addresses.items():
                 distance = shop_info.get('distance_km', 0)
@@ -26654,20 +26830,16 @@ class CheckoutOrder(viewsets.ViewSet):
             print(f"[DISTANCE] Max distance found: {max_distance} km")
             
             delivery_fee = self._calculate_delivery_fee(max_distance)
-            total = subtotal + delivery_fee
+            total = float(subtotal) + delivery_fee
             
             print("=" * 80)
             print("[TOTALS]")
-            print(f"  Subtotal (excl. VAT): ₱{subtotal_ex_vat:.2f}")
-            print(f"  VAT (12%): ₱{total_vat:.2f}")
-            print(f"  Subtotal (incl. VAT): ₱{subtotal:.2f}")
+            print(f"  Subtotal: ₱{subtotal:.2f}")
             print(f"  Delivery Fee: ₱{delivery_fee:.2f}")
             print(f"  Total: ₱{total:.2f}")
             print("=" * 80)
             
-            logger.info(f"💰 Subtotal (excl. VAT): ₱{subtotal_ex_vat:.2f}")
-            logger.info(f"💰 VAT (12%): ₱{total_vat:.2f}")
-            logger.info(f"💰 Subtotal (incl. VAT): ₱{subtotal:.2f}")
+            logger.info(f"💰 Subtotal: ₱{subtotal:.2f}")
             logger.info(f"💰 Delivery Fee: ₱{delivery_fee:.2f} (based on {max_distance:.2f} km distance at ₱40/km, capped at ₱300)")
             logger.info(f"💰 Total: ₱{total:.2f}")
 
@@ -26676,7 +26848,7 @@ class CheckoutOrder(viewsets.ViewSet):
             available_vouchers = self._get_simple_available_vouchers(
                 list(shop_ids),
                 user_id,
-                subtotal,
+                float(subtotal),
                 user_purchase_history
             )
 
@@ -26706,12 +26878,9 @@ class CheckoutOrder(viewsets.ViewSet):
                 "success": True,
                 "checkout_items": checkout_items,
                 "summary": {
-                    "subtotal_excluding_vat": subtotal_ex_vat,
-                    "total_vat_amount": total_vat,
-                    "subtotal": subtotal,
+                    "subtotal": float(subtotal),
                     "delivery": delivery_fee,
                     "total": total,
-                    "vat_rate": "12%",
                     "item_count": len(checkout_items),
                     "shop_count": len(shop_ids),
                     "personal_seller_count": len(personal_seller_addresses),
@@ -26824,14 +26993,21 @@ class CheckoutOrder(viewsets.ViewSet):
 
             voucher_list = []
             for voucher in unique_vouchers:
-                # Check usage count - only include if maximum_usage is not reached
-                usage_count = Checkout.objects.filter(
-                    voucher=voucher,
-                    order__status__in=['delivered', 'completed', 'processing', 'shipped']
-                ).count()
+                # Check if user has already used this voucher
+                user = User.objects.filter(id=user_id).first()
+                user_has_used = False
+                if user:
+                    user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
+                
+                # Skip if user has already used this voucher
+                if user_has_used:
+                    continue
+                
+                # Check global usage count - only include if maximum_usage is not reached
+                total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
                 
                 # Skip if maximum usage reached (0 means unlimited)
-                if voucher.maximum_usage > 0 and usage_count >= voucher.maximum_usage:
+                if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
                     continue
                 
                 potential_savings = self._calculate_discount(voucher, Decimal(str(current_subtotal)))
@@ -26839,7 +27015,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 # Get remaining usage
                 remaining_usage = None
                 if voucher.maximum_usage > 0:
-                    remaining_usage = voucher.maximum_usage - usage_count
+                    remaining_usage = voucher.maximum_usage - total_usage_count
 
                 voucher_data = {
                     "id": str(voucher.id),
@@ -26849,7 +27025,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
                     "maximum_usage": voucher.maximum_usage,
-                    "usage_count": usage_count,
+                    "usage_count": total_usage_count,
                     "remaining_usage": remaining_usage,
                     "shop_name": voucher.shop.name if voucher.shop else "All Shops",
                     "shop_id": str(voucher.shop.id) if voucher.shop else None,
@@ -26857,7 +27033,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     "potential_savings": float(potential_savings),
                     "customer_tier": "all",
                     "voucher_type": voucher.voucher_type,
-                    "is_general": voucher.shop is None
+                    "is_general": voucher.shop is None,
+                    "user_has_used": user_has_used
                 }
                 voucher_list.append(voucher_data)
 
@@ -27044,13 +27221,20 @@ class CheckoutOrder(viewsets.ViewSet):
                         "error": "Invalid voucher code or voucher not applicable"
                     }, status=status.HTTP_404_NOT_FOUND)
 
-            # Check usage count
-            usage_count = Checkout.objects.filter(
-                voucher=voucher,
-                order__status__in=['delivered', 'completed', 'processing', 'shipped']
-            ).count()
+            # Check if user has already used this voucher
+            user = User.objects.get(id=user_id)
+            user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
             
-            if voucher.maximum_usage > 0 and usage_count >= voucher.maximum_usage:
+            if user_has_used:
+                return Response({
+                    "valid": False,
+                    "error": "You have already used this voucher. Each voucher can only be used once per user."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check global usage count
+            total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
+            
+            if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
                 return Response({
                     "valid": False,
                     "error": f"This voucher has reached its maximum usage limit ({voucher.maximum_usage} uses)"
@@ -27060,7 +27244,7 @@ class CheckoutOrder(viewsets.ViewSet):
             
             remaining_usage = None
             if voucher.maximum_usage > 0:
-                remaining_usage = voucher.maximum_usage - usage_count
+                remaining_usage = voucher.maximum_usage - total_usage_count
 
             return Response({
                 "valid": True,
@@ -27072,15 +27256,18 @@ class CheckoutOrder(viewsets.ViewSet):
                     "value": float(voucher.value),
                     "minimum_spend": float(voucher.minimum_spend),
                     "maximum_usage": voucher.maximum_usage,
-                    "usage_count": usage_count,
+                    "usage_count": total_usage_count,
                     "remaining_usage": remaining_usage,
                     "shop_name": voucher.shop.name if voucher.shop else "All Shops",
                     "discount_amount": float(discount_amount),
                     "customer_tier": "all",
-                    "is_general": voucher.shop is None
+                    "is_general": voucher.shop is None,
+                    "user_has_used": user_has_used
                 }
             })
 
+        except User.DoesNotExist:
+            return Response({"valid": False, "error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Error validating voucher: {str(e)}")
             return Response(
@@ -27223,14 +27410,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
                 price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
-                # Add VAT if variant has it
-                if hasattr(direct_variant, 'value_added_tax') and direct_variant.value_added_tax:
-                    vat_amount = Decimal(str(direct_variant.value_added_tax))
-                    price_with_vat = price + vat_amount
-                else:
-                    vat_amount = self._calculate_vat(price)
-                    price_with_vat = price + vat_amount
-                subtotal = price_with_vat * direct_quantity
+                subtotal = price * direct_quantity
                 
             else:
                 for cart_item in cart_items:
@@ -27247,22 +27427,13 @@ class CheckoutOrder(viewsets.ViewSet):
                         }, status=status.HTTP_400_BAD_REQUEST)
 
                     price = Decimal('0')
-                    vat_amount = Decimal('0')
-                    price_with_vat = Decimal('0')
                     
                     if cart_item.variant and cart_item.variant.price is not None:
                         price = Decimal(str(cart_item.variant.price))
-                        if hasattr(cart_item.variant, 'value_added_tax') and cart_item.variant.value_added_tax:
-                            vat_amount = Decimal(str(cart_item.variant.value_added_tax))
-                        else:
-                            vat_amount = self._calculate_vat(price)
-                        price_with_vat = price + vat_amount
-                    elif cart_item.product and cart_item.product.price is not None:
+                    elif cart_item.product and hasattr(cart_item.product, 'price') and cart_item.product.price is not None:
                         price = Decimal(str(cart_item.product.price))
-                        vat_amount = self._calculate_vat(price)
-                        price_with_vat = price + vat_amount
 
-                    line_total = price_with_vat * cart_item.quantity
+                    line_total = price * cart_item.quantity
                     subtotal += line_total
 
                     if cart_item.variant:
@@ -27270,7 +27441,7 @@ class CheckoutOrder(viewsets.ViewSet):
                             stock_validation_errors.append(
                                 f"Insufficient stock for {cart_item.variant.title}. Available: {cart_item.variant.quantity}"
                             )
-                    elif cart_item.product:
+                    elif cart_item.product and hasattr(cart_item.product, 'quantity'):
                         if cart_item.quantity > cart_item.product.quantity:
                             stock_validation_errors.append(
                                 f"Insufficient stock for {cart_item.product.name}. Available: {cart_item.product.quantity}"
@@ -27296,13 +27467,18 @@ class CheckoutOrder(viewsets.ViewSet):
                         minimum_spend__lte=subtotal
                     )
                     
-                    # Check usage count before applying
-                    usage_count = Checkout.objects.filter(
-                        voucher=voucher,
-                        order__status__in=['delivered', 'completed', 'processing', 'shipped']
-                    ).count()
+                    # Check if user has already used this voucher
+                    user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
+                    if user_has_used:
+                        return Response(
+                            {"error": "You have already used this voucher. Each voucher can only be used once per user."},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
                     
-                    if voucher.maximum_usage > 0 and usage_count >= voucher.maximum_usage:
+                    # Check global usage count before applying
+                    total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
+                    
+                    if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
                         return Response(
                             {"error": "This voucher has reached its maximum usage limit"},
                             status=status.HTTP_400_BAD_REQUEST
@@ -27323,18 +27499,28 @@ class CheckoutOrder(viewsets.ViewSet):
                 
                 max_distance = 0
                 if customer_lat and customer_lng:
-                    for cart_item in cart_items:
-                        if cart_item.product and cart_item.product.shop:
-                            shop = cart_item.product.shop
-                            if shop.latitude and shop.longitude:
-                                distance = self._calculate_distance(
-                                    customer_lat,
-                                    customer_lng,
-                                    float(shop.latitude),
-                                    float(shop.longitude)
-                                )
-                                if distance > max_distance:
-                                    max_distance = distance
+                    if is_direct_checkout and direct_product and direct_product.shop:
+                        shop = direct_product.shop
+                        if shop.latitude and shop.longitude:
+                            max_distance = self._calculate_distance(
+                                customer_lat,
+                                customer_lng,
+                                float(shop.latitude),
+                                float(shop.longitude)
+                            )
+                    else:
+                        for cart_item in cart_items:
+                            if cart_item.product and cart_item.product.shop:
+                                shop = cart_item.product.shop
+                                if shop.latitude and shop.longitude:
+                                    distance = self._calculate_distance(
+                                        customer_lat,
+                                        customer_lng,
+                                        float(shop.latitude),
+                                        float(shop.longitude)
+                                    )
+                                    if distance > max_distance:
+                                        max_distance = distance
                 delivery_fee = Decimal(str(self._calculate_delivery_fee(max_distance)))
             
             # Calculate base total (subtotal + delivery fee - discount)
@@ -27377,14 +27563,7 @@ class CheckoutOrder(viewsets.ViewSet):
 
             if is_direct_checkout:
                 unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
-                if hasattr(direct_variant, 'value_added_tax') and direct_variant.value_added_tax:
-                    vat_amount = Decimal(str(direct_variant.value_added_tax))
-                    unit_price_with_vat = unit_price + vat_amount
-                else:
-                    vat_amount = self._calculate_vat(unit_price)
-                    unit_price_with_vat = unit_price + vat_amount
-                    
-                checkout_total = unit_price_with_vat * direct_quantity
+                checkout_total = unit_price * direct_quantity
                 
                 product_image_url = None
                 if direct_product.productmedia_set.exists():
@@ -27409,7 +27588,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     direct_product_id=direct_product.id,
                     direct_variant_id=direct_variant.id,
                     direct_product_name=direct_product.name,
-                    direct_product_price=unit_price_with_vat,
+                    direct_product_price=unit_price,
                     direct_product_image=variant_image_url or product_image_url,
                     direct_shop_id=direct_product.shop.id if direct_product.shop else None,
                     direct_shop_name=direct_product.shop.name if direct_product.shop else None
@@ -27427,8 +27606,6 @@ class CheckoutOrder(viewsets.ViewSet):
                     "shop_name": direct_product.shop.name if direct_product.shop else None,
                     "quantity": direct_quantity,
                     "price": float(unit_price),
-                    "price_with_vat": float(unit_price_with_vat),
-                    "vat_amount": float(vat_amount),
                     "total_amount": float(checkout_total),
                     "status": "pending",
                     "product_image": variant_image_url or product_image_url,
@@ -27439,17 +27616,10 @@ class CheckoutOrder(viewsets.ViewSet):
                 for cart_item in cart_items:
                     if cart_item.variant and cart_item.variant.price is not None:
                         unit_price = Decimal(str(cart_item.variant.price))
-                        if hasattr(cart_item.variant, 'value_added_tax') and cart_item.variant.value_added_tax:
-                            vat_amount = Decimal(str(cart_item.variant.value_added_tax))
-                        else:
-                            vat_amount = self._calculate_vat(unit_price)
-                        unit_price_with_vat = unit_price + vat_amount
                     else:
                         unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
-                        vat_amount = self._calculate_vat(unit_price)
-                        unit_price_with_vat = unit_price + vat_amount
 
-                    checkout_total = unit_price_with_vat * cart_item.quantity
+                    checkout_total = unit_price * cart_item.quantity
 
                     checkout_item = Checkout.objects.create(
                         order=order,
@@ -27473,8 +27643,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         "shop_name": cart_item.product.shop.name if cart_item.product and cart_item.product.shop else None,
                         "quantity": cart_item.quantity,
                         "price": float(unit_price),
-                        "price_with_vat": float(unit_price_with_vat),
-                        "vat_amount": float(vat_amount),
                         "total_amount": float(checkout_total),
                         "status": "pending",
                         "is_refundable": cart_item.variant.is_refundable if cart_item.variant else getattr(cart_item.product, 'is_refundable', False)
@@ -27487,6 +27655,15 @@ class CheckoutOrder(viewsets.ViewSet):
                 method=payment_method,
                 status='pending'
             )
+
+            # Record voucher usage if voucher was applied
+            if voucher:
+                UserVoucherUsage.objects.create(
+                    user=user,
+                    voucher=voucher,
+                    order=order,
+                    discount_amount=discount_amount
+                )
 
             # Decrease stock for the order items
             self._decrease_stock_for_order(order)
@@ -27723,7 +27900,7 @@ class CheckoutOrder(viewsets.ViewSet):
                         unit_price = float(checkout_item.total_amount) / checkout_item.quantity
                     elif variant and variant.price:
                         unit_price = float(variant.price)
-                    elif product and product.price:
+                    elif product and hasattr(product, 'price') and product.price:
                         unit_price = float(product.price)
 
                     items.append({
@@ -28264,7 +28441,7 @@ class CheckoutOrder(viewsets.ViewSet):
                         continue
                     variant.quantity -= checkout_item.quantity
                     variant.save()
-                elif cart_item.product:
+                elif cart_item.product and hasattr(cart_item.product, 'quantity'):
                     product = cart_item.product
                     if checkout_item.quantity > product.quantity:
                         stock_errors.append(f"Insufficient stock for {product.name}")
