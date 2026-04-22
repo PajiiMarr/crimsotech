@@ -459,6 +459,7 @@ class Product(models.Model):
     removal_reason = models.TextField(blank=True, null=True)
     removed_at = models.DateTimeField(blank=True, null=True)
     refund_days = models.PositiveIntegerField(default=0)
+    value_added_tax = models.FloatField(default=0)
 
     class Meta:
         indexes = [
