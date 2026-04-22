@@ -1,1507 +1,1060 @@
-// app/customer/view-product.tsx
-import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
+// app/seller/view-product.tsx
+import React, { useState, useEffect } from 'react';
 import {
+  SafeAreaView,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Image,
   ActivityIndicator,
   Alert,
-  Image,
-  ScrollView,
-  Text,
-  TouchableOpacity,
-  View,
-  Modal,
-  FlatList,
+  RefreshControl,
   Dimensions,
-  TouchableWithoutFeedback,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
-import AxiosInstance from "../../contexts/axios";
-import { useAuth } from "../../contexts/AuthContext";
+  Modal,
+} from 'react-native';
+import { Ionicons, MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useAuth } from '../../contexts/AuthContext';
+import AxiosInstance from '../../contexts/axios';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+const { width } = Dimensions.get('window');
 
-type Variant = {
+// Interfaces
+interface Variant {
   id: string;
-  title?: string;
-  price?: string | null;
-  quantity?: number;
-  available_quantity?: number;
-  in_stock?: boolean;
-  image?: string | null;
-  image_url?: string | null;
-  sku_code?: string;
-  proof_image?: string | null;
-  original_price?: string | null;
-  purchase_date?: string | null;
-  usage_period?: number | null;
-  usage_unit?: string | null;
-  depreciation_rate?: number | null;
-};
+  title: string;
+  option_title: string | null;
+  sku_code: string | null;
+  price: string | null;
+  compare_price: string | null;
+  quantity: number;
+  length: string | null;
+  width: string | null;
+  height: string | null;
+  dimension_unit: string;
+  value_added_tax: string;
+  value_added_tax_amount: string;
+  price_with_vat: string | null;
+  weight: string | null;
+  weight_unit: string;
+  critical_trigger: number | null;
+  critical_stock: number | null;
+  is_active: boolean;
+  is_refundable: boolean;
+  refund_days: number;
+  allow_swap: boolean;
+  swap_type: string;
+  swap_description: string | null;
+  original_price: string | null;
+  usage_period: number | null;
+  usage_unit: string | null;
+  depreciation_rate: number | null;
+  minimum_additional_payment: string;
+  maximum_additional_payment: string;
+  image: string | null;
+  proof_image: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
-type ProductDetail = {
+interface Media {
+  id: string;
+  file_data: string;
+  file_type: string;
+}
+
+interface Review {
+  id: string;
+  rating: number;
+  comment: string;
+  customer: {
+    id: string;
+    username: string;
+    first_name: string;
+    last_name: string;
+  } | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface Shop {
   id: string;
   name: string;
-  description?: string;
-  condition?: number;
-  variants?: Variant[];
-  media_files?: Array<{ file_data?: string; file_url?: string }>;
-  has_stock?: boolean;
-  is_favorite?: boolean;
-};
+  shop_picture: string | null;
+  verified: boolean;
+  city: string;
+  barangay: string;
+  street: string;
+  contact_number: string;
+  total_sales: string;
+  created_at: string;
+  is_suspended: boolean;
+}
 
-const formatCurrency = (amount?: string | number | null) => {
-  if (!amount && amount !== 0) return null;
-  const num = typeof amount === "string" ? parseFloat(amount) : amount;
-  if (isNaN(num)) return null;
-  return `₱${num.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-};
+interface Category {
+  id: string;
+  name: string;
+}
 
-const formatDate = (dateString?: string) => {
-  if (!dateString) return "N/A";
-  const date = new Date(dateString);
-  return date.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-};
+interface VariantStats {
+  total_variants: number;
+  active_variants: number;
+  total_stock: number;
+  min_price: string | null;
+  max_price: string | null;
+  low_stock_variants: number;
+  out_of_stock_variants: number;
+}
 
-// ─── Image Gallery Modal ────────────────────────────────────────────────────
-const ImageGalleryModal = ({
-  visible,
-  images,
-  initialIndex = 0,
-  onClose,
-}: {
-  visible: boolean;
-  images: string[];
-  initialIndex?: number;
-  onClose: () => void;
-}) => {
-  const [currentIndex, setCurrentIndex] = useState(initialIndex);
-  const flatListRef = useRef<FlatList>(null);
-
-  useEffect(() => {
-    if (visible) {
-      setCurrentIndex(initialIndex);
-      // Give the FlatList time to mount before scrolling
-      if (initialIndex > 0) {
-        const timer = setTimeout(() => {
-          flatListRef.current?.scrollToIndex({
-            index: initialIndex,
-            animated: false,
-          });
-        }, 150);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [visible, initialIndex]);
-
-  if (!visible) return null;
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.95)" }}>
-        {/* Close button */}
-        <TouchableOpacity
-          style={{
-            position: "absolute",
-            top: 50,
-            right: 20,
-            zIndex: 10,
-            backgroundColor: "rgba(255,255,255,0.15)",
-            borderRadius: 20,
-            padding: 6,
-          }}
-          onPress={onClose}
-        >
-          <Ionicons name="close" size={28} color="#FFFFFF" />
-        </TouchableOpacity>
-
-        {/* Image counter */}
-        {images.length > 1 && (
-          <View
-            style={{
-              position: "absolute",
-              top: 56,
-              alignSelf: "center",
-              zIndex: 10,
-              backgroundColor: "rgba(0,0,0,0.5)",
-              paddingHorizontal: 14,
-              paddingVertical: 6,
-              borderRadius: 20,
-            }}
-          >
-            <Text style={{ color: "#FFFFFF", fontSize: 14, fontWeight: "600" }}>
-              {currentIndex + 1} / {images.length}
-            </Text>
-          </View>
-        )}
-
-        <FlatList
-          ref={flatListRef}
-          data={images}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          initialScrollIndex={initialIndex}
-          getItemLayout={(_, index) => ({
-            length: SCREEN_WIDTH,
-            offset: SCREEN_WIDTH * index,
-            index,
-          })}
-          onScrollToIndexFailed={(info) => {
-            setTimeout(() => {
-              flatListRef.current?.scrollToIndex({
-                index: info.index,
-                animated: false,
-              });
-            }, 500);
-          }}
-          onScroll={(e) => {
-            const index = Math.round(
-              e.nativeEvent.contentOffset.x / SCREEN_WIDTH
-            );
-            setCurrentIndex(index);
-          }}
-          scrollEventThrottle={16}
-          renderItem={({ item }) => (
-            <View
-              style={{
-                width: SCREEN_WIDTH,
-                flex: 1,
-                justifyContent: "center",
-                alignItems: "center",
-              }}
-            >
-              <Image
-                source={{ uri: item }}
-                style={{
-                  width: SCREEN_WIDTH,
-                  height: SCREEN_WIDTH * 1.2,
-                  resizeMode: "contain",
-                }}
-              />
-            </View>
-          )}
-          keyExtractor={(_, index) => index.toString()}
-        />
-      </View>
-    </Modal>
-  );
-};
-
-// ─── Ownership Info Card ────────────────────────────────────────────────────
-const OwnershipInfoCard = ({
-  variant,
-  onProofImagePress,
-}: {
-  variant: Variant;
-  onProofImagePress: (url: string) => void;
-}) => {
-  // Default to expanded so proof image is immediately visible
-  const [isExpanded, setIsExpanded] = useState(true);
-
-  const hasOwnershipInfo =
-    variant.original_price ||
-    variant.purchase_date ||
-    variant.proof_image ||
-    variant.usage_period ||
-    variant.depreciation_rate;
-
-  if (!hasOwnershipInfo) return null;
-
-  const originalPrice = variant.original_price
-    ? parseFloat(variant.original_price)
-    : null;
-  const currentPrice = variant.price ? parseFloat(variant.price) : null;
-  const savings =
-    originalPrice && currentPrice && originalPrice > currentPrice
-      ? originalPrice - currentPrice
-      : null;
-  const savingsPercent =
-    savings && originalPrice
-      ? Math.round((savings / originalPrice) * 100)
-      : null;
-
-  return (
-    <View
-      style={{
-        backgroundColor: "#FFF7ED",
-        borderRadius: 12,
-        marginTop: 12,
-        marginBottom: 4,
-        borderWidth: 1,
-        borderColor: "#FED7AA",
-        overflow: "hidden",
-      }}
-    >
-      {/* Header row */}
-      <TouchableOpacity
-        onPress={() => setIsExpanded(!isExpanded)}
-        activeOpacity={0.7}
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: 14,
-          backgroundColor: isExpanded ? "#FFEDD5" : "#FFF7ED",
-        }}
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Ionicons name="time-outline" size={16} color="#EA580C" />
-          <Text style={{ fontSize: 14, fontWeight: "700", color: "#111827" }}>
-            Item History & Ownership
-          </Text>
-        </View>
-        <Ionicons
-          name={isExpanded ? "chevron-up" : "chevron-down"}
-          size={20}
-          color="#EA580C"
-        />
-      </TouchableOpacity>
-
-      {/* Expanded content */}
-      {isExpanded && (
-        <View style={{ padding: 14, paddingTop: 8 }}>
-          {/* Original Price */}
-          {variant.original_price && (
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                marginBottom: 8,
-              }}
-            >
-              <Text style={{ fontSize: 13, color: "#6B7280" }}>
-                Original Price
-              </Text>
-              <Text
-                style={{
-                  fontSize: 13,
-                  color: "#9CA3AF",
-                  textDecorationLine: "line-through",
-                }}
-              >
-                {formatCurrency(variant.original_price)}
-              </Text>
-            </View>
-          )}
-
-          {/* Current / Selling Price */}
-          {variant.price && (
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                marginBottom: 8,
-              }}
-            >
-              <Text style={{ fontSize: 13, color: "#6B7280" }}>
-                Selling Price
-              </Text>
-              <Text
-                style={{ fontSize: 13, fontWeight: "700", color: "#EA580C" }}
-              >
-                {formatCurrency(variant.price)}
-              </Text>
-            </View>
-          )}
-
-          {/* Savings badge */}
-          {savings && savingsPercent && (
-            <View
-              style={{
-                backgroundColor: "#DCFCE7",
-                borderRadius: 8,
-                padding: 8,
-                marginBottom: 10,
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <Text
-                style={{ fontSize: 12, color: "#059669", fontWeight: "600" }}
-              >
-                You Save
-              </Text>
-              <Text
-                style={{ fontSize: 12, color: "#059669", fontWeight: "700" }}
-              >
-                {formatCurrency(savings)} ({savingsPercent}% off)
-              </Text>
-            </View>
-          )}
-
-          {/* Purchase Date */}
-          {variant.purchase_date && (
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                marginBottom: 8,
-              }}
-            >
-              <Text style={{ fontSize: 13, color: "#6B7280" }}>
-                Purchase Date
-              </Text>
-              <Text style={{ fontSize: 13, color: "#374151" }}>
-                {formatDate(variant.purchase_date)}
-              </Text>
-            </View>
-          )}
-
-          {/* Usage Period */}
-          {variant.usage_period != null && variant.usage_unit && (
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                marginBottom: 8,
-              }}
-            >
-              <Text style={{ fontSize: 13, color: "#6B7280" }}>
-                Usage Period
-              </Text>
-              <Text style={{ fontSize: 13, color: "#374151" }}>
-                {variant.usage_period} {variant.usage_unit}
-              </Text>
-            </View>
-          )}
-
-          {/* Depreciation Rate */}
-          {variant.depreciation_rate != null && (
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                marginBottom: 8,
-              }}
-            >
-              <Text style={{ fontSize: 13, color: "#6B7280" }}>
-                Depreciation Rate
-              </Text>
-              <Text style={{ fontSize: 13, color: "#374151" }}>
-                {variant.depreciation_rate}% / year
-              </Text>
-            </View>
-          )}
-
-          {/* ── Proof of Ownership Image ─────────────────────── */}
-          {variant.proof_image ? (
-            <View style={{ marginTop: 12 }}>
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 6,
-                  marginBottom: 10,
-                }}
-              >
-                <Ionicons
-                  name="shield-checkmark-outline"
-                  size={15}
-                  color="#EA580C"
-                />
-                <Text
-                  style={{
-                    fontSize: 13,
-                    color: "#374151",
-                    fontWeight: "600",
-                  }}
-                >
-                  Proof of Ownership
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                onPress={() => onProofImagePress(variant.proof_image!)}
-                activeOpacity={0.85}
-                style={{
-                  width: 110,
-                  height: 110,
-                  borderRadius: 10,
-                  overflow: "hidden",
-                  borderWidth: 2,
-                  borderColor: "#34D399",
-                }}
-              >
-                <Image
-                  source={{ uri: variant.proof_image }}
-                  style={{ width: "100%", height: "100%" }}
-                  resizeMode="cover"
-                  onError={(e) =>
-                    console.log(
-                      "Proof image load error:",
-                      e.nativeEvent.error,
-                      "URL:",
-                      variant.proof_image
-                    )
-                  }
-                />
-                {/* Tap to view overlay */}
-                <View
-                  style={{
-                    position: "absolute",
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    backgroundColor: "rgba(52,211,153,0.85)",
-                    paddingVertical: 4,
-                    alignItems: "center",
-                    flexDirection: "row",
-                    justifyContent: "center",
-                    gap: 4,
-                  }}
-                >
-                  <Ionicons name="expand-outline" size={11} color="#FFFFFF" />
-                  <Text
-                    style={{
-                      fontSize: 10,
-                      fontWeight: "700",
-                      color: "#FFFFFF",
-                    }}
-                  >
-                    Tap to view
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            // Show a placeholder so you know it's missing vs not rendered
-            <View
-              style={{
-                marginTop: 12,
-                padding: 10,
-                backgroundColor: "#F3F4F6",
-                borderRadius: 8,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <Ionicons name="image-outline" size={14} color="#9CA3AF" />
-              <Text style={{ fontSize: 12, color: "#9CA3AF" }}>
-                No proof of ownership image provided
-              </Text>
-            </View>
-          )}
-        </View>
-      )}
-    </View>
-  );
-};
-
-// ─── Variant Selection Drawer Modal ────────────────────────────────────────
-const VariantSelectionModal = ({
-  visible,
-  variants,
-  selectedVariant,
-  quantity,
-  onSelectVariant,
-  onQuantityChange,
-  onConfirm,
-  onClose,
-  productName,
-  productImage,
-}: {
-  visible: boolean;
-  variants: Variant[];
-  selectedVariant: Variant | null;
+interface Product {
+  id: string;
+  name: string;
+  description: string;
   quantity: number;
-  onSelectVariant: (variant: Variant) => void;
-  onQuantityChange: (quantity: number) => void;
-  onConfirm: () => void;
-  onClose: () => void;
-  productName: string;
-  productImage?: string | null;
-}) => {
-  const [tempQuantity, setTempQuantity] = useState(quantity);
-  const [tempSelectedVariant, setTempSelectedVariant] =
-    useState<Variant | null>(selectedVariant);
+  price_range: {
+    min: string | null;
+    max: string | null;
+  };
+  upload_status: string;
+  status: string;
+  condition: number;
+  is_refundable: boolean;
+  refund_days: number;
+  created_at: string;
+  updated_at: string;
+  is_removed: boolean;
+  removal_reason: string | null;
+  removed_at: string | null;
+  active_report_count: number;
+  favorites_count: number;
+  average_rating: number;
+  total_reviews: number;
+  shop: Shop | null;
+  customer: {
+    id: string;
+    username: string;
+    email: string;
+    first_name: string;
+    last_name: string;
+    contact_number: string;
+    product_limit: number;
+    current_product_count: number;
+  } | null;
+  category: Category | null;
+  category_admin: Category | null;
+  media: Media[];
+  variants: Variant[];
+  reviews: Review[];
+  variant_stats: VariantStats;
+  reports: {
+    active: number;
+    resolved: number;
+    total: number;
+    active_reports: any[];
+  };
+}
+
+export default function SellerViewProduct() {
+  const router = useRouter();
+  const { productId, shopId } = useLocalSearchParams<{ productId: string; shopId: string }>();
+  const { userId } = useAuth();
+
+  const [product, setProduct] = useState<Product | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const [expandedSections, setExpandedSections] = useState({
+    variants: false,
+    reviews: false,
+  });
 
   useEffect(() => {
-    if (visible) {
-      setTempQuantity(quantity);
-      setTempSelectedVariant(selectedVariant);
-    }
-  }, [visible, quantity, selectedVariant]);
-
-  const handleConfirm = () => {
-    if (tempSelectedVariant) {
-      onSelectVariant(tempSelectedVariant);
-      onQuantityChange(tempQuantity);
-      onConfirm();
-    } else {
-      Alert.alert("Error", "Please select a variant");
-    }
-  };
-
-  const getDisplayImage = () => {
-    if (
-      tempSelectedVariant &&
-      (tempSelectedVariant.image_url || tempSelectedVariant.image)
-    ) {
-      return tempSelectedVariant.image_url || tempSelectedVariant.image;
-    }
-    return productImage || null;
-  };
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }} />
-      </TouchableWithoutFeedback>
-
-      <View
-        style={{
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          backgroundColor: "#FFFFFF",
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
-          maxHeight: SCREEN_HEIGHT * 0.85,
-        }}
-      >
-        {/* Header */}
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            paddingHorizontal: 20,
-            paddingVertical: 16,
-            borderBottomWidth: 1,
-            borderBottomColor: "#F3F4F6",
-          }}
-        >
-          <Text
-            style={{ fontSize: 18, fontWeight: "700", color: "#111827" }}
-          >
-            Select Option
-          </Text>
-          <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
-            <Ionicons name="close" size={24} color="#6B7280" />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          style={{ flex: 1 }}
-          contentContainerStyle={{ padding: 20 }}
-        >
-          {/* Product preview */}
-          <View
-            style={{ flexDirection: "row", gap: 12, marginBottom: 20 }}
-          >
-            {getDisplayImage() ? (
-              <Image
-                source={{ uri: getDisplayImage()! }}
-                style={{ width: 80, height: 80, borderRadius: 8 }}
-              />
-            ) : (
-              <View
-                style={{
-                  width: 80,
-                  height: 80,
-                  backgroundColor: "#F3F4F6",
-                  borderRadius: 8,
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons name="cube-outline" size={32} color="#9CA3AF" />
-              </View>
-            )}
-            <View style={{ flex: 1, justifyContent: "center" }}>
-              <Text
-                style={{
-                  fontSize: 16,
-                  fontWeight: "700",
-                  color: "#111827",
-                }}
-                numberOfLines={2}
-              >
-                {productName}
-              </Text>
-              {tempSelectedVariant && (
-                <Text
-                  style={{
-                    fontSize: 20,
-                    fontWeight: "700",
-                    color: "#EA580C",
-                    marginTop: 4,
-                  }}
-                >
-                  {formatCurrency(tempSelectedVariant.price) ?? "₱0.00"}
-                </Text>
-              )}
-            </View>
-          </View>
-
-          {/* Variant options */}
-          <Text
-            style={{
-              fontSize: 14,
-              fontWeight: "600",
-              color: "#374151",
-              marginBottom: 12,
-            }}
-          >
-            Select Variant{" "}
-            {variants.length > 1 ? `(${variants.length} options)` : ""}
-          </Text>
-
-          {variants.map((variant) => {
-            const isSelected = tempSelectedVariant?.id === variant.id;
-            const availableQty =
-              variant.available_quantity ?? variant.quantity ?? 0;
-            const isInStock = variant.in_stock ?? availableQty > 0;
-
-            return (
-              <TouchableOpacity
-                key={variant.id}
-                onPress={() => {
-                  setTempSelectedVariant(variant);
-                  setTempQuantity(1);
-                }}
-                disabled={!isInStock}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: 12,
-                  borderWidth: 2,
-                  borderColor: isSelected ? "#EA580C" : "#E5E7EB",
-                  borderRadius: 10,
-                  marginBottom: 10,
-                  backgroundColor: isSelected ? "#FFF7ED" : "#FFFFFF",
-                  opacity: isInStock ? 1 : 0.5,
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 12,
-                    flex: 1,
-                  }}
-                >
-                  {variant.image_url || variant.image ? (
-                    <Image
-                      source={{ uri: variant.image_url || variant.image! }}
-                      style={{ width: 50, height: 50, borderRadius: 8 }}
-                    />
-                  ) : (
-                    <View
-                      style={{
-                        width: 50,
-                        height: 50,
-                        backgroundColor: "#F3F4F6",
-                        borderRadius: 8,
-                        justifyContent: "center",
-                        alignItems: "center",
-                      }}
-                    >
-                      <Ionicons
-                        name="cube-outline"
-                        size={24}
-                        color="#9CA3AF"
-                      />
-                    </View>
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "#111827",
-                      }}
-                    >
-                      {variant.title || variant.sku_code || "Standard"}
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        color: "#EA580C",
-                        fontWeight: "700",
-                      }}
-                    >
-                      {formatCurrency(variant.price) ?? "₱0.00"}
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: 11,
-                        color: isInStock ? "#16A34A" : "#DC2626",
-                        marginTop: 2,
-                      }}
-                    >
-                      {isInStock
-                        ? `${availableQty} available`
-                        : "Out of Stock"}
-                    </Text>
-                  </View>
-                </View>
-                {isSelected && (
-                  <Ionicons
-                    name="checkmark-circle"
-                    size={24}
-                    color="#EA580C"
-                  />
-                )}
-              </TouchableOpacity>
-            );
-          })}
-
-          {/* Quantity selector */}
-          {tempSelectedVariant &&
-            (tempSelectedVariant.in_stock ??
-              (tempSelectedVariant.available_quantity ?? 0) > 0) && (
-              <View style={{ marginTop: 20 }}>
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "#374151",
-                    marginBottom: 12,
-                  }}
-                >
-                  Quantity
-                </Text>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 16,
-                  }}
-                >
-                  <TouchableOpacity
-                    onPress={() =>
-                      setTempQuantity(Math.max(1, tempQuantity - 1))
-                    }
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 8,
-                      backgroundColor: "#F3F4F6",
-                      justifyContent: "center",
-                      alignItems: "center",
-                    }}
-                  >
-                    <Ionicons name="remove" size={24} color="#374151" />
-                  </TouchableOpacity>
-                  <Text
-                    style={{
-                      fontSize: 20,
-                      fontWeight: "600",
-                      color: "#111827",
-                      minWidth: 50,
-                      textAlign: "center",
-                    }}
-                  >
-                    {tempQuantity}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() =>
-                      setTempQuantity(
-                        Math.min(
-                          tempSelectedVariant.available_quantity ??
-                            tempSelectedVariant.quantity ??
-                            99,
-                          tempQuantity + 1
-                        )
-                      )
-                    }
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 8,
-                      backgroundColor: "#F3F4F6",
-                      justifyContent: "center",
-                      alignItems: "center",
-                    }}
-                  >
-                    <Ionicons name="add" size={24} color="#374151" />
-                  </TouchableOpacity>
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      color: "#6B7280",
-                      marginLeft: "auto",
-                    }}
-                  >
-                    {tempSelectedVariant.available_quantity ??
-                      tempSelectedVariant.quantity ??
-                      0}{" "}
-                    available
-                  </Text>
-                </View>
-              </View>
-            )}
-        </ScrollView>
-
-        {/* Footer */}
-        <View
-          style={{
-            flexDirection: "row",
-            gap: 12,
-            paddingHorizontal: 20,
-            paddingVertical: 16,
-            borderTopWidth: 1,
-            borderTopColor: "#F3F4F6",
-            backgroundColor: "#FFFFFF",
-          }}
-        >
-          <TouchableOpacity
-            onPress={onClose}
-            style={{
-              flex: 1,
-              borderWidth: 1,
-              borderColor: "#E5E7EB",
-              borderRadius: 10,
-              paddingVertical: 14,
-              alignItems: "center",
-            }}
-          >
-            <Text
-              style={{ fontSize: 14, fontWeight: "600", color: "#6B7280" }}
-            >
-              Cancel
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={handleConfirm}
-            disabled={
-              !tempSelectedVariant?.in_stock &&
-              (tempSelectedVariant?.available_quantity ?? 0) === 0
-            }
-            style={{
-              flex: 2,
-              backgroundColor:
-                tempSelectedVariant?.in_stock ??
-                (tempSelectedVariant?.available_quantity ?? 0) > 0
-                  ? "#EA580C"
-                  : "#D1D5DB",
-              borderRadius: 10,
-              paddingVertical: 14,
-              alignItems: "center",
-            }}
-          >
-            <Text
-              style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}
-            >
-              Confirm Selection
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  );
-};
-
-// ─── Main Screen ────────────────────────────────────────────────────────────
-export default function CustomerViewProductScreen() {
-  const { userId } = useAuth();
-  const params = useLocalSearchParams<{ id?: string }>();
-  const productId = params.id ? String(params.id) : "";
-
-  const [loading, setLoading] = useState(true);
-  const [product, setProduct] = useState<ProductDetail | null>(null);
-  const [selectedVariant, setSelectedVariant] = useState<Variant | null>(null);
-  const [quantity, setQuantity] = useState(1);
-  const [addingToCart, setAddingToCart] = useState(false);
-  const [variantModalVisible, setVariantModalVisible] = useState(false);
-  const [pendingAction, setPendingAction] = useState<
-    "add_to_cart" | "buy_now" | null
-  >(null);
-
-  // Gallery state
-  const [galleryVisible, setGalleryVisible] = useState(false);
-  const [galleryImages, setGalleryImages] = useState<string[]>([]);
-  const [galleryInitialIndex, setGalleryInitialIndex] = useState(0);
-
-  const fetchProduct = useCallback(async () => {
-    if (!productId) {
-      setLoading(false);
-      return;
-    }
-    try {
-      const headers: Record<string, string> = {};
-      if (userId) headers["X-User-Id"] = userId;
-
-      const response = await AxiosInstance.get(
-        `/public-products/${productId}/`,
-        { headers }
-      );
-
-      if (response.data) {
-        setProduct(response.data);
-
-        // Debug: log all variants and their proof images
-        if (__DEV__) {
-          console.log(
-            "[view-product] variants:",
-            JSON.stringify(
-              response.data.variants?.map((v: Variant) => ({
-                id: v.id,
-                title: v.title,
-                proof_image: v.proof_image,
-                original_price: v.original_price,
-                purchase_date: v.purchase_date,
-              })),
-              null,
-              2
-            )
-          );
-        }
-
-        if (response.data.variants?.length > 0) {
-          const inStock = response.data.variants.find(
-            (v: Variant) => v.in_stock
-          );
-          setSelectedVariant(inStock || response.data.variants[0]);
-        }
-      }
-    } catch (error: any) {
-      Alert.alert("Error", "Unable to load product details.");
-      setProduct(null);
-    } finally {
-      setLoading(false);
+    if (productId && userId) {
+      fetchProduct();
     }
   }, [productId, userId]);
 
-  useEffect(() => {
-    fetchProduct();
-  }, [fetchProduct]);
+  const fetchProduct = async () => {
+    if (!productId || !userId) return;
 
-  // All product media images
-  const productImages = useMemo(() => {
-    return (product?.media_files || [])
-      .map((item) => item.file_url || item.file_data)
-      .filter((url): url is string => !!url);
-  }, [product]);
-
-  // All proof images across variants (for the gallery)
-  const allProofImages = useMemo(() => {
-    return (product?.variants || [])
-      .map((v) => v.proof_image)
-      .filter((url): url is string => !!url);
-  }, [product]);
-
-  // Open proof image gallery at the tapped image
-  const openProofGallery = (url: string) => {
-    const index = allProofImages.findIndex((img) => img === url);
-    setGalleryImages(allProofImages);
-    setGalleryInitialIndex(index >= 0 ? index : 0);
-    setGalleryVisible(true);
-  };
-
-  // Open product media gallery
-  const openProductGallery = (index: number = 0) => {
-    setGalleryImages(productImages);
-    setGalleryInitialIndex(index);
-    setGalleryVisible(true);
-  };
-
-  // Add to Cart
-  const addToCart = async () => {
-    if (!userId) {
-      Alert.alert("Sign In Required", "Please sign in to add items to cart");
-      return;
-    }
-    if (!selectedVariant) {
-      if (product?.variants && product.variants.length > 0) {
-        setPendingAction("add_to_cart");
-        setVariantModalVisible(true);
-      } else {
-        Alert.alert("Error", "No variants available for this product");
-      }
-      return;
-    }
-    if (!selectedVariant.in_stock) {
-      Alert.alert("Out of Stock", "This variant is currently out of stock");
-      return;
-    }
-
-    setAddingToCart(true);
     try {
-      await AxiosInstance.post("/view-cart/", {
-        user_id: userId,
-        variant_id: selectedVariant.id,
-        quantity,
-      });
-      Alert.alert("Success", `${product?.name} has been added to your cart.`);
-    } catch (err: any) {
-      Alert.alert(
-        "Error",
-        err.response?.data?.error || "Failed to add to cart."
+      console.log('Fetching product:', productId);
+      console.log('User ID:', userId);
+      
+      const response = await AxiosInstance.get(
+        `/seller-products/${productId}/get_product/`,
+        {
+          params: { user_id: userId },
+        }
       );
+
+      console.log('Product response:', response.data);
+
+      if (response.data.success) {
+        setProduct(response.data.product);
+      } else {
+        Alert.alert('Error', response.data.error || 'Failed to load product');
+        router.back();
+      }
+    } catch (error: any) {
+      console.error('Error fetching product:', error);
+      console.error('Error response:', error.response?.data);
+      
+      let errorMessage = 'Failed to load product';
+      if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.response?.status === 403) {
+        errorMessage = 'You do not have permission to view this product';
+      } else if (error.response?.status === 404) {
+        errorMessage = 'Product not found';
+      }
+      
+      Alert.alert('Error', errorMessage);
+      router.back();
     } finally {
-      setAddingToCart(false);
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  // Buy Now
-  const buyNow = () => {
-    if (!userId) {
-      Alert.alert("Sign In Required", "Please sign in to purchase");
-      return;
-    }
-    if (!selectedVariant) {
-      if (product?.variants && product.variants.length > 0) {
-        setPendingAction("buy_now");
-        setVariantModalVisible(true);
-      } else {
-        Alert.alert("Error", "No variants available for this product");
-      }
-      return;
-    }
-    if (!selectedVariant.in_stock) {
-      Alert.alert("Out of Stock", "This variant is currently out of stock");
-      return;
-    }
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchProduct();
+  };
 
-    router.push({
-      pathname: "/customer/checkout",
-      params: {
-        productId,
-        variantId: selectedVariant.id,
-        quantity: String(quantity),
-      },
+  const getProductImages = (): string[] => {
+    const images: string[] = [];
+    if (product?.media && product.media.length > 0) {
+      images.push(...product.media.map(m => m.file_data));
+    }
+    if (product?.variants && product.variants.length > 0) {
+      for (const variant of product.variants) {
+        if (variant.image && !images.includes(variant.image)) {
+          images.push(variant.image);
+        }
+      }
+    }
+    return images;
+  };
+
+  const formatCurrency = (amount: string | number | null) => {
+    if (!amount) return '₱0.00';
+    const num = typeof amount === 'string' ? parseFloat(amount) : amount;
+    return `₱${num.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-PH', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     });
   };
 
-  // Execute the pending action after variant is confirmed
-  const executePendingAction = async () => {
-    if (!selectedVariant) return;
-
-    if (pendingAction === "add_to_cart") {
-      setAddingToCart(true);
-      try {
-        await AxiosInstance.post("/view-cart/", {
-          user_id: userId,
-          variant_id: selectedVariant.id,
-          quantity,
-        });
-        Alert.alert(
-          "Success",
-          `${product?.name} has been added to your cart.`
-        );
-      } catch (err: any) {
-        Alert.alert(
-          "Error",
-          err.response?.data?.error || "Failed to add to cart."
-        );
-      } finally {
-        setAddingToCart(false);
-        setPendingAction(null);
-      }
-    } else if (pendingAction === "buy_now") {
-      router.push({
-        pathname: "/customer/checkout",
-        params: {
-          productId,
-          variantId: selectedVariant.id,
-          quantity: String(quantity),
-        },
-      });
-      setPendingAction(null);
+  const getConditionLabel = (condition: number) => {
+    switch (condition) {
+      case 1: return { label: 'Poor', color: '#EF4444' };
+      case 2: return { label: 'Fair', color: '#F59E0B' };
+      case 3: return { label: 'Good', color: '#3B82F6' };
+      case 4: return { label: 'Very Good', color: '#8B5CF6' };
+      case 5: return { label: 'Like New', color: '#10B981' };
+      default: return { label: 'Unknown', color: '#6B7280' };
     }
   };
 
-  const handleVariantConfirm = () => {
-    setVariantModalVisible(false);
-    setTimeout(executePendingAction, 100);
+  const getStatusBadge = () => {
+    if (!product) return null;
+    
+    if (product.is_removed) {
+      return { label: 'Removed', color: '#EF4444', bg: '#FEE2E2' };
+    }
+    
+    switch (product.upload_status) {
+      case 'published':
+        return { label: 'Published', color: '#22C55E', bg: '#E6F7E6' };
+      case 'draft':
+        return { label: 'Draft', color: '#6B7280', bg: '#F3F4F6' };
+      case 'archived':
+        return { label: 'Archived', color: '#F59E0B', bg: '#FEF3C7' };
+      default:
+        return { label: product.upload_status || 'Unknown', color: '#6B7280', bg: '#F3F4F6' };
+    }
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────
+  const renderStars = (rating: number) => {
+    const stars = [];
+    const fullStars = Math.floor(rating);
+    const hasHalfStar = rating % 1 >= 0.5;
+    
+    for (let i = 0; i < fullStars; i++) {
+      stars.push(<Ionicons key={`star-${i}`} name="star" size={14} color="#F59E0B" />);
+    }
+    if (hasHalfStar) {
+      stars.push(<Ionicons key="half-star" name="star-half" size={14} color="#F59E0B" />);
+    }
+    const emptyStars = 5 - stars.length;
+    for (let i = 0; i < emptyStars; i++) {
+      stars.push(<Ionicons key={`empty-${i}`} name="star-outline" size={14} color="#D1D5DB" />);
+    }
+    return stars;
+  };
 
   if (loading) {
     return (
-      <SafeAreaView
-        style={{
-          flex: 1,
-          backgroundColor: "#F9FAFB",
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <ActivityIndicator size="large" color="#EA580C" />
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text style={styles.loadingText}>Loading product details...</Text>
+        </View>
       </SafeAreaView>
     );
   }
 
   if (!product) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: "#F9FAFB" }}>
-        <View style={{ padding: 16 }}>
-          <TouchableOpacity onPress={() => router.back()} style={{ padding: 6 }}>
-            <Ionicons name="arrow-back" size={22} color="#111827" />
+      <SafeAreaView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <MaterialIcons name="error-outline" size={64} color="#EF4444" />
+          <Text style={styles.errorTitle}>Product Not Found</Text>
+          <Text style={styles.errorText}>Unable to load product details</Text>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>Go Back</Text>
           </TouchableOpacity>
-          <Text
-            style={{ textAlign: "center", marginTop: 40, color: "#6B7280" }}
-          >
-            Product not found.
-          </Text>
         </View>
       </SafeAreaView>
     );
   }
 
-  const isInStock = selectedVariant?.in_stock ?? product.has_stock;
+  const badge = getStatusBadge();
+  const conditionInfo = getConditionLabel(product.condition);
+  const productImages = getProductImages();
+  const variantStats = product.variant_stats;
+  const priceRange = product.price_range;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F9FAFB" }}>
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <View
-        style={{
-          paddingHorizontal: 16,
-          paddingVertical: 10,
-          flexDirection: "row",
-          alignItems: "center",
-          borderBottomWidth: 1,
-          borderBottomColor: "#E5E7EB",
-          backgroundColor: "#FFFFFF",
-        }}
-      >
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={{ padding: 6, marginRight: 8 }}
-        >
-          <Ionicons name="arrow-back" size={22} color="#111827" />
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButtonHeader}>
+          <Ionicons name="arrow-back" size={24} color="#111827" />
         </TouchableOpacity>
-        <Text
-          style={{
-            fontSize: 18,
-            fontWeight: "700",
-            color: "#111827",
-            flex: 1,
-          }}
-          numberOfLines={1}
+        <Text style={styles.headerTitle}>Product Details</Text>
+        <TouchableOpacity 
+          style={styles.editButton}
+          onPress={() => router.push(`/seller/components/seller-edit-product?productId=${product.id}&shopId=${shopId}&product=${encodeURIComponent(JSON.stringify(product))}`)}
         >
-          Product Details
-        </Text>
-        <TouchableOpacity
-          onPress={() => router.push("/customer/cart")}
-          style={{ padding: 8 }}
-        >
-          <Ionicons name="cart-outline" size={24} color="#111827" />
+          <MaterialIcons name="edit" size={22} color="#3B82F6" />
         </TouchableOpacity>
       </View>
 
-      {/* ── Scrollable body ────────────────────────────────────────────── */}
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#3B82F6']} />
+        }
       >
-        {/* Hero image card */}
-        <View
-          style={{
-            backgroundColor: "#FFFFFF",
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: "#E5E7EB",
-            overflow: "hidden",
-            marginBottom: 12,
-          }}
-        >
-          <TouchableOpacity
-            onPress={() => openProductGallery(0)}
-            activeOpacity={0.9}
+        {/* Image Gallery */}
+        {productImages.length > 0 && (
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={styles.imageGallery}
+            contentContainerStyle={styles.imageGalleryContent}
           >
-            {productImages.length > 0 ? (
-              <View>
-                <Image
-                  source={{ uri: productImages[0] }}
-                  style={{ width: "100%", height: 260 }}
-                  resizeMode="cover"
-                />
-                {productImages.length > 1 && (
-                  <View
-                    style={{
-                      position: "absolute",
-                      bottom: 10,
-                      right: 10,
-                      backgroundColor: "rgba(0,0,0,0.55)",
-                      borderRadius: 12,
-                      paddingHorizontal: 10,
-                      paddingVertical: 4,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 4,
-                    }}
-                  >
-                    <Ionicons name="images-outline" size={13} color="#FFF" />
-                    <Text
-                      style={{
-                        color: "#FFFFFF",
-                        fontSize: 12,
-                        fontWeight: "600",
-                      }}
-                    >
-                      {productImages.length}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            ) : (
-              <View
-                style={{
-                  height: 260,
-                  backgroundColor: "#F3F4F6",
-                  justifyContent: "center",
-                  alignItems: "center",
+            {productImages.map((image, index) => (
+              <TouchableOpacity 
+                key={index} 
+                onPress={() => {
+                  setSelectedImage(image);
+                  setPreviewVisible(true);
                 }}
               >
-                <Ionicons name="image-outline" size={48} color="#9CA3AF" />
-              </View>
-            )}
-          </TouchableOpacity>
+                <Image source={{ uri: image }} style={styles.galleryImage} resizeMode="cover" />
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
 
-          <View style={{ padding: 14 }}>
-            <Text
-              style={{ fontSize: 20, fontWeight: "700", color: "#111827" }}
-            >
-              {product.name}
-            </Text>
-            <Text
-              style={{
-                fontSize: 26,
-                fontWeight: "700",
-                color: "#EA580C",
-                marginTop: 6,
-              }}
-            >
-              {selectedVariant
-                ? formatCurrency(selectedVariant.price) ?? "₱0.00"
-                : "Price unavailable"}
-            </Text>
-            {product.description ? (
-              <Text
-                style={{
-                  fontSize: 14,
-                  color: "#374151",
-                  marginTop: 12,
-                  lineHeight: 20,
-                }}
-              >
-                {product.description}
-              </Text>
-            ) : null}
+        {productImages.length === 0 && (
+          <View style={styles.imagePlaceholder}>
+            <Ionicons name="image-outline" size={64} color="#CBD5E1" />
+            <Text style={styles.imagePlaceholderText}>No Images</Text>
           </View>
-        </View>
+        )}
 
-        {/* Variant selection button */}
-        {product.variants && product.variants.length > 0 && (
-          <TouchableOpacity
-            onPress={() => setVariantModalVisible(true)}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              backgroundColor: "#FFFFFF",
-              borderWidth: 1,
-              borderColor: "#E5E7EB",
-              borderRadius: 10,
-              padding: 12,
-              marginBottom: 4,
-            }}
-          >
-            <View style={{ flex: 1 }}>
-              <Text
-                style={{ fontSize: 13, color: "#6B7280", marginBottom: 2 }}
-              >
-                Variant
-              </Text>
-              <Text
-                style={{
-                  fontSize: 15,
-                  fontWeight: "600",
-                  color: "#111827",
-                }}
-              >
-                {selectedVariant?.title ||
-                  selectedVariant?.sku_code ||
-                  "Select Option"}
+        <View style={styles.content}>
+          {/* Status and Basic Info */}
+          <View style={styles.statusBar}>
+            <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
+              <Text style={[styles.statusText, { color: badge.color }]}>{badge.label}</Text>
+            </View>
+            <View style={[styles.conditionBadge, { backgroundColor: `${conditionInfo.color}10` }]}>
+              <Text style={[styles.conditionText, { color: conditionInfo.color }]}>
+                {conditionInfo.label}
               </Text>
             </View>
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 12,
-              }}
-            >
-              {selectedVariant && (
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "700",
-                    color: "#EA580C",
-                  }}
-                >
-                  {formatCurrency(selectedVariant.price) ?? "₱0.00"}
+          </View>
+
+          {/* Product Name */}
+          <Text style={styles.productName}>{product.name}</Text>
+
+          {/* Price Range */}
+          <View style={styles.priceSection}>
+            <Text style={styles.priceLabel}>Price Range</Text>
+            <View style={styles.priceRange}>
+              {priceRange.min && (
+                <Text style={styles.priceValue}>
+                  {formatCurrency(priceRange.min)} - {formatCurrency(priceRange.max)}
                 </Text>
               )}
-              <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+              {!priceRange.min && (
+                <Text style={styles.priceValue}>No price set</Text>
+              )}
             </View>
-          </TouchableOpacity>
-        )}
+          </View>
 
-        {/* ── Ownership Info Card (always rendered when variant selected) ── */}
-        {selectedVariant && (
-          <OwnershipInfoCard
-            variant={selectedVariant}
-            onProofImagePress={openProofGallery}
-          />
-        )}
+          {/* Stats Cards */}
+          <View style={styles.statsGrid}>
+            <View style={styles.statCard}>
+              <MaterialIcons name="inventory" size={20} color="#6B7280" />
+              <Text style={styles.statValue}>{variantStats.total_stock}</Text>
+              <Text style={styles.statLabel}>Total Stock</Text>
+            </View>
+            <View style={styles.statCard}>
+              <MaterialIcons name="style" size={20} color="#6B7280" />
+              <Text style={styles.statValue}>{variantStats.active_variants}</Text>
+              <Text style={styles.statLabel}>Active Variants</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Ionicons name="star" size={20} color="#6B7280" />
+              <Text style={styles.statValue}>{product.average_rating.toFixed(1)}</Text>
+              <Text style={styles.statLabel}>Rating</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Ionicons name="heart" size={20} color="#6B7280" />
+              <Text style={styles.statValue}>{product.favorites_count}</Text>
+              <Text style={styles.statLabel}>Favorites</Text>
+            </View>
+          </View>
+
+          {/* Description */}
+          <View style={styles.infoCard}>
+            <Text style={styles.cardTitle}>Description</Text>
+            <Text style={styles.descriptionText}>{product.description}</Text>
+          </View>
+
+          {/* Return Policy */}
+          <View style={styles.infoCard}>
+            <Text style={styles.cardTitle}>Return Policy</Text>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Refundable</Text>
+              <Text style={[styles.infoValue, { color: product.is_refundable ? '#22C55E' : '#EF4444' }]}>
+                {product.is_refundable ? 'Yes' : 'No'}
+              </Text>
+            </View>
+            {product.is_refundable && (
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Refund Period</Text>
+                <Text style={styles.infoValue}>{product.refund_days} days</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Category */}
+          {product.category_admin && (
+            <View style={styles.infoCard}>
+              <Text style={styles.cardTitle}>Category</Text>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Global Category</Text>
+                <Text style={styles.infoValue}>{product.category_admin.name}</Text>
+              </View>
+            </View>
+          )}
+
+          {/* Shop Info */}
+          {product.shop && (
+            <View style={styles.infoCard}>
+              <Text style={styles.cardTitle}>Shop Information</Text>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Shop Name</Text>
+                <Text style={styles.infoValue}>{product.shop.name}</Text>
+              </View>
+              {product.shop.contact_number && (
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Contact</Text>
+                  <Text style={styles.infoValue}>{product.shop.contact_number}</Text>
+                </View>
+              )}
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Address</Text>
+                <Text style={styles.infoValue}>
+                  {[product.shop.street, product.shop.barangay, product.shop.city]
+                    .filter(Boolean)
+                    .join(', ')}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Variants Section */}
+          {product.variants && product.variants.length > 0 && (
+            <View style={styles.infoCard}>
+              <TouchableOpacity 
+                style={styles.sectionHeader}
+                onPress={() => setExpandedSections(prev => ({ ...prev, variants: !prev.variants }))}
+              >
+                <Text style={styles.cardTitle}>Variants ({product.variants.length})</Text>
+                <Ionicons 
+                  name={expandedSections.variants ? "chevron-up" : "chevron-down"} 
+                  size={20} 
+                  color="#6B7280" 
+                />
+              </TouchableOpacity>
+
+              {expandedSections.variants && (
+                <View>
+                  {product.variants.map((variant, index) => (
+                    <View key={variant.id} style={styles.variantItem}>
+                      <View style={styles.variantHeader}>
+                        <Text style={styles.variantTitle}>
+                          {variant.title || `Variant ${index + 1}`}
+                        </Text>
+                        <View style={[
+                          styles.variantStatusBadge,
+                          { backgroundColor: variant.is_active ? '#E6F7E6' : '#F3F4F6' }
+                        ]}>
+                          <Text style={[
+                            styles.variantStatusText,
+                            { color: variant.is_active ? '#22C55E' : '#6B7280' }
+                          ]}>
+                            {variant.is_active ? 'Active' : 'Inactive'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.variantDetails}>
+                        <View style={styles.variantPriceRow}>
+                          <Text style={styles.variantPrice}>{formatCurrency(variant.price)}</Text>
+                          {variant.compare_price && (
+                            <Text style={styles.variantComparePrice}>
+                              {formatCurrency(variant.compare_price)}
+                            </Text>
+                          )}
+                        </View>
+                        <View style={styles.variantMetaRow}>
+                          <Text style={styles.variantStock}>Stock: {variant.quantity}</Text>
+                          {variant.sku_code && (
+                            <Text style={styles.variantSku}>SKU: {variant.sku_code}</Text>
+                          )}
+                        </View>
+                        {(variant.length || variant.width || variant.height) && (
+                          <Text style={styles.variantDimensions}>
+                            Dimensions: {variant.length || 0} × {variant.width || 0} × {variant.height || 0} {variant.dimension_unit}
+                          </Text>
+                        )}
+                        {variant.weight && (
+                          <Text style={styles.variantWeight}>
+                            Weight: {variant.weight} {variant.weight_unit}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {!expandedSections.variants && (
+                <View style={styles.variantSummary}>
+                  <Text style={styles.variantSummaryText}>
+                    {variantStats.active_variants} active variants • {variantStats.total_stock} total stock
+                  </Text>
+                  <Text style={styles.variantSummarySubtext}>
+                    Price: {formatCurrency(variantStats.min_price)} - {formatCurrency(variantStats.max_price)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Reviews Section */}
+          {product.reviews && product.reviews.length > 0 && (
+            <View style={styles.infoCard}>
+              <TouchableOpacity 
+                style={styles.sectionHeader}
+                onPress={() => setExpandedSections(prev => ({ ...prev, reviews: !prev.reviews }))}
+              >
+                <Text style={styles.cardTitle}>Reviews ({product.total_reviews})</Text>
+                <Ionicons 
+                  name={expandedSections.reviews ? "chevron-up" : "chevron-down"} 
+                  size={20} 
+                  color="#6B7280" 
+                />
+              </TouchableOpacity>
+
+              {expandedSections.reviews && (
+                <View>
+                  {product.reviews.map((review) => (
+                    <View key={review.id} style={styles.reviewItem}>
+                      <View style={styles.reviewHeader}>
+                        <View style={styles.reviewUser}>
+                          <Text style={styles.reviewUserName}>
+                            {review.customer?.first_name} {review.customer?.last_name}
+                          </Text>
+                          <View style={styles.reviewStars}>
+                            {renderStars(review.rating)}
+                          </View>
+                        </View>
+                        <Text style={styles.reviewDate}>{formatDate(review.created_at)}</Text>
+                      </View>
+                      {review.comment && (
+                        <Text style={styles.reviewComment}>{review.comment}</Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {!expandedSections.reviews && (
+                <View style={styles.reviewSummary}>
+                  <View style={styles.reviewSummaryStars}>
+                    {renderStars(product.average_rating)}
+                    <Text style={styles.reviewSummaryText}>
+                      {product.average_rating.toFixed(1)} out of 5
+                    </Text>
+                  </View>
+                  <Text style={styles.reviewSummaryCount}>
+                    Based on {product.total_reviews} reviews
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Date Info */}
+          <View style={styles.infoCard}>
+            <Text style={styles.cardTitle}>Product Timeline</Text>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Created</Text>
+              <Text style={styles.infoValue}>{formatDate(product.created_at)}</Text>
+            </View>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Last Updated</Text>
+              <Text style={styles.infoValue}>{formatDate(product.updated_at)}</Text>
+            </View>
+          </View>
+
+          {/* Removal Reason */}
+          {product.is_removed && product.removal_reason && (
+            <View style={[styles.infoCard, styles.removedCard]}>
+              <Text style={[styles.cardTitle, { color: '#EF4444' }]}>Removal Information</Text>
+              <Text style={styles.removalReasonText}>{product.removal_reason}</Text>
+              {product.removed_at && (
+                <Text style={styles.removalDateText}>
+                  Removed on: {formatDate(product.removed_at)}
+                </Text>
+              )}
+            </View>
+          )}
+
+          {/* Spacing for bottom */}
+          <View style={styles.bottomSpacing} />
+        </View>
       </ScrollView>
 
-      {/* ── Footer action bar ───────────────────────────────────────────── */}
-      {isInStock ? (
-        <View
-          style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            backgroundColor: "#FFFFFF",
-            borderTopWidth: 1,
-            borderTopColor: "#E5E7EB",
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            paddingBottom: 28,
-            flexDirection: "row",
-            gap: 10,
-          }}
-        >
-          {/* Add to Cart */}
-          <TouchableOpacity
-            onPress={addToCart}
-            disabled={addingToCart}
-            style={{
-              flex: 1,
-              borderWidth: 2,
-              borderColor: "#F97316",
-              borderRadius: 10,
-              paddingVertical: 14,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              backgroundColor: "#FFFFFF",
-            }}
-          >
-            {addingToCart ? (
-              <ActivityIndicator size="small" color="#F97316" />
-            ) : (
-              <>
-                <Ionicons name="cart-outline" size={20} color="#F97316" />
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "700",
-                    color: "#F97316",
-                  }}
-                >
-                  Add to Cart
-                </Text>
-              </>
-            )}
+      {/* Image Preview Modal */}
+      <Modal
+        visible={previewVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setPreviewVisible(false)}
+      >
+        <View style={styles.previewOverlay}>
+          <TouchableOpacity style={styles.previewClose} onPress={() => setPreviewVisible(false)}>
+            <Ionicons name="close" size={30} color="#FFFFFF" />
           </TouchableOpacity>
-
-          {/* Buy Now */}
-          <TouchableOpacity
-            onPress={buyNow}
-            style={{
-              flex: 1,
-              backgroundColor: "#EA580C",
-              borderRadius: 10,
-              paddingVertical: 14,
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-            }}
-          >
-            <Ionicons name="flash-outline" size={20} color="#FFFFFF" />
-            <Text
-              style={{ fontSize: 14, fontWeight: "700", color: "#FFFFFF" }}
-            >
-              Buy Now
-            </Text>
-          </TouchableOpacity>
+          {selectedImage && (
+            <Image source={{ uri: selectedImage }} style={styles.previewImage} resizeMode="contain" />
+          )}
         </View>
-      ) : (
-        <View
-          style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            backgroundColor: "#F9FAFB",
-            borderTopWidth: 1,
-            borderTopColor: "#E5E7EB",
-            padding: 16,
-            paddingBottom: 28,
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: "#FEE2E2",
-              borderRadius: 10,
-              padding: 14,
-              alignItems: "center",
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 14,
-                color: "#DC2626",
-                fontWeight: "700",
-              }}
-            >
-              Currently Out of Stock
-            </Text>
-          </View>
-        </View>
-      )}
-
-      {/* ── Variant Selection Modal ─────────────────────────────────────── */}
-      {product.variants && (
-        <VariantSelectionModal
-          visible={variantModalVisible}
-          variants={product.variants}
-          selectedVariant={selectedVariant}
-          quantity={quantity}
-          onSelectVariant={setSelectedVariant}
-          onQuantityChange={setQuantity}
-          onConfirm={handleVariantConfirm}
-          onClose={() => setVariantModalVisible(false)}
-          productName={product.name}
-          productImage={productImages[0] ?? null}
-        />
-      )}
-
-      {/* ── Unified Image Gallery Modal ─────────────────────────────────── */}
-      <ImageGalleryModal
-        visible={galleryVisible}
-        images={galleryImages}
-        initialIndex={galleryInitialIndex}
-        onClose={() => setGalleryVisible(false)}
-      />
+      </Modal>
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  backButtonHeader: {
+    padding: 4,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  editButton: {
+    padding: 4,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  backButton: {
+    backgroundColor: '#3B82F6',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  backButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  imageGallery: {
+    backgroundColor: '#FFFFFF',
+  },
+  imageGalleryContent: {
+    padding: 16,
+    gap: 12,
+  },
+  galleryImage: {
+    width: 120,
+    height: 120,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+  },
+  imagePlaceholder: {
+    backgroundColor: '#FFFFFF',
+    padding: 40,
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  imagePlaceholderText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#9CA3AF',
+  },
+  content: {
+    padding: 16,
+  },
+  statusBar: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  conditionBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  conditionText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  productName: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  priceSection: {
+    marginBottom: 16,
+  },
+  priceLabel: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginBottom: 4,
+  },
+  priceRange: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
+  priceValue: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#F97316',
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 16,
+  },
+  statCard: {
+    flex: 1,
+    minWidth: '45%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  infoCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  infoLabel: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  infoValue: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111827',
+    flex: 1,
+    textAlign: 'right',
+    marginLeft: 12,
+  },
+  descriptionText: {
+    fontSize: 14,
+    color: '#4B5563',
+    lineHeight: 20,
+  },
+  variantItem: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  variantHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  variantTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    flex: 1,
+  },
+  variantStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  variantStatusText: {
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  variantDetails: {
+    gap: 6,
+  },
+  variantPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  variantPrice: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#F97316',
+  },
+  variantComparePrice: {
+    fontSize: 13,
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
+  },
+  variantMetaRow: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  variantStock: {
+    fontSize: 13,
+    color: '#6B7280',
+  },
+  variantSku: {
+    fontSize: 12,
+    color: '#9CA3AF',
+  },
+  variantDimensions: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  variantWeight: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  variantSummary: {
+    paddingTop: 8,
+  },
+  variantSummaryText: {
+    fontSize: 13,
+    color: '#6B7280',
+  },
+  variantSummarySubtext: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginTop: 2,
+  },
+  reviewItem: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  reviewHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  reviewUser: {
+    flex: 1,
+  },
+  reviewUserName: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  reviewStars: {
+    flexDirection: 'row',
+    gap: 2,
+  },
+  reviewDate: {
+    fontSize: 11,
+    color: '#9CA3AF',
+  },
+  reviewComment: {
+    fontSize: 13,
+    color: '#4B5563',
+    lineHeight: 18,
+  },
+  reviewSummary: {
+    alignItems: 'center',
+    paddingTop: 8,
+  },
+  reviewSummaryStars: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  reviewSummaryText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#111827',
+  },
+  reviewSummaryCount: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  removedCard: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FEE2E2',
+  },
+  removalReasonText: {
+    fontSize: 14,
+    color: '#991B1B',
+    marginBottom: 8,
+  },
+  removalDateText: {
+    fontSize: 12,
+    color: '#7F1D1D',
+  },
+  bottomSpacing: {
+    height: 40,
+  },
+  previewOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  previewClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+  },
+  previewImage: {
+    width: width - 40,
+    height: width - 40,
+  },
+});
