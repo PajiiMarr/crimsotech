@@ -25546,6 +25546,7 @@ class SellerOrderList(viewsets.ViewSet):
                         }
                     }, status=status.HTTP_200_OK)
                 
+                # Sort by total distance (nearest first)
                 rider_distances.sort(key=lambda x: x['total_distance'])
                 rider_comparison.sort(key=lambda x: x['total_distance_km'])
                 
@@ -25558,82 +25559,87 @@ class SellerOrderList(viewsets.ViewSet):
                     logger.info(f"{medal} {rider_name} - {rd['total_distance']:.2f} km total")
                 logger.info("=" * 80)
                 
-                top_riders = rider_distances
-                deliveries_created = []
+                # FIX: SELECT ONLY THE NEAREST RIDER (NOT ALL RIDERS)
+                nearest = rider_distances[0]
+                selected_rider = nearest['rider']
+                total_distance = nearest['total_distance']
+                distance_to_pickup = nearest['distance_to_pickup']
+                distance_pickup_to_dest = nearest['distance_pickup_to_dest']
                 
-                for rider_data in top_riders:
-                    rider = rider_data['rider']
-                    total_distance = rider_data['total_distance']
-                    distance_to_pickup = rider_data['distance_to_pickup']
-                    distance_pickup_to_dest = rider_data['distance_pickup_to_dest']
-                    
-                    delivery_fee = self._calculate_delivery_fee(total_distance)
-                    estimated_minutes = self._calculate_estimated_time(total_distance)
-                    
-                    delivery = Delivery.objects.create(
-                        order=order,
-                        rider=rider,
-                        status='pending_offer',
-                        distance_km=Decimal(str(total_distance)),
-                        estimated_minutes=estimated_minutes,
-                        delivery_fee=Decimal(str(delivery_fee)),
-                        metadata={
-                            'distance_to_pickup': distance_to_pickup,
-                            'distance_pickup_to_dest': distance_pickup_to_dest,
-                            'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
-                            'destination_location': {'lat': dest_lat, 'lng': dest_lng}
+                delivery_fee = self._calculate_delivery_fee(total_distance)
+                estimated_minutes = self._calculate_estimated_time(total_distance)
+                
+                # Delete any existing pending deliveries for this order
+                Delivery.objects.filter(order=order, status='pending_offer').delete()
+                
+                # Create SINGLE delivery record for the nearest rider with status 'pending_offer'
+                delivery = Delivery.objects.create(
+                    order=order,
+                    rider=selected_rider,
+                    status='pending_offer',
+                    distance_km=Decimal(str(total_distance)),
+                    estimated_minutes=estimated_minutes,
+                    delivery_fee=Decimal(str(delivery_fee)),
+                    metadata={
+                        'distance_to_pickup': distance_to_pickup,
+                        'distance_pickup_to_dest': distance_pickup_to_dest,
+                        'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
+                        'destination_location': {'lat': dest_lat, 'lng': dest_lng},
+                        'all_riders_compared': rider_comparison,
+                        'nearest_rider': {
+                            'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
+                            'username': selected_rider.rider.username,
+                            'total_distance_km': round(total_distance, 2),
+                            'delivery_fee': delivery_fee,
+                            'estimated_minutes': estimated_minutes
                         }
-                    )
-                    deliveries_created.append(str(delivery.id))
-                    
-                    logger.info(f"✅ Assigned to {rider.rider.username} - {total_distance:.2f}km, Fee: ₱{delivery_fee:.2f}")
-                    
-                    Notification.objects.create(
-                        user=rider.rider,
-                        title='New Delivery Assignment',
-                        type='delivery',
-                        message=f'You have a new delivery assignment for order #{str(order.order)[:8]}. '
-                                f'Distance: {total_distance:.1f}km, Fee: ₱{delivery_fee:.2f}',
-                        is_read=False
-                    )
+                    }
+                )
                 
-                # Store rider comparison data in the first delivery's metadata
-                if deliveries_created:
-                    first_delivery = Delivery.objects.get(id=deliveries_created[0])
-                    first_delivery.metadata['all_riders_compared'] = rider_comparison
-                    first_delivery.save()
+                logger.info(f"✅ Assigned to {selected_rider.rider.username} - {total_distance:.2f}km, Fee: ₱{delivery_fee:.2f}")
+                
+                # Send notification ONLY to the selected rider
+                Notification.objects.create(
+                    user=selected_rider.rider,
+                    title='New Delivery Assignment',
+                    type='delivery',
+                    message=f'You have a new delivery assignment for order #{str(order.order)[:8]}. '
+                            f'Distance: {total_distance:.1f}km, Fee: ₱{delivery_fee:.2f}',
+                    is_read=False
+                )
                 
                 order.status = 'rider_assigned'
                 order.save()
                 
-                nearest_rider = rider_distances[0]
-                nearest_rider_name = f"{nearest_rider['rider'].rider.first_name} {nearest_rider['rider'].rider.last_name}".strip() or nearest_rider['rider'].rider.username
+                nearest_rider_name = f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username
                 
                 logger.info("=" * 80)
-                logger.info(f"✅ SUCCESS: Assigned {len(deliveries_created)} nearest riders")
-                logger.info(f"   Nearest Rider: {nearest_rider_name} - {nearest_rider['total_distance']:.2f} km")
+                logger.info(f"✅ SUCCESS: Assigned nearest rider: {nearest_rider_name}")
+                logger.info(f"   Total Distance: {total_distance:.2f} km")
+                logger.info(f"   Delivery Fee: ₱{delivery_fee:.2f}")
                 logger.info("=" * 80)
                 
-                message = f"Assigned {len(deliveries_created)} nearest riders. Nearest: {nearest_rider_name} ({nearest_rider['total_distance']:.2f} km)"
+                message = f"Assigned nearest rider: {nearest_rider_name} ({total_distance:.2f} km)"
                 
                 return Response({
                     "success": True,
                     "message": message,
                     "data": {
                         "order_id": str(order.order),
-                        "deliveries_created": deliveries_created,
-                        "rider_count": len(deliveries_created),
+                        "delivery_id": str(delivery.id),
+                        "rider_count": 1,
                         "pickup_location": pickup_name,
                         "nearest_rider": {
                             "name": nearest_rider_name,
-                            "username": nearest_rider['rider'].rider.username,
-                            "total_distance_km": round(nearest_rider['total_distance'], 2),
-                            "delivery_fee": self._calculate_delivery_fee(nearest_rider['total_distance']),
-                            "estimated_minutes": self._calculate_estimated_time(nearest_rider['total_distance'])
+                            "username": selected_rider.rider.username,
+                            "total_distance_km": round(total_distance, 2),
+                            "delivery_fee": delivery_fee,
+                            "estimated_minutes": estimated_minutes
                         },
                         "all_riders_compared": rider_comparison
                     }
                 }, status=status.HTTP_200_OK)
+
             
             elif action_type == 'ready_to_ship':
                 if is_pickup:
