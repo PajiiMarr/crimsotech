@@ -1123,6 +1123,7 @@ class Order(models.Model):
         super().save(*args, **kwargs)
 
 class Checkout(models.Model):
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
     voucher = models.ForeignKey(
         'Voucher',
@@ -1151,7 +1152,12 @@ class Checkout(models.Model):
     direct_shop_name = models.CharField(max_length=200, null=True, blank=True)
     quantity = models.IntegerField(default=0)
     total_amount = models.DecimalField(decimal_places=2, max_digits=9)
-    status = models.TextField()
+    status = models.CharField(max_length=20, choices=[
+        ('pending', 'Pending'),
+        ('cancelled', 'Cancelled'),
+        ('completed', 'Completed'),
+    ], default='pending')
+
     remarks = models.CharField(max_length=500, null=True, blank=True)
     created_at = models.DateField(auto_now_add=True)
 

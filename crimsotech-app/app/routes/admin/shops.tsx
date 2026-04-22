@@ -35,6 +35,10 @@ import {
   TrendingUp,
   TrendingDown,
   Zap,
+  Wallet,
+  Truck,
+  DollarSign,
+  PiggyBank,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import AxiosInstance from "~/components/axios/Axios";
@@ -92,6 +96,16 @@ interface Shop {
   is_removed?: boolean;
   suspension_reason?: string;
   suspension_end_date?: string;
+  // Sales breakdown fields
+  completed_revenue?: number;
+  pending_revenue?: number;
+  total_revenue?: number;
+  incoming_balance?: number;
+  platform_fees?: number;
+  shipping_fees?: number;
+  completed_orders?: number;
+  pending_orders?: number;
+  total_orders?: number;
 }
 
 interface ShopMetrics {
@@ -103,6 +117,14 @@ interface ShopMetrics {
   active_shops: number;
   suspended_shops: number;
   pending_shops: number;
+  sales_summary?: {
+    completed_revenue: number;
+    pending_revenue: number;
+    total_revenue: number;
+    platform_fees: number;
+    shipping_fees: number;
+    incoming_balance: number;
+  };
   growth_metrics?: {
     shop_growth?: number;
     previous_period_total?: number;
@@ -112,6 +134,229 @@ interface ShopMetrics {
 
 interface LoaderData {
   user: any;
+}
+
+// ── Format Currency Helper ────────────────────────────────────────────────────
+
+const formatCurrency = (amount: number): string => {
+  if (amount === undefined || amount === null) return "₱0";
+  if (amount >= 1000000) {
+    return `₱${(amount / 1000000).toFixed(1)}M`;
+  }
+  if (amount >= 1000) {
+    return `₱${(amount / 1000).toFixed(1)}K`;
+  }
+  return `₱${amount.toLocaleString()}`;
+};
+
+// ── Sales Card Component ──────────────────────────────────────────────────────
+
+interface SalesCardProps {
+  title: string;
+  completedRevenue: number;
+  pendingRevenue: number;
+  totalRevenue: number;
+  platformFees: number;
+  shippingFees: number;
+  isLoading: boolean;
+}
+
+function SalesCard({
+  title,
+  completedRevenue,
+  pendingRevenue,
+  totalRevenue,
+  platformFees,
+  shippingFees,
+  isLoading,
+}: SalesCardProps) {
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardContent className="p-4 sm:p-6">
+          <Skeleton className="h-4 w-24 mb-2" />
+          <Skeleton className="h-8 w-32 mt-1" />
+          <Skeleton className="h-3 w-40 mt-2" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const netEarnings = completedRevenue - platformFees;
+
+  return (
+    <>
+      <Card
+        className="cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95"
+        onClick={() => setIsDialogOpen(true)}
+      >
+        <CardContent className="p-4 sm:p-6">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <p className="text-sm text-muted-foreground">{title}</p>
+              <p className="text-xl sm:text-2xl font-bold mt-1">
+                {formatCurrency(totalRevenue)}
+              </p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3 text-green-500" />
+                  Completed: {formatCurrency(completedRevenue)}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-yellow-500" />
+                  Incoming: {formatCurrency(pendingRevenue)}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">Click for breakdown</p>
+            </div>
+            <div className="p-2 sm:p-3 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full">
+              <PiggyBank className="w-4 h-4 sm:w-6 sm:h-6 text-white" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="sm:max-w-2xl max-w-[95vw] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <div className="p-2 bg-green-600 rounded-full">
+                <PiggyBank className="w-4 h-4 text-white" />
+              </div>
+              Sales & Revenue Breakdown
+            </DialogTitle>
+            <DialogDescription>
+              Detailed breakdown of platform sales and revenue for the selected period
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-4 space-y-6">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-4">
+                <p className="text-sm font-medium text-green-700">Total Revenue</p>
+                <p className="text-2xl font-bold text-green-800">{formatCurrency(totalRevenue)}</p>
+                <p className="text-xs text-green-600 mt-1">
+                  {formatCurrency(completedRevenue)} completed + {formatCurrency(pendingRevenue)} incoming
+                </p>
+              </div>
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4">
+                <p className="text-sm font-medium text-blue-700">Net Earnings (After Fees)</p>
+                <p className="text-2xl font-bold text-blue-800">{formatCurrency(netEarnings)}</p>
+                <p className="text-xs text-blue-600 mt-1">
+                  Platform fees: {formatCurrency(platformFees)}
+                </p>
+              </div>
+            </div>
+
+            {/* Detailed Breakdown */}
+            <div className="space-y-3">
+              <h4 className="font-semibold text-lg">Revenue Components</h4>
+              
+              {/* Completed Revenue */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-green-500" />
+                    <span className="text-sm font-medium">Completed Revenue</span>
+                  </div>
+                  <span className="text-sm font-semibold">{formatCurrency(completedRevenue)}</span>
+                </div>
+                <p className="text-xs text-muted-foreground pl-5">
+                  Orders with status "completed" or "delivered" - fully realized sales
+                </p>
+              </div>
+
+              {/* Pending Revenue / Incoming Balance */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-yellow-500" />
+                    <span className="text-sm font-medium">Incoming Balance (Pending)</span>
+                  </div>
+                  <span className="text-sm font-semibold">{formatCurrency(pendingRevenue)}</span>
+                </div>
+                <p className="text-xs text-muted-foreground pl-5">
+                  Orders with status "pending", "processing", or "shipped" - will be realized when completed
+                </p>
+              </div>
+
+              {/* Platform Fees */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-red-500" />
+                    <span className="text-sm font-medium">Platform Fees (5%)</span>
+                  </div>
+                  <span className="text-sm font-semibold">{formatCurrency(platformFees)}</span>
+                </div>
+                <p className="text-xs text-muted-foreground pl-5">
+                  5% fee applied only to completed orders (pending orders not yet charged)
+                </p>
+              </div>
+
+              {/* Shipping Fees */}
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-purple-500" />
+                    <span className="text-sm font-medium">Shipping Fees Collected</span>
+                  </div>
+                  <span className="text-sm font-semibold">{formatCurrency(shippingFees)}</span>
+                </div>
+                <p className="text-xs text-muted-foreground pl-5">
+                  Delivery fees from completed orders
+                </p>
+              </div>
+            </div>
+
+            {/* Visual Representation */}
+            <div className="pt-4 border-t">
+              <h4 className="font-semibold text-lg mb-3">Revenue Distribution</h4>
+              <div className="space-y-2">
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>Completed Revenue</span>
+                    <span>{totalRevenue > 0 ? ((completedRevenue / totalRevenue) * 100).toFixed(1) : 0}%</span>
+                  </div>
+                  <Progress 
+                    value={totalRevenue > 0 ? (completedRevenue / totalRevenue) * 100 : 0} 
+                    className="h-2 bg-gray-200"
+                  />
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>Incoming Balance</span>
+                    <span>{totalRevenue > 0 ? ((pendingRevenue / totalRevenue) * 100).toFixed(1) : 0}%</span>
+                  </div>
+                  <Progress 
+                    value={totalRevenue > 0 ? (pendingRevenue / totalRevenue) * 100 : 0} 
+                    className="h-2 bg-gray-200"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Info Note */}
+            <div className="bg-blue-50 rounded-lg p-3 border-l-4 border-blue-500">
+              <p className="text-xs text-blue-700">
+                💡 <span className="font-semibold">Note:</span> Platform fees (5%) are only deducted from completed orders. 
+                Incoming balance represents pending orders that will be realized once the transaction is completed.
+              </p>
+            </div>
+
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
 
 // ── Interactive Number Card Component ─────────────────────────────────────────
@@ -151,7 +396,6 @@ function InteractiveNumberCard({
 
   const totalBreakdownValue = breakdown.reduce((sum, item) => sum + (item.value || 0), 0);
 
-  // Safely format number with fallback
   const formatValue = (val: number) => {
     if (val === undefined || val === null) return "0";
     return val.toLocaleString();
@@ -194,7 +438,6 @@ function InteractiveNumberCard({
           </DialogHeader>
 
           <div className="mt-4 space-y-6">
-            {/* Summary Card */}
             <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg p-4">
               <div className="flex justify-between items-center">
                 <div>
@@ -208,7 +451,6 @@ function InteractiveNumberCard({
               </div>
             </div>
 
-            {/* Breakdown List */}
             <div className="space-y-3">
               <h4 className="font-semibold text-lg">Breakdown</h4>
               {breakdown.filter(item => item.value > 0 || item.label.includes("──")).map((item, index) => (
@@ -236,7 +478,6 @@ function InteractiveNumberCard({
               ))}
             </div>
 
-            {/* Chart Visualization */}
             <div className="pt-4 border-t">
               <h4 className="font-semibold text-lg mb-3">Distribution</h4>
               <div className="flex flex-wrap gap-2">
@@ -258,7 +499,6 @@ function InteractiveNumberCard({
               </div>
             </div>
 
-            {/* Action Buttons */}
             <div className="flex justify-end gap-2 pt-4">
               <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
                 Close
@@ -593,7 +833,6 @@ function ActionsCell({
   return (
     <>
       <div className="flex items-center gap-1">
-        {/* View details */}
         <Link
           to={`/admin/shops/${shop.id}`}
           className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
@@ -602,7 +841,6 @@ function ActionsCell({
           <Eye className="w-4 h-4" />
         </Link>
 
-        {/* 3-dot dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="h-8 w-8 p-0">
@@ -650,7 +888,6 @@ function ActionsCell({
         </DropdownMenu>
       </div>
 
-      {/* AlertDialog */}
       <AlertDialog
         open={showDialog}
         onOpenChange={!processing ? setShowDialog : undefined}
@@ -658,7 +895,6 @@ function ActionsCell({
         <AlertDialogContent className="sm:max-w-[500px] max-w-[95vw]">
           {currentConfig && (
             <div className="space-y-4">
-              {/* Title + description */}
               <div>
                 <h3 className="text-lg font-semibold">{currentConfig.title}</h3>
                 <p className="text-sm text-muted-foreground mt-1">
@@ -666,7 +902,6 @@ function ActionsCell({
                 </p>
               </div>
 
-              {/* Shop info chip */}
               <div className="bg-muted/50 rounded-lg p-3">
                 <p className="text-sm font-medium">Shop: {shop.name}</p>
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -697,7 +932,6 @@ function ActionsCell({
                 </div>
               </div>
 
-              {/* Reason input */}
               {currentConfig.needsReason && (
                 <div className="space-y-2">
                   <Label
@@ -728,7 +962,6 @@ function ActionsCell({
                 </div>
               )}
 
-              {/* Suspension days */}
               {activeAction === "suspend" && (
                 <div className="space-y-2">
                   <Label
@@ -758,7 +991,6 @@ function ActionsCell({
                 </div>
               )}
 
-              {/* Destructive warning */}
               {currentConfig.variant === "destructive" && (
                 <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3">
                   <p className="text-sm font-medium text-destructive flex items-center gap-1">
@@ -946,21 +1178,37 @@ function buildColumns(
       },
     },
     {
-      accessorKey: "totalSales",
+      accessorKey: "totalRevenue",
       header: ({ column }) => (
         <Button
           variant="ghost"
           onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
         >
-          Total Sales
+          Revenue
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
       ),
-      cell: ({ row }) => (
-        <div className="font-medium text-sm whitespace-nowrap">
-          ₱{((row.getValue("totalSales") as number) || 0).toLocaleString()}
-        </div>
-      ),
+      cell: ({ row }) => {
+        const shop = row.original;
+        const totalRevenue = shop.total_revenue || shop.totalSales || 0;
+        const completedRevenue = shop.completed_revenue || 0;
+        const pendingRevenue = shop.pending_revenue || 0;
+        return (
+          <div className="space-y-0.5 min-w-[120px]">
+            <div className="font-semibold text-sm">{formatCurrency(totalRevenue)}</div>
+            <div className="flex gap-2 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <CheckCircle className="w-3 h-3 text-green-500" />
+                {formatCurrency(completedRevenue)}
+              </span>
+              <span className="flex items-center gap-1">
+                <Clock className="w-3 h-3 text-yellow-500" />
+                {formatCurrency(pendingRevenue)}
+              </span>
+            </div>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "status",
@@ -1011,6 +1259,14 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
     active_shops: 0,
     suspended_shops: 0,
     pending_shops: 0,
+    sales_summary: {
+      completed_revenue: 0,
+      pending_revenue: 0,
+      total_revenue: 0,
+      platform_fees: 0,
+      shipping_fees: 0,
+      incoming_balance: 0,
+    },
   });
   const [isLoading, setIsLoading] = useState(true);
   const [dateRange, setDateRange] = useState({
@@ -1037,7 +1293,17 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
       ]);
 
       if (metricsResponse.data.success) {
-        setShopMetrics(metricsResponse.data.metrics);
+        setShopMetrics({
+          ...metricsResponse.data.metrics,
+          sales_summary: metricsResponse.data.metrics.sales_summary || {
+            completed_revenue: 0,
+            pending_revenue: 0,
+            total_revenue: 0,
+            platform_fees: 0,
+            shipping_fees: 0,
+            incoming_balance: 0,
+          },
+        });
       }
       if (shopsResponse.data.success) {
         setShops(
@@ -1049,6 +1315,15 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
             rating: s.rating || 0,
             totalRatings: s.totalRatings || 0,
             totalSales: s.totalSales || 0,
+            completed_revenue: s.completed_revenue || 0,
+            pending_revenue: s.pending_revenue || 0,
+            total_revenue: s.total_revenue || 0,
+            incoming_balance: s.incoming_balance || 0,
+            platform_fees: s.platform_fees || 0,
+            shipping_fees: s.shipping_fees || 0,
+            completed_orders: s.completed_orders || 0,
+            pending_orders: s.pending_orders || 0,
+            total_orders: s.total_orders || 0,
           })),
         );
       }
@@ -1077,12 +1352,6 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
     fetchShopData(range.start, range.end, range.rangeType);
   };
 
-  const formatPercentage = (value: number) =>
-    `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
-
-  const growthMetrics = shopMetrics.growth_metrics || {};
-
-  // Calculate breakdowns for each metric with safe fallbacks
   const calculateTotalShopsBreakdown = () => {
     const statusBreakdown: Record<string, number> = {};
     const verificationBreakdown = {
@@ -1091,11 +1360,9 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
     };
 
     (shops || []).forEach((shop) => {
-      // Status breakdown
       const status = normalizeShopStatus(shop.status);
       statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
 
-      // Verification breakdown
       if (shop.verified) {
         verificationBreakdown["Verified"]++;
       } else {
@@ -1239,7 +1506,6 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
     },
   };
 
-  // Build columns — pass user and the refresh callback so ActionsCell has everything it needs
   const columns = buildColumns(
     user,
     () => fetchShopData(dateRange.start, dateRange.end, dateRange.rangeType),
@@ -1260,6 +1526,15 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
     </Card>
   );
 
+  const salesSummary = shopMetrics.sales_summary || {
+    completed_revenue: 0,
+    pending_revenue: 0,
+    total_revenue: 0,
+    platform_fees: 0,
+    shipping_fees: 0,
+    incoming_balance: 0,
+  };
+
   return (
     <UserProvider user={user}>
       <SidebarLayout>
@@ -1270,6 +1545,17 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
 
           <DateRangeFilter
             onDateRangeChange={handleDateRangeChange}
+            isLoading={isLoading}
+          />
+
+          {/* Sales Revenue Card */}
+          <SalesCard
+            title="Platform Sales Revenue"
+            completedRevenue={salesSummary.completed_revenue}
+            pendingRevenue={salesSummary.pending_revenue}
+            totalRevenue={salesSummary.total_revenue}
+            platformFees={salesSummary.platform_fees}
+            shippingFees={salesSummary.shipping_fees}
             isLoading={isLoading}
           />
 

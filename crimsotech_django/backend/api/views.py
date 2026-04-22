@@ -4361,18 +4361,164 @@ class AdminShops(viewsets.ViewSet):
 
         return start_date, end_date
 
-    # ── get_all_shops (NEW - returns ALL shops without date filtering) ─────────
+    # ── Helper to get shop sales with breakdown ─────────────────────────────────
+
+    def get_shop_sales_breakdown(self, shop, start_date=None, end_date=None):
+        """
+        Get comprehensive sales breakdown for a shop including:
+        - Completed sales (orders with status 'completed' or 'delivered')
+        - Pending sales (orders with status 'pending', 'processing', 'shipped')
+        - Total sales (completed + pending)
+        - Order counts by status
+        """
+        try:
+            from decimal import Decimal
+            
+            # Get all checkouts (order items) for this shop's products
+            checkouts_qs = Checkout.objects.filter(
+                order__isnull=False
+            ).filter(
+                Q(cart_item__product__shop=shop) | Q(direct_shop_id=str(shop.id))
+            ).distinct()
+
+            # Apply date filter using datetime range
+            if start_date and end_date:
+                if not timezone.is_aware(start_date):
+                    start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+                if not timezone.is_aware(end_date):
+                    end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+                
+                start_datetime = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_datetime = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                
+                checkouts_qs = checkouts_qs.filter(
+                    created_at__gte=start_datetime,
+                    created_at__lte=end_datetime
+                )
+            elif start_date:
+                if not timezone.is_aware(start_date):
+                    start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+                start_datetime = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                checkouts_qs = checkouts_qs.filter(created_at__gte=start_datetime)
+            elif end_date:
+                if not timezone.is_aware(end_date):
+                    end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+                end_datetime = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                checkouts_qs = checkouts_qs.filter(created_at__lte=end_datetime)
+
+            # Get related orders
+            order_ids = checkouts_qs.values_list('order', flat=True).distinct()
+            orders_qs = Order.objects.filter(pk__in=order_ids)
+
+            # Completed orders (delivered/completed)
+            completed_orders = orders_qs.filter(
+                status__in=['completed', 'delivered']
+            )
+            completed_revenue = Decimal('0')
+            for order in completed_orders:
+                shop_checkouts = checkouts_qs.filter(order=order)
+                order_total = shop_checkouts.aggregate(total=Sum('total_amount'))['total']
+                if order_total:
+                    completed_revenue += order_total
+
+            # Pending orders (pending, processing, shipped)
+            pending_orders = orders_qs.filter(
+                status__in=['pending', 'processing', 'shipped']
+            )
+            pending_revenue = Decimal('0')
+            for order in pending_orders:
+                shop_checkouts = checkouts_qs.filter(order=order)
+                order_total = shop_checkouts.aggregate(total=Sum('total_amount'))['total']
+                if order_total:
+                    pending_revenue += order_total
+
+            # Cancelled/refunded orders
+            cancelled_orders = orders_qs.filter(
+                status__in=['cancelled', 'refunded']
+            )
+            cancelled_revenue = Decimal('0')
+            for order in cancelled_orders:
+                shop_checkouts = checkouts_qs.filter(order=order)
+                order_total = shop_checkouts.aggregate(total=Sum('total_amount'))['total']
+                if order_total:
+                    cancelled_revenue += order_total
+
+            # Platform fees (5% of completed revenue only)
+            platform_fees = completed_revenue * Decimal('0.05')
+
+            # Shipping fees from completed orders - get from Delivery model
+            shipping_fees = Decimal('0')
+            for order in completed_orders:
+                delivery = Delivery.objects.filter(order=order, status='delivered').first()
+                if delivery and delivery.delivery_fee:
+                    shipping_fees += Decimal(str(delivery.delivery_fee))
+
+            # Order counts by status
+            order_status_counts = {
+                'pending': orders_qs.filter(status='pending').count(),
+                'processing': orders_qs.filter(status='processing').count(),
+                'shipped': orders_qs.filter(status='shipped').count(),
+                'delivered': orders_qs.filter(status='delivered').count(),
+                'completed': orders_qs.filter(status='completed').count(),
+                'cancelled': orders_qs.filter(status='cancelled').count(),
+                'refunded': orders_qs.filter(status='refunded').count(),
+            }
+
+            return {
+                'completed_revenue': float(completed_revenue),
+                'pending_revenue': float(pending_revenue),
+                'total_revenue': float(completed_revenue + pending_revenue),
+                'cancelled_revenue': float(cancelled_revenue),
+                'platform_fees': float(platform_fees),
+                'shipping_fees': float(shipping_fees),
+                'completed_orders': completed_orders.count(),
+                'pending_orders': pending_orders.count(),
+                'cancelled_orders': cancelled_orders.count(),
+                'total_orders': orders_qs.count(),
+                'order_status_breakdown': order_status_counts,
+                'incoming_balance': float(pending_revenue),
+            }
+        except Exception as e:
+            print(f"Error in get_shop_sales_breakdown for shop {shop.id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'completed_revenue': 0.0,
+                'pending_revenue': 0.0,
+                'total_revenue': 0.0,
+                'cancelled_revenue': 0.0,
+                'platform_fees': 0.0,
+                'shipping_fees': 0.0,
+                'completed_orders': 0,
+                'pending_orders': 0,
+                'cancelled_orders': 0,
+                'total_orders': 0,
+                'order_status_breakdown': {},
+                'incoming_balance': 0.0,
+            }
+
+    # ── get_all_shops (returns ALL shops with sales breakdown) ─────────────────
 
     @action(detail=False, methods=['get'], url_path='get_all_shops')
     def get_all_shops(self, request):
         """
-        Return ALL shops in the system. No date filtering applied.
-        Used for statistics and complete shop listing.
+        Return ALL shops in the system with complete sales breakdown.
+        Shows completed vs pending revenue for each shop.
         """
         try:
-            # Get ALL shops - no date filter
-            shops_qs = Shop.objects.all().select_related('customer__customer').order_by('-created_at')
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
             
+            start_date = None
+            end_date = None
+            
+            if start_date_str or end_date_str:
+                try:
+                    start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+                except ValueError as e:
+                    return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+            shops_qs = Shop.objects.all().select_related('customer__customer').order_by('-created_at')
             shop_ids = list(shops_qs.values_list('id', flat=True))
 
             # Followers count
@@ -4427,8 +4573,23 @@ class AdminShops(viewsets.ViewSet):
             }
 
             shops_data = []
+            total_completed_revenue_all = 0
+            total_pending_revenue_all = 0
+            total_platform_fees_all = 0
+            total_shipping_fees_all = 0
+            total_orders_all = 0
+
             for shop in shops_qs:
                 shop_id = str(shop.id)
+
+                # Get sales breakdown for this shop
+                sales_breakdown = self.get_shop_sales_breakdown(shop, start_date, end_date)
+                
+                total_completed_revenue_all += sales_breakdown['completed_revenue']
+                total_pending_revenue_all += sales_breakdown['pending_revenue']
+                total_platform_fees_all += sales_breakdown['platform_fees']
+                total_shipping_fees_all += sales_breakdown['shipping_fees']
+                total_orders_all += sales_breakdown['total_orders']
 
                 customer = shop.customer
                 owner_info = None
@@ -4486,9 +4647,19 @@ class AdminShops(viewsets.ViewSet):
                     'is_suspended':          shop.is_suspended,
                     'suspension_reason':     shop.suspension_reason,
                     'suspended_until':       shop.suspended_until.isoformat() if shop.suspended_until else None,
+                    # Sales breakdown
+                    'completed_revenue':     sales_breakdown['completed_revenue'],
+                    'pending_revenue':       sales_breakdown['pending_revenue'],
+                    'total_revenue':         sales_breakdown['total_revenue'],
+                    'incoming_balance':      sales_breakdown['incoming_balance'],
+                    'platform_fees':         sales_breakdown['platform_fees'],
+                    'shipping_fees':         sales_breakdown['shipping_fees'],
+                    'completed_orders':      sales_breakdown['completed_orders'],
+                    'pending_orders':        sales_breakdown['pending_orders'],
+                    'total_orders':          sales_breakdown['total_orders'],
+                    'order_status_breakdown': sales_breakdown['order_status_breakdown'],
                 })
 
-            # Calculate statistics from ALL shops
             total_shops = len(shops_data)
             total_followers_all = sum(s['followers'] for s in shops_data)
             verified_shops = sum(1 for s in shops_data if s['verified'])
@@ -4496,11 +4667,9 @@ class AdminShops(viewsets.ViewSet):
             suspended_shops = sum(1 for s in shops_data if s['is_suspended'])
             pending_shops = sum(1 for s in shops_data if s['status'] == 'Pending')
             
-            # Calculate average rating from shops that have ratings
             shops_with_ratings = [s['rating'] for s in shops_data if s['rating'] > 0]
             avg_rating = sum(shops_with_ratings) / len(shops_with_ratings) if shops_with_ratings else 0
             
-            # Find top shop by rating
             top_shop = max(shops_data, key=lambda x: x['rating']) if shops_data else None
             top_shop_name = top_shop['name'] if top_shop else "No shops"
 
@@ -4517,8 +4686,22 @@ class AdminShops(viewsets.ViewSet):
                     'suspended_shops': suspended_shops,
                     'pending_shops': pending_shops,
                     'top_shop_name': top_shop_name,
+                    'platform_sales_summary': {
+                        'total_completed_revenue': total_completed_revenue_all,
+                        'total_pending_revenue': total_pending_revenue_all,
+                        'total_revenue': total_completed_revenue_all + total_pending_revenue_all,
+                        'total_platform_fees': total_platform_fees_all,
+                        'total_shipping_fees': total_shipping_fees_all,
+                        'total_orders': total_orders_all,
+                    }
                 },
-                'message': 'All shops retrieved successfully'
+                'message': 'All shops retrieved successfully',
+                'date_range': {
+                    'start_date': start_date_str,
+                    'end_date': end_date_str,
+                    'actual_start': start_date.isoformat() if start_date else None,
+                    'actual_end': end_date.isoformat() if end_date else None,
+                }
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -4534,13 +4717,22 @@ class AdminShops(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='get_metrics')
     def get_metrics(self, request):
         try:
+            from decimal import Decimal
+            
             start_date_str = request.GET.get('start_date')
             end_date_str   = request.GET.get('end_date')
 
-            try:
-                start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
-            except ValueError as e:
-                return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            start_date = None
+            end_date = None
+            
+            if start_date_str or end_date_str:
+                try:
+                    start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+                except ValueError as e:
+                    return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                end_date = timezone.now()
+                start_date = end_date - timedelta(days=30)
 
             # Get ALL shops for base metrics
             all_shops_qs = Shop.objects.all()
@@ -4549,30 +4741,83 @@ class AdminShops(viewsets.ViewSet):
             # New shops in period
             new_shops_qs = Shop.objects.all()
             if start_date and end_date:
-                new_shops_qs = new_shops_qs.filter(created_at__range=[start_date, end_date])
+                if hasattr(start_date, 'date'):
+                    start_date_filter = start_date.date()
+                else:
+                    start_date_filter = start_date
+                if hasattr(end_date, 'date'):
+                    end_date_filter = end_date.date()
+                else:
+                    end_date_filter = end_date
+                new_shops_qs = new_shops_qs.filter(
+                    created_at__date__gte=start_date_filter, 
+                    created_at__date__lte=end_date_filter
+                )
             new_shops_in_period = new_shops_qs.count()
 
             # Previous period for growth calculation
+            prev_start_date = None
+            prev_end_date = None
+            previous_total_shops = total_shops
+            period_days = 30
+            
             if start_date and end_date:
                 period_days = (end_date - start_date).days
                 prev_end_date = start_date
                 prev_start_date = start_date - timedelta(days=period_days)
-                prev_shops_qs = Shop.objects.filter(created_at__range=[prev_start_date, prev_end_date])
+                
+                if hasattr(prev_start_date, 'date'):
+                    prev_start_filter = prev_start_date.date()
+                else:
+                    prev_start_filter = prev_start_date
+                if hasattr(prev_end_date, 'date'):
+                    prev_end_filter = prev_end_date.date()
+                else:
+                    prev_end_filter = prev_end_date
+                    
+                prev_shops_qs = Shop.objects.filter(
+                    created_at__date__gte=prev_start_filter, 
+                    created_at__date__lte=prev_end_filter
+                )
                 previous_total_shops = prev_shops_qs.count()
                 shop_growth = ((total_shops - previous_total_shops) / previous_total_shops * 100) if previous_total_shops > 0 else 0
             else:
                 shop_growth = 0
-                period_days = 30
 
             total_followers = ShopFollow.objects.count()
             
             # Previous period followers
-            if start_date and end_date:
-                prev_followers = ShopFollow.objects.filter(followed_at__range=[prev_start_date, prev_end_date]).count()
-                current_followers_in_period = ShopFollow.objects.filter(followed_at__range=[start_date, end_date]).count()
+            follower_growth = 0
+            if start_date and end_date and prev_start_date and prev_end_date:
+                if hasattr(prev_start_date, 'date'):
+                    prev_start_filter = prev_start_date.date()
+                else:
+                    prev_start_filter = prev_start_date
+                if hasattr(prev_end_date, 'date'):
+                    prev_end_filter = prev_end_date.date()
+                else:
+                    prev_end_filter = prev_end_date
+                    
+                prev_followers = ShopFollow.objects.filter(
+                    followed_at__date__gte=prev_start_filter, 
+                    followed_at__date__lte=prev_end_filter
+                ).count()
+                
+                if hasattr(start_date, 'date'):
+                    current_start_filter = start_date.date()
+                else:
+                    current_start_filter = start_date
+                if hasattr(end_date, 'date'):
+                    current_end_filter = end_date.date()
+                else:
+                    current_end_filter = end_date
+                    
+                current_followers_in_period = ShopFollow.objects.filter(
+                    followed_at__date__gte=current_start_filter, 
+                    followed_at__date__lte=current_end_filter
+                ).count()
+                
                 follower_growth = ((current_followers_in_period - prev_followers) / prev_followers * 100) if prev_followers > 0 else 0
-            else:
-                follower_growth = 0
 
             rating_agg = Review.objects.aggregate(
                 avg_rating=Avg('average_rating'),
@@ -4592,7 +4837,51 @@ class AdminShops(viewsets.ViewSet):
             active_reports = Report.objects.filter(report_type='shop', status__in=['pending', 'under_review']).count()
             suspended_shops = all_shops_qs.filter(is_suspended=True).count()
             total_products = Product.objects.filter(shop__isnull=False).count()
-            total_sales_all = all_shops_qs.aggregate(total=Sum('total_sales'))['total'] or 0
+            
+            # Get sales summary for the period using Checkout model
+            checkouts_qs = Checkout.objects.filter(order__isnull=False)
+            if start_date and end_date:
+                if not timezone.is_aware(start_date):
+                    start_date = timezone.make_aware(start_date, timezone.get_current_timezone())
+                if not timezone.is_aware(end_date):
+                    end_date = timezone.make_aware(end_date, timezone.get_current_timezone())
+                
+                start_datetime = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_datetime = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                
+                checkouts_qs = checkouts_qs.filter(
+                    created_at__gte=start_datetime,
+                    created_at__lte=end_datetime
+                )
+            
+            # Get related orders
+            order_ids = checkouts_qs.values_list('order', flat=True).distinct()
+            orders_in_period = Order.objects.filter(pk__in=order_ids)
+            
+            completed_orders_in_period = orders_in_period.filter(status__in=['completed', 'delivered'])
+            completed_revenue = Decimal('0')
+            for order in completed_orders_in_period:
+                order_checkouts = checkouts_qs.filter(order=order)
+                order_total = order_checkouts.aggregate(total=Sum('total_amount'))['total']
+                if order_total:
+                    completed_revenue += order_total
+            
+            pending_orders_in_period = orders_in_period.filter(status__in=['pending', 'processing', 'shipped'])
+            pending_revenue = Decimal('0')
+            for order in pending_orders_in_period:
+                order_checkouts = checkouts_qs.filter(order=order)
+                order_total = order_checkouts.aggregate(total=Sum('total_amount'))['total']
+                if order_total:
+                    pending_revenue += order_total
+            
+            platform_fees = completed_revenue * Decimal('0.05')
+            
+            # Shipping fees from completed orders - get from Delivery model
+            shipping_fees = Decimal('0')
+            for order in completed_orders_in_period:
+                delivery = Delivery.objects.filter(order=order, status='delivered').first()
+                if delivery and delivery.delivery_fee:
+                    shipping_fees += Decimal(str(delivery.delivery_fee))
 
             # Calculate active shops (status = 'Active' and not suspended)
             active_shops = all_shops_qs.filter(status='Active', is_suspended=False).count()
@@ -4611,22 +4900,27 @@ class AdminShops(viewsets.ViewSet):
                     'active_reports': active_reports,
                     'suspended_shops': suspended_shops,
                     'total_products': total_products,
-                    'total_sales': float(total_sales_all),
                     'active_shops': active_shops,
                     'pending_shops': pending_shops,
+                    'sales_summary': {
+                        'completed_revenue': float(completed_revenue),
+                        'pending_revenue': float(pending_revenue),
+                        'total_revenue': float(completed_revenue + pending_revenue),
+                        'platform_fees': float(platform_fees),
+                        'shipping_fees': float(shipping_fees),
+                        'incoming_balance': float(pending_revenue),
+                    },
                     'growth_metrics': {
                         'shop_growth': round(shop_growth, 1),
                         'follower_growth': round(follower_growth, 1),
-                        'previous_period_total': previous_total_shops if start_date and end_date else total_shops,
+                        'previous_period_total': previous_total_shops,
                         'period_days': period_days,
                     }
                 },
                 'message': 'Metrics retrieved successfully',
                 'date_range': {
-                    'start_date': start_date_str or start_date.isoformat(),
-                    'end_date': end_date_str or end_date.isoformat(),
-                    'actual_start': start_date.isoformat() if start_date else None,
-                    'actual_end': end_date.isoformat() if end_date else None,
+                    'start_date': start_date_str or (start_date.isoformat() if start_date else None),
+                    'end_date': end_date_str or (end_date.isoformat() if end_date else None),
                 }
             }, status=status.HTTP_200_OK)
 
@@ -4643,21 +4937,21 @@ class AdminShops(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='get_shops_list')
     def get_shops_list(self, request):
         """
-        Return ALL shops. Date range only filters metrics, never the shop list itself.
+        Return ALL shops with sales breakdown.
         """
         try:
             start_date_str = request.GET.get('start_date')
             end_date_str   = request.GET.get('end_date')
 
-            # Only parse dates when explicitly supplied — no silent 30-day default
-            start_date = end_date = None
+            start_date = None
+            end_date = None
+            
             if start_date_str or end_date_str:
                 try:
                     start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
                 except ValueError as e:
                     return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-            # ALL shops — no date filter on the queryset
             shops_qs = Shop.objects.all().select_related('customer__customer')
             shop_ids = list(shops_qs.values_list('id', flat=True))
 
@@ -4710,6 +5004,9 @@ class AdminShops(viewsets.ViewSet):
             shops_data = []
             for shop in shops_qs:
                 shop_id = str(shop.id)
+
+                # Get sales breakdown
+                sales_breakdown = self.get_shop_sales_breakdown(shop, start_date, end_date)
 
                 customer = shop.customer
                 owner_info = None
@@ -4767,6 +5064,16 @@ class AdminShops(viewsets.ViewSet):
                     'is_suspended':      shop.is_suspended,
                     'suspension_reason': shop.suspension_reason,
                     'suspended_until':   shop.suspended_until.isoformat() if shop.suspended_until else None,
+                    # Sales breakdown
+                    'completed_revenue': sales_breakdown['completed_revenue'],
+                    'pending_revenue':   sales_breakdown['pending_revenue'],
+                    'total_revenue':     sales_breakdown['total_revenue'],
+                    'incoming_balance':  sales_breakdown['incoming_balance'],
+                    'platform_fees':     sales_breakdown['platform_fees'],
+                    'shipping_fees':     sales_breakdown['shipping_fees'],
+                    'completed_orders':  sales_breakdown['completed_orders'],
+                    'pending_orders':    sales_breakdown['pending_orders'],
+                    'total_orders':      sales_breakdown['total_orders'],
                 })
 
             return Response({
@@ -4795,6 +5102,18 @@ class AdminShops(viewsets.ViewSet):
     @action(detail=True, methods=['get'], url_path='get_shop_details')
     def get_shop_details(self, request, pk=None):
         try:
+            start_date_str = request.GET.get('start_date')
+            end_date_str = request.GET.get('end_date')
+            
+            start_date = None
+            end_date = None
+            
+            if start_date_str or end_date_str:
+                try:
+                    start_date, end_date = self.get_date_range_filter(start_date_str, end_date_str)
+                except ValueError as e:
+                    return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
             shop = Shop.objects.select_related('customer__customer').get(pk=pk)
 
             customer = shop.customer
@@ -4828,6 +5147,9 @@ class AdminShops(viewsets.ViewSet):
                 reported_shop=shop, status__in=['pending', 'under_review']
             ).count()
 
+            # Get sales breakdown
+            sales_breakdown = self.get_shop_sales_breakdown(shop, start_date, end_date)
+
             categories = Category.objects.filter(
                 Q(products__shop=shop) | Q(admin_products__shop=shop)
             ).distinct().values('id', 'name')
@@ -4855,6 +5177,17 @@ class AdminShops(viewsets.ViewSet):
                 'favorites_count':     favorites_count,
                 'followers_count':     followers_count,
                 'categories':          list(categories),
+                # Sales breakdown
+                'completed_revenue':   sales_breakdown['completed_revenue'],
+                'pending_revenue':     sales_breakdown['pending_revenue'],
+                'total_revenue':       sales_breakdown['total_revenue'],
+                'incoming_balance':    sales_breakdown['incoming_balance'],
+                'platform_fees':       sales_breakdown['platform_fees'],
+                'shipping_fees':       sales_breakdown['shipping_fees'],
+                'completed_orders':    sales_breakdown['completed_orders'],
+                'pending_orders':      sales_breakdown['pending_orders'],
+                'total_orders':        sales_breakdown['total_orders'],
+                'order_status_breakdown': sales_breakdown['order_status_breakdown'],
                 **self.build_shop_legal_docs(shop),
             }
 
@@ -4871,6 +5204,535 @@ class AdminShops(viewsets.ViewSet):
             traceback.print_exc()
             return Response(
                 {'success': False, 'error': f'Error retrieving shop details: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_products (for shop detail page) - WITH PROPER VARIANTS ──────────────
+
+    @action(detail=True, methods=['get'], url_path='get_products')
+    def get_products(self, request, pk=None):
+        """Get all products for a specific shop with complete details including all variants"""
+        try:
+            from decimal import Decimal
+            
+            shop = get_object_or_404(Shop, pk=pk)
+            
+            # Get products with their variants and related data
+            products = Product.objects.filter(
+                shop=shop,
+                is_removed=False
+            ).select_related(
+                'category',
+                'shop',
+                'customer__customer'
+            ).prefetch_related(
+                'variants',
+                'productmedia_set',
+                'reviews'
+            ).order_by('-created_at')
+            
+            products_data = []
+            for product in products:
+                # Get product images from ProductMedia
+                product_images = []
+                for media in product.productmedia_set.all():
+                    product_images.append({
+                        'id': str(media.id),
+                        'url': self.get_media_url(media.file_data),
+                        'file_type': media.file_type,
+                    })
+                
+                # Get first image as thumbnail
+                thumbnail = product_images[0]['url'] if product_images else None
+                
+                # ── GET ALL VARIANTS FOR THIS PRODUCT ──────────────────────────────
+                variants = []
+                variant_prices = []
+                total_variant_stock = 0
+                
+                # Fetch all active variants for this product
+                all_variants = product.variants.filter(is_active=True).order_by('title')
+                
+                for variant in all_variants:
+                    variant_price = float(variant.price) if variant.price else 0
+                    variant_prices.append(variant_price)
+                    total_variant_stock += variant.quantity
+                    
+                    # Get variant images
+                    variant_image = self.get_media_url(variant.image) if variant.image else None
+                    variant_proof_image = self.get_media_url(variant.proof_image) if variant.proof_image else None
+                    
+                    variants.append({
+                        'id': str(variant.id),
+                        'title': variant.title,
+                        'price': variant_price,
+                        'compare_price': float(variant.compare_price) if variant.compare_price else None,
+                        'quantity': variant.quantity,
+                        'sku_code': variant.sku_code,
+                        'is_active': variant.is_active,
+                        'is_refundable': variant.is_refundable,
+                        'refund_days': variant.refund_days,
+                        'allow_swap': variant.allow_swap,
+                        'swap_type': variant.swap_type,
+                        'original_price': float(variant.original_price) if variant.original_price else None,
+                        'purchase_date': variant.purchase_date.isoformat() if variant.purchase_date else None,
+                        'usage_period': variant.usage_period,
+                        'usage_unit': variant.usage_unit,
+                        'depreciation_rate': variant.depreciation_rate,
+                        'minimum_additional_payment': float(variant.minimum_additional_payment) if variant.minimum_additional_payment else 0,
+                        'maximum_additional_payment': float(variant.maximum_additional_payment) if variant.maximum_additional_payment else 0,
+                        'swap_description': variant.swap_description,
+                        'image': variant_image,
+                        'proof_image': variant_proof_image,
+                        'critical_stock': variant.critical_stock,
+                        'weight': float(variant.weight) if variant.weight else None,
+                        'weight_unit': variant.weight_unit,
+                        'length': float(variant.length) if variant.length else None,
+                        'width': float(variant.width) if variant.width else None,
+                        'height': float(variant.height) if variant.height else None,
+                        'dimension_unit': variant.dimension_unit,
+                        'created_at': variant.created_at.isoformat() if variant.created_at else None,
+                        'updated_at': variant.updated_at.isoformat() if variant.updated_at else None,
+                    })
+                
+                # Calculate price range from variants
+                min_price = min(variant_prices) if variant_prices else (float(product.min_price) if product.min_price else 0)
+                max_price = max(variant_prices) if variant_prices else (float(product.max_price) if product.max_price else min_price)
+                
+                price_display = f"₱{min_price:,.2f}"
+                if max_price and max_price != min_price:
+                    price_display = f"₱{min_price:,.2f} - ₱{max_price:,.2f}"
+                
+                # Total stock is sum of all variant quantities
+                total_stock = total_variant_stock
+                
+                # Get review statistics
+                review_aggregate = product.reviews.aggregate(
+                    avg_rating=Avg('average_rating'),
+                    total_reviews=Count('id')
+                )
+                avg_rating = review_aggregate['avg_rating'] or 0
+                total_reviews = review_aggregate['total_reviews'] or 0
+                
+                # Get favorite count
+                favorites_count = Favorites.objects.filter(product=product).count()
+                
+                # Get order statistics
+                order_stats = Checkout.objects.filter(
+                    Q(cart_item__product=product) | Q(direct_product_id=product.id)
+                ).aggregate(
+                    total_orders=Count('id', distinct=True),
+                    total_quantity=Sum('quantity'),
+                    total_revenue=Sum('total_amount', filter=Q(order__status__in=['completed', 'delivered']))
+                )
+                
+                total_orders = order_stats['total_orders'] or 0
+                total_quantity_sold = order_stats['total_quantity'] or 0
+                total_revenue = float(order_stats['total_revenue'] or 0)
+                
+                # Get view count from CustomerActivity
+                view_count = CustomerActivity.objects.filter(
+                    product=product,
+                    activity_type='view'
+                ).count()
+                
+                # Check if product has active boost
+                active_boost = Boost.objects.filter(
+                    product=product,
+                    status='active',
+                    end_date__gte=timezone.now()
+                ).first()
+                
+                # Determine stock status
+                stock_status = 'in_stock'
+                if total_stock <= 0:
+                    stock_status = 'out_of_stock'
+                elif total_stock <= 10:
+                    stock_status = 'low_stock'
+                
+                # Get category info
+                category_info = None
+                if product.category:
+                    category_info = {
+                        'id': str(product.category.id),
+                        'name': product.category.name
+                    }
+                
+                # Get shop info
+                shop_info = None
+                if product.shop:
+                    shop_info = {
+                        'id': str(product.shop.id),
+                        'name': product.shop.name
+                    }
+                
+                # Get customer/seller info
+                customer_info = None
+                if product.customer and product.customer.customer:
+                    customer_info = {
+                        'id': str(product.customer.customer.id),
+                        'name': f"{product.customer.customer.first_name} {product.customer.customer.last_name}".strip() or product.customer.customer.username
+                    }
+                
+                products_data.append({
+                    'id': str(product.id),
+                    'name': product.name,
+                    'description': product.description,
+                    'thumbnail': thumbnail,
+                    'images': product_images,
+                    'price': min_price,
+                    'max_price': max_price,
+                    'price_display': price_display,
+                    'stock': total_stock,
+                    'stock_status': stock_status,
+                    'total_quantity_sold': total_quantity_sold,
+                    'status': product.upload_status,
+                    'condition': product.condition,
+                    'is_refundable': product.is_refundable,
+                    'refund_days': product.refund_days,
+                    'created_at': product.created_at.isoformat(),
+                    'updated_at': product.updated_at.isoformat() if product.updated_at else None,
+                    'category': category_info,
+                    'shop': shop_info,
+                    'customer': customer_info,
+                    'variants': variants,
+                    'variants_count': len(variants),
+                    'has_variants': len(variants) > 0,
+                    'reviews': {
+                        'average_rating': round(float(avg_rating), 1),
+                        'total_reviews': total_reviews,
+                        'rating_distribution': {
+                            1: product.reviews.filter(average_rating=1).count(),
+                            2: product.reviews.filter(average_rating=2).count(),
+                            3: product.reviews.filter(average_rating=3).count(),
+                            4: product.reviews.filter(average_rating=4).count(),
+                            5: product.reviews.filter(average_rating=5).count(),
+                        }
+                    },
+                    'favorites_count': favorites_count,
+                    'view_count': view_count,
+                    'total_orders': total_orders,
+                    'total_revenue': total_revenue,
+                    'active_boost': {
+                        'is_boosted': active_boost is not None,
+                        'boost_id': str(active_boost.id) if active_boost else None,
+                        'plan_name': active_boost.boost_plan.name if active_boost and active_boost.boost_plan else None,
+                        'end_date': active_boost.end_date.isoformat() if active_boost and active_boost.end_date else None,
+                    } if active_boost else {'is_boosted': False},
+                    'is_removed': product.is_removed,
+                    'removal_reason': product.removal_reason,
+                    'removed_at': product.removed_at.isoformat() if product.removed_at else None,
+                })
+            
+            # Calculate shop statistics
+            total_products = len(products_data)
+            total_stock_all = sum(p['stock'] for p in products_data)
+            total_revenue_all = sum(p['total_revenue'] for p in products_data)
+            total_orders_all = sum(p['total_orders'] for p in products_data)
+            products_with_low_stock = sum(1 for p in products_data if p['stock_status'] == 'low_stock')
+            products_out_of_stock = sum(1 for p in products_data if p['stock_status'] == 'out_of_stock')
+            products_with_variants = sum(1 for p in products_data if p['has_variants'])
+            total_variants_count = sum(p['variants_count'] for p in products_data)
+            
+            # Get top selling products
+            top_selling = sorted(products_data, key=lambda x: x['total_orders'], reverse=True)[:5]
+            
+            # Get most viewed products
+            most_viewed = sorted(products_data, key=lambda x: x['view_count'], reverse=True)[:5]
+            
+            return Response({
+                'success': True,
+                'products': products_data,
+                'total_count': len(products_data),
+                'shop_id': str(shop.id),
+                'shop_name': shop.name,
+                'statistics': {
+                    'total_products': total_products,
+                    'total_stock': total_stock_all,
+                    'total_revenue': total_revenue_all,
+                    'total_orders': total_orders_all,
+                    'low_stock_count': products_with_low_stock,
+                    'out_of_stock_count': products_out_of_stock,
+                    'products_with_variants': products_with_variants,
+                    'total_variants': total_variants_count,
+                    'top_selling_products': top_selling,
+                    'most_viewed_products': most_viewed,
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'success': False, 'error': f'Error retrieving products: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_reviews (for shop detail page) ─────────────────────────────────────
+
+    @action(detail=True, methods=['get'], url_path='get_reviews')
+    def get_reviews(self, request, pk=None):
+        """Get all reviews for a specific shop"""
+        try:
+            shop = get_object_or_404(Shop, pk=pk)
+            
+            reviews = Review.objects.filter(
+                shop=shop
+            ).select_related('customer__customer', 'product').order_by('-created_at')
+            
+            reviews_data = []
+            for review in reviews:
+                customer = review.customer
+                customer_name = "Unknown User"
+                if customer and customer.customer:
+                    customer_name = f"{customer.customer.first_name} {customer.customer.last_name}".strip() or customer.customer.username
+                
+                reviews_data.append({
+                    'id': str(review.id),
+                    'rating': review.average_rating,
+                    'condition_rating': review.condition_rating,
+                    'accuracy_rating': review.accuracy_rating,
+                    'value_rating': review.value_rating,
+                    'delivery_rating': review.delivery_rating,
+                    'comment': review.comment,
+                    'customer_name': customer_name,
+                    'customer_id': str(customer.customer.id) if customer and customer.customer else None,
+                    'product_name': review.product.name if review.product else None,
+                    'product_id': str(review.product.id) if review.product else None,
+                    'created_at': review.created_at.isoformat(),
+                    'has_media': review.medias.exists(),
+                })
+            
+            # Calculate rating statistics
+            avg_rating = reviews.aggregate(Avg('average_rating'))['average_rating__avg'] or 0
+            rating_distribution = {
+                1: reviews.filter(average_rating=1).count(),
+                2: reviews.filter(average_rating=2).count(),
+                3: reviews.filter(average_rating=3).count(),
+                4: reviews.filter(average_rating=4).count(),
+                5: reviews.filter(average_rating=5).count(),
+            }
+            
+            return Response({
+                'success': True,
+                'reviews': reviews_data,
+                'total_count': len(reviews_data),
+                'statistics': {
+                    'average_rating': round(float(avg_rating), 1),
+                    'total_reviews': len(reviews_data),
+                    'rating_distribution': rating_distribution,
+                },
+                'shop_id': str(shop.id),
+                'shop_name': shop.name,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'success': False, 'error': f'Error retrieving reviews: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_boosts (for shop detail page) ──────────────────────────────────────
+
+    @action(detail=True, methods=['get'], url_path='get_boosts')
+    def get_boosts(self, request, pk=None):
+        """Get all boosts for a specific shop"""
+        try:
+            shop = get_object_or_404(Shop, pk=pk)
+            
+            boosts = Boost.objects.filter(
+                shop=shop
+            ).select_related('boost_plan', 'product').order_by('-created_at')
+            
+            boosts_data = []
+            for boost in boosts:
+                boosts_data.append({
+                    'id': str(boost.id),
+                    'product_name': boost.product.name if boost.product else None,
+                    'product_id': str(boost.product.id) if boost.product else None,
+                    'plan_name': boost.boost_plan.name if boost.boost_plan else None,
+                    'plan_price': float(boost.boost_plan.price) if boost.boost_plan else 0,
+                    'status': boost.status,
+                    'start_date': boost.start_date.isoformat(),
+                    'end_date': boost.end_date.isoformat(),
+                    'created_at': boost.created_at.isoformat(),
+                    'payment_verified': boost.payment_verified,
+                    'payment_method': boost.payment_method,
+                })
+            
+            # Calculate boost statistics
+            active_boosts = boosts.filter(status='active').count()
+            total_boost_revenue = sum(
+                float(b.boost_plan.price) for b in boosts.filter(status='active') 
+                if b.boost_plan and b.boost_plan.price
+            )
+            
+            return Response({
+                'success': True,
+                'boosts': boosts_data,
+                'total_count': len(boosts_data),
+                'statistics': {
+                    'active_boosts': active_boosts,
+                    'total_boost_revenue': total_boost_revenue,
+                    'pending_payment': boosts.filter(status='payment_pending').count(),
+                },
+                'shop_id': str(shop.id),
+                'shop_name': shop.name,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'success': False, 'error': f'Error retrieving boosts: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_categories (for shop detail page) ──────────────────────────────────
+
+    @action(detail=True, methods=['get'], url_path='get_categories')
+    def get_categories(self, request, pk=None):
+        """Get all categories for a specific shop"""
+        try:
+            shop = get_object_or_404(Shop, pk=pk)
+            
+            categories = Category.objects.filter(
+                shop=shop
+            ).annotate(
+                product_count=Count('products', filter=Q(products__is_removed=False))
+            ).order_by('name')
+            
+            categories_data = []
+            for category in categories:
+                categories_data.append({
+                    'id': str(category.id),
+                    'name': category.name,
+                    'product_count': category.product_count,
+                })
+            
+            return Response({
+                'success': True,
+                'categories': categories_data,
+                'total_count': len(categories_data),
+                'shop_id': str(shop.id),
+                'shop_name': shop.name,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'success': False, 'error': f'Error retrieving categories: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_vouchers (for shop detail page) ────────────────────────────────────
+
+    @action(detail=True, methods=['get'], url_path='get_vouchers')
+    def get_vouchers(self, request, pk=None):
+        """Get all vouchers for a specific shop"""
+        try:
+            shop = get_object_or_404(Shop, pk=pk)
+            
+            vouchers = Voucher.objects.filter(
+                shop=shop
+            ).order_by('-added_at')
+            
+            vouchers_data = []
+            for voucher in vouchers:
+                # Calculate usage count
+                usage_count = Checkout.objects.filter(
+                    voucher=voucher,
+                    order__status__in=['delivered', 'completed', 'processing', 'shipped']
+                ).count()
+                
+                vouchers_data.append({
+                    'id': str(voucher.id),
+                    'code': voucher.code,
+                    'name': voucher.name,
+                    'discount_type': voucher.discount_type,
+                    'value': float(voucher.value),
+                    'minimum_spend': float(voucher.minimum_spend),
+                    'maximum_usage': voucher.maximum_usage,
+                    'usage_count': usage_count,
+                    'remaining_usage': voucher.maximum_usage - usage_count if voucher.maximum_usage > 0 else None,
+                    'start_date': voucher.start_date.isoformat(),
+                    'end_date': voucher.end_date.isoformat() if voucher.end_date else None,
+                    'is_active': voucher.is_active,
+                    'voucher_type': voucher.voucher_type,
+                    'created_at': voucher.added_at.isoformat() if voucher.added_at else None,
+                })
+            
+            return Response({
+                'success': True,
+                'vouchers': vouchers_data,
+                'total_count': len(vouchers_data),
+                'shop_id': str(shop.id),
+                'shop_name': shop.name,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'success': False, 'error': f'Error retrieving vouchers: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ── get_reports (for shop detail page) ─────────────────────────────────────
+
+    @action(detail=True, methods=['get'], url_path='get_reports')
+    def get_reports(self, request, pk=None):
+        """Get all reports against a specific shop"""
+        try:
+            shop = get_object_or_404(Shop, pk=pk)
+            
+            reports = Report.objects.filter(
+                reported_shop=shop
+            ).select_related('reporter').order_by('-created_at')
+            
+            reports_data = []
+            for report in reports:
+                reporter_name = "Unknown"
+                if report.reporter:
+                    reporter_name = f"{report.reporter.first_name} {report.reporter.last_name}".strip() or report.reporter.username
+                
+                reports_data.append({
+                    'id': str(report.id),
+                    'report_type': report.report_type,
+                    'reason': report.reason,
+                    'description': report.description,
+                    'status': report.status,
+                    'reporter_name': reporter_name,
+                    'reporter_id': str(report.reporter.id) if report.reporter else None,
+                    'created_at': report.created_at.isoformat(),
+                    'updated_at': report.updated_at.isoformat(),
+                    'has_media': report.media.exists(),
+                })
+            
+            # Report statistics
+            pending_reports = reports.filter(status__in=['pending', 'under_review']).count()
+            resolved_reports = reports.filter(status='resolved').count()
+            
+            return Response({
+                'success': True,
+                'reports': reports_data,
+                'total_count': len(reports_data),
+                'statistics': {
+                    'pending_reports': pending_reports,
+                    'resolved_reports': resolved_reports,
+                },
+                'shop_id': str(shop.id),
+                'shop_name': shop.name,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'success': False, 'error': f'Error retrieving reports: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -5125,7 +5987,7 @@ class AdminShops(viewsets.ViewSet):
             return Response(
                 {'success': False, 'error': f'Error retrieving pending shops: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )        
+            )
 
 class AdminBoosting(viewsets.ViewSet):
     def parse_date(self, date_str):
