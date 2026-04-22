@@ -44382,79 +44382,231 @@ class RiderProofViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='delivery/(?P<delivery_id>[^/.]+)/proofs')
     def get_delivery_proofs(self, request, delivery_id=None):
         """
-        Get all proofs for a specific delivery
-        
-        Parameters:
-        - delivery_id: UUID of the delivery (in URL)
-        
-        Returns:
-        - List of proofs for the delivery
+        Get proof images for a specific delivery.
         """
-        import logging
-        logger = logging.getLogger(__name__)
+        print("=" * 50)
+        print("get_delivery_proofs called")
+        print(f"delivery_id: {delivery_id}")
         
-        logger.info("="*50)
-        logger.info("get_delivery_proofs called")
-        logger.info(f"delivery_id: {delivery_id}")
-        
-        # Get the authenticated rider
         rider = self._get_rider(request)
-        logger.info(f"rider: {rider}")
-        
         if not rider:
-            logger.error("Rider not found or unauthorized")
+            print("No rider found")
             return Response(
-                {"success": False, "error": "Rider not found or unauthorized"},
+                {"success": False, "error": "Rider not found"},
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Validate delivery_id
+        print(f"rider: {rider.rider.username if rider.rider else 'Unknown'}")
+        
         try:
-            delivery_uuid = uuid.UUID(delivery_id)
-            logger.info(f"delivery_uuid: {delivery_uuid}")
-        except (ValueError, AttributeError) as e:
-            logger.error(f"Invalid delivery ID format: {e}")
+            delivery_uuid = uuid.UUID(str(delivery_id))
+            print(f"delivery_uuid: {delivery_uuid}")
+        except (ValueError, AttributeError):
+            print(f"Invalid delivery ID format: {delivery_id}")
             return Response(
                 {"success": False, "error": "Invalid delivery ID format"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Get the delivery and verify it belongs to this rider
         try:
-            delivery = Delivery.objects.get(id=delivery_uuid, rider=rider)
-            logger.info(f"delivery found: {delivery.id}")
-        except Delivery.DoesNotExist:
-            logger.error(f"Delivery not found: {delivery_uuid}")
-            return Response(
-                {"success": False, "error": "Delivery not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Get all proofs for this delivery
-        proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
-        logger.info(f"proofs count: {proofs.count()}")
-        
-        # Use serializer
-        try:
-            serializer = ProofSerializer(proofs, many=True, context={'request': request})
-            logger.info("serializer created successfully")
+            # Get the delivery
+            delivery = Delivery.objects.get(id=delivery_uuid)
             
-            data = serializer.data
-            logger.info(f"serializer.data length: {len(data)}")
+            # Check if the rider is assigned to this delivery
+            if delivery.rider and delivery.rider != rider:
+                print(f"Rider {rider.rider.username if rider.rider else 'Unknown'} not assigned to delivery {delivery_id}")
+                print(f"Delivery is assigned to rider: {delivery.rider.rider.username if delivery.rider.rider else 'Unknown'}")
+                
+                # Try to find if there's a delivery for this order assigned to the current rider
+                order = delivery.order
+                current_rider_delivery = Delivery.objects.filter(order=order, rider=rider).first()
+                
+                if current_rider_delivery:
+                    print(f"Found delivery for same order assigned to current rider: {current_rider_delivery.id}")
+                    # Use the current rider's delivery instead
+                    delivery = current_rider_delivery
+                else:
+                    return Response(
+                        {"success": False, "error": "You are not authorized to view proofs for this delivery", "delivery_assigned_to": delivery.rider.rider.username if delivery.rider.rider else "Unknown"},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            
+            # Get all proofs for this delivery
+            proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
+            
+            proofs_data = []
+            for proof in proofs:
+                file_url = None
+                if proof.file_data:
+                    try:
+                        file_url = get_media_url(proof.file_data)
+                    except Exception as e:
+                        print(f"Error getting file URL: {e}")
+                        file_url = proof.file_data.url if hasattr(proof.file_data, 'url') else None
+                
+                proofs_data.append({
+                    "id": str(proof.id),
+                    "file_url": file_url,
+                    "file_type": proof.file_type,
+                    "proof_type": proof.proof_type if hasattr(proof, 'proof_type') else None,
+                    "uploaded_at": proof.uploaded_at.isoformat() if proof.uploaded_at else None
+                })
+            
+            print(f"Found {len(proofs_data)} proofs for delivery {delivery.id}")
             
             return Response({
                 "success": True,
                 "delivery_id": str(delivery.id),
-                "total_proofs": len(proofs),
-                "proofs": data
+                "delivery_status": delivery.status,
+                "proofs": proofs_data,
+                "count": len(proofs_data)
             }, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error in serializer: {e}", exc_info=True)
+            
+        except Delivery.DoesNotExist:
+            print(f"Delivery not found: {delivery_id}")
+            
+            # Try to find by order ID instead (fallback for backward compatibility)
+            try:
+                order = Order.objects.filter(order=delivery_uuid).first()
+                if order:
+                    # Find delivery for this order assigned to current rider
+                    delivery = Delivery.objects.filter(order=order, rider=rider).first()
+                    if delivery:
+                        print(f"Found delivery by order ID assigned to current rider: {delivery.id}")
+                        proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
+                        proofs_data = []
+                        for proof in proofs:
+                            file_url = None
+                            if proof.file_data:
+                                try:
+                                    file_url = get_media_url(proof.file_data)
+                                except Exception:
+                                    file_url = proof.file_data.url if hasattr(proof.file_data, 'url') else None
+                            proofs_data.append({
+                                "id": str(proof.id),
+                                "file_url": file_url,
+                                "file_type": proof.file_type,
+                                "proof_type": proof.proof_type if hasattr(proof, 'proof_type') else None,
+                                "uploaded_at": proof.uploaded_at.isoformat() if proof.uploaded_at else None
+                            })
+                        return Response({
+                            "success": True,
+                            "delivery_id": str(delivery.id),
+                            "delivery_status": delivery.status,
+                            "proofs": proofs_data,
+                            "count": len(proofs_data)
+                        }, status=status.HTTP_200_OK)
+                    else:
+                        print(f"No delivery found for order {delivery_uuid} assigned to current rider")
+            except Exception as e:
+                print(f"Fallback lookup error: {e}")
+            
             return Response(
-                {"success": False, "error": f"Serializer error: {str(e)}"},
+                {"success": False, "error": "Delivery not found", "delivery_id": delivery_id},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            print(f"Error getting delivery proofs: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {"success": False, "error": f"Failed to get proofs: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
 
+    @action(detail=False, methods=['get'], url_path='order/(?P<order_id>[^/.]+)/proofs')
+    def get_order_proofs(self, request, order_id=None):
+        """
+        Get proof images for a specific order (by order ID instead of delivery ID).
+        This is a more reliable endpoint since the frontend always has the correct order ID.
+        """
+        print("=" * 50)
+        print("get_order_proofs called")
+        print(f"order_id: {order_id}")
+        
+        rider = self._get_rider(request)
+        if not rider:
+            print("No rider found")
+            return Response(
+                {"success": False, "error": "Rider not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        print(f"rider: {rider.rider.username if rider.rider else 'Unknown'}")
+        
+        try:
+            order_uuid = uuid.UUID(str(order_id))
+            print(f"order_uuid: {order_uuid}")
+        except (ValueError, AttributeError):
+            print(f"Invalid order ID format: {order_id}")
+            return Response(
+                {"success": False, "error": "Invalid order ID format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            order = Order.objects.get(order=order_uuid)
+            print(f"Found order: {order.order}")
+            
+            # Find delivery for this order assigned to current rider
+            delivery = Delivery.objects.filter(order=order, rider=rider).first()
+            
+            if not delivery:
+                print(f"No delivery found for order {order_id} assigned to current rider")
+                return Response(
+                    {"success": False, "error": "No delivery found for this order assigned to you"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            print(f"Found delivery: {delivery.id}")
+            
+            # Get all proofs for this delivery
+            proofs = Proof.objects.filter(delivery=delivery).order_by('-uploaded_at')
+            
+            proofs_data = []
+            for proof in proofs:
+                file_url = None
+                if proof.file_data:
+                    try:
+                        file_url = get_media_url(proof.file_data)
+                    except Exception as e:
+                        print(f"Error getting file URL: {e}")
+                        file_url = proof.file_data.url if hasattr(proof.file_data, 'url') else None
+                
+                proofs_data.append({
+                    "id": str(proof.id),
+                    "file_url": file_url,
+                    "file_type": proof.file_type,
+                    "proof_type": proof.proof_type if hasattr(proof, 'proof_type') else None,
+                    "uploaded_at": proof.uploaded_at.isoformat() if proof.uploaded_at else None
+                })
+            
+            print(f"Found {len(proofs_data)} proofs for order {order_id}")
+            
+            return Response({
+                "success": True,
+                "order_id": str(order.order),
+                "delivery_id": str(delivery.id),
+                "delivery_status": delivery.status,
+                "proofs": proofs_data,
+                "count": len(proofs_data)
+            }, status=status.HTTP_200_OK)
+            
+        except Order.DoesNotExist:
+            print(f"Order not found: {order_id}")
+            return Response(
+                {"success": False, "error": "Order not found", "order_id": order_id},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            print(f"Error getting order proofs: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {"success": False, "error": f"Failed to get proofs: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=False, methods=['post'], url_path='upload/(?P<delivery_id>[^/.]+)')
     def upload_proof(self, request, delivery_id=None):
@@ -44552,6 +44704,126 @@ class RiderProofViewSet(viewsets.ViewSet):
                 "id": str(proof.id),
                 "delivery_id": str(delivery.id),
                 "order_id": str(delivery.order.order) if delivery.order else None,
+                "proof_type": proof.proof_type,
+                "proof_type_display": proof.get_proof_type_display(),
+                "file_url": proof.file_data.url if proof.file_data else None,
+                "file_type": proof.file_type,
+                "uploaded_at": proof.uploaded_at,
+                "file_name": os.path.basename(proof.file_data.name) if proof.file_data else None,
+                "file_size": proof.file_data.size if proof.file_data else 0
+            }
+        }
+        
+        return Response(proof_data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=False, methods=['post'], url_path='upload-by-order/(?P<order_id>[^/.]+)')
+    def upload_proof_by_order(self, request, order_id=None):
+        """
+        Upload proof of delivery for an order (by order ID instead of delivery ID).
+        This automatically finds the delivery assigned to the current rider.
+        
+        Parameters:
+        - order_id: UUID of the order (in URL)
+        - proof_type: Type of proof ('delivery', 'seller', 'pickup') (in form data)
+        - file: The proof file to upload (in form data)
+        
+        Returns:
+        - Proof details including file URL
+        """
+        # Get the authenticated rider
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found or unauthorized"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Validate order_id
+        try:
+            order_uuid = uuid.UUID(order_id)
+        except (ValueError, AttributeError):
+            return Response(
+                {"success": False, "error": "Invalid order ID format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get the order
+        try:
+            order = Order.objects.get(order=order_uuid)
+        except Order.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Order not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Find delivery for this order assigned to current rider
+        delivery = Delivery.objects.filter(order=order, rider=rider).first()
+        
+        if not delivery:
+            return Response(
+                {"success": False, "error": "No delivery found for this order assigned to you"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Validate proof_type
+        proof_type = request.data.get('proof_type')
+        if not proof_type:
+            return Response(
+                {"success": False, "error": "proof_type is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if proof_type not in dict(Proof.PROOF_TYPE_CHOICES):
+            valid_types = ', '.join(dict(Proof.PROOF_TYPE_CHOICES).keys())
+            return Response(
+                {"success": False, "error": f"Invalid proof_type. Must be one of: {valid_types}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate file
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response(
+                {"success": False, "error": "file is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate file size (max 10MB)
+        max_size = 10 * 1024 * 1024
+        if file_obj.size > max_size:
+            return Response(
+                {"success": False, "error": "File size too large. Maximum size is 10MB."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate file type
+        allowed_extensions = ['.jpg', '.jpeg', '.png', '.pdf', '.heic', '.heif']
+        file_extension = os.path.splitext(file_obj.name)[1].lower()
+        if file_extension not in allowed_extensions:
+            return Response(
+                {"success": False, "error": f"Invalid file type. Allowed types: {', '.join(allowed_extensions)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get file type from extension
+        file_type = file_extension[1:] if file_extension else 'unknown'
+        
+        # Create proof record
+        proof = Proof.objects.create(
+            delivery=delivery,
+            proof_type=proof_type,
+            file_data=file_obj,
+            file_type=file_type
+        )
+        
+        # Prepare response with proof details
+        proof_data = {
+            "success": True,
+            "message": "Proof of delivery uploaded successfully",
+            "proof": {
+                "id": str(proof.id),
+                "delivery_id": str(delivery.id),
+                "order_id": str(order.order),
                 "proof_type": proof.proof_type,
                 "proof_type_display": proof.get_proof_type_display(),
                 "file_url": proof.file_data.url if proof.file_data else None,
