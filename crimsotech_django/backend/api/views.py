@@ -23467,7 +23467,7 @@ class SellerOrderList(viewsets.ViewSet):
                     },
                     'quantity': checkout.quantity,
                     'total_amount': item_total,
-                    'status': checkout.status if hasattr(checkout, 'status') else 'pending',
+                    'status': checkout.status if hasattr(checkout, 'status') else 'pending', 
                 })
             
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
@@ -26512,6 +26512,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'cart_item_id': None,
                             'product_id': str(checkout.direct_product_id),
                             'product_name': checkout.direct_product_name,
+                            'item_status': checkout.status,
                             'product_description': product.description if product else '',
                             'product_condition': product.condition if product else 0,
                             'product_status': product.status if product else '',
@@ -26525,7 +26526,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'quantity': checkout.quantity,
                             'price': price,
                             'subtotal': str(checkout.total_amount),
-                            'status': order.status,
+                            'status': checkout.status if checkout.status == 'cancelled' else order.status,
+                            'item_status': checkout.status,
                             'remarks': checkout.remarks,
                             'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
                             'product_images': product_images,
@@ -26616,7 +26618,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'quantity': checkout.quantity,
                                 'price': variant_price,
                                 'subtotal': str(checkout.total_amount),
-                                'status': order.status,
+                                'status': checkout.status if checkout.status == 'cancelled' else order.status,  
+                                'item_status': checkout.status, 
                                 'remarks': checkout.remarks,
                                 'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
                                 'product_images': product_images,
@@ -26680,7 +26683,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'quantity': checkout.quantity,
                             'price': '0.00',
                             'subtotal': str(checkout.total_amount),
-                            'status': order.status,
+                            'status': checkout.status if checkout.status == 'cancelled' else order.status,
                             'remarks': checkout.remarks,
                             'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
                             'product_images': [],
@@ -27123,7 +27126,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'price': variant_price,
                         'original_price': variant_original_price,
                         'subtotal': str(checkout.total_amount or '0.00'),
-                        'status': order.status,
+                        'status': checkout.status if checkout.status == 'cancelled' else order.status,
+                        'item_status': checkout.status,  
                         'purchased_at': checkout.created_at.isoformat(),
                         'product_images': product_images,
                         'primary_image': primary_image,
@@ -27200,6 +27204,15 @@ class PurchasesBuyer(viewsets.ViewSet):
             logger.exception('Unhandled exception in view_order_detail for order %s user %s: %s', pk, user_id, exc)
             return Response({'error': 'An internal error occurred while fetching the order'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    def _get_item_status(self, order, checkout):
+        """
+        Determine the correct status for an item.
+        For cancelled items, use checkout.status.
+        For other statuses, use order.status.
+        """
+        if checkout.status == 'cancelled':
+            return checkout.status
+        return order.status
     
     def _get_status_display(self, status):
         status_map = {
@@ -27583,6 +27596,121 @@ class PurchasesBuyer(viewsets.ViewSet):
             "order_id": str(order.order), 
             "riders": riders_data
     })
+
+    @action(detail=True, methods=['post'], url_path='cancel-items')
+    def cancel_items(self, request, pk=None):
+        """
+        Cancel specific items from an order (not the entire order)
+        Expected payload: {"checkout_ids": ["checkout_id_1", "checkout_id_2"]}
+        """
+        from django.utils import timezone
+        from decimal import Decimal
+        
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({'error': 'X-User-Id header is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            order = Order.objects.get(order=pk, user=user)
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get checkout IDs from request
+        checkout_ids = request.data.get('checkout_ids', [])
+        if not checkout_ids:
+            return Response({'error': 'checkout_ids array is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Only allow cancellation for pending or processing orders
+        if order.status not in ['pending', 'processing']:
+            return Response({
+                'error': f'Cannot cancel items for order with status: {order.status}',
+                'success': False
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Get the checkout items to cancel
+            checkouts = Checkout.objects.filter(
+                order=order,
+                id__in=checkout_ids
+            )
+            
+            if not checkouts.exists():
+                return Response({
+                    'error': 'No valid checkout items found to cancel',
+                    'success': False
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            cancelled_count = 0
+            cancelled_items = []
+            cancelled_total = Decimal('0')
+            
+            for checkout in checkouts:
+                # Only cancel if still pending
+                if checkout.status == 'pending':
+                    # Mark as cancelled
+                    checkout.status = 'cancelled'
+                    checkout.save(update_fields=['status'])
+                    cancelled_count += 1
+                    cancelled_items.append(str(checkout.id))
+                    
+                    # Track cancelled amount to update order total
+                    if checkout.total_amount:
+                        cancelled_total += checkout.total_amount
+                    
+                    # Restore stock if needed
+                    if checkout.cart_item and checkout.cart_item.variant:
+                        variant = checkout.cart_item.variant
+                        variant.quantity += checkout.quantity
+                        variant.save(update_fields=['quantity'])
+                    elif checkout.cart_item and checkout.cart_item.product:
+                        product = checkout.cart_item.product
+                        product.quantity += checkout.quantity
+                        product.save(update_fields=['quantity'])
+                    elif hasattr(checkout, 'direct_variant_id') and checkout.direct_variant_id:
+                        try:
+                            variant = Variants.objects.get(id=checkout.direct_variant_id)
+                            variant.quantity += checkout.quantity
+                            variant.save(update_fields=['quantity'])
+                        except Variants.DoesNotExist:
+                            pass
+            
+            # Update order total amount
+            if cancelled_total > 0:
+                new_total = order.total_amount - cancelled_total
+                # Ensure total doesn't go negative
+                if new_total < 0:
+                    new_total = Decimal('0')
+                order.total_amount = new_total
+                order.save(update_fields=['total_amount'])
+            
+            # If all items are cancelled, mark the order as cancelled
+            remaining_checkouts = Checkout.objects.filter(order=order).exclude(status='cancelled')
+            if remaining_checkouts.count() == 0:
+                order.status = 'cancelled'
+                order.save(update_fields=['status'])
+                message = 'All items cancelled. Order has been cancelled.'
+            else:
+                message = f'{cancelled_count} item(s) cancelled successfully.'
+
+            return Response({
+                'success': True,
+                'message': message,
+                'cancelled_count': cancelled_count,
+                'cancelled_items': cancelled_items,
+                'updated_total': float(order.total_amount)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.exception('Error cancelling items: %s', e)
+            return Response({
+                'error': str(e),
+                'success': False
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])

@@ -190,7 +190,14 @@ const formatImageUrl = (url: string | null | undefined): string | null => {
 };
 
 // Helper function to map backend status to frontend status
-const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
+// Helper function to map backend status to frontend status
+// Update the mapStatus function to better handle checkout status
+const mapStatus = (backendStatus: string, checkoutStatus?: string): PurchaseItem['status'] => {
+  // If there's a checkout status and it's cancelled, use that
+  if (checkoutStatus === 'cancelled') {
+    return 'cancelled';
+  }
+  
   const normalized = (backendStatus || '').toString().trim().toLowerCase();
 
   switch (normalized) {
@@ -212,6 +219,7 @@ const mapStatus = (backendStatus: string): PurchaseItem['status'] => {
     case 'completed':
       return 'completed';
     case 'cancelled':
+    case 'canceled':
       return 'cancelled';
     case 'refunded':
     case 'return_refund':
@@ -292,15 +300,19 @@ export default function PurchasesPage() {
           'X-User-Id': userId
         }
       });
-
+  
       const purchasesData = response.data;
       const items: PurchaseItem[] = [];
-
+  
       purchasesData.purchases.forEach((order: PurchaseOrder) => {
         if (order.items && order.items.length > 0) {
           order.items.forEach((item: OrderItem, index: number) => {
-            const statusToUse = item.status || order.status || 'pending';
-            const mappedStatus = mapStatus(statusToUse);
+            // IMPORTANT: Use item.status for cancelled items, fallback to order.status
+            const effectiveStatus = item.status === 'cancelled' 
+              ? item.status 
+              : (item.status || order.status || 'pending');
+            
+            const mappedStatus = mapStatus(effectiveStatus, item.status);
             
             let imageUrl = 'https://via.placeholder.com/70?text=No+Image';
             
@@ -311,7 +323,7 @@ export default function PurchasesPage() {
               const formatted = formatImageUrl(item.product_images[0].url);
               if (formatted) imageUrl = formatted;
             }
-
+  
             const purchaseItem: PurchaseItem = {
               id: `${order.order_id}-${index}`,
               order_id: order.order_id,
@@ -333,16 +345,16 @@ export default function PurchasesPage() {
                 sku: item.variant_sku || ''
               } : undefined
             };
-
+  
             if (item.status === 'cancelled' && item.remarks) {
               purchaseItem.reason = item.remarks;
             }
-
+  
             items.push(purchaseItem);
           });
         }
       });
-
+  
       setPurchaseItems(items);
       calculateOrderCounts(items);
     } catch (error) {
@@ -368,18 +380,16 @@ export default function PurchasesPage() {
   
     items.forEach((item) => {
       const status = item.status;
-      const paymentMethod = (item.order.payment_method || '').toString().toLowerCase();
-      const deliveryMethod = (item.order.delivery_method || '').toString().toLowerCase();
-      const isPickupCash = paymentMethod.includes('cash on pickup') && deliveryMethod.includes('pickup');
-  
-      // Count pending - ONLY orders with status 'pending'
+      // Use item's status directly since we're already mapping correctly
+      const isCancelledItem = status === 'cancelled';
+      
+      // Count pending - ONLY items with status 'pending' (not cancelled)
       if (status === 'pending') counts.pending++;
       
-      // Count processing - only 'in_progress' status (not pending)
+      // Count processing - only 'in_progress' status (not pending or cancelled)
       if (status === 'in_progress') counts.processing++;
   
       // Count to_pickup - ONLY 'ready_for_pickup' status
-      // Pending orders should NOT be in to_pickup
       if (status === 'ready_for_pickup') counts.to_pickup++;
   
       const rawOrderStatus = (item.order?.status || '').toString().trim().toLowerCase();
@@ -391,17 +401,18 @@ export default function PurchasesPage() {
         status === 'completed' ||
         rawOrderStatus === 'delivered'
       ) {
-        counts.shipped++;
+        if (!isCancelledItem) counts.shipped++;
       }
   
       if (status === 'picked_up' || status === 'completed') {
-        counts.completed++;
+        if (!isCancelledItem) counts.completed++;
       }
   
       if ((status === 'picked_up' || status === 'completed') && item.can_review) {
-        counts.rate++;
+        if (!isCancelledItem) counts.rate++;
       }
   
+      // Count returns - includes cancelled items and return_refund status
       if (status === 'cancelled' || status === 'return_refund') {
         counts.returns++;
       }
@@ -442,19 +453,17 @@ export default function PurchasesPage() {
             return item.status === 'ready_for_pickup';
           });
           break;
-        case 'shipped':
-          filtered = filtered.filter(item => {
-            const rawOrderStatus = (item.order?.status || '').toString().trim().toLowerCase();
-            return (
-              item.status === 'to_ship' ||
-              item.status === 'to_receive' ||
-              item.status === 'delivered' ||
-              item.status === 'picked_up' ||
-              item.status === 'completed' ||
-              rawOrderStatus === 'delivered'
-            );
-          });
-          break;
+          case 'shipped':
+            filtered = filtered.filter(item => {
+              return (
+                item.status === 'to_ship' ||
+                item.status === 'to_receive' ||
+                item.status === 'delivered' ||
+                item.status === 'picked_up' ||
+                item.status === 'completed'
+              );
+            });
+            break;
         case 'completed':
           filtered = filtered.filter(item => 
             item.status === 'picked_up' || item.status === 'completed'
@@ -547,6 +556,14 @@ export default function PurchasesPage() {
             </View>
           </View>
         )}
+        {/* Cancelled Badge for individual cancelled items */}
+{/* Cancelled Badge for individual cancelled items */}
+{item.status === 'cancelled' && (
+  <View style={styles.cancelledItemBadge}>
+    <MaterialIcons name="cancel" size={12} color="#EF4444" />
+    <Text style={styles.cancelledItemText}>Item Cancelled</Text>
+  </View>
+)}
 
         {/* Shop Header */}
         <View style={styles.shopHeader}>
@@ -589,10 +606,11 @@ export default function PurchasesPage() {
             </View>
 
             {/* Quantity and Price */}
-            <View style={styles.priceRow}>
-              <Text style={styles.quantity}>x{formatNumber(item.quantity)}</Text>
-              <Text style={styles.price}>{formatCurrency(item.total_amount)}</Text>
-            </View>
+            {/* Quantity and Price */}
+<View style={styles.priceRow}>
+<Text style={styles.quantity}>x{formatNumber(item.quantity)}</Text>
+<Text style={styles.price}>{formatCurrency(item.total_amount)}</Text>
+</View>
           </View>
         </View>
 
@@ -608,24 +626,25 @@ export default function PurchasesPage() {
 
         {/* Total and Action */}
         <View style={styles.footer}>
-          <View style={styles.totalContainer}>
+          {/* <View style={styles.totalContainer}>
             <Text style={styles.totalLabel}>Total:</Text>
             <Text style={styles.totalAmount}>{formatCurrency(parseFloat(item.order.total_amount))}</Text>
-          </View>
+          </View> */}
 
           {/* Action Buttons */}
-          <View style={styles.actionButtons}>
-            {/* View Details button for returns */}
-            {(item.status === 'cancelled' || item.status === 'return_refund') && (
-              <TouchableOpacity 
-                style={[styles.actionButton, styles.detailsButton]}
-                onPress={() => router.push(`/customer/view-refund?orderId=${item.order_id}`)}
-              >
-                <MaterialIcons name="visibility" size={12} color="#6B7280" />
-                <Text style={styles.detailsButtonText}>Details</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          {/* Action Buttons */}
+<View style={styles.actionButtons}>
+  {/* View Details button for returns - only for return_refund, not cancelled */}
+  {item.status === 'return_refund' && (
+    <TouchableOpacity 
+      style={[styles.actionButton, styles.detailsButton]}
+      onPress={() => router.push(`/customer/view-refund?orderId=${item.order_id}`)}
+    >
+      <MaterialIcons name="visibility" size={12} color="#6B7280" />
+      <Text style={styles.detailsButtonText}>Details</Text>
+    </TouchableOpacity>
+  )}
+</View>
         </View>
 
         {/* Cancelled Reason - if available */}
@@ -930,6 +949,21 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginBottom: 2,
   },
+  cancelledPriceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  cancelledPrice: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#9CA3AF',
+    textDecorationLine: 'line-through',
+  },
+  refundNote: {
+    fontSize: 10,
+    color: '#10B981',
+    fontStyle: 'italic',
+  },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1070,5 +1104,21 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  cancelledItemBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+    gap: 4,
+    marginTop: 4,
+  },
+  cancelledItemText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#EF4444',
   },
 });

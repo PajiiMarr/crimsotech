@@ -56,7 +56,7 @@ interface OrderItem {
   cart_item: OrderItemCartItem;
   quantity: number;
   total_amount: number;
-  status: string;
+  status: string;  
   created_at: string;
   is_shipped?: boolean;
   shipping_method?: string | null;
@@ -1070,30 +1070,42 @@ const renderActionButtons = () => {
             <Text style={styles.cardTitle}>Items ({order.items.length})</Text>
           </View>
           {order.items.map((item, index) => (
-            <View key={item.id || index} style={styles.orderItem}>
-              <Image
-                source={{ uri: getProductImageUrl(item) }}
-                style={styles.itemImage}
-              />
-              <View style={styles.itemDetails}>
-                <Text style={styles.itemName} numberOfLines={2}>
-                  {item.cart_item?.product?.name || 'Product Name'}
-                </Text>
-                <Text style={styles.itemVariant}>
-                  {item.cart_item?.product?.variant || 'Standard'}
-                </Text>
-                <View style={styles.itemPriceRow}>
-                  <Text style={styles.itemPrice}>
-                    {formatCurrency(item.cart_item?.product?.price || 0)}
-                  </Text>
-                  <Text style={styles.itemQuantity}>× {item.quantity}</Text>
-                </View>
-              </View>
-              <Text style={styles.itemTotal}>
-                {formatCurrency(item.total_amount)}
-              </Text>
-            </View>
-          ))}
+  <View key={item.id || index} style={[
+    styles.orderItem,
+    item.status === 'cancelled' && styles.cancelledOrderItem  // ← ADD THIS
+  ]}>
+    <Image
+      source={{ uri: getProductImageUrl(item) }}
+      style={[styles.itemImage, item.status === 'cancelled' && styles.cancelledItemImage]}  // ← ADD THIS
+    />
+    <View style={styles.itemDetails}>
+      <Text style={[styles.itemName, item.status === 'cancelled' && styles.cancelledItemText]}>
+        {item.cart_item?.product?.name || 'Product Name'}
+      </Text>
+      <Text style={styles.itemVariant}>
+        {item.cart_item?.product?.variant || 'Standard'}
+      </Text>
+      
+      {/* ADD CANCELLED BADGE */}
+      {item.status === 'cancelled' && (
+        <View style={styles.cancelledBadge}>
+          <MaterialIcons name="cancel" size={12} color="#EF4444" />
+          <Text style={styles.cancelledBadgeText}>CANCELLED</Text>
+        </View>
+      )}
+      
+      <View style={styles.itemPriceRow}>
+        <Text style={styles.itemPrice}>
+          {formatCurrency(item.cart_item?.product?.price || 0)}
+        </Text>
+        <Text style={styles.itemQuantity}>× {item.quantity}</Text>
+      </View>
+    </View>
+    <Text style={[styles.itemTotal, item.status === 'cancelled' && styles.cancelledItemText]}>
+      {formatCurrency(item.total_amount)}
+    </Text>
+  </View>
+))}
         </View>
 
         {/* Order Summary */}
@@ -1574,5 +1586,32 @@ previewImage: {
     fontSize: 12,
     color: '#DC2626',
     flex: 1,
+  },
+  cancelledOrderItem: {
+    backgroundColor: '#FEF2F2',
+    opacity: 0.8,
+  },
+  cancelledItemImage: {
+    opacity: 0.5,
+  },
+  cancelledItemText: {
+    textDecorationLine: 'line-through',
+    color: '#9CA3AF',
+  },
+  cancelledBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+    gap: 4,
+    marginTop: 4,
+  },
+  cancelledBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#EF4444',
   },
 });

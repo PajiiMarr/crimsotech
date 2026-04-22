@@ -183,7 +183,7 @@ export default function CustomerHeader({
               </TouchableOpacity>
 
               {/* Switch Button */}
-              {showSwitchButton && (
+              {/* {showSwitchButton && (
                 <TouchableOpacity 
                   style={styles.iconBtn} 
                   onPress={onInterfaceSwitch}
@@ -194,7 +194,7 @@ export default function CustomerHeader({
                     color={interfaceType === 'management' ? '#EE4D2D' : '#111'} 
                   />
                 </TouchableOpacity>
-              )}
+              )} */}
             </View>
           </View>
         )}

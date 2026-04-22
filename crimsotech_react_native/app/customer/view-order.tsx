@@ -23,6 +23,7 @@ interface OrderItem {
   checkout_id: string;
   product_id: string;
   product_name: string;
+  item_status?: string; 
   product_description: string;
   product_variant: string;
   quantity: number;
@@ -193,6 +194,8 @@ export default function ViewTrackOrderPage() {
   const [centerToastVisible, setCenterToastVisible] = useState(false);
   const [centerToastMessage, setCenterToastMessage] = useState("");
   const [cancelModalVisible, setCancelModalVisible] = useState(false);
+  const [cancelItemsModalVisible, setCancelItemsModalVisible] = useState(false);
+const [cancellingItems, setCancellingItems] = useState(false);
 
   useEffect(() => {
     if (user?.id && orderId) {
@@ -201,14 +204,14 @@ export default function ViewTrackOrderPage() {
   }, [user?.id, orderId]);
   
 
-  const fetchOrderData = async () => {
+  const fetchOrderData = async (skipLoading = false) => {
     if (!user?.id || !orderId) {
-      setLoading(false);
+      if (!skipLoading) setLoading(false);
       return;
     }
-
+  
     try {
-      setLoading(true);
+      if (!skipLoading) setLoading(true);
       const response = await AxiosInstance.get(
         `/purchases-buyer/${orderId}/view-order/`,
         {
@@ -220,7 +223,8 @@ export default function ViewTrackOrderPage() {
       
       if (response.data) {
         const data = response.data as any;
-
+  
+        // Process items
         data.items = Array.isArray(data.items) ? data.items.map((item: any) => ({
           checkout_id: item.checkout_id || '',
           product_id: item.product_id || '',
@@ -232,6 +236,7 @@ export default function ViewTrackOrderPage() {
           original_price: item.original_price ?? '0',
           subtotal: item.subtotal ?? '0',
           status: item.status ?? '',
+          item_status: item.item_status || item.checkout_status || 'pending',
           purchased_at: item.purchased_at ?? null,
           product_images: Array.isArray(item.product_images) ? item.product_images : [],
           primary_image: item.primary_image || { url: null, file_type: null },
@@ -249,9 +254,9 @@ export default function ViewTrackOrderPage() {
           can_return: item.can_return ?? false,
           return_deadline: item.return_deadline ?? null,
         })) : [];
-
+  
         data.timeline = Array.isArray(data.timeline) ? data.timeline : [];
-
+  
         const rawSummary = data.order_summary || {};
         const computedSubtotal = data.items.reduce((sum: number, it: any) => sum + (parseFloat(it.subtotal || '0') || 0), 0).toFixed(2);
         const subtotalStr = rawSummary.subtotal ?? computedSubtotal;
@@ -259,7 +264,7 @@ export default function ViewTrackOrderPage() {
         const discountStr = rawSummary.discount ?? '0';
         const taxStr = rawSummary.tax ?? '0';
         const totalStr = rawSummary.total ?? ((parseFloat(subtotalStr || '0') + parseFloat(shippingFeeStr || '0') - parseFloat(discountStr || '0') + parseFloat(taxStr || '0')).toFixed(2));
-
+  
         data.order_summary = {
           subtotal: subtotalStr,
           shipping_fee: shippingFeeStr,
@@ -268,21 +273,21 @@ export default function ViewTrackOrderPage() {
           total: totalStr,
           payment_fee: rawSummary.payment_fee ?? '0'
         };
-
+  
         data.summary_counts = data.summary_counts || { total_items: data.items.length || 0, total_unique_items: data.items.length || 0 };
         data.actions = data.actions || { can_cancel: false, can_track: false, can_review: false, can_return: false, can_contact_seller: false, can_buy_again: false };
         data.shipping_info = data.shipping_info || { logistics_carrier: '', tracking_number: null, delivery_method: '', estimated_delivery: null };
         data.delivery_address = data.delivery_address || { recipient_name: '', phone_number: '', address: '', address_details: { street: '', barangay: '', city: '', province: '', postal_code: '' } };
-
+  
         if (!data.order.shop_name && data.items.length > 0 && data.items[0].shop_info?.name) {
           data.order.shop_name = data.items[0].shop_info.name;
           data.order.shop_id = data.items[0].shop_info.id;
         }
-
+  
         if (!data.order.pickup_expire_date && data.order.pickup_date) {
           data.order.pickup_expire_date = data.order.pickup_date;
         }
-
+  
         setOrderData(data);
         if (data.proof_images && data.proof_images.length > 0) {
           setProofs(data.proof_images);
@@ -292,12 +297,11 @@ export default function ViewTrackOrderPage() {
       }
     } catch (error: any) {
       console.error('Error fetching order details:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.error || 'Failed to load order details'
-      );
+      if (!skipLoading) {
+        Alert.alert('Error', error.response?.data?.error || 'Failed to load order details');
+      }
     } finally {
-      setLoading(false);
+      if (!skipLoading) setLoading(false);
       setRefreshing(false);
     }
   };
@@ -462,13 +466,86 @@ const CancelConfirmationModal = ({
     }
   };
 
-  const handleCancelOrder = () => {
-    if (!orderId || !user?.id) return;
-    setCancelModalVisible(true);
-  };
+  // const toggleItemForCancellation = (checkoutId: string) => {
+  //   setSelectedItemsToCancel(prev => {
+  //     const newSet = new Set(prev);
+  //     if (newSet.has(checkoutId)) {
+  //       newSet.delete(checkoutId);
+  //     } else {
+  //       newSet.add(checkoutId);
+  //     }
+  //     return newSet;
+  //   });
+  // };
   
+  const handleCancelSelectedItems = async (selectedIds: string[]) => {
+    // Filter out any IDs that belong to already cancelled items
+    const validSelectedIds = selectedIds.filter(id => {
+      const item = orderData?.items.find(i => i.checkout_id === id);
+      return item && item.item_status !== 'cancelled';
+    });
+  
+    if (validSelectedIds.length === 0) {
+      Alert.alert('No Items Selected', 'Please select at least one item that is not already cancelled.');
+      return;
+    }
+  
+    if (!user?.id) {
+      Alert.alert('Error', 'User not authenticated');
+      return;
+    }
+  
+    setCancellingItems(true);
+  
+    try {
+      const payload = { checkout_ids: validSelectedIds };
+      
+      const response = await AxiosInstance.post(
+        `/purchases-buyer/${orderId}/cancel-items/`,
+        payload,
+        { headers: { 'X-User-Id': user.id } }
+      );
+  
+      if (response.data.success) {
+        setCancelItemsModalVisible(false);
+        await fetchOrderData();
+        
+        setCenterToastMessage(`${validSelectedIds.length} item(s) cancelled successfully`);
+        setCenterToastVisible(true);
+        
+        setTimeout(() => {
+          setCenterToastVisible(false);
+        }, 2000);
+      } else {
+        setCenterToastMessage(response.data.message || 'Failed to cancel items');
+        setCenterToastVisible(true);
+        setTimeout(() => {
+          setCenterToastVisible(false);
+        }, 2000);
+      }
+    } catch (error: any) {
+      setCenterToastMessage(error.response?.data?.error || 'Failed to cancel items');
+      setCenterToastVisible(true);
+      setTimeout(() => {
+        setCenterToastVisible(false);
+      }, 2000);
+    } finally {
+      setCancellingItems(false);
+    }
+  };
+  const handleCancelOrder = () => {
+    if (!orderId || !user?.id) {
+      Alert.alert('Error', 'Unable to cancel order');
+      return;
+    }
+    // Just open the modal - selection state is now managed inside the modal
+    setCancelItemsModalVisible(true);
+  };
   const confirmCancelOrder = async () => {
-    if (!orderId || !user?.id) return;
+    if (!orderId || !user?.id) {
+      Alert.alert('Error', 'User not authenticated');
+      return;
+    }
     
     setCancelModalVisible(false);
     
@@ -496,7 +573,6 @@ const CancelConfirmationModal = ({
       setCenterToastVisible(true);
     }
   };
-
   const handleOrderReceived = async () => {
     if (!orderId || !user?.id) return;
     
@@ -586,101 +662,351 @@ const CancelConfirmationModal = ({
     );
   };
 
-  // ─── Center Toast Notification ───────────────────────────────────
-const CenterToast = ({
-  visible,
-  message,
-  iconName = "checkmark-circle",
-  onHide,
-}: {
-  visible: boolean;
-  message: string;
-  iconName?: string;
-  onHide: () => void;
-}) => {
-  const scale = useRef(new Animated.Value(0)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (visible) {
-      Animated.parallel([
-        Animated.spring(scale, {
-          toValue: 1,
-          useNativeDriver: true,
-          tension: 100,
-          friction: 8,
-        }),
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start();
-
-      const timer = setTimeout(() => {
+  // Item Selection Modal for Cancel
+  // Item Selection Modal for Cancel - OPTIMIZED VERSION
+  // Item Selection Modal for Cancel - UPDATED with disabled items
+  // Item Selection Modal for Cancel - UPDATED with disabled items
+  const CancelItemsModal = ({
+    visible,
+    onClose,
+    onConfirm,
+    items,
+    loading,
+  }: {
+    visible: boolean;
+    onClose: () => void;
+    onConfirm: (selectedIds: string[]) => void;
+    items: OrderItem[];
+    loading: boolean;
+  }) => {
+    const scale = useRef(new Animated.Value(0)).current;
+    const opacity = useRef(new Animated.Value(0)).current;
+    // Local state for selected items - doesn't trigger parent re-renders
+    const [localSelectedItems, setLocalSelectedItems] = useState<Set<string>>(new Set());
+  
+    // Filter out already cancelled items - USE item_status, NOT status
+    const cancellableItems = items.filter(item => item.item_status !== 'cancelled');
+    const cancelledItems = items.filter(item => item.item_status === 'cancelled');
+  
+    // Reset selection when modal opens
+    useEffect(() => {
+      if (visible) {
+        setLocalSelectedItems(new Set());
+      }
+    }, [visible]);
+  
+    useEffect(() => {
+      if (visible) {
+        Animated.parallel([
+          Animated.spring(scale, {
+            toValue: 1,
+            useNativeDriver: true,
+            tension: 65,
+            friction: 8,
+          }),
+          Animated.timing(opacity, {
+            toValue: 1,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+        ]).start();
+      } else {
         Animated.parallel([
           Animated.spring(scale, {
             toValue: 0,
+            useNativeDriver: true,
+            tension: 65,
+            friction: 8,
+          }),
+          Animated.timing(opacity, {
+            toValue: 0,
+            duration: 150,
+            useNativeDriver: true,
+          }),
+        ]).start();
+      }
+    }, [visible]);
+  
+    const toggleItem = (checkoutId: string) => {
+      setLocalSelectedItems(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(checkoutId)) {
+          newSet.delete(checkoutId);
+        } else {
+          newSet.add(checkoutId);
+        }
+        return newSet;
+      });
+    };
+  
+    const handleConfirm = () => {
+      onConfirm(Array.from(localSelectedItems));
+    };
+  
+    if (!visible) return null;
+  
+    return (
+      <Modal
+        visible={visible}
+        transparent
+        animationType="none"
+        onRequestClose={onClose}
+      >
+        <View style={styles.cancelModalOverlay}>
+          <Animated.View
+            style={[
+              styles.cancelItemsModalContainer,
+              {
+                transform: [{ scale }],
+                opacity,
+              },
+            ]}
+          >
+            <View style={styles.cancelModalHeader}>
+              <Text style={styles.cancelModalTitle}>Select Items to Cancel</Text>
+              <TouchableOpacity onPress={onClose}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+  
+            <Text style={styles.cancelModalSubtitle}>
+              Choose which items you want to cancel from this order
+            </Text>
+  
+            <ScrollView style={styles.cancelItemsList} showsVerticalScrollIndicator={false}>
+              {/* Cancellable Items */}
+              {cancellableItems.length > 0 && (
+                <>
+                  <Text style={styles.cancelSectionTitle}>Available to Cancel</Text>
+                  {cancellableItems.map((item) => {
+                    const isSelected = localSelectedItems.has(item.checkout_id);
+                    const imageUrl = item.primary_image?.url || 
+                      (item.product_images && item.product_images[0]?.url) || 
+                      'https://via.placeholder.com/50';
+                    
+                    return (
+                      <TouchableOpacity
+                        key={item.checkout_id}
+                        style={[styles.cancelItemCard, isSelected && styles.cancelItemCardSelected]}
+                        onPress={() => toggleItem(item.checkout_id)}
+                        activeOpacity={0.7}
+                      >
+                        <Image source={{ uri: imageUrl }} style={styles.cancelItemImage} />
+                        <View style={styles.cancelItemDetails}>
+                          <Text style={styles.cancelItemName} numberOfLines={2}>
+                            {item.product_name}
+                          </Text>
+                          {item.product_variant ? (
+                            <Text style={styles.cancelItemVariant} numberOfLines={1}>
+                              {item.product_variant}
+                            </Text>
+                          ) : null}
+                          <View style={styles.cancelItemMeta}>
+                            <Text style={styles.cancelItemQuantity}>Qty: {item.quantity}</Text>
+                            <Text style={styles.cancelItemPrice}>{formatCurrency(item.price)}</Text>
+                          </View>
+                        </View>
+                        <View style={[styles.cancelItemCheckbox, isSelected && styles.cancelItemCheckboxSelected]}>
+                          {isSelected && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </>
+              )}
+  
+              {/* Already Cancelled Items - Disabled */}
+              {cancelledItems.length > 0 && (
+                <>
+                  <Text style={[styles.cancelSectionTitle, styles.cancelSectionTitleDisabled]}>
+                    Already Cancelled
+                  </Text>
+                  {cancelledItems.map((item) => {
+                    const imageUrl = item.primary_image?.url || 
+                      (item.product_images && item.product_images[0]?.url) || 
+                      'https://via.placeholder.com/50';
+                    
+                    return (
+                      <View
+                        key={item.checkout_id}
+                        style={[styles.cancelItemCard, styles.cancelItemCardDisabled]}
+                      >
+                        <Image source={{ uri: imageUrl }} style={[styles.cancelItemImage, styles.cancelItemImageDisabled]} />
+                        <View style={styles.cancelItemDetails}>
+                          <Text style={[styles.cancelItemName, styles.cancelItemTextDisabled]} numberOfLines={2}>
+                            {item.product_name}
+                          </Text>
+                          {item.product_variant ? (
+                            <Text style={[styles.cancelItemVariant, styles.cancelItemTextDisabled]} numberOfLines={1}>
+                              {item.product_variant}
+                            </Text>
+                          ) : null}
+                          <View style={styles.cancelItemMeta}>
+                            <Text style={[styles.cancelItemQuantity, styles.cancelItemTextDisabled]}>Qty: {item.quantity}</Text>
+                            <Text style={[styles.cancelItemPrice, styles.cancelItemTextDisabled]}>{formatCurrency(item.price)}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.cancelledBadge}>
+                          <MaterialIcons name="check-circle" size={16} color="#10B981" />
+                          <Text style={styles.cancelledBadgeText}>Cancelled</Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </>
+              )}
+            </ScrollView>
+  
+            <View style={styles.cancelItemsFooter}>
+              <View style={styles.cancelItemsSummary}>
+                <Text style={styles.cancelItemsCount}>
+                  {localSelectedItems.size} item(s) selected
+                </Text>
+              </View>
+  
+              <View style={styles.cancelButtonsContainer}>
+                <TouchableOpacity
+                  style={styles.cancelNoButton}
+                  onPress={onClose}
+                >
+                  <Text style={styles.cancelNoButtonText}>Back</Text>
+                </TouchableOpacity>
+  
+                <TouchableOpacity
+                  style={[
+                    styles.cancelYesButton,
+                    (localSelectedItems.size === 0 || loading) && styles.cancelYesButtonDisabled
+                  ]}
+                  onPress={handleConfirm}
+                  disabled={localSelectedItems.size === 0 || loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <MaterialIcons name="delete-outline" size={18} color="#FFFFFF" />
+                      <Text style={styles.cancelYesButtonText}>
+                        Cancel {localSelectedItems.size > 0 ? `(${localSelectedItems.size})` : ''}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
+    );
+  };
+
+  // ─── Center Toast Notification ───────────────────────────────────
+  const CenterToast = ({
+    visible,
+    message,
+    iconName = "checkmark-circle",
+    onHide,
+  }: {
+    visible: boolean;
+    message: string;
+    iconName?: string;
+    onHide: () => void;
+  }) => {
+    const scale = useRef(new Animated.Value(0)).current;
+    const opacity = useRef(new Animated.Value(0)).current;
+    const timeoutRef = useRef<number | null>(null);  // ← CHANGE: number instead of NodeJS.Timeout
+  
+    useEffect(() => {
+      if (visible) {
+        // Clear any existing timeout
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+        }
+        
+        Animated.parallel([
+          Animated.spring(scale, {
+            toValue: 1,
             useNativeDriver: true,
             tension: 100,
             friction: 8,
           }),
           Animated.timing(opacity, {
-            toValue: 0,
+            toValue: 1,
             duration: 200,
             useNativeDriver: true,
           }),
-        ]).start(() => onHide());
-      }, 1500);
-
-      return () => clearTimeout(timer);
-    }
-  }, [visible]);
-
-  if (!visible) return null;
-
-  return (
-    <View
-      pointerEvents="none"
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        justifyContent: "center",
-        alignItems: "center",
-        zIndex: 10000,
-      }}
-    >
-      <Animated.View
+        ]).start();
+  
+        timeoutRef.current = setTimeout(() => {
+          Animated.parallel([
+            Animated.spring(scale, {
+              toValue: 0,
+              useNativeDriver: true,
+              tension: 100,
+              friction: 8,
+            }),
+            Animated.timing(opacity, {
+              toValue: 0,
+              duration: 200,
+              useNativeDriver: true,
+            }),
+          ]).start(() => {
+            onHide();
+            timeoutRef.current = null;
+          });
+        }, 1500);
+  
+        return () => {
+          if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+          }
+        };
+      }
+    }, [visible]);
+  
+    if (!visible) return null;
+  
+    return (
+      <View
         pointerEvents="none"
         style={{
-          backgroundColor: "transparent",
-          paddingHorizontal: 24,
-          paddingVertical: 12,
-          alignItems: "center",
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
           justifyContent: "center",
-          transform: [{ scale }],
-          opacity,
+          alignItems: "center",
+          zIndex: 10000,
         }}
       >
-        <Ionicons name={iconName as any} size={48} color="#EA580C" />
-        <Text
+        <Animated.View
+          pointerEvents="none"
           style={{
-            fontSize: 16,
-            fontWeight: "600",
-            color: "#EA580C",
-            marginTop: 8,
-            textAlign: "center",
+            backgroundColor: "transparent",
+            paddingHorizontal: 24,
+            paddingVertical: 12,
+            alignItems: "center",
+            justifyContent: "center",
+            transform: [{ scale }],
+            opacity,
           }}
         >
-          {message}
-        </Text>
-      </Animated.View>
-    </View>
-  );
-};
+          <Ionicons name={iconName as any} size={48} color="#EA580C" />
+          <Text
+            style={{
+              fontSize: 16,
+              fontWeight: "600",
+              color: "#EA580C",
+              marginTop: 8,
+              textAlign: "center",
+            }}
+          >
+            {message}
+          </Text>
+        </Animated.View>
+      </View>
+    );
+  };
 
   const handleReviewProduct = (productId: string) => {
     router.push(`/customer/order-review?productId=${productId}&orderId=${orderId}`);
@@ -769,6 +1095,8 @@ const CenterToast = ({
         onConfirm={confirmCancelOrder}
         orderId={orderId as string}
       />
+
+      
       {/* Header */}
       <SafeAreaView style={styles.headerSafeArea}>
         <View style={styles.header}>
@@ -1170,93 +1498,129 @@ const CenterToast = ({
 
         {/* Product Cards */}
         {items.map((item, index) => (
-          <View key={item.checkout_id} style={styles.productCard}>
-            {item.shop_info && item.shop_info.name ? (
-              <TouchableOpacity 
-                style={styles.storeHeader}
-                activeOpacity={0.7}
-                onPress={() => router.push({
-                  pathname: "/customer/view-shop",
-                  params: { shopId: item.shop_info.id }
-                })}
-              >
-                {item.shop_info.picture ? (
-                  <Image 
-                    source={{ uri: item.shop_info.picture }} 
-                    style={styles.storeLogo} 
-                  />
-                ) : (
-                  <View style={styles.storeLogo}>
-                    <Text style={styles.logoText}>
-                      {item.shop_info.name.substring(0, 2).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.storeInfo}>
-                  <View style={styles.storeTitleRow}>
-                    <Text style={styles.storeName}>{item.shop_info.name}</Text>
-                    {item.shop_info.is_choices && (
-                      <View style={styles.choicesBadge}>
-                        <Text style={styles.badgeText}>Choices</Text>
-                      </View>
-                    )}
-                    <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
-                  </View>
-                  <Text style={styles.followerText}>
-                    {formatNumber(item.shop_info.items_count)} Items | {formatNumber(item.shop_info.followers_count || 0)} followers
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity 
-                style={styles.storeHeader}
-                activeOpacity={0.7}
-                onPress={order?.shop_id ? () => router.push({
-                  pathname: "/customer/view-shop",
-                  params: { shopId: order.shop_id }
-                }) : undefined}
-              >
-                <View style={styles.storeLogo}>
-                  <Text style={styles.logoText}>SH</Text>
-                </View>
-                <View style={styles.storeInfo}>
-                  <View style={styles.storeTitleRow}>
-                    <Text style={styles.storeName}>{order?.shop_name || 'Shop'}</Text>
-                    <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
-                  </View>
-                </View>
-              </TouchableOpacity>
-            )}
-            
-            <View style={styles.productBody}>
-              <Image 
-                source={{ 
-                  uri: item.primary_image?.url || 'https://via.placeholder.com/80'
-                }} 
-                style={styles.productImage} 
-              />
-              <View style={styles.productDetails}>
-                <Text style={styles.productName} numberOfLines={2}>
-                  {item.product_name}
-                </Text>
-                <Text style={styles.productVariant}>{item.product_variant}</Text>
-                <Text style={styles.productQuantity}>Quantity: {formatNumber(item.quantity)}</Text>
-              </View>
-              <View style={styles.priceContainer}>
-                <View style={styles.priceRow}>
-                  <Text style={styles.currentPrice}>{formatCurrency(item.price)}</Text>
-                  <Ionicons name="help-circle-outline" size={14} color="#9CA3AF" />
-                </View>
-                <Text style={styles.oldPrice}>{formatCurrency(item.original_price)}</Text>
-                <Text style={styles.subtotal}>Subtotal: {formatCurrency(item.subtotal)}</Text>
-              </View>
-            </View>
-
-            <View style={styles.productActions}>
-              {/* Action buttons removed */}
-            </View>
+  <View key={item.checkout_id} style={[
+    styles.productCard,
+    item.item_status === 'cancelled' && styles.cancelledProductCard  // ← ADD THIS
+  ]}>
+    {item.shop_info && item.shop_info.name ? (
+      <TouchableOpacity 
+        style={styles.storeHeader}
+        activeOpacity={0.7}
+        onPress={() => router.push({
+          pathname: "/customer/view-shop",
+          params: { shopId: item.shop_info.id }
+        })}
+      >
+        {item.shop_info.picture ? (
+          <Image 
+            source={{ uri: item.shop_info.picture }} 
+            style={styles.storeLogo} 
+          />
+        ) : (
+          <View style={styles.storeLogo}>
+            <Text style={styles.logoText}>
+              {item.shop_info.name.substring(0, 2).toUpperCase()}
+            </Text>
           </View>
-        ))}
+        )}
+        <View style={styles.storeInfo}>
+          <View style={styles.storeTitleRow}>
+            <Text style={[styles.storeName, item.item_status === 'cancelled' && styles.cancelledText]}>
+              {item.shop_info.name}
+            </Text>
+            {item.shop_info.is_choices && (
+              <View style={styles.choicesBadge}>
+                <Text style={styles.badgeText}>Choices</Text>
+              </View>
+            )}
+            <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
+          </View>
+          <Text style={[styles.followerText, item.item_status === 'cancelled' && styles.cancelledText]}>
+            {formatNumber(item.shop_info.items_count)} Items | {formatNumber(item.shop_info.followers_count || 0)} followers
+          </Text>
+        </View>
+      </TouchableOpacity>
+    ) : (
+      <TouchableOpacity 
+        style={styles.storeHeader}
+        activeOpacity={0.7}
+        onPress={order?.shop_id ? () => router.push({
+          pathname: "/customer/view-shop",
+          params: { shopId: order.shop_id }
+        }) : undefined}
+      >
+        <View style={styles.storeLogo}>
+          <Text style={styles.logoText}>SH</Text>
+        </View>
+        <View style={styles.storeInfo}>
+          <View style={styles.storeTitleRow}>
+            <Text style={[styles.storeName, item.item_status === 'cancelled' && styles.cancelledText]}>
+              {order?.shop_name || 'Shop'}
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
+          </View>
+        </View>
+      </TouchableOpacity>
+    )}
+    
+    {/* CANCELLED BADGE - ADD THIS */}
+    {item.item_status === 'cancelled' && (
+      <View style={styles.cancelledItemBadge}>
+        <MaterialIcons name="cancel" size={14} color="#EF4444" />
+        <Text style={styles.cancelledItemBadgeText}>Item Cancelled</Text>
+      </View>
+    )}
+    
+    <View style={styles.productBody}>
+      <Image 
+        source={{ 
+          uri: item.primary_image?.url || 'https://via.placeholder.com/80'
+        }} 
+        style={[
+          styles.productImage,
+          item.item_status === 'cancelled' && styles.cancelledImage  // ← ADD THIS
+        ]} 
+      />
+      <View style={styles.productDetails}>
+        <Text style={[
+          styles.productName,
+          item.item_status === 'cancelled' && styles.cancelledText  // ← ADD THIS
+        ]} numberOfLines={2}>
+          {item.product_name}
+        </Text>
+        <Text style={[
+          styles.productVariant,
+          item.item_status === 'cancelled' && styles.cancelledText  // ← ADD THIS
+        ]}>{item.product_variant}</Text>
+        <Text style={[
+          styles.productQuantity,
+          item.item_status === 'cancelled' && styles.cancelledText  // ← ADD THIS
+        ]}>Quantity: {formatNumber(item.quantity)}</Text>
+      </View>
+      <View style={styles.priceContainer}>
+        <View style={styles.priceRow}>
+          <Text style={[
+            styles.currentPrice,
+            item.item_status === 'cancelled' && styles.cancelledPrice  // ← ADD THIS
+          ]}>{formatCurrency(item.price)}</Text>
+          <Ionicons name="help-circle-outline" size={14} color="#9CA3AF" />
+        </View>
+        <Text style={[
+          styles.oldPrice,
+          item.item_status === 'cancelled' && styles.cancelledText  // ← ADD THIS
+        ]}>{formatCurrency(item.original_price)}</Text>
+        {/* <Text style={[
+          styles.subtotal,
+          item.item_status === 'cancelled' && styles.cancelledText  // ← ADD THIS
+        ]}>Subtotal: {formatCurrency(item.subtotal)}</Text> */}
+      </View>
+    </View>
+
+    <View style={styles.productActions}>
+      {/* Action buttons - disabled for cancelled items */}
+    </View>
+  </View>
+))}
 
         {/* Order Summary */}
         <View style={styles.summaryCard}>
@@ -1318,7 +1682,7 @@ const CenterToast = ({
             {(actions.can_cancel || (orderStatusLower === 'rider_assigned' && order?.delivery_status?.toLowerCase() === 'pending')) && (
               <TouchableOpacity
                 style={styles.cancelOrderButton}
-                onPress={() => setCancelModalVisible(true)} 
+                onPress={handleCancelOrder} 
               >
                 <Text style={styles.cancelOrderButtonText}>Cancel Order</Text>
               </TouchableOpacity>
@@ -1391,6 +1755,16 @@ const CenterToast = ({
           </View>
         </View>
       )}
+
+{/* Cancel Items Modal */}
+{/* Cancel Items Modal */}
+<CancelItemsModal
+  visible={cancelItemsModalVisible}
+  onClose={() => setCancelItemsModalVisible(false)}
+  onConfirm={handleCancelSelectedItems}
+  items={items}
+  loading={cancellingItems}
+/>
 
       {/* Image Preview Modal */}
       <Modal
@@ -2108,6 +2482,39 @@ cancelModalMessage: {
   lineHeight: 20,
   marginBottom: 12,
 },
+// Cancelled item styles
+cancelledProductCard: {
+  backgroundColor: '#FEF2F2',
+  opacity: 0.85,
+},
+cancelledItemBadge: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#FEE2E2',
+  paddingHorizontal: 10,
+  paddingVertical: 5,
+  borderRadius: 6,
+  alignSelf: 'flex-start',
+  marginBottom: 10,
+  gap: 6,
+},
+cancelledItemBadgeText: {
+  fontSize: 12,
+  fontWeight: '600',
+  color: '#EF4444',
+},
+cancelledImage: {
+  opacity: 0.5,
+},
+cancelledText: {
+  color: '#9CA3AF',
+  textDecorationLine: 'line-through',
+},
+cancelledPrice: {
+  color: '#9CA3AF',
+  textDecorationLine: 'line-through',
+  fontWeight: 'normal',
+},
 refundExpireRow: {
   flexDirection: 'row',
   alignItems: 'center',
@@ -2191,5 +2598,153 @@ cancelYesButtonText: {
   fontSize: 14,
   fontWeight: '600',
   color: '#FFFFFF',
+},
+cancelItemsModalContainer: {
+  backgroundColor: '#FFFFFF',
+  borderRadius: 24,
+  width: '90%',
+  maxHeight: '80%',
+  padding: 20,
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: 0.25,
+  shadowRadius: 8,
+  elevation: 8,
+},
+cancelModalHeader: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  marginBottom: 8,
+},
+cancelModalSubtitle: {
+  fontSize: 13,
+  color: '#6B7280',
+  marginBottom: 16,
+  textAlign: 'center',
+},
+cancelItemsList: {
+  maxHeight: 400,
+  marginBottom: 16,
+},
+cancelItemCard: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 12,
+  backgroundColor: '#F9FAFB',
+  borderRadius: 12,
+  marginBottom: 8,
+  borderWidth: 1,
+  borderColor: '#E5E7EB',
+},
+cancelItemCardSelected: {
+  backgroundColor: '#FFF7ED',
+  borderColor: '#F97316',
+},
+cancelItemImage: {
+  width: 50,
+  height: 50,
+  borderRadius: 8,
+  backgroundColor: '#F3F4F6',
+},
+cancelItemDetails: {
+  flex: 1,
+  marginLeft: 12,
+},
+cancelItemName: {
+  fontSize: 13,
+  fontWeight: '600',
+  color: '#111827',
+  marginBottom: 2,
+},
+cancelItemVariant: {
+  fontSize: 11,
+  color: '#6B7280',
+  marginBottom: 4,
+},
+cancelItemMeta: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+},
+cancelItemQuantity: {
+  fontSize: 11,
+  color: '#6B7280',
+},
+cancelItemPrice: {
+  fontSize: 12,
+  fontWeight: '600',
+  color: '#F97316',
+},
+cancelItemCheckbox: {
+  width: 22,
+  height: 22,
+  borderRadius: 11,
+  borderWidth: 2,
+  borderColor: '#D1D5DB',
+  justifyContent: 'center',
+  alignItems: 'center',
+  marginLeft: 8,
+},
+cancelItemCheckboxSelected: {
+  backgroundColor: '#F97316',
+  borderColor: '#F97316',
+},
+cancelItemsFooter: {
+  borderTopWidth: 1,
+  borderTopColor: '#E5E7EB',
+  paddingTop: 16,
+},
+cancelItemsSummary: {
+  marginBottom: 12,
+  alignItems: 'center',
+},
+cancelItemsCount: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#F97316',
+},
+cancelYesButtonDisabled: {
+  backgroundColor: '#D1D5DB',
+  opacity: 0.7,
+},
+// Add these to your styles object
+cancelSectionTitle: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#111827',
+  marginTop: 8,
+  marginBottom: 12,
+  paddingLeft: 4,
+},
+cancelSectionTitleDisabled: {
+  color: '#9CA3AF',
+  marginTop: 16,
+},
+cancelItemCardDisabled: {
+  backgroundColor: '#F9FAFB',
+  borderColor: '#E5E7EB',
+  opacity: 0.6,
+},
+cancelItemImageDisabled: {
+  opacity: 0.5,
+},
+cancelItemTextDisabled: {
+  color: '#9CA3AF',
+},
+cancelledBadge: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#D1FAE5',
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+  borderRadius: 12,
+  gap: 4,
+  marginLeft: 8,
+},
+cancelledBadgeText: {
+  fontSize: 10,
+  fontWeight: '600',
+  color: '#059669',
 },
 });
