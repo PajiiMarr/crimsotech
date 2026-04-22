@@ -4367,7 +4367,8 @@ class AdminShops(viewsets.ViewSet):
         """
         Get comprehensive sales breakdown for a shop including:
         - Completed sales (orders with status 'completed' or 'delivered')
-        - Pending sales (orders with status 'pending', 'processing', 'shipped')
+        - Pending sales (orders with status 'pending', 'processing', 'shipped') - INCOMING BALANCE
+        - Failed/Cancelled sales (orders with status 'cancelled', 'refunded') - LOST REVENUE
         - Total sales (completed + pending)
         - Order counts by status
         """
@@ -4410,7 +4411,7 @@ class AdminShops(viewsets.ViewSet):
             order_ids = checkouts_qs.values_list('order', flat=True).distinct()
             orders_qs = Order.objects.filter(pk__in=order_ids)
 
-            # Completed orders (delivered/completed)
+            # Completed orders (delivered/completed) - THESE ARE REALIZED SALES
             completed_orders = orders_qs.filter(
                 status__in=['completed', 'delivered']
             )
@@ -4421,7 +4422,7 @@ class AdminShops(viewsets.ViewSet):
                 if order_total:
                     completed_revenue += order_total
 
-            # Pending orders (pending, processing, shipped)
+            # Pending orders (pending, processing, shipped) - THESE ARE INCOMING BALANCE
             pending_orders = orders_qs.filter(
                 status__in=['pending', 'processing', 'shipped']
             )
@@ -4432,7 +4433,7 @@ class AdminShops(viewsets.ViewSet):
                 if order_total:
                     pending_revenue += order_total
 
-            # Cancelled/refunded orders
+            # Cancelled/refunded orders - THESE ARE LOST REVENUE (excluded from total)
             cancelled_orders = orders_qs.filter(
                 status__in=['cancelled', 'refunded']
             )
@@ -4464,10 +4465,13 @@ class AdminShops(viewsets.ViewSet):
                 'refunded': orders_qs.filter(status='refunded').count(),
             }
 
+            # Calculate total revenue (completed + pending only, exclude cancelled/refunded)
+            total_revenue = completed_revenue + pending_revenue
+
             return {
                 'completed_revenue': float(completed_revenue),
                 'pending_revenue': float(pending_revenue),
-                'total_revenue': float(completed_revenue + pending_revenue),
+                'total_revenue': float(total_revenue),
                 'cancelled_revenue': float(cancelled_revenue),
                 'platform_fees': float(platform_fees),
                 'shipping_fees': float(shipping_fees),
@@ -4639,7 +4643,7 @@ class AdminShops(viewsets.ViewSet):
                     'verified':              shop.verified,
                     'joinedDate':            shop.created_at.isoformat() if shop.created_at else None,
                     'created_at':            shop.created_at.isoformat() if shop.created_at else None,
-                    'totalSales':            float(shop.total_sales),
+                    'totalSales':            float(shop.total_sales),  # This is the database field
                     'total_sales':           float(shop.total_sales),
                     'activeBoosts':          active_boosts,
                     'active_boosts':         active_boosts,
@@ -4647,7 +4651,7 @@ class AdminShops(viewsets.ViewSet):
                     'is_suspended':          shop.is_suspended,
                     'suspension_reason':     shop.suspension_reason,
                     'suspended_until':       shop.suspended_until.isoformat() if shop.suspended_until else None,
-                    # Sales breakdown
+                    # Sales breakdown from calculation
                     'completed_revenue':     sales_breakdown['completed_revenue'],
                     'pending_revenue':       sales_breakdown['pending_revenue'],
                     'total_revenue':         sales_breakdown['total_revenue'],
@@ -4887,6 +4891,9 @@ class AdminShops(viewsets.ViewSet):
             active_shops = all_shops_qs.filter(status='Active', is_suspended=False).count()
             pending_shops = all_shops_qs.filter(status='Pending').count()
 
+            # Calculate total revenue (completed + pending)
+            total_revenue = completed_revenue + pending_revenue
+
             return Response({
                 'success': True,
                 'metrics': {
@@ -4905,7 +4912,7 @@ class AdminShops(viewsets.ViewSet):
                     'sales_summary': {
                         'completed_revenue': float(completed_revenue),
                         'pending_revenue': float(pending_revenue),
-                        'total_revenue': float(completed_revenue + pending_revenue),
+                        'total_revenue': float(total_revenue),
                         'platform_fees': float(platform_fees),
                         'shipping_fees': float(shipping_fees),
                         'incoming_balance': float(pending_revenue),
@@ -5167,7 +5174,7 @@ class AdminShops(viewsets.ViewSet):
                 'contact_number': shop.contact_number,
                 'verified':       shop.verified,
                 'status':         shop.status,
-                'total_sales':    float(shop.total_sales),
+                'total_sales':    float(shop.total_sales),  # This is the database field
                 'created_at':     shop.created_at.isoformat() if shop.created_at else None,
                 'updated_at':     shop.updated_at.isoformat() if shop.updated_at else None,
                 'is_suspended':   shop.is_suspended,
@@ -5177,7 +5184,7 @@ class AdminShops(viewsets.ViewSet):
                 'favorites_count':     favorites_count,
                 'followers_count':     followers_count,
                 'categories':          list(categories),
-                # Sales breakdown
+                # Sales breakdown from calculation
                 'completed_revenue':   sales_breakdown['completed_revenue'],
                 'pending_revenue':     sales_breakdown['pending_revenue'],
                 'total_revenue':       sales_breakdown['total_revenue'],
@@ -5317,18 +5324,20 @@ class AdminShops(viewsets.ViewSet):
                 # Get favorite count
                 favorites_count = Favorites.objects.filter(product=product).count()
                 
-                # Get order statistics
+                # Get order statistics - IMPORTANT: Include ALL orders, not just completed
                 order_stats = Checkout.objects.filter(
                     Q(cart_item__product=product) | Q(direct_product_id=product.id)
                 ).aggregate(
                     total_orders=Count('id', distinct=True),
                     total_quantity=Sum('quantity'),
-                    total_revenue=Sum('total_amount', filter=Q(order__status__in=['completed', 'delivered']))
+                    total_revenue=Sum('total_amount', filter=Q(order__status__in=['completed', 'delivered'])),
+                    pending_revenue=Sum('total_amount', filter=Q(order__status__in=['pending', 'processing', 'shipped']))
                 )
                 
                 total_orders = order_stats['total_orders'] or 0
                 total_quantity_sold = order_stats['total_quantity'] or 0
                 total_revenue = float(order_stats['total_revenue'] or 0)
+                pending_revenue = float(order_stats['pending_revenue'] or 0)
                 
                 # Get view count from CustomerActivity
                 view_count = CustomerActivity.objects.filter(
@@ -5413,6 +5422,7 @@ class AdminShops(viewsets.ViewSet):
                     'view_count': view_count,
                     'total_orders': total_orders,
                     'total_revenue': total_revenue,
+                    'pending_revenue': pending_revenue,
                     'active_boost': {
                         'is_boosted': active_boost is not None,
                         'boost_id': str(active_boost.id) if active_boost else None,
@@ -5428,6 +5438,7 @@ class AdminShops(viewsets.ViewSet):
             total_products = len(products_data)
             total_stock_all = sum(p['stock'] for p in products_data)
             total_revenue_all = sum(p['total_revenue'] for p in products_data)
+            total_pending_revenue_all = sum(p['pending_revenue'] for p in products_data)
             total_orders_all = sum(p['total_orders'] for p in products_data)
             products_with_low_stock = sum(1 for p in products_data if p['stock_status'] == 'low_stock')
             products_out_of_stock = sum(1 for p in products_data if p['stock_status'] == 'out_of_stock')
@@ -5450,6 +5461,7 @@ class AdminShops(viewsets.ViewSet):
                     'total_products': total_products,
                     'total_stock': total_stock_all,
                     'total_revenue': total_revenue_all,
+                    'total_pending_revenue': total_pending_revenue_all,
                     'total_orders': total_orders_all,
                     'low_stock_count': products_with_low_stock,
                     'out_of_stock_count': products_out_of_stock,
@@ -5988,7 +6000,7 @@ class AdminShops(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving pending shops: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+        
 class AdminBoosting(viewsets.ViewSet):
     def parse_date(self, date_str):
         """Parse date string in multiple formats"""

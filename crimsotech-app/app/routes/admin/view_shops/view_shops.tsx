@@ -11,7 +11,6 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  CardFooter,
 } from "~/components/ui/card";
 import { Badge } from "~/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
@@ -20,7 +19,6 @@ import { Separator } from "~/components/ui/separator";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
 import {
-  Building2,
   Package,
   Tag,
   Users,
@@ -30,28 +28,24 @@ import {
   MapPin,
   Phone,
   Calendar,
-  DollarSign,
   BarChart3,
   Shield,
   Gift,
-  ExternalLink,
   MoreVertical,
   ChevronLeft,
   Store,
   Eye,
   Ban,
   Trash2,
-  Archive,
-  Send,
-  Undo,
   XCircle,
   ShieldAlert,
-  Menu,
   TrendingUp,
   Heart,
   Clock,
   FileText,
   ZoomIn,
+  Wallet,
+  PhilippinePeso,
 } from "lucide-react";
 import { DataTable } from "~/components/ui/data-table";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -69,19 +63,8 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
-  AlertDialogDescription,
   AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "~/components/ui/sheet";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { useToast } from "~/hooks/use-toast";
@@ -94,7 +77,30 @@ export function meta(): Route.MetaDescriptors {
   ];
 }
 
-// Updated interfaces to match API response from AdminShops
+// Format currency helper
+const formatCurrency = (amount: number): string => {
+  if (amount === undefined || amount === null) return "₱0";
+  return new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+};
+
+// Format compact currency
+const formatCompactCurrency = (amount: number): string => {
+  if (amount === undefined || amount === null) return "₱0";
+  if (amount >= 1000000) {
+    return `₱${(amount / 1000000).toFixed(1)}M`;
+  }
+  if (amount >= 1000) {
+    return `₱${(amount / 1000).toFixed(1)}K`;
+  }
+  return `₱${amount.toLocaleString()}`;
+};
+
+// Updated interfaces to match API response
 interface Customer {
   id: string;
   username: string | null;
@@ -129,7 +135,26 @@ interface Shop {
   favorites_count: number;
   followers_count: number;
   categories?: Category[];
-  // ── Legal Documents ──────────────────────────────────────────────
+  // Sales breakdown fields
+  completed_revenue?: number;
+  pending_revenue?: number;
+  total_revenue?: number;
+  incoming_balance?: number;
+  platform_fees?: number;
+  shipping_fees?: number;
+  completed_orders?: number;
+  pending_orders?: number;
+  total_orders?: number;
+  order_status_breakdown?: {
+    pending: number;
+    processing: number;
+    shipped: number;
+    delivered: number;
+    completed: number;
+    cancelled: number;
+    refunded: number;
+  };
+  // Legal documents
   business_registration_type: string | null;
   business_registration_number: string | null;
   business_registration_image: string | null;
@@ -142,49 +167,82 @@ interface Shop {
   legal_documents_complete: boolean;
 }
 
-// Updated Product interface to match the enhanced API response with price range and category object
+interface Variant {
+  id: string;
+  title: string;
+  price: number;
+  compare_price: number | null;
+  quantity: number;
+  sku_code: string;
+  is_active: boolean;
+  is_refundable: boolean;
+  refund_days: number;
+  allow_swap: boolean;
+  swap_type: string;
+  original_price: number | null;
+  purchase_date: string | null;
+  usage_period: number | null;
+  usage_unit: string | null;
+  depreciation_rate: number | null;
+  minimum_additional_payment: number;
+  maximum_additional_payment: number;
+  swap_description: string;
+  image: string | null;
+  proof_image: string | null;
+  critical_stock: number | null;
+  weight: number | null;
+  weight_unit: string | null;
+  length: number | null;
+  width: number | null;
+  height: number | null;
+  dimension_unit: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 interface Product {
   id: string;
   name: string;
   description: string;
-  quantity: number;
-  price: {
-    display: string;
-    min: number | null;
-    max: number | null;
-  };
-  condition: string;
+  thumbnail: string | null;
+  images: Array<{ id: string; url: string; file_type: string }>;
+  price: number;
+  max_price: number;
+  price_display: string;
+  stock: number;
+  stock_status: string;
+  total_quantity_sold: number;
   status: string;
   upload_status: string;
-  created_at: string;
-  updated_at: string | null;
-  category: {
-    id: string | null;
-    name: string;
-    type: "global" | "shop" | "none";
-  };
-  shop: {
-    id: string | null;
-    name: string;
-  };
-  views: number;
-  purchases: number;
-  favorites: number;
-  rating: number;
-  boostPlan: string;
-  variants_count: number;
-  issues_count: number;
-  lowStock: boolean;
-  is_refundable: boolean | null;
+  condition: number;
+  is_refundable: boolean;
   refund_days: number;
+  created_at: string;
+  updated_at: string;
+  category: { id: string; name: string } | null;
+  shop: { id: string; name: string } | null;
+  customer: { id: string; name: string } | null;
+  variants: Variant[];
+  variants_count: number;
+  has_variants: boolean;
+  reviews: {
+    average_rating: number;
+    total_reviews: number;
+    rating_distribution: Record<number, number>;
+  };
+  favorites_count: number;
+  view_count: number;
+  total_orders: number;
+  total_revenue: number;
+  active_boost: { is_boosted: boolean; boost_id?: string; plan_name?: string; end_date?: string };
   is_removed: boolean;
   removal_reason: string | null;
+  removed_at: string | null;
 }
 
 interface Category {
   id: string;
   name: string;
-  category_type?: "global" | "shop";
   product_count?: number;
 }
 
@@ -208,15 +266,8 @@ interface Voucher {
 
 interface Boost {
   id: string;
-  product: {
-    id: string | null;
-    name: string | null;
-  };
-  boost_plan: {
-    id: string | null;
-    name: string | null;
-    price: number;
-  } | null;
+  product: { id: string | null; name: string | null };
+  boost_plan: { id: string | null; name: string | null; price: number } | null;
   status: string;
   start_date: string | null;
   end_date: string | null;
@@ -224,10 +275,7 @@ interface Boost {
 
 interface Report {
   id: string;
-  reporter?: {
-    first_name?: string;
-    last_name?: string;
-  };
+  reporter?: { first_name?: string; last_name?: string };
   reason: string;
   description: string | null;
   status: string;
@@ -256,10 +304,6 @@ export async function loader({
   context,
   params,
 }: Route.LoaderArgs): Promise<LoaderData> {
-  const { registrationMiddleware } = await import(
-    "~/middleware/registration.server"
-  );
-
   const { requireRole } = await import("~/middleware/role-require.server");
   const { fetchUserRole } = await import("~/middleware/role.server");
 
@@ -270,7 +314,6 @@ export async function loader({
 
   await requireRole(request, context, ["isAdmin"]);
 
-  // Get shop ID from params
   const shopId = params.shop_id || "";
 
   if (!shopId) {
@@ -282,9 +325,7 @@ export async function loader({
     };
   }
 
-  // Validate that shopId is a valid UUID format
-  const uuidRegex =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuidRegex.test(shopId)) {
     return {
       user,
@@ -295,7 +336,6 @@ export async function loader({
   }
 
   try {
-    // Fetch all shop data in parallel with the correct API path
     const [
       shopResponse,
       productsResponse,
@@ -314,13 +354,11 @@ export async function loader({
       AxiosInstance.get(`/admin-shops/${shopId}/get_reports/`),
     ]);
 
-    // Handle shop response
     if (shopResponse.status === "rejected") {
       console.error("Shop fetch failed:", shopResponse.reason);
       throw new Error("Failed to fetch shop details");
     }
 
-    // Extract data from responses - note the API returns data wrapped in { success: true, ... }
     const shopData: ShopDetailsData = {
       shop: shopResponse.value.data.shop,
       products:
@@ -364,10 +402,7 @@ export async function loader({
       user,
       shopId,
       shopData: null,
-      error:
-        error.response?.data?.error ||
-        error.message ||
-        "Failed to load shop data",
+      error: error.response?.data?.error || error.message || "Failed to load shop data",
     };
   }
 }
@@ -412,8 +447,7 @@ const actionConfigs = {
   },
   suspend: {
     title: "Suspend Shop",
-    description:
-      "This will suspend the shop temporarily. Customers won't be able to view or purchase from it.",
+    description: "This will suspend the shop temporarily.",
     confirmText: "Suspend",
     variant: "outline" as const,
     icon: Ban,
@@ -422,8 +456,7 @@ const actionConfigs = {
   },
   unsuspend: {
     title: "Unsuspend Shop",
-    description:
-      "This will unsuspend the shop and make it available to customers again.",
+    description: "This will unsuspend the shop and make it available again.",
     confirmText: "Unsuspend",
     variant: "outline" as const,
     icon: CheckCircle,
@@ -432,8 +465,7 @@ const actionConfigs = {
   },
   delete: {
     title: "Delete Shop",
-    description:
-      "This action cannot be undone. This will permanently delete the shop and all its products.",
+    description: "This action cannot be undone. This will permanently delete the shop.",
     confirmText: "Delete Shop",
     variant: "destructive" as const,
     icon: Trash2,
@@ -442,29 +474,48 @@ const actionConfigs = {
   },
 };
 
-// Product table columns - Responsive version updated for new API response
+// Product table columns
 const productColumns: ColumnDef<Product>[] = [
   {
     accessorKey: "name",
     header: "Product Name",
     cell: ({ row }) => {
       const product = row.original;
-      const lowStock = product.lowStock;
+      const isLowStock = product.stock_status === "low_stock";
+      const isOutOfStock = product.stock_status === "out_of_stock";
       return (
         <div className="flex items-center space-x-3">
-          <div className="h-8 w-8 sm:h-10 sm:w-10 rounded bg-gray-200 flex items-center justify-center flex-shrink-0">
-            <Package className="h-4 w-4 sm:h-5 sm:w-5 text-gray-500" />
+          <div className="h-10 w-10 rounded bg-gray-200 flex items-center justify-center flex-shrink-0 overflow-hidden">
+            {product.thumbnail ? (
+              <img
+                src={product.thumbnail}
+                alt={product.name}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <Package className="h-5 w-5 text-gray-500" />
+            )}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="font-medium text-sm sm:text-base truncate flex items-center gap-2">
+            <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
               {product.name}
-              {lowStock && (
-                <Badge variant="destructive" className="text-xs px-1 py-0 h-5">
+              {isLowStock && (
+                <Badge variant="destructive" className="text-xs">
                   Low Stock
                 </Badge>
               )}
+              {isOutOfStock && (
+                <Badge variant="destructive" className="text-xs">
+                  Out of Stock
+                </Badge>
+              )}
+              {product.has_variants && (
+                <Badge variant="secondary" className="text-xs">
+                  {product.variants_count} Variants
+                </Badge>
+              )}
             </div>
-            <div className="text-xs sm:text-sm text-gray-500 truncate">
+            <div className="text-xs text-gray-500 truncate max-w-[200px]">
               {product.description?.substring(0, 50)}
               {product.description?.length > 50 ? "..." : ""}
             </div>
@@ -474,7 +525,7 @@ const productColumns: ColumnDef<Product>[] = [
     },
   },
   {
-    accessorKey: "category.name",
+    accessorKey: "category",
     header: "Category",
     cell: ({ row }) => {
       const category = row.original.category;
@@ -482,33 +533,32 @@ const productColumns: ColumnDef<Product>[] = [
         <div className="hidden sm:block">
           <Badge variant="outline" className="text-xs">
             {category?.name || "Uncategorized"}
-            {category?.type === "global" && (
-              <span className="ml-1 text-[10px] text-blue-500">(Global)</span>
-            )}
           </Badge>
         </div>
       );
     },
   },
   {
-    accessorKey: "price",
+    accessorKey: "price_display",
     header: "Price",
     cell: ({ row }) => {
-      const price = row.original.price;
+      const product = row.original;
       return (
-        <div className="font-medium text-sm sm:text-base">{price.display}</div>
+        <div className="font-medium text-sm">{product.price_display}</div>
       );
     },
   },
   {
-    accessorKey: "quantity",
+    accessorKey: "stock",
     header: "Stock",
     cell: ({ row }) => {
-      const quantity = row.original.quantity;
+      const product = row.original;
       return (
         <div className="hidden md:block">
-          {quantity}
-          {quantity <= 10 && (
+          <span className={product.stock <= 10 ? "text-red-500 font-medium" : ""}>
+            {product.stock}
+          </span>
+          {product.stock <= 10 && product.stock > 0 && (
             <span className="ml-1 text-xs text-red-500">Low</span>
           )}
         </div>
@@ -516,25 +566,25 @@ const productColumns: ColumnDef<Product>[] = [
     },
   },
   {
-    accessorKey: "rating",
+    accessorKey: "reviews.average_rating",
     header: "Rating",
     cell: ({ row }) => {
-      const rating = row.original.rating ?? 0;
+      const rating = row.original.reviews?.average_rating ?? 0;
       return (
         <div className="hidden lg:flex items-center gap-1">
           <Star
             className={`h-3 w-3 ${rating > 0 ? "fill-yellow-400 text-yellow-400" : "text-gray-300"}`}
           />
-          <span className="text-sm">{rating.toFixed(1)}</span>
+          <span className="text-sm">{rating > 0 ? rating.toFixed(1) : "—"}</span>
         </div>
       );
     },
   },
   {
-    accessorKey: "favorites",
+    accessorKey: "favorites_count",
     header: "Favorites",
     cell: ({ row }) => {
-      const favorites = row.original.favorites;
+      const favorites = row.original.favorites_count;
       return (
         <div className="hidden xl:block">
           <div className="flex items-center gap-1">
@@ -550,22 +600,15 @@ const productColumns: ColumnDef<Product>[] = [
     header: "Status",
     cell: ({ row }) => {
       const status = row.original.upload_status;
-      const isRemoved = row.original.is_removed;
       return (
         <div className="hidden xl:block">
           <Badge
             variant={
-              isRemoved
-                ? "destructive"
-                : status === "published"
-                  ? "default"
-                  : status === "draft"
-                    ? "secondary"
-                    : "outline"
+              status === "published" ? "default" : status === "draft" ? "secondary" : "outline"
             }
             className="text-xs"
           >
-            {isRemoved ? "Removed" : status}
+            {status}
           </Badge>
         </div>
       );
@@ -584,9 +627,7 @@ const productColumns: ColumnDef<Product>[] = [
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuLabel>Actions</DropdownMenuLabel>
-            <DropdownMenuItem
-              onClick={() => navigator.clipboard.writeText(product.id)}
-            >
+            <DropdownMenuItem onClick={() => navigator.clipboard.writeText(product.id)}>
               Copy Product ID
             </DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -600,7 +641,7 @@ const productColumns: ColumnDef<Product>[] = [
   },
 ];
 
-// Mobile product columns (simplified)
+// Mobile product columns
 const mobileProductColumns: ColumnDef<Product>[] = [
   {
     accessorKey: "name",
@@ -609,20 +650,26 @@ const mobileProductColumns: ColumnDef<Product>[] = [
       const product = row.original;
       return (
         <div className="flex items-center space-x-3">
-          <div className="h-8 w-8 rounded bg-gray-200 flex items-center justify-center">
-            <Package className="h-4 w-4 text-gray-500" />
+          <div className="h-8 w-8 rounded bg-gray-200 flex items-center justify-center overflow-hidden">
+            {product.thumbnail ? (
+              <img
+                src={product.thumbnail}
+                alt={product.name}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <Package className="h-4 w-4 text-gray-500" />
+            )}
           </div>
-          <div>
+          <div className="flex-1">
             <div className="font-medium text-sm">{product.name}</div>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               <Badge variant="outline" className="text-xs">
                 {product.category?.name || "Uncategorized"}
               </Badge>
-              <span className="text-xs font-medium">
-                {product.price.display}
-              </span>
-              {product.lowStock && (
-                <Badge variant="destructive" className="text-xs px-1 py-0 h-5">
+              <span className="text-xs font-medium">{product.price_display}</span>
+              {product.stock_status === "low_stock" && (
+                <Badge variant="destructive" className="text-xs">
                   Low
                 </Badge>
               )}
@@ -634,17 +681,11 @@ const mobileProductColumns: ColumnDef<Product>[] = [
   },
 ];
 
-export default function ShopDetails({
-  loaderData,
-}: {
-  loaderData: LoaderData;
-}) {
+export default function ShopDetails({ loaderData }: { loaderData: LoaderData }) {
   const { user, shopData, error } = loaderData;
   const [shop, setShop] = useState<Shop | null>(shopData?.shop || null);
   const [products, setProducts] = useState<Product[]>(shopData?.products || []);
-  const [categories, setCategories] = useState<Category[]>(
-    shopData?.categories || [],
-  );
+  const [categories, setCategories] = useState<Category[]>(shopData?.categories || []);
   const [reviews, setReviews] = useState<Review[]>(shopData?.reviews || []);
   const [vouchers, setVouchers] = useState<Voucher[]>(shopData?.vouchers || []);
   const [boosts, setBoosts] = useState<Boost[]>(shopData?.boosts || []);
@@ -658,21 +699,16 @@ export default function ShopDetails({
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // Show error toast if there was an error loading data
   useEffect(() => {
     if (error) {
-      toast({
-        title: "Error",
-        description: error,
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: error, variant: "destructive" });
     }
   }, [error]);
 
   if (error && !shop) {
     return (
       <UserProvider user={user}>
-        <div className="container mx-auto p-3 sm:p-4 md:p-6">
+        <div className="container mx-auto p-6">
           <div className="text-center py-12">
             <Store className="h-12 w-12 mx-auto text-gray-400 mb-4" />
             <h2 className="text-xl font-semibold mb-2">Shop Not Found</h2>
@@ -689,13 +725,11 @@ export default function ShopDetails({
   if (!shop) {
     return (
       <UserProvider user={user}>
-        <div className="container mx-auto p-3 sm:p-4 md:p-6">
+        <div className="container mx-auto p-6">
           <div className="flex items-center justify-center min-h-[400px]">
             <div className="flex flex-col items-center gap-2">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-              <p className="text-sm text-muted-foreground">
-                Loading shop details...
-              </p>
+              <p className="text-sm text-muted-foreground">Loading shop details...</p>
             </div>
           </div>
         </div>
@@ -703,29 +737,29 @@ export default function ShopDetails({
     );
   }
 
-  // Filter products based on selected category
+  // Get sales data from shop
+  const completedRevenue = shop.completed_revenue || 0;
+  const pendingRevenue = shop.pending_revenue || 0;
+  const totalRevenue = shop.total_revenue || (completedRevenue + pendingRevenue);
+  const platformFees = shop.platform_fees || 0;
+
   const filteredProducts =
     selectedCategory === "all"
       ? products
       : products.filter((product) => product.category?.id === selectedCategory);
 
-  // Calculate statistics
   const avgRating =
     reviews.length > 0
       ? reviews.reduce((acc, review) => acc + (review.rating || 0), 0) / reviews.length
       : 0;
 
   const totalProducts = products.length;
-  const totalCategories = categories.length - 1; // exclude "all" category
+  const totalCategories = categories.length - 1;
   const activeReports = reports.filter(
-    (r) => r.status === "pending" || r.status === "under_review",
+    (r) => r.status === "pending" || r.status === "under_review"
   ).length;
-  const totalFavorites = products.reduce(
-    (sum, product) => sum + (product.favorites || 0),
-    0,
-  );
+  const totalFavorites = products.reduce((sum, product) => sum + (product.favorites_count || 0), 0);
 
-  // Calculate category distribution
   const categoryDistribution = categories
     .filter((cat) => cat.id !== "all")
     .map((category) => ({
@@ -733,85 +767,41 @@ export default function ShopDetails({
       count: products.filter((p) => p.category?.id === category.id).length,
     }));
 
-  // Get current columns based on screen size
   const getColumns = () => {
     if (typeof window === "undefined") return productColumns;
     if (window.innerWidth < 768) return mobileProductColumns;
-    if (window.innerWidth < 1024) return productColumns.slice(0, 4); // Show fewer columns on tablet
+    if (window.innerWidth < 1024) return productColumns.slice(0, 5);
     return productColumns;
   };
 
   const [columns, setColumns] = useState(getColumns());
 
-  // Determine available actions based on shop status
   const getAvailableActions = () => {
     const actions = [];
 
-    // Add approve/reject actions if shop is pending
     if (shop.status === "Pending") {
-      actions.push({
-        id: "approve",
-        label: "Approve Shop",
-        icon: CheckCircle,
-        variant: "default" as const,
-      });
-      actions.push({
-        id: "reject",
-        label: "Reject Shop",
-        icon: XCircle,
-        variant: "destructive" as const,
-      });
+      actions.push({ id: "approve", label: "Approve Shop", icon: CheckCircle, variant: "default" as const });
+      actions.push({ id: "reject", label: "Reject Shop", icon: XCircle, variant: "destructive" as const });
     } else {
-      // Add verification actions
       if (shop.verified) {
-        actions.push({
-          id: "unverify",
-          label: "Remove Verification",
-          icon: ShieldAlert,
-          variant: "outline" as const,
-        });
+        actions.push({ id: "unverify", label: "Remove Verification", icon: ShieldAlert, variant: "outline" as const });
       } else {
-        actions.push({
-          id: "verify",
-          label: "Verify Shop",
-          icon: Shield,
-          variant: "default" as const,
-        });
+        actions.push({ id: "verify", label: "Verify Shop", icon: Shield, variant: "default" as const });
       }
 
-      // Add suspension actions
       if (shop.is_suspended) {
-        actions.push({
-          id: "unsuspend",
-          label: "Unsuspend Shop",
-          icon: CheckCircle,
-          variant: "outline" as const,
-        });
+        actions.push({ id: "unsuspend", label: "Unsuspend Shop", icon: CheckCircle, variant: "outline" as const });
       } else {
-        actions.push({
-          id: "suspend",
-          label: "Suspend Shop",
-          icon: Ban,
-          variant: "outline" as const,
-        });
+        actions.push({ id: "suspend", label: "Suspend Shop", icon: Ban, variant: "outline" as const });
       }
     }
 
-    // Always add delete action
-    actions.push({
-      id: "delete",
-      label: "Delete Shop",
-      icon: Trash2,
-      variant: "destructive" as const,
-    });
-
+    actions.push({ id: "delete", label: "Delete Shop", icon: Trash2, variant: "destructive" as const });
     return actions;
   };
 
   const availableActions = getAvailableActions();
-  const currentAction = activeAction
-    ? actionConfigs[activeAction as keyof typeof actionConfigs]
-    : null;
+  const currentAction = activeAction ? actionConfigs[activeAction as keyof typeof actionConfigs] : null;
 
   const handleActionClick = (actionId: string) => {
     setActiveAction(actionId);
@@ -823,49 +813,30 @@ export default function ShopDetails({
   const handleConfirm = async () => {
     if (!activeAction || !shop) return;
 
-    // Validate required reason for actions that need it
     const needsReason = ["suspend", "reject", "delete"].includes(activeAction);
     if (needsReason && !reason.trim()) {
-      toast({
-        title: "Validation Error",
-        description: "Please provide a reason for this action",
-        variant: "destructive",
-      });
+      toast({ title: "Validation Error", description: "Please provide a reason for this action", variant: "destructive" });
       return;
     }
 
     setProcessing(true);
     try {
-      // Include the user ID in the request to identify who performed the action
-      const response = await AxiosInstance.post(
-        `/admin-shops/${shop.id}/execute_action/`,
-        {
-          action: activeAction,
-          reason: reason,
-          suspension_days: suspensionDays,
-          user_id: user?.user_id || user?.id, // Send the current admin's user ID
-        },
-      );
-
-      toast({
-        title: "Success",
-        description: `${currentAction?.confirmText} action completed successfully`,
-        variant: "success",
+      const response = await AxiosInstance.post(`/admin-shops/${shop.id}/execute_action/`, {
+        action: activeAction,
+        reason: reason,
+        suspension_days: suspensionDays,
+        user_id: user?.user_id || user?.id,
       });
 
-      // Update shop state with returned data
+      toast({ title: "Success", description: `${currentAction?.confirmText} action completed successfully` });
+
       if (response.data.shop) {
         setShop((prev) => ({ ...prev, ...response.data.shop }));
       }
     } catch (error: any) {
-      console.error("Error executing action:", error);
-
       toast({
         title: "Error",
-        description:
-          error.response?.data?.error ||
-          error.message ||
-          "Failed to complete action. Please try again.",
+        description: error.response?.data?.error || error.message || "Failed to complete action.",
         variant: "destructive",
       });
     } finally {
@@ -893,77 +864,44 @@ export default function ShopDetails({
         <div className="space-y-4">
           <div>
             <h3 className="text-lg font-semibold">{currentAction.title}</h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              {currentAction.description}
-            </p>
+            <p className="text-sm text-muted-foreground mt-1">{currentAction.description}</p>
           </div>
 
-          {/* Shop info */}
           <div className="bg-muted/50 rounded-lg p-3">
             <p className="text-sm font-medium">Shop: {shop.name}</p>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               {shop.status === "Pending" && (
-                <Badge
-                  variant="secondary"
-                  className="text-xs bg-yellow-100 text-yellow-800"
-                >
-                  <Clock className="w-3 h-3 mr-1" />
-                  Pending Approval
+                <Badge variant="secondary" className="text-xs bg-yellow-100 text-yellow-800">
+                  <Clock className="w-3 h-3 mr-1" /> Pending Approval
                 </Badge>
               )}
-              <Badge
-                variant={shop.verified ? "default" : "secondary"}
-                className="text-xs"
-              >
+              <Badge variant={shop.verified ? "default" : "secondary"} className="text-xs">
                 {shop.verified ? "Verified" : "Unverified"}
               </Badge>
-              <Badge
-                variant={shop.is_suspended ? "destructive" : "default"}
-                className="text-xs"
-              >
-                {shop.is_suspended ? "Suspended" : "Active"}
-              </Badge>
-              <span className="text-xs text-muted-foreground">
-                {shop.followers_count?.toLocaleString() || 0} followers
-              </span>
+              <span className="text-xs text-muted-foreground">{shop.followers_count?.toLocaleString() || 0} followers</span>
             </div>
           </div>
 
-          {/* Reason input for actions that need it */}
-          {(activeAction === "suspend" ||
-            activeAction === "reject" ||
-            activeAction === "delete") && (
+          {(activeAction === "suspend" || activeAction === "reject" || activeAction === "delete") && (
             <div className="space-y-2">
               <Label htmlFor="reason" className="text-sm font-medium">
-                Reason for{" "}
-                {activeAction === "suspend"
-                  ? "Suspension"
-                  : activeAction === "reject"
-                    ? "Rejection"
-                    : "Deletion"}{" "}
-                <span className="text-red-500">*</span>
+                Reason for {activeAction === "suspend" ? "Suspension" : activeAction === "reject" ? "Rejection" : "Deletion"} <span className="text-red-500">*</span>
               </Label>
               <Input
                 id="reason"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder={`Please provide a reason for ${activeAction === "suspend" ? "suspending" : activeAction === "reject" ? "rejecting" : "deleting"} this shop...`}
+                placeholder={`Enter reason for ${activeAction}ing this shop...`}
                 className="h-10"
                 required
               />
-              <p className="text-xs text-muted-foreground">
-                This reason will be recorded and may be shared with the shop
-                owner.
-              </p>
+              <p className="text-xs text-muted-foreground">This reason will be recorded and may be shared with the shop owner.</p>
             </div>
           )}
 
-          {/* Suspension days for suspend action */}
           {activeAction === "suspend" && (
             <div className="space-y-2">
-              <Label htmlFor="suspension-days" className="text-sm font-medium">
-                Suspension Duration
-              </Label>
+              <Label htmlFor="suspension-days" className="text-sm font-medium">Suspension Duration</Label>
               <div className="flex items-center gap-3">
                 <Input
                   id="suspension-days"
@@ -971,33 +909,22 @@ export default function ShopDetails({
                   min="1"
                   max="365"
                   value={suspensionDays}
-                  onChange={(e) =>
-                    setSuspensionDays(
-                      Math.max(1, parseInt(e.target.value) || 7),
-                    )
-                  }
+                  onChange={(e) => setSuspensionDays(Math.max(1, parseInt(e.target.value) || 7))}
                   className="h-10 w-24"
                 />
                 <span className="text-sm text-muted-foreground">days</span>
               </div>
-              <p className="text-xs text-muted-foreground">
-                The shop will be automatically unsuspended after this period.
-              </p>
+              <p className="text-xs text-muted-foreground">The shop will be automatically unsuspended after this period.</p>
             </div>
           )}
 
-          {/* Warning message for destructive actions */}
           {currentAction.variant === "destructive" && (
             <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3">
               <p className="text-sm font-medium text-destructive flex items-center gap-1">
-                <AlertCircle className="w-4 h-4" />
-                Warning: This action cannot be undone
+                <AlertCircle className="w-4 h-4" /> Warning: This action cannot be undone
               </p>
               {activeAction === "delete" && (
-                <p className="text-xs text-destructive mt-1">
-                  All products, orders, and shop data will be permanently
-                  deleted.
-                </p>
+                <p className="text-xs text-destructive mt-1">All products, orders, and shop data will be permanently deleted.</p>
               )}
             </div>
           )}
@@ -1007,84 +934,55 @@ export default function ShopDetails({
   };
 
   useEffect(() => {
-    const handleResize = () => {
-      setColumns(getColumns());
-    };
-
+    const handleResize = () => setColumns(getColumns());
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   return (
     <UserProvider user={user}>
-      <div className="container mx-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
-        {/* Loading indicator for actions */}
+      <div className="container mx-auto p-4 md:p-6 space-y-6">
         {processing && (
           <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50">
             <div className="flex flex-col items-center gap-2">
-              <div className="h-6 w-6 sm:h-8 sm:w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-              <p className="text-xs sm:text-sm text-muted-foreground">
-                Processing action...
-              </p>
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+              <p className="text-sm text-muted-foreground">Processing action...</p>
             </div>
           </div>
         )}
 
-        {/* Responsive Header with Mobile Navigation */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          {/* Breadcrumb */}
-          <nav className="text-xs sm:text-sm text-muted-foreground flex items-center gap-1 flex-wrap">
-            <a
-              href="/admin"
-              className="hover:text-primary hover:underline flex items-center gap-1"
-            >
-              <ChevronLeft className="w-3 h-3 sm:w-4 sm:h-4" />
-              <span className="hidden xs:inline">Admin</span>
+          <nav className="text-sm text-muted-foreground flex items-center gap-1 flex-wrap">
+            <a href="/admin" className="hover:text-primary hover:underline flex items-center gap-1">
+              <ChevronLeft className="w-4 h-4" /> Admin
             </a>
             <span>&gt;</span>
-            <a
-              href="/admin/shops"
-              className="hover:text-primary hover:underline"
-            >
-              Shops
-            </a>
+            <a href="/admin/shops" className="hover:text-primary hover:underline">Shops</a>
             <span>&gt;</span>
-            <span className="text-foreground font-medium truncate max-w-[120px] xs:max-w-[180px] sm:max-w-[250px]">
-              {shop.name}
-            </span>
+            <span className="text-foreground font-medium">{shop.name}</span>
           </nav>
 
-          {/* Admin Actions Dropdown */}
           {availableActions.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="ml-auto">
-                  <MoreVertical className="w-4 h-4 mr-2" />
-                  Actions
+                <Button variant="outline" size="sm">
+                  <MoreVertical className="w-4 h-4 mr-2" /> Actions
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
                 {availableActions.map((action, index) => {
                   const isDestructive = action.variant === "destructive";
                   const prevAction = availableActions[index - 1];
-                  const needsSeparator =
-                    isDestructive &&
-                    prevAction &&
-                    prevAction.variant !== "destructive";
+                  const needsSeparator = isDestructive && prevAction && prevAction.variant !== "destructive";
 
                   return (
                     <div key={action.id}>
                       {needsSeparator && <DropdownMenuSeparator />}
                       <DropdownMenuItem
                         onClick={() => handleActionClick(action.id)}
-                        className={`flex items-center gap-2 cursor-pointer ${
-                          isDestructive
-                            ? "text-destructive focus:text-destructive"
-                            : ""
-                        }`}
+                        className={`flex items-center gap-2 cursor-pointer ${isDestructive ? "text-destructive" : ""}`}
                       >
-                        <action.icon className="w-4 h-4" />
-                        {action.label}
+                        <action.icon className="w-4 h-4" /> {action.label}
                       </DropdownMenuItem>
                     </div>
                   );
@@ -1094,148 +992,67 @@ export default function ShopDetails({
           )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left Column - Shop Overview */}
-          <div className="space-y-3 sm:space-y-4">
+          <div className="space-y-4">
             <Card>
-              <CardContent className="p-4 sm:p-6">
-                <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
-                  <Avatar className="h-24 w-24 sm:h-28 sm:w-28 md:h-32 md:w-32 mx-auto sm:mx-0">
-                    {shop.shop_picture && (
-                      <AvatarImage src={shop.shop_picture} />
-                    )}
-                    <AvatarFallback className="text-xl sm:text-2xl">
-                      <Store className="h-8 w-8 sm:h-10 sm:w-10 md:h-12 md:w-12" />
-                    </AvatarFallback>
+              <CardContent className="p-6">
+                <div className="flex flex-col sm:flex-row gap-6">
+                  <Avatar className="h-28 w-28 mx-auto sm:mx-0">
+                    {shop.shop_picture && <AvatarImage src={shop.shop_picture} />}
+                    <AvatarFallback><Store className="h-10 w-10" /></AvatarFallback>
                   </Avatar>
 
-                  <div className="flex-1 space-y-3 sm:space-y-4 text-center sm:text-left">
+                  <div className="flex-1 space-y-4 text-center sm:text-left">
                     <div className="flex flex-col gap-2">
-                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1 sm:gap-2">
-                        <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight break-words">
-                          {shop.name}
-                        </h1>
-                        <div className="flex flex-wrap justify-center sm:justify-start gap-1">
+                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                        <h1 className="text-2xl font-bold">{shop.name}</h1>
+                        <div className="flex flex-wrap gap-1">
                           {shop.status === "Pending" && (
-                            <Badge
-                              variant="secondary"
-                              className="gap-1 text-xs bg-yellow-100 text-yellow-800"
-                            >
-                              <Clock className="h-3 w-3" />
-                              Pending
-                            </Badge>
+                            <Badge className="bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1" /> Pending</Badge>
                           )}
-                          {shop.verified && (
-                            <Badge className="gap-1 text-xs bg-green-100 text-green-800">
-                              <Shield className="h-3 w-3" />
-                              Verified
-                            </Badge>
-                          )}
-                          <Badge
-                            variant={
-                              shop.status === "Active"
-                                ? "default"
-                                : shop.status === "Suspended"
-                                  ? "destructive"
-                                  : "secondary"
-                            }
-                            className="text-xs"
-                          >
-                            {shop.status}
-                          </Badge>
-                          {shop.is_suspended && (
-                            <Badge variant="destructive" className="text-xs">
-                              Suspended
-                            </Badge>
-                          )}
+                          {shop.verified && <Badge className="bg-green-100 text-green-800"><Shield className="h-3 w-3 mr-1" /> Verified</Badge>}
+                          <Badge variant={shop.status === "Active" ? "default" : shop.status === "Suspended" ? "destructive" : "secondary"}>{shop.status}</Badge>
                         </div>
                       </div>
-                      <p className="text-gray-600 text-sm sm:text-base">
-                        {shop.description}
-                      </p>
+                      <p className="text-gray-600">{shop.description}</p>
                     </div>
 
-                    <Separator className="my-2 sm:my-4" />
+                    <Separator />
 
-                    {/* Engagement Stats */}
-                    <div className="flex items-center gap-4 sm:gap-6 flex-wrap justify-center sm:justify-start">
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1">
-                          {[1, 2, 3, 4, 5].map((star) => (
-                            <Star
-                              key={star}
-                              className={`w-3 h-3 sm:w-4 sm:h-4 ${
-                                star <= Math.round(avgRating)
-                                  ? "fill-yellow-400 text-yellow-400"
-                                  : "text-gray-300"
-                              }`}
-                            />
-                          ))}
-                        </div>
-                        <span className="text-xs sm:text-sm text-muted-foreground">
-                          {(avgRating || 0).toFixed(1)}
-                        </span>
+                    <div className="flex items-center gap-6 flex-wrap justify-center sm:justify-start">
+                      <div className="flex items-center gap-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <Star key={star} className={`w-4 h-4 ${star <= Math.round(avgRating) ? "fill-yellow-400 text-yellow-400" : "text-gray-300"}`} />
+                        ))}
+                        <span className="text-sm text-muted-foreground">{(avgRating || 0).toFixed(1)}</span>
                       </div>
                       <div className="flex items-center gap-1">
-                        <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-red-500" />
-                        <span className="text-xs sm:text-sm text-muted-foreground">
-                          {shop.favorites_count?.toLocaleString() || 0}{" "}
-                          favorites
-                        </span>
+                        <Heart className="w-4 h-4 text-red-500" />
+                        <span className="text-sm">{shop.favorites_count?.toLocaleString() || 0} favorites</span>
                       </div>
                       <div className="flex items-center gap-1">
-                        <Users className="w-3 h-3 sm:w-4 sm:h-4 text-blue-500" />
-                        <span className="text-xs sm:text-sm text-muted-foreground">
-                          {shop.followers_count?.toLocaleString() || 0}{" "}
-                          followers
-                        </span>
+                        <Users className="w-4 h-4 text-blue-500" />
+                        <span className="text-sm">{shop.followers_count?.toLocaleString() || 0} followers</span>
                       </div>
                     </div>
 
-                    {/* Key Details */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-500">
-                          <MapPin className="h-3 w-3 sm:h-4 sm:w-4" />
-                          Location
-                        </div>
-                        <p className="font-medium text-sm sm:text-base truncate">
-                          {shop.street}, {shop.barangay}, {shop.city},{" "}
-                          {shop.province}
-                        </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <div className="flex items-center gap-2 text-gray-500"><MapPin className="h-4 w-4" /> Location</div>
+                        <p className="font-medium text-sm">{shop.street}, {shop.barangay}, {shop.city}, {shop.province}</p>
                       </div>
-
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-500">
-                          <Phone className="h-3 w-3 sm:h-4 sm:w-4" />
-                          Contact
-                        </div>
-                        <p className="font-medium text-sm sm:text-base">
-                          {shop.contact_number}
-                        </p>
+                      <div>
+                        <div className="flex items-center gap-2 text-gray-500"><Phone className="h-4 w-4" /> Contact</div>
+                        <p className="font-medium">{shop.contact_number}</p>
                       </div>
-
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-500">
-                          <Calendar className="h-3 w-3 sm:h-4 sm:w-4" />
-                          Created
-                        </div>
-                        <p className="font-medium text-sm sm:text-base">
-                          {new Date(shop.created_at).toLocaleDateString()}
-                        </p>
+                      <div>
+                        <div className="flex items-center gap-2 text-gray-500"><Calendar className="h-4 w-4" /> Created</div>
+                        <p className="font-medium">{new Date(shop.created_at).toLocaleDateString()}</p>
                       </div>
-
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-500">
-                          <DollarSign className="h-3 w-3 sm:h-4 sm:w-4" />
-                          Total Sales
-                        </div>
-                        <p className="font-medium text-sm sm:text-base">
-                          ₱
-                          {shop.total_sales?.toLocaleString("en-PH", {
-                            minimumFractionDigits: 2,
-                          }) || "0.00"}
-                        </p>
+                      <div>
+                        <div className="flex items-center gap-2 text-gray-500"><PhilippinePeso className="h-4 w-4" /> Total Sales</div>
+                        <p className="font-medium">{formatCurrency(shop.total_sales || 0)}</p>
                       </div>
                     </div>
                   </div>
@@ -1243,309 +1060,134 @@ export default function ShopDetails({
               </CardContent>
             </Card>
 
-            {/* Quick Stats - Responsive Grid */}
+            {/* Quick Stats - Enhanced with Revenue info */}
             <div className="grid grid-cols-2 gap-3">
               <Card className="overflow-hidden">
-                <CardContent className="p-3 sm:p-4">
-                  <div className="flex items-center justify-between">
+                <CardContent className="p-4">
+                  <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-500">
-                        Products
-                      </p>
-                      <p className="text-xl sm:text-2xl font-bold">
-                        {totalProducts}
-                      </p>
+                      <p className="text-sm text-gray-500">Products</p>
+                      <p className="text-2xl font-bold">{totalProducts}</p>
                     </div>
-                    <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-lg bg-blue-100 flex items-center justify-center">
-                      <Package className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
-                    </div>
+                    <Package className="h-8 w-8 text-blue-600" />
                   </div>
-                  {shop.customer && (
-                    <div className="mt-2 sm:mt-3">
-                      <div className="flex justify-between text-xs text-gray-500 mb-1">
-                        <span>Product Limit</span>
-                        <span>
-                          {shop.customer.current_product_count || 0}/
-                          {shop.customer.product_limit || 0}
-                        </span>
+                </CardContent>
+              </Card>
+
+
+              {/* Received Balance Card - Green */}
+              <Card className="overflow-hidden border-green-200 bg-green-50">
+                <CardContent className="p-4">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="flex items-center gap-1 mb-1">
+                        <CheckCircle className="h-3 w-3 text-green-600" />
+                        <p className="text-xs text-green-700 font-medium">Received</p>
                       </div>
-                      <Progress
-                        value={
-                          ((shop.customer.current_product_count || 0) /
-                            (shop.customer.product_limit || 1)) *
-                          100
-                        }
-                        className="h-1 sm:h-2"
-                      />
+                      <p className="text-xl font-bold text-green-700">{formatCompactCurrency(completedRevenue)}</p>
+                      <p className="text-xs text-green-600">{shop.completed_orders || 0} orders</p>
                     </div>
-                  )}
+                    <Wallet className="h-8 w-8 text-green-600" />
+                  </div>
                 </CardContent>
               </Card>
 
-              <Card className="overflow-hidden">
-                <CardContent className="p-3 sm:p-4">
-                  <div className="flex items-center justify-between">
+              {/* Receivable Balance Card - Yellow */}
+              <Card className="overflow-hidden border-yellow-200 bg-yellow-50">
+                <CardContent className="p-4">
+                  <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-500">
-                        Categories
-                      </p>
-                      <p className="text-xl sm:text-2xl font-bold">
-                        {totalCategories}
-                      </p>
+                      <div className="flex items-center gap-1 mb-1">
+                        <Clock className="h-3 w-3 text-yellow-600" />
+                        <p className="text-xs text-yellow-700 font-medium">Receivable</p>
+                      </div>
+                      <p className="text-xl font-bold text-yellow-700">{formatCompactCurrency(pendingRevenue)}</p>
+                      <p className="text-xs text-yellow-600">{shop.pending_orders || 0} orders</p>
                     </div>
-                    <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-lg bg-green-100 flex items-center justify-center">
-                      <Tag className="h-4 w-4 sm:h-5 sm:w-5 text-green-600" />
-                    </div>
+                    <Wallet className="h-8 w-8 text-yellow-600" />
                   </div>
-                  {categoryDistribution.length > 0 && (
-                    <div className="mt-2 sm:mt-3">
-                      <p className="text-xs text-gray-500 mb-1">Most Popular</p>
-                      <p className="text-sm font-medium truncate">
-                        {
-                          categoryDistribution.sort(
-                            (a, b) => b.count - a.count,
-                          )[0]?.name
-                        }
-                      </p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card className="overflow-hidden">
-                <CardContent className="p-3 sm:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-500">
-                        Total Favorites
-                      </p>
-                      <p className="text-xl sm:text-2xl font-bold">
-                        {totalFavorites}
-                      </p>
-                    </div>
-                    <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-lg bg-pink-100 flex items-center justify-center">
-                      <Heart className="h-4 w-4 sm:h-5 sm:w-5 text-pink-600" />
-                    </div>
-                  </div>
-                  {totalProducts > 0 && (
-                    <div className="mt-2 sm:mt-3">
-                      <p className="text-xs text-gray-500 mb-1">
-                        Avg per Product
-                      </p>
-                      <p className="text-sm font-medium">
-                        {Math.round(totalFavorites / totalProducts)} favs
-                      </p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card className="overflow-hidden">
-                <CardContent className="p-3 sm:p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-500">
-                        Active Reports
-                      </p>
-                      <p className="text-xl sm:text-2xl font-bold">
-                        {activeReports}
-                      </p>
-                    </div>
-                    <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-lg bg-red-100 flex items-center justify-center">
-                      <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 text-red-600" />
-                    </div>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1 sm:mt-2">
-                    {shop.active_report_count || 0} shop reports
-                  </p>
                 </CardContent>
               </Card>
             </div>
+
+            {/* Mini Revenue Bar */}
+            {totalRevenue > 0 && (
+              <div className="bg-gray-50 rounded-lg p-3">
+                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                  <span>Total Revenue: {formatCurrency(totalRevenue)}</span>
+                  <span className="flex items-center gap-2">
+                    <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500" /> Received: {((completedRevenue / totalRevenue) * 100).toFixed(0)}%</span>
+                    <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-yellow-500" /> Receivable: {((pendingRevenue / totalRevenue) * 100).toFixed(0)}%</span>
+                  </span>
+                </div>
+                <div className="flex h-1.5 rounded-full overflow-hidden">
+                  <div className="bg-green-500 h-full" style={{ width: `${(completedRevenue / totalRevenue) * 100}%` }} />
+                  <div className="bg-yellow-500 h-full" style={{ width: `${(pendingRevenue / totalRevenue) * 100}%` }} />
+                </div>
+                {platformFees > 0 && (
+                  <p className="text-xs text-gray-400 mt-2">Platform fees: {formatCurrency(platformFees)} (5% of completed)</p>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Right Column - Owner Info & Actions */}
-          <div className="space-y-4 sm:space-y-6">
-            {/* Owner Information */}
+          {/* Right Column - Owner Info */}
+          <div className="space-y-6">
             {shop.customer && (
               <Card>
-                <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                  <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                    <Users className="w-4 h-4 sm:w-5 sm:h-5" />
-                    Shop Owner
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
+                <CardHeader><CardTitle className="flex items-center gap-2"><Users className="w-5 h-5" /> Shop Owner</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
                   <div className="flex items-center gap-3">
-                    <Avatar className="h-10 w-10 sm:h-12 sm:w-12">
-                      <AvatarFallback>
-                        {shop.customer.first_name?.[0]}
-                        {shop.customer.last_name?.[0]}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0">
-                      <div className="font-medium text-sm sm:text-base">
-                        {shop.customer.first_name} {shop.customer.last_name}
-                      </div>
-                      <div className="text-xs sm:text-sm text-gray-500">
-                        @{shop.customer.username}
-                      </div>
-                    </div>
+                    <Avatar><AvatarFallback>{shop.customer.first_name?.[0]}{shop.customer.last_name?.[0]}</AvatarFallback></Avatar>
+                    <div><div className="font-medium">{shop.customer.first_name} {shop.customer.last_name}</div><div className="text-sm text-gray-500">@{shop.customer.username}</div></div>
                   </div>
-
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-xs sm:text-sm">
-                      <span className="text-gray-500">Email:</span>
-                      <span className="font-medium truncate">
-                        {shop.customer.email}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs sm:text-sm">
-                      <span className="text-gray-500">Contact:</span>
-                      <span className="font-medium">
-                        {shop.customer.contact_number}
-                      </span>
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    asChild
-                  >
-                    <a href={`/admin/users/${shop.customer.id}`}>
-                      View Full Profile
-                    </a>
-                  </Button>
+                  <div><p className="text-sm text-gray-500">Email:</p><p className="font-medium">{shop.customer.email}</p></div>
+                  <div><p className="text-sm text-gray-500">Contact:</p><p className="font-medium">{shop.customer.contact_number}</p></div>
+                  <Button variant="outline" size="sm" className="w-full" asChild><a href={`/admin/users/${shop.customer.id}`}>View Full Profile</a></Button>
                 </CardContent>
               </Card>
             )}
 
-            {/* Shop Status Overview */}
             <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                  <Shield className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Shop Status Overview
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
+              <CardHeader><CardTitle className="flex items-center gap-2"><Shield className="w-5 h-5" /> Shop Status Overview</CardTitle></CardHeader>
+              <CardContent>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="flex flex-col items-center justify-center p-3 border rounded-lg bg-muted/50">
-                    <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">
-                      Approval Status
-                    </span>
-                    <Badge
-                      variant={
-                        shop.status === "Active" ? "default" : "secondary"
-                      }
-                      className={
-                        shop.status === "Pending"
-                          ? "bg-yellow-100 text-yellow-800"
-                          : ""
-                      }
-                    >
-                      {shop.status}
-                    </Badge>
-                  </div>
-                  <div className="flex flex-col items-center justify-center p-3 border rounded-lg bg-muted/50">
-                    <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">
-                      Verification
-                    </span>
-                    <Badge variant={shop.verified ? "default" : "secondary"}>
-                      {shop.verified ? "Verified" : "Unverified"}
-                    </Badge>
-                  </div>
-                  <div className="flex flex-col items-center justify-center p-3 border rounded-lg bg-muted/50">
-                    <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">
-                      Followers
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <Users className="w-3 h-3 sm:w-4 sm:h-4 text-blue-500" />
-                      <span className="font-medium text-base sm:text-lg">
-                        {shop.followers_count?.toLocaleString() || 0}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-center justify-center p-3 border rounded-lg bg-muted/50">
-                    <span className="text-xs sm:text-sm text-muted-foreground mb-2 text-center">
-                      Total Sales
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <DollarSign className="w-3 h-3 sm:w-4 sm:h-4 text-green-500" />
-                      <span className="font-medium text-sm">
-                        ₱{Math.round((shop.total_sales || 0) / 1000)}k
-                      </span>
-                    </div>
-                  </div>
+                  <div className="text-center p-3 border rounded-lg"><p className="text-sm text-muted-foreground mb-1">Approval Status</p><Badge variant={shop.status === "Active" ? "default" : "secondary"}>{shop.status}</Badge></div>
+                  <div className="text-center p-3 border rounded-lg"><p className="text-sm text-muted-foreground mb-1">Verification</p><Badge variant={shop.verified ? "default" : "secondary"}>{shop.verified ? "Verified" : "Unverified"}</Badge></div>
+                  <div className="text-center p-3 border rounded-lg"><p className="text-sm text-muted-foreground mb-1">Followers</p><p className="font-bold text-lg">{shop.followers_count?.toLocaleString() || 0}</p></div>
+                  <div className="text-center p-3 border rounded-lg"><p className="text-sm text-muted-foreground mb-1">Total Orders</p><p className="font-bold text-lg">{shop.total_orders || 0}</p></div>
                 </div>
               </CardContent>
             </Card>
           </div>
         </div>
 
-        {/* Products Section - Full Width */}
+        {/* Products Section */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between px-4 py-3 sm:px-6 sm:py-4">
-            <div>
-              <CardTitle className="text-lg sm:text-xl">Products</CardTitle>
-              <CardDescription className="text-sm">
-                {filteredProducts.length} products in this shop
-              </CardDescription>
-            </div>
+          <CardHeader>
+            <CardTitle>Products</CardTitle>
+            <CardDescription>{filteredProducts.length} products in this shop</CardDescription>
           </CardHeader>
-          <CardContent className="px-4 py-3 sm:px-6 sm:py-4 pt-0">
-            {/* Category Tabs - Responsive */}
-            <Tabs
-              defaultValue="all"
-              value={selectedCategory}
-              onValueChange={setSelectedCategory}
-            >
+          <CardContent>
+            <Tabs defaultValue="all" value={selectedCategory} onValueChange={setSelectedCategory}>
               <ScrollArea className="w-full pb-2">
-                <TabsList className="inline-flex h-9 w-auto items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground">
+                <TabsList className="inline-flex h-auto w-auto items-center justify-start rounded-lg bg-muted p-1">
                   {categories.map((category) => (
-                    <TabsTrigger
-                      key={category.id}
-                      value={category.id}
-                      className="inline-flex items-center justify-center whitespace-nowrap rounded-md px-2 sm:px-3 py-1 text-xs font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow"
-                    >
-                      <Tag className="h-2 w-2 sm:h-3 sm:w-3 mr-1 sm:mr-2" />
-                      <span className="truncate max-w-[60px] sm:max-w-none">
-                        {category.name}
-                      </span>
-                      {category.id !== "all" && (
-                        <Badge variant="secondary" className="ml-1 text-xs">
-                          {
-                            products.filter(
-                              (p) => p.category?.id === category.id,
-                            ).length
-                          }
-                        </Badge>
-                      )}
+                    <TabsTrigger key={category.id} value={category.id} className="text-xs">
+                      <Tag className="h-3 w-3 mr-1" />
+                      {category.name}
+                      {category.id !== "all" && <Badge variant="secondary" className="ml-1 text-xs">{products.filter(p => p.category?.id === category.id).length}</Badge>}
                     </TabsTrigger>
                   ))}
                 </TabsList>
               </ScrollArea>
 
               {categories.map((category) => (
-                <TabsContent
-                  key={category.id}
-                  value={category.id}
-                  className="mt-3 sm:mt-4"
-                >
+                <TabsContent key={category.id} value={category.id} className="mt-4">
                   {filteredProducts.length > 0 ? (
-                    <div className="overflow-hidden">
-                      <DataTable columns={columns} data={filteredProducts} />
-                    </div>
+                    <DataTable columns={columns} data={filteredProducts} />
                   ) : (
-                    <div className="text-center py-6 sm:py-8">
-                      <Package className="h-10 w-10 sm:h-12 sm:w-12 mx-auto text-gray-400 mb-3 sm:mb-4" />
-                      <p className="text-gray-500 text-sm sm:text-base">
-                        No products in this category
-                      </p>
-                    </div>
+                    <div className="text-center py-8"><Package className="h-12 w-12 mx-auto text-gray-400 mb-4" /><p className="text-gray-500">No products in this category</p></div>
                   )}
                 </TabsContent>
               ))}
@@ -1553,625 +1195,116 @@ export default function ShopDetails({
           </CardContent>
         </Card>
 
-        {/* Bottom Section - Tabs */}
+        {/* Bottom Tabs */}
         <Tabs defaultValue="reviews" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5 h-auto min-h-[2.5rem]">
-            <TabsTrigger
-              value="reviews"
-              className="text-xs sm:text-sm py-2 px-2"
-            >
-              Reviews & Ratings
-            </TabsTrigger>
-            <TabsTrigger
-              value="vouchers"
-              className="text-xs sm:text-sm py-2 px-2"
-            >
-              Vouchers & Promotions
-            </TabsTrigger>
-            <TabsTrigger
-              value="boosts"
-              className="text-xs sm:text-sm py-2 px-2"
-            >
-              Active Boosts
-            </TabsTrigger>
-            <TabsTrigger
-              value="reports"
-              className="text-xs sm:text-sm py-2 px-2"
-            >
-              Reports & Moderation
-            </TabsTrigger>
-            <TabsTrigger value="legal" className="text-xs sm:text-sm py-2 px-2">
-              <FileText className="w-3 h-3 mr-1" />
-              Legal Docs
-            </TabsTrigger>
+          <TabsList className="grid w-full grid-cols-5">
+            <TabsTrigger value="reviews">Reviews</TabsTrigger>
+            <TabsTrigger value="vouchers">Vouchers</TabsTrigger>
+            <TabsTrigger value="boosts">Boosts</TabsTrigger>
+            <TabsTrigger value="reports">Reports</TabsTrigger>
+            <TabsTrigger value="legal"><FileText className="w-3 h-3 mr-1" /> Legal</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="reviews" className="space-y-3 sm:space-y-4">
+          <TabsContent value="reviews" className="space-y-4">
             <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <CardTitle className="text-base sm:text-lg">
-                  Customer Reviews
-                </CardTitle>
-                <CardDescription className="text-xs sm:text-sm">
-                  {reviews.length} total reviews • {(avgRating || 0).toFixed(1)}{" "}
-                  average rating
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
+              <CardHeader><CardTitle>Customer Reviews</CardTitle><CardDescription>{reviews.length} total reviews • {(avgRating || 0).toFixed(1)} average rating</CardDescription></CardHeader>
+              <CardContent className="space-y-4">
                 {reviews.map((review) => (
-                  <div
-                    key={review.id}
-                    className="border-b pb-3 sm:pb-4 last:border-0"
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 mb-2">
-                      <div className="flex items-center gap-1">
-                        {[1, 2, 3, 4, 5].map((star) => (
-                          <Star
-                            key={star}
-                            className={`w-3 h-3 ${
-                              star <= (review.rating || 0)
-                                ? "fill-yellow-400 text-yellow-400"
-                                : "text-gray-300"
-                            }`}
-                          />
-                        ))}
-                      </div>
-                      <span className="text-xs sm:text-sm font-medium">
-                        {review.customer?.first_name}{" "}
-                        {review.customer?.last_name}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(review.created_at).toLocaleDateString()}
-                      </span>
+                  <div key={review.id} className="border-b pb-4 last:border-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="flex items-center gap-1">{Array(5).fill(0).map((_, i) => (<Star key={i} className={`w-3 h-3 ${i + 1 <= (review.rating || 0) ? "fill-yellow-400 text-yellow-400" : "text-gray-300"}`} />))}</div>
+                      <span className="text-sm font-medium">{review.customer?.first_name} {review.customer?.last_name}</span>
+                      <span className="text-xs text-muted-foreground">{new Date(review.created_at).toLocaleDateString()}</span>
                     </div>
-                    <p className="text-xs sm:text-sm">
-                      {review.comment || "No comment provided"}
-                    </p>
+                    <p className="text-sm">{review.comment || "No comment provided"}</p>
                   </div>
                 ))}
-                {reviews.length === 0 && (
-                  <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
-                    No reviews yet for this shop.
-                  </p>
-                )}
+                {reviews.length === 0 && <p className="text-center text-muted-foreground py-8">No reviews yet for this shop.</p>}
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="vouchers" className="space-y-3 sm:space-y-4">
+          <TabsContent value="vouchers" className="space-y-4">
             <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                  <Gift className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Active Vouchers
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
+              <CardHeader><CardTitle className="flex items-center gap-2"><Gift className="w-5 h-5" /> Active Vouchers</CardTitle></CardHeader>
+              <CardContent>
                 <div className="space-y-3">
-                  {vouchers
-                    .filter((v) => v.is_active)
-                    .map((voucher) => (
-                      <div key={voucher.id} className="border rounded-lg p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="font-medium text-sm">
-                            {voucher.name}
-                          </div>
-                          <Badge variant="outline" className="text-xs">
-                            {voucher.discount_type === "percentage"
-                              ? `${voucher.value}%`
-                              : `₱${voucher.value}`}
-                          </Badge>
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          Code:{" "}
-                          <code className="bg-gray-100 px-1 py-0.5 rounded">
-                            {voucher.code}
-                          </code>
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          Valid until:{" "}
-                          {new Date(voucher.valid_until).toLocaleDateString()}
-                        </div>
-                      </div>
-                    ))}
-                  {vouchers.filter((v) => v.is_active).length === 0 && (
-                    <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
-                      No active vouchers for this shop.
-                    </p>
-                  )}
+                  {vouchers.filter(v => v.is_active).map((voucher) => (
+                    <div key={voucher.id} className="border rounded-lg p-3">
+                      <div className="flex justify-between mb-2"><span className="font-medium">{voucher.name}</span><Badge variant="outline">{voucher.discount_type === "percentage" ? `${voucher.value}%` : `₱${voucher.value}`}</Badge></div>
+                      <div className="text-xs text-gray-500">Code: <code className="bg-gray-100 px-1 rounded">{voucher.code}</code></div>
+                      <div className="text-xs text-gray-500 mt-1">Valid until: {new Date(voucher.valid_until).toLocaleDateString()}</div>
+                    </div>
+                  ))}
+                  {vouchers.filter(v => v.is_active).length === 0 && <p className="text-center text-muted-foreground py-8">No active vouchers for this shop.</p>}
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="boosts" className="space-y-3 sm:space-y-4">
+          <TabsContent value="boosts" className="space-y-4">
             <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                  <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Active Boosts
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
+              <CardHeader><CardTitle className="flex items-center gap-2"><TrendingUp className="w-5 h-5" /> Active Boosts</CardTitle></CardHeader>
+              <CardContent>
                 <div className="space-y-3">
-                  {boosts.length > 0 ? (
-                    boosts.map((boost) => (
-                      <div
-                        key={boost.id}
-                        className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 sm:p-4 border rounded-lg gap-3 sm:gap-0"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="h-8 w-8 sm:h-10 sm:w-10 rounded bg-purple-100 flex items-center justify-center">
-                            <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-purple-600" />
-                          </div>
-                          <div>
-                            <div className="font-medium text-sm sm:text-base">
-                              {boost.product?.name || "Unknown Product"}
-                            </div>
-                            <div className="text-xs sm:text-sm text-gray-500">
-                              Plan: {boost.boost_plan?.name || "No Plan"} • ₱
-                              {boost.boost_plan?.price || 0}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 sm:gap-4 ml-11 sm:ml-0">
-                          <Badge
-                            variant={
-                              boost.status === "active"
-                                ? "default"
-                                : boost.status === "expired"
-                                  ? "secondary"
-                                  : "outline"
-                            }
-                            className="text-xs"
-                          >
-                            {boost.status}
-                          </Badge>
-                          <div className="text-xs sm:text-sm text-gray-500">
-                            Ends:{" "}
-                            {boost.end_date
-                              ? new Date(boost.end_date).toLocaleDateString()
-                              : "N/A"}
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-center text-muted-foreground py-6 sm:py-8 text-sm sm:text-base">
-                      No active boosts for this shop.
-                    </p>
-                  )}
+                  {boosts.map((boost) => (
+                    <div key={boost.id} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex items-center gap-3"><BarChart3 className="h-8 w-8 text-purple-600" /><div><div className="font-medium">{boost.product?.name || "Unknown Product"}</div><div className="text-sm text-gray-500">Plan: {boost.boost_plan?.name || "No Plan"} • ₱{boost.boost_plan?.price || 0}</div></div></div>
+                      <div className="flex items-center gap-4"><Badge variant={boost.status === "active" ? "default" : "secondary"}>{boost.status}</Badge><div className="text-sm text-gray-500">Ends: {boost.end_date ? new Date(boost.end_date).toLocaleDateString() : "N/A"}</div></div>
+                    </div>
+                  ))}
+                  {boosts.length === 0 && <p className="text-center text-muted-foreground py-8">No active boosts for this shop.</p>}
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="reports" className="space-y-3 sm:space-y-4">
+          <TabsContent value="reports" className="space-y-4">
             <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                  <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Reports & Moderation
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-3 sm:space-y-4">
-                <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 sm:gap-4">
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">
-                      Active Reports
-                    </p>
-                    <p
-                      className={`font-medium text-sm sm:text-base ${activeReports > 0 ? "text-red-600" : "text-green-600"}`}
-                    >
-                      {activeReports} active
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">
-                      Total Reports
-                    </p>
-                    <p className="font-medium text-sm sm:text-base">
-                      {reports.length} total
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs sm:text-sm text-muted-foreground">
-                      Shop Reports
-                    </p>
-                    <p className="font-medium text-sm sm:text-base">
-                      {shop.active_report_count || 0} active
-                    </p>
-                  </div>
-                </div>
-
-                {reports.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-xs sm:text-sm font-medium">
-                      Recent Reports:
-                    </p>
-                    <div className="space-y-2">
-                      {reports.slice(0, 2).map((report) => (
-                        <div key={report.id} className="border rounded p-2">
-                          <div className="flex items-center justify-between mb-1">
-                            <div className="font-medium capitalize text-xs sm:text-sm">
-                              {report.reason.replace(/_/g, " ")}
-                            </div>
-                            <Badge
-                              variant={
-                                report.status === "pending"
-                                  ? "secondary"
-                                  : report.status === "resolved"
-                                    ? "default"
-                                    : "outline"
-                              }
-                              className="text-xs"
-                            >
-                              {report.status}
-                            </Badge>
-                          </div>
-                          {report.description && (
-                            <p className="text-xs text-gray-600 line-clamp-2">
-                              {report.description}
-                            </p>
-                          )}
-                          <div className="text-xs text-gray-500 mt-1">
-                            {new Date(report.created_at).toLocaleDateString()}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex gap-2 flex-wrap">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-xs sm:text-sm"
-                    asChild
-                  >
-                    <a href={`/admin/shops/${shop.id}/reports`}>
-                      View All Reports
-                    </a>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-xs sm:text-sm"
-                    asChild
-                  >
-                    <a href={`/admin/shops/${shop.id}/moderate`}>
-                      Moderate Shop
-                    </a>
-                  </Button>
-                </div>
+              <CardHeader><CardTitle className="flex items-center gap-2"><AlertCircle className="w-5 h-5" /> Reports & Moderation</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-3 gap-4"><div><p className="text-sm text-muted-foreground">Active Reports</p><p className={`font-medium ${activeReports > 0 ? "text-red-600" : "text-green-600"}`}>{activeReports} active</p></div><div><p className="text-sm text-muted-foreground">Total Reports</p><p className="font-medium">{reports.length} total</p></div><div><p className="text-sm text-muted-foreground">Shop Reports</p><p className="font-medium">{shop.active_report_count || 0} active</p></div></div>
+                {reports.length > 0 && <div><p className="text-sm font-medium mb-2">Recent Reports:</p><div className="space-y-2">{reports.slice(0, 2).map((report) => (<div key={report.id} className="border rounded p-2"><div className="flex justify-between mb-1"><span className="font-medium capitalize text-sm">{report.reason.replace(/_/g, " ")}</span><Badge variant={report.status === "pending" ? "secondary" : "default"}>{report.status}</Badge></div>{report.description && <p className="text-xs text-gray-600">{report.description}</p>}<div className="text-xs text-gray-500 mt-1">{new Date(report.created_at).toLocaleDateString()}</div></div>))}</div></div>}
+                <div className="flex gap-2"><Button variant="outline" size="sm" asChild><a href={`/admin/shops/${shop.id}/reports`}>View All Reports</a></Button><Button variant="outline" size="sm" asChild><a href={`/admin/shops/${shop.id}/moderate`}>Moderate Shop</a></Button></div>
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="legal" className="space-y-3 sm:space-y-4">
+          <TabsContent value="legal" className="space-y-4">
             <Card>
-              <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                    <FileText className="w-4 h-4 sm:w-5 sm:h-5" />
-                    Legal Documents
-                  </CardTitle>
-                  <Badge
-                    variant={
-                      shop.legal_documents_complete ? "default" : "secondary"
-                    }
-                    className={
-                      shop.legal_documents_complete
-                        ? "bg-green-100 text-green-800"
-                        : "bg-yellow-100 text-yellow-800"
-                    }
-                  >
-                    {shop.legal_documents_complete ? "Complete" : "Incomplete"}
-                  </Badge>
-                </div>
-                <CardDescription className="text-xs sm:text-sm">
-                  Documents submitted during shop registration for admin review.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="px-4 py-3 sm:px-6 sm:py-4 space-y-6">
-                {/* ── Business Registration ── */}
-                <div>
-                  <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
-                    <div className="w-2 h-2 rounded-full bg-blue-500" />
-                    Business Registration (
-                    {shop.business_registration_type || "N/A"})
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">
-                        Registration Number
-                      </p>
-                      <p className="text-sm font-medium">
-                        {shop.business_registration_number || (
-                          <span className="text-muted-foreground italic">
-                            Not provided
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">
-                        Certificate Upload
-                      </p>
-                      {shop.business_registration_image ? (
-                        <button
-                          onClick={() =>
-                            setLightboxImage(shop.business_registration_image)
-                          }
-                          className="group relative w-full h-32 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
-                        >
-                          <img
-                            src={shop.business_registration_image}
-                            alt="Business Registration Certificate"
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <ZoomIn className="w-6 h-6 text-white" />
-                          </div>
-                        </button>
-                      ) : (
-                        <div className="w-full h-24 rounded-lg border-2 border-dashed border-border flex items-center justify-center">
-                          <p className="text-xs text-muted-foreground">
-                            No image uploaded
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
+              <CardHeader><div className="flex justify-between"><CardTitle className="flex items-center gap-2"><FileText className="w-5 h-5" /> Legal Documents</CardTitle><Badge variant={shop.legal_documents_complete ? "default" : "secondary"} className={shop.legal_documents_complete ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"}>{shop.legal_documents_complete ? "Complete" : "Incomplete"}</Badge></div><CardDescription>Documents submitted during shop registration for admin review.</CardDescription></CardHeader>
+              <CardContent className="space-y-6">
+                <div><h3 className="text-sm font-semibold mb-3">Business Registration ({shop.business_registration_type || "N/A"})</h3><div className="grid grid-cols-2 gap-4"><div><p className="text-xs text-muted-foreground">Registration Number</p><p className="text-sm font-medium">{shop.business_registration_number || <span className="italic text-muted-foreground">Not provided</span>}</p></div><div><p className="text-xs text-muted-foreground">Certificate Upload</p>{shop.business_registration_image ? <button onClick={() => setLightboxImage(shop.business_registration_image)} className="relative w-full h-32 rounded-lg overflow-hidden border hover:border-primary"><img src={shop.business_registration_image} alt="Certificate" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition flex items-center justify-center"><ZoomIn className="w-6 h-6 text-white" /></div></button> : <div className="w-full h-24 rounded-lg border-2 border-dashed flex items-center justify-center"><p className="text-xs text-muted-foreground">No image uploaded</p></div>}</div></div></div>
                 <Separator />
-
-                {/* ── Government ID ── */}
-                <div>
-                  <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
-                    <div className="w-2 h-2 rounded-full bg-purple-500" />
-                    Government ID ({shop.government_id_type || "N/A"})
-                  </h3>
-                  <div className="space-y-3">
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">ID Number</p>
-                      <p className="text-sm font-medium">
-                        {shop.government_id_number || (
-                          <span className="text-muted-foreground italic">
-                            Not provided
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">
-                          Front of ID
-                        </p>
-                        {shop.government_id_image_front ? (
-                          <button
-                            onClick={() =>
-                              setLightboxImage(shop.government_id_image_front)
-                            }
-                            className="group relative w-full h-32 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
-                          >
-                            <img
-                              src={shop.government_id_image_front}
-                              alt="Government ID Front"
-                              className="w-full h-full object-cover"
-                            />
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                              <ZoomIn className="w-6 h-6 text-white" />
-                            </div>
-                          </button>
-                        ) : (
-                          <div className="w-full h-24 rounded-lg border-2 border-dashed border-border flex items-center justify-center">
-                            <p className="text-xs text-muted-foreground">
-                              No image uploaded
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">
-                          Back of ID
-                        </p>
-                        {shop.government_id_image_back ? (
-                          <button
-                            onClick={() =>
-                              setLightboxImage(shop.government_id_image_back)
-                            }
-                            className="group relative w-full h-32 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
-                          >
-                            <img
-                              src={shop.government_id_image_back}
-                              alt="Government ID Back"
-                              className="w-full h-full object-cover"
-                            />
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                              <ZoomIn className="w-6 h-6 text-white" />
-                            </div>
-                          </button>
-                        ) : (
-                          <div className="w-full h-24 rounded-lg border-2 border-dashed border-border flex items-center justify-center">
-                            <p className="text-xs text-muted-foreground italic">
-                              Not provided (optional)
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
+                <div><h3 className="text-sm font-semibold mb-3">Government ID ({shop.government_id_type || "N/A"})</h3><div><p className="text-xs text-muted-foreground">ID Number</p><p className="text-sm font-medium">{shop.government_id_number || <span className="italic text-muted-foreground">Not provided</span>}</p></div><div className="grid grid-cols-2 gap-4 mt-3"><div><p className="text-xs text-muted-foreground">Front of ID</p>{shop.government_id_image_front ? <button onClick={() => setLightboxImage(shop.government_id_image_front)} className="relative w-full h-32 rounded-lg overflow-hidden border"><img src={shop.government_id_image_front} alt="ID Front" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition flex items-center justify-center"><ZoomIn className="w-6 h-6 text-white" /></div></button> : <div className="w-full h-24 rounded-lg border-2 border-dashed flex items-center justify-center"><p className="text-xs text-muted-foreground">No image uploaded</p></div>}</div><div><p className="text-xs text-muted-foreground">Back of ID</p>{shop.government_id_image_back ? <button onClick={() => setLightboxImage(shop.government_id_image_back)} className="relative w-full h-32 rounded-lg overflow-hidden border"><img src={shop.government_id_image_back} alt="ID Back" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition flex items-center justify-center"><ZoomIn className="w-6 h-6 text-white" /></div></button> : <div className="w-full h-24 rounded-lg border-2 border-dashed flex items-center justify-center"><p className="text-xs text-muted-foreground italic">Not provided</p></div>}</div></div></div>
                 <Separator />
-
-                {/* ── Business Permit ── */}
-                <div>
-                  <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
-                    <div className="w-2 h-2 rounded-full bg-green-500" />
-                    Business Permit
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">
-                        Permit Number
-                      </p>
-                      <p className="text-sm font-medium">
-                        {shop.business_permit_number || (
-                          <span className="text-muted-foreground italic">
-                            Not provided
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">
-                        Permit Upload
-                      </p>
-                      {shop.business_permit_image ? (
-                        <button
-                          onClick={() =>
-                            setLightboxImage(shop.business_permit_image)
-                          }
-                          className="group relative w-full h-32 rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
-                        >
-                          <img
-                            src={shop.business_permit_image}
-                            alt="Business Permit"
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <ZoomIn className="w-6 h-6 text-white" />
-                          </div>
-                        </button>
-                      ) : (
-                        <div className="w-full h-24 rounded-lg border-2 border-dashed border-border flex items-center justify-center">
-                          <p className="text-xs text-muted-foreground">
-                            No image uploaded
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                <div><h3 className="text-sm font-semibold mb-3">Business Permit</h3><div className="grid grid-cols-2 gap-4"><div><p className="text-xs text-muted-foreground">Permit Number</p><p className="text-sm font-medium">{shop.business_permit_number || <span className="italic text-muted-foreground">Not provided</span>}</p></div><div><p className="text-xs text-muted-foreground">Permit Upload</p>{shop.business_permit_image ? <button onClick={() => setLightboxImage(shop.business_permit_image)} className="relative w-full h-32 rounded-lg overflow-hidden border"><img src={shop.business_permit_image} alt="Permit" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition flex items-center justify-center"><ZoomIn className="w-6 h-6 text-white" /></div></button> : <div className="w-full h-24 rounded-lg border-2 border-dashed flex items-center justify-center"><p className="text-xs text-muted-foreground">No image uploaded</p></div>}</div></div></div>
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
 
-        {/* Suspension History - Conditional */}
         {(shop.is_suspended || shop.suspension_reason) && (
           <Card>
-            <CardHeader className="px-4 py-3 sm:px-6 sm:py-4">
-              <CardTitle className="flex items-center gap-2 text-red-600 text-sm sm:text-base">
-                <AlertCircle className="w-4 h-4 sm:w-5 sm:w-5" />
-                Suspension History
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 py-3 sm:px-6 sm:py-4">
-              <div className="space-y-3">
-                {shop.is_suspended && (
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 sm:p-4 border border-red-200 rounded-lg bg-red-50 gap-3 sm:gap-0">
-                    <div className="flex items-center gap-3">
-                      <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 text-red-500" />
-                      <div>
-                        <div className="font-medium text-sm sm:text-base">
-                          Currently Suspended
-                        </div>
-                        {shop.suspension_reason && (
-                          <div className="text-xs sm:text-sm text-gray-600">
-                            Reason: {shop.suspension_reason}
-                          </div>
-                        )}
-                        {shop.suspended_until && (
-                          <div className="text-xs sm:text-sm text-gray-600">
-                            Until:{" "}
-                            {new Date(shop.suspended_until).toLocaleString()}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2 sm:mt-0"
-                      onClick={() => handleActionClick("unsuspend")}
-                    >
-                      Lift Suspension
-                    </Button>
-                  </div>
-                )}
-              </div>
+            <CardHeader><CardTitle className="flex items-center gap-2 text-red-600"><AlertCircle className="w-5 h-5" /> Suspension History</CardTitle></CardHeader>
+            <CardContent>
+              {shop.is_suspended && (
+                <div className="flex items-center justify-between p-4 border border-red-200 rounded-lg bg-red-50">
+                  <div className="flex items-center gap-3"><AlertCircle className="h-5 w-5 text-red-500" /><div><div className="font-medium">Currently Suspended</div>{shop.suspension_reason && <div className="text-sm text-gray-600">Reason: {shop.suspension_reason}</div>}{shop.suspended_until && <div className="text-sm text-gray-600">Until: {new Date(shop.suspended_until).toLocaleString()}</div>}</div></div>
+                  <Button variant="outline" size="sm" onClick={() => handleActionClick("unsuspend")}>Lift Suspension</Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
 
-        {/* Alert Dialog for Actions */}
-        <AlertDialog
-          open={showDialog}
-          onOpenChange={!processing ? setShowDialog : undefined}
-        >
-          <AlertDialogContent className="sm:max-w-[500px] max-w-[95vw]">
-            {renderDialogContent()}
-            <AlertDialogFooter className="mt-6 sm:flex-row flex-col gap-2">
-              <AlertDialogCancel
-                onClick={handleCancel}
-                disabled={processing}
-                className="mt-0 sm:w-auto w-full order-2 sm:order-1"
-              >
-                Cancel
-              </AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleConfirm}
-                className={`sm:w-auto w-full order-1 sm:order-2 ${
-                  currentAction?.variant === "destructive"
-                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    : ""
-                }`}
-                disabled={
-                  processing ||
-                  ((activeAction === "suspend" ||
-                    activeAction === "reject" ||
-                    activeAction === "delete") &&
-                    !reason.trim())
-                }
-              >
-                {processing ? (
-                  <>
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />
-                    Processing...
-                  </>
-                ) : (
-                  currentAction?.confirmText
-                )}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
+        <AlertDialog open={showDialog} onOpenChange={!processing ? setShowDialog : undefined}>
+          <AlertDialogContent>{renderDialogContent()}<AlertDialogFooter><AlertDialogCancel onClick={handleCancel} disabled={processing}>Cancel</AlertDialogCancel><AlertDialogAction onClick={handleConfirm} disabled={processing || ((activeAction === "suspend" || activeAction === "reject" || activeAction === "delete") && !reason.trim())} className={currentAction?.variant === "destructive" ? "bg-destructive hover:bg-destructive/90" : ""}>{processing ? "Processing..." : currentAction?.confirmText}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
         </AlertDialog>
-        {/* Image Lightbox */}
+
         {lightboxImage && (
-          <div
-            className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
-            onClick={() => setLightboxImage(null)}
-          >
-            <div className="relative max-w-4xl max-h-[90vh]">
-              <img
-                src={lightboxImage}
-                alt="Document"
-                className="max-w-full max-h-[85vh] object-contain rounded-lg"
-              />
-              <Button
-                variant="outline"
-                size="icon"
-                className="absolute top-2 right-2 bg-white"
-                onClick={() => setLightboxImage(null)}
-              >
-                <XCircle className="w-4 h-4" />
-              </Button>
-            </div>
+          <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setLightboxImage(null)}>
+            <div className="relative max-w-4xl max-h-[90vh]"><img src={lightboxImage} alt="Document" className="max-w-full max-h-[85vh] object-contain rounded-lg" /><Button variant="outline" size="icon" className="absolute top-2 right-2 bg-white" onClick={() => setLightboxImage(null)}><XCircle className="w-4 h-4" /></Button></div>
           </div>
         )}
       </div>

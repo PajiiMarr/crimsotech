@@ -1,3 +1,4 @@
+// app/routes/admin/shops.tsx
 import { toast } from "sonner";
 import type { Route } from "./+types/shops";
 import SidebarLayout from "~/components/layouts/sidebar";
@@ -136,17 +137,18 @@ interface LoaderData {
   user: any;
 }
 
-// ── Format Currency Helper ────────────────────────────────────────────────────
+// ── Format Currency Helper (shows full number, no K/M abbreviation) ─────────
 
-const formatCurrency = (amount: number): string => {
-  if (amount === undefined || amount === null) return "₱0";
-  if (amount >= 1000000) {
-    return `₱${(amount / 1000000).toFixed(1)}M`;
-  }
-  if (amount >= 1000) {
-    return `₱${(amount / 1000).toFixed(1)}K`;
-  }
-  return `₱${amount.toLocaleString()}`;
+const formatCurrencyFull = (amount: number): string => {
+  if (amount === undefined || amount === null) return "₱0.00";
+  return `₱${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
+// ── Format Number Helper (for non-currency numbers, shows full number) ───────
+
+const formatNumberFull = (value: number): string => {
+  if (value === undefined || value === null) return "0";
+  return value.toLocaleString();
 };
 
 // ── Sales Card Component ──────────────────────────────────────────────────────
@@ -197,16 +199,16 @@ function SalesCard({
             <div className="flex-1">
               <p className="text-sm text-muted-foreground">{title}</p>
               <p className="text-xl sm:text-2xl font-bold mt-1">
-                {formatCurrency(totalRevenue)}
+                {formatCurrencyFull(totalRevenue)}
               </p>
               <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
                   <CheckCircle className="w-3 h-3 text-green-500" />
-                  Completed: {formatCurrency(completedRevenue)}
+                  Completed: {formatCurrencyFull(completedRevenue)}
                 </span>
                 <span className="flex items-center gap-1">
                   <Clock className="w-3 h-3 text-yellow-500" />
-                  Incoming: {formatCurrency(pendingRevenue)}
+                  Incoming: {formatCurrencyFull(pendingRevenue)}
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-2">Click for breakdown</p>
@@ -237,16 +239,16 @@ function SalesCard({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-4">
                 <p className="text-sm font-medium text-green-700">Total Revenue</p>
-                <p className="text-2xl font-bold text-green-800">{formatCurrency(totalRevenue)}</p>
+                <p className="text-2xl font-bold text-green-800">{formatCurrencyFull(totalRevenue)}</p>
                 <p className="text-xs text-green-600 mt-1">
-                  {formatCurrency(completedRevenue)} completed + {formatCurrency(pendingRevenue)} incoming
+                  {formatCurrencyFull(completedRevenue)} completed + {formatCurrencyFull(pendingRevenue)} incoming
                 </p>
               </div>
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4">
                 <p className="text-sm font-medium text-blue-700">Net Earnings (After Fees)</p>
-                <p className="text-2xl font-bold text-blue-800">{formatCurrency(netEarnings)}</p>
+                <p className="text-2xl font-bold text-blue-800">{formatCurrencyFull(netEarnings)}</p>
                 <p className="text-xs text-blue-600 mt-1">
-                  Platform fees: {formatCurrency(platformFees)}
+                  Platform fees: {formatCurrencyFull(platformFees)}
                 </p>
               </div>
             </div>
@@ -262,7 +264,7 @@ function SalesCard({
                     <div className="w-3 h-3 rounded-full bg-green-500" />
                     <span className="text-sm font-medium">Completed Revenue</span>
                   </div>
-                  <span className="text-sm font-semibold">{formatCurrency(completedRevenue)}</span>
+                  <span className="text-sm font-semibold">{formatCurrencyFull(completedRevenue)}</span>
                 </div>
                 <p className="text-xs text-muted-foreground pl-5">
                   Orders with status "completed" or "delivered" - fully realized sales
@@ -276,7 +278,7 @@ function SalesCard({
                     <div className="w-3 h-3 rounded-full bg-yellow-500" />
                     <span className="text-sm font-medium">Incoming Balance (Pending)</span>
                   </div>
-                  <span className="text-sm font-semibold">{formatCurrency(pendingRevenue)}</span>
+                  <span className="text-sm font-semibold">{formatCurrencyFull(pendingRevenue)}</span>
                 </div>
                 <p className="text-xs text-muted-foreground pl-5">
                   Orders with status "pending", "processing", or "shipped" - will be realized when completed
@@ -290,7 +292,7 @@ function SalesCard({
                     <div className="w-3 h-3 rounded-full bg-red-500" />
                     <span className="text-sm font-medium">Platform Fees (5%)</span>
                   </div>
-                  <span className="text-sm font-semibold">{formatCurrency(platformFees)}</span>
+                  <span className="text-sm font-semibold">{formatCurrencyFull(platformFees)}</span>
                 </div>
                 <p className="text-xs text-muted-foreground pl-5">
                   5% fee applied only to completed orders (pending orders not yet charged)
@@ -304,7 +306,7 @@ function SalesCard({
                     <div className="w-3 h-3 rounded-full bg-purple-500" />
                     <span className="text-sm font-medium">Shipping Fees Collected</span>
                   </div>
-                  <span className="text-sm font-semibold">{formatCurrency(shippingFees)}</span>
+                  <span className="text-sm font-semibold">{formatCurrencyFull(shippingFees)}</span>
                 </div>
                 <p className="text-xs text-muted-foreground pl-5">
                   Delivery fees from completed orders
@@ -927,7 +929,7 @@ function ActionsCell({
                     {normalizeShopStatus(shop.status)}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
-                    {(shop.followers || 0).toLocaleString()} followers
+                    {formatNumberFull(shop.followers || 0)} followers
                   </span>
                 </div>
               </div>
@@ -1130,7 +1132,7 @@ function buildColumns(
       cell: ({ row }) => (
         <div className="flex items-center gap-1 text-sm whitespace-nowrap">
           <Users className="w-3.5 h-3.5 text-muted-foreground" />
-          {((row.getValue("followers") as number) || 0).toLocaleString()}
+          {formatNumberFull((row.getValue("followers") as number) || 0)}
         </div>
       ),
     },
@@ -1148,7 +1150,7 @@ function buildColumns(
       cell: ({ row }) => (
         <div className="flex items-center gap-1 text-sm whitespace-nowrap">
           <Package className="w-3.5 h-3.5 text-muted-foreground" />
-          {(row.getValue("products") as number) || 0}
+          {formatNumberFull((row.getValue("products") as number) || 0)}
         </div>
       ),
     },
@@ -1170,7 +1172,7 @@ function buildColumns(
             </div>
             {(shop.totalRatings || 0) > 0 && (
               <div className="text-xs text-muted-foreground">
-                {shop.totalRatings || 0} review{(shop.totalRatings || 0) !== 1 ? "s" : ""}
+                {formatNumberFull(shop.totalRatings || 0)} review{(shop.totalRatings || 0) !== 1 ? "s" : ""}
               </div>
             )}
           </div>
@@ -1194,16 +1196,16 @@ function buildColumns(
         const completedRevenue = shop.completed_revenue || 0;
         const pendingRevenue = shop.pending_revenue || 0;
         return (
-          <div className="space-y-0.5 min-w-[120px]">
-            <div className="font-semibold text-sm">{formatCurrency(totalRevenue)}</div>
+          <div className="space-y-0.5 min-w-[140px]">
+            <div className="font-semibold text-sm">{formatCurrencyFull(totalRevenue)}</div>
             <div className="flex gap-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
                 <CheckCircle className="w-3 h-3 text-green-500" />
-                {formatCurrency(completedRevenue)}
+                {formatCurrencyFull(completedRevenue)}
               </span>
               <span className="flex items-center gap-1">
                 <Clock className="w-3 h-3 text-yellow-500" />
-                {formatCurrency(pendingRevenue)}
+                {formatCurrencyFull(pendingRevenue)}
               </span>
             </div>
           </div>
