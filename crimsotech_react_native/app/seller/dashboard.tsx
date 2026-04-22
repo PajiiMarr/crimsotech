@@ -26,6 +26,7 @@ interface DashboardSummary {
   orders_change?: number;
   period_earnings?: number;
   draft_count?: number;
+  pending_sales?: number; 
 }
 
 interface ShopPerformance {
@@ -88,6 +89,14 @@ function BreakdownModal({ visible, onClose, title, data }: BreakdownModalProps) 
             {renderBreakdownItem('Latest Orders', data.latest_orders?.length || 0, 'time-outline')}
           </>
         );
+        case 'Pending Sales':
+          return (
+            <>
+              {renderBreakdownItem('Pending Balance', `₱${(data.pending_sales || 0).toLocaleString('en-PH')}`, 'hourglass-outline')}
+              {renderBreakdownItem('Awaiting Release', '3-day hold period', 'calendar-outline')}
+              {renderBreakdownItem('Will be available after', data.release_date || 'refund period expires', 'time-outline')}
+            </>
+          );
       
       case 'Low Stock':
         const lowStockItems = data.low_stock || [];
@@ -195,28 +204,44 @@ export default function Dashboard() {
 
   const fetchDashboardData = async () => {
     if (!shopId) return;
-
+  
     try {
       setLoading(true);
       
       const endDate = new Date();
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - 30);
-
+  
       const params = new URLSearchParams({
         shop_id: shopId,
         start_date: startDate.toISOString().split('T')[0],
         end_date: endDate.toISOString().split('T')[0],
         range_type: 'monthly',
       });
-
+  
       const response = await AxiosInstance.get(`/seller-dashboard/get_dashboard/?${params.toString()}`, {
         headers: { 'X-User-Id': userId || '' }
       });
-
+  
       if (response.data.success) {
+        // Fetch pending balance from wallet
+        let pendingSales = 0;
+        try {
+          const walletRes = await AxiosInstance.get('/wallet/balance/', {
+            headers: { 'X-User-Id': userId || '' }
+          });
+          if (walletRes.data.success) {
+            pendingSales = walletRes.data.pending_balance || 0;
+          }
+        } catch (walletError) {
+          console.error('Error fetching wallet balance:', walletError);
+        }
+  
         setData({
-          summary: response.data.summary || {},
+          summary: {
+            ...response.data.summary,
+            pending_sales: pendingSales,  // ← ADD THIS
+          },
           shop_performance: response.data.shop_performance || {},
           latest_orders: response.data.latest_orders || [],
           low_stock: response.data.low_stock || [],
@@ -314,80 +339,57 @@ export default function Dashboard() {
           ) : (
             <>
               {/* Quick Stats */}
-              <Text style={styles.sectionLabel}>Overview</Text>
-              <View style={styles.statsGrid}>
-                <TouchableOpacity 
-                  style={styles.statCard} 
-                  onPress={() => showBreakdown('Total Sales', 'summary')}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.statIcon, { backgroundColor: '#EEF2FF' }]}>
-                    <Ionicons name="cash-outline" size={20} color="#4F46E5" />
-                  </View>
-                  <Text style={styles.statValue}>{formatCurrency(summary.period_sales)}</Text>
-                  <Text style={styles.statLabel}>Total Sales</Text>
-                  {summary.sales_change !== undefined && (
-                    <View style={styles.statChange}>
-                      <Ionicons 
-                        name={summary.sales_change >= 0 ? 'arrow-up' : 'arrow-down'} 
-                        size={12} 
-                        color={summary.sales_change >= 0 ? '#10B981' : '#EF4444'} 
-                      />
-                      <Text style={[styles.changeText, { color: summary.sales_change >= 0 ? '#10B981' : '#EF4444' }]}>
-                        {Math.abs(summary.sales_change)}%
-                      </Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
+              {/* Quick Stats */}
+<Text style={styles.sectionLabel}>Overview</Text>
+<View style={styles.statsGrid}>
+  <TouchableOpacity 
+    style={styles.statCard} 
+    onPress={() => showBreakdown('Total Sales', 'summary')}
+    activeOpacity={0.7}
+  >
+    <View style={[styles.statIcon, { backgroundColor: '#EEF2FF' }]}>
+      <Ionicons name="cash-outline" size={20} color="#4F46E5" />
+    </View>
+    <Text style={styles.statValue}>{formatCurrency(summary.period_sales)}</Text>
+    <Text style={styles.statLabel}>Total Sales</Text>
+  </TouchableOpacity>
 
-                <TouchableOpacity 
-                  style={styles.statCard} 
-                  onPress={() => showBreakdown('Orders', 'summary')}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.statIcon, { backgroundColor: '#F0F9FF' }]}>
-                    <Ionicons name="cart-outline" size={20} color="#0284C7" />
-                  </View>
-                  <Text style={styles.statValue}>{summary.period_orders || 0}</Text>
-                  <Text style={styles.statLabel}>Orders</Text>
-                  {summary.orders_change !== undefined && (
-                    <View style={styles.statChange}>
-                      <Ionicons 
-                        name={summary.orders_change >= 0 ? 'arrow-up' : 'arrow-down'} 
-                        size={12} 
-                        color={summary.orders_change >= 0 ? '#10B981' : '#EF4444'} 
-                      />
-                      <Text style={[styles.changeText, { color: summary.orders_change >= 0 ? '#10B981' : '#EF4444' }]}>
-                        {Math.abs(summary.orders_change)}%
-                      </Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
+  <TouchableOpacity 
+    style={styles.statCard} 
+    onPress={() => showBreakdown('Pending Sales', 'wallet')}
+    activeOpacity={0.7}
+  >
+    <View style={[styles.statIcon, { backgroundColor: '#FEF3C7' }]}>
+      <Ionicons name="hourglass-outline" size={20} color="#D97706" />
+    </View>
+    <Text style={styles.statValue}>{formatCurrency(summary.pending_sales || 0)}</Text>
+    <Text style={styles.statLabel}>Pending Sales</Text>
+  </TouchableOpacity>
 
-                <TouchableOpacity 
-                  style={styles.statCard} 
-                  onPress={() => showBreakdown('Low Stock', 'summary')}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.statIcon, { backgroundColor: '#FEF2F2' }]}>
-                    <Ionicons name="cube-outline" size={20} color="#DC2626" />
-                  </View>
-                  <Text style={styles.statValue}>{summary.low_stock_count || 0}</Text>
-                  <Text style={styles.statLabel}>Low Stock</Text>
-                </TouchableOpacity>
+  <TouchableOpacity 
+    style={styles.statCard} 
+    onPress={() => showBreakdown('Orders', 'summary')}
+    activeOpacity={0.7}
+  >
+    <View style={[styles.statIcon, { backgroundColor: '#F0F9FF' }]}>
+      <Ionicons name="cart-outline" size={20} color="#0284C7" />
+    </View>
+    <Text style={styles.statValue}>{summary.period_orders || 0}</Text>
+    <Text style={styles.statLabel}>Orders</Text>
+  </TouchableOpacity>
 
-                <TouchableOpacity 
-                  style={styles.statCard} 
-                  onPress={() => showBreakdown('Refunds', 'refunds')}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.statIcon, { backgroundColor: '#FEF3C7' }]}>
-                    <Ionicons name="refresh-outline" size={20} color="#D97706" />
-                  </View>
-                  <Text style={styles.statValue}>{summary.refund_requests || 0}</Text>
-                  <Text style={styles.statLabel}>Refunds</Text>
-                </TouchableOpacity>
-              </View>
+  <TouchableOpacity 
+    style={styles.statCard} 
+    onPress={() => showBreakdown('Refunds', 'refunds')}
+    activeOpacity={0.7}
+  >
+    <View style={[styles.statIcon, { backgroundColor: '#FEF2F2' }]}>
+      <Ionicons name="refresh-outline" size={20} color="#DC2626" />
+    </View>
+    <Text style={styles.statValue}>{summary.refund_requests || 0}</Text>
+    <Text style={styles.statLabel}>Refunds</Text>
+  </TouchableOpacity>
+</View>
 
               {/* Shop Performance */}
               <Text style={[styles.sectionLabel, styles.sectionMargin]}>Shop Performance</Text>

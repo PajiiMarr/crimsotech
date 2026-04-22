@@ -1417,60 +1417,43 @@ export default function ProfileScreen() {
     </ScrollView>
 
     {/* ── Balance cards with shadow and border ── */}
-    <View style={styles.balanceGrid}>
-      {/* Available */}
-      <View style={[styles.balanceCardStyled, { flex: 1.2 }]}>
-        <View style={styles.balanceCardHeader}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            <MaterialIcons
-              name="account-balance-wallet"
-              size={16}
-              color="#2563EB"
-            />
-            <Text style={styles.balanceCardLabel}>Available</Text>
-          </View>
-          <TouchableOpacity
-            onPress={() => setShowBalance(!showBalance)}
-          >
-            <MaterialIcons
-              name={showBalance ? "visibility-off" : "visibility"}
-              size={16}
-              color="#9CA3AF"
-            />
-          </TouchableOpacity>
-        </View>
-        <Text style={[styles.balanceAmount, { color: "#059669" }]}>
-          {showBalance
-            ? formatCurrency(wallet?.available_balance || 0)
-            : "••••••"}
-        </Text>
-        <Text style={styles.balanceCardSub}>Ready to withdraw</Text>
-      </View>
-
-      {/* Pending */}
-      <View style={[styles.balanceCardStyled, { flex: 1 }]}>
-        <View style={styles.balanceCardHeader}>
-          <MaterialIcons
-            name="hourglass-empty"
-            size={16}
-            color="#D97706"
-          />
-          <Text style={styles.balanceCardLabel}>Pending</Text>
-        </View>
-        <Text style={[styles.balanceAmount, { color: "#D97706" }]}>
-          {showBalance
-            ? formatCurrency(wallet?.pending_balance || 0)
-            : "••••••"}
-        </Text>
-        <Text style={styles.balanceCardSub}>Awaiting release</Text>
-      </View>
+    {/* ── Balance cards with shadow and border ── */}
+<View style={styles.balanceGrid}>
+  {/* Pending - NOW FIRST */}
+  <View style={[styles.balanceCardStyled, { flex: 1 }]}>
+    <View style={styles.balanceCardHeader}>
+      <MaterialIcons name="hourglass-empty" size={16} color="#D97706" />
+      <Text style={styles.balanceCardLabel}>Pending</Text>
+      <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
+        <MaterialIcons
+          name={showBalance ? "visibility-off" : "visibility"}
+          size={16}
+          color="#9CA3AF"
+        />
+      </TouchableOpacity>
     </View>
+    <Text style={[styles.balanceAmount, { color: "#D97706" }]}>
+      {showBalance
+        ? formatCurrency(wallet?.pending_balance || 0)
+        : "••••••"}
+    </Text>
+    <Text style={styles.balanceCardSub}>Awaiting release (3-day hold)</Text>
+  </View>
+
+  {/* Available - NOW SECOND */}
+  <View style={[styles.balanceCardStyled, { flex: 1.2 }]}>
+    <View style={styles.balanceCardHeader}>
+      <MaterialIcons name="account-balance-wallet" size={16} color="#2563EB" />
+      <Text style={styles.balanceCardLabel}>Available</Text>
+    </View>
+    <Text style={[styles.balanceAmount, { color: "#059669" }]}>
+      {showBalance
+        ? formatCurrency(wallet?.available_balance || 0)
+        : "••••••"}
+    </Text>
+    <Text style={styles.balanceCardSub}>Ready to withdraw</Text>
+  </View>
+</View>
 
     <View style={styles.balanceGrid}>
       {/* Total */}
