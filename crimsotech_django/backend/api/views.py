@@ -17080,17 +17080,15 @@ class RiderStatus(viewsets.ViewSet):
         }, status=status.HTTP_200_OK)
 
 
-import requests
-from decimal import Decimal
-
 class CustomerShops(APIView):
 
     # ── Geocoding Helper ───────────────────────────────────────────────────────
 
     def geocode_address(self, street, barangay, city, province):
         """Convert address to coordinates using Google Maps Geocoding API."""
+        # Check if all required address parts are present
         if not all([street, barangay, city, province]):
-            print(f"[GEOCODE] Missing address parts - cannot geocode")
+            print(f"[GEOCODE] Missing address parts - street:{bool(street)}, barangay:{bool(barangay)}, city:{bool(city)}, province:{bool(province)}")
             return None, None
         
         # Build full address
@@ -17135,6 +17133,22 @@ class CustomerShops(APIView):
         except Exception as e:
             print(f"[GEOCODE] ❌ Error: {str(e)}")
             return None, None
+
+    def get_coordinates_from_shop(self, shop):
+        """Get coordinates from shop address, returns (latitude, longitude) tuple"""
+        if shop.latitude and shop.longitude:
+            return float(shop.latitude), float(shop.longitude)
+        
+        # Try to geocode if coordinates are missing but address exists
+        if shop.street and shop.barangay and shop.city and shop.province:
+            lat, lng = self.geocode_address(shop.street, shop.barangay, shop.city, shop.province)
+            if lat and lng:
+                shop.latitude = lat
+                shop.longitude = lng
+                shop.save(update_fields=['latitude', 'longitude'])
+                return float(lat), float(lng)
+        
+        return None, None
 
     # ── Image URL helper ───────────────────────────────────────────────────────
 
@@ -17182,11 +17196,37 @@ class CustomerShops(APIView):
         try:
             customer = Customer.objects.get(customer_id=customer_id)
             shops_queryset = Shop.objects.filter(customer=customer).order_by('name')
-            serializer = ShopSerializer(shops_queryset, many=True, context={'request': request})
+            
+            # Prepare shop data with coordinates
+            shops_data = []
+            for shop in shops_queryset:
+                # Get coordinates (geocode if missing)
+                lat, lng = self.get_coordinates_from_shop(shop)
+                
+                shop_dict = {
+                    'id': str(shop.id),
+                    'name': shop.name,
+                    'description': shop.description,
+                    'province': shop.province,
+                    'city': shop.city,
+                    'barangay': shop.barangay,
+                    'street': shop.street,
+                    'contact_number': shop.contact_number,
+                    'verified': shop.verified,
+                    'status': shop.status,
+                    'total_sales': str(shop.total_sales),
+                    'created_at': shop.created_at.isoformat(),
+                    'updated_at': shop.updated_at.isoformat(),
+                    'shop_picture': self.get_media_url(shop.shop_picture),
+                    'latitude': lat,
+                    'longitude': lng,
+                    **self.build_shop_legal_docs(shop),
+                }
+                shops_data.append(shop_dict)
 
             return Response({
                 "success":     True,
-                "shops":       serializer.data,
+                "shops":       shops_data,
                 "message":     "Shops retrieved successfully",
                 "data_source": "database"
             }, status=status.HTTP_200_OK)
@@ -17202,7 +17242,7 @@ class CustomerShops(APIView):
     # ── POST ───────────────────────────────────────────────────────────────────
 
     def post(self, request):
-        """Create a new shop for a customer with legal requirements."""
+        """Create a new shop for a customer with legal requirements and geocoding."""
         try:
             user_id = request.data.get('customer')
             if not user_id:
@@ -17316,22 +17356,28 @@ class CustomerShops(APIView):
                         validate_image(file, label)
 
                 # ── Geocode address to get coordinates ──────────────────────
-                latitude, longitude = self.geocode_address(
-                    street=request.data.get('street', '').strip(),
-                    barangay=request.data.get('barangay', '').strip(),
-                    city=request.data.get('city', '').strip(),
-                    province=request.data.get('province', '').strip()
-                )
+                street = request.data.get('street', '').strip()
+                barangay = request.data.get('barangay', '').strip()
+                city = request.data.get('city', '').strip()
+                province = request.data.get('province', '').strip()
+                
+                print(f"[SHOP CREATE] Geocoding address: {street}, {barangay}, {city}, {province}")
+                latitude, longitude = self.geocode_address(street, barangay, city, province)
+                
+                if latitude and longitude:
+                    print(f"[SHOP CREATE] ✅ Coordinates obtained: ({latitude}, {longitude})")
+                else:
+                    print(f"[SHOP CREATE] ⚠️ Could not geocode address, coordinates will be null")
 
                 # Create shop
                 shop = Shop.objects.create(
                     id=uuid.uuid4(),
                     name=name,
                     description=description,
-                    province=request.data.get('province', '').strip(),
-                    city=request.data.get('city', '').strip(),
-                    barangay=request.data.get('barangay', '').strip(),
-                    street=request.data.get('street', '').strip(),
+                    province=province,
+                    city=city,
+                    barangay=barangay,
+                    street=street,
                     contact_number=contact_number,
                     customer=customer,
                     verified=False,
@@ -17363,9 +17409,9 @@ class CustomerShops(APIView):
 
                 # Log geocoding result
                 if latitude and longitude:
-                    logger.info(f"📍 Shop '{shop.name}' geocoded to coordinates: ({latitude}, {longitude})")
+                    logger.info(f"📍 Shop '{shop.name}' created with coordinates: ({latitude}, {longitude})")
                 else:
-                    logger.warning(f"⚠️ Could not geocode address for shop '{shop.name}'")
+                    logger.warning(f"⚠️ Shop '{shop.name}' created without coordinates - address may need verification")
 
                 # Notify admins
                 for admin_user in User.objects.filter(is_admin=True):
@@ -17404,7 +17450,8 @@ class CustomerShops(APIView):
                     'success': True,
                     'message': 'Shop submitted for approval. You will be notified once an admin reviews your application.',
                     'shop':    shop_data,
-                    'id':      str(shop.id)
+                    'id':      str(shop.id),
+                    'geocoding_success': latitude is not None and longitude is not None
                 }, status=status.HTTP_201_CREATED)
 
         except ValueError as e:
@@ -17434,10 +17481,13 @@ class CustomerShops(APIView):
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     def get_return_address(self, customer_id, shop_id):
-        """Get the return address for a specific shop."""
+        """Get the return address for a specific shop with coordinates."""
         try:
             customer = Customer.objects.get(customer_id=customer_id)
             shop     = Shop.objects.get(id=shop_id, customer=customer)
+
+            # Get coordinates (geocode if missing)
+            lat, lng = self.get_coordinates_from_shop(shop)
 
             return Response({
                 'success': True,
@@ -17448,8 +17498,8 @@ class CustomerShops(APIView):
                     'street':         shop.street,
                     'contact_number': shop.contact_number,
                     'full_address':   f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}",
-                    'latitude':       float(shop.latitude) if shop.latitude else None,
-                    'longitude':      float(shop.longitude) if shop.longitude else None,
+                    'latitude':       lat,
+                    'longitude':      lng,
                 },
                 'shop_name':    shop.name,
                 'shop_id':      str(shop.id),
@@ -17484,7 +17534,11 @@ class CustomerShops(APIView):
                 'street' in request.data
             ])
             
+            latitude = None
+            longitude = None
+            
             if address_changed:
+                print(f"[SHOP UPDATE] Re-geocoding address: {shop.street}, {shop.barangay}, {shop.city}, {shop.province}")
                 latitude, longitude = self.geocode_address(
                     street=shop.street,
                     barangay=shop.barangay,
@@ -17497,8 +17551,15 @@ class CustomerShops(APIView):
                     logger.info(f"📍 Shop '{shop.name}' coordinates updated to: ({latitude}, {longitude})")
                 else:
                     logger.warning(f"⚠️ Could not geocode updated address for shop '{shop.name}'")
+                    # Keep existing coordinates if available
+                    if not (shop.latitude and shop.longitude):
+                        logger.warning(f"⚠️ Shop '{shop.name}' has no coordinates after update")
             
             shop.save()
+
+            # Get final coordinates for response
+            final_lat = float(shop.latitude) if shop.latitude else (float(latitude) if latitude else None)
+            final_lng = float(shop.longitude) if shop.longitude else (float(longitude) if longitude else None)
 
             return Response({
                 'success': True,
@@ -17510,10 +17571,11 @@ class CustomerShops(APIView):
                     'street':         shop.street,
                     'contact_number': shop.contact_number,
                     'full_address':   f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}",
-                    'latitude':       float(shop.latitude) if shop.latitude else None,
-                    'longitude':      float(shop.longitude) if shop.longitude else None,
+                    'latitude':       final_lat,
+                    'longitude':      final_lng,
                 },
                 'shop_picture': self.get_media_url(shop.shop_picture),
+                'geocoding_success': latitude is not None and longitude is not None if address_changed else True
             }, status=status.HTTP_200_OK)
 
         except Customer.DoesNotExist:
@@ -17523,6 +17585,8 @@ class CustomerShops(APIView):
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
+
+
 class CustomerShopsAddSeller(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_shop(self, request):
@@ -42369,6 +42433,39 @@ class ReviewView(APIView):
                     'message': 'Either product_id or rider_id must be provided'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
+            # ========== FIX: Check for existing reviews BEFORE validation ==========
+            # Check for existing product review
+            if product_id:
+                existing_product_review = Review.objects.filter(
+                    customer=customer,
+                    product_id=product_id
+                ).first()
+                
+                if existing_product_review:
+                    return Response({
+                        'status': 'error',
+                        'message': 'You have already reviewed this product',
+                        'data': {
+                            'existing_review_id': str(existing_product_review.id)
+                        }
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check for existing rider review
+            if rider_id:
+                existing_rider_review = Review.objects.filter(
+                    customer=customer,
+                    rider_id=rider_id
+                ).first()
+                
+                if existing_rider_review:
+                    return Response({
+                        'status': 'error',
+                        'message': 'You have already reviewed this rider',
+                        'data': {
+                            'existing_review_id': str(existing_rider_review.id)
+                        }
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
             # Prepare data for serializer
             data = {}
             
@@ -42384,29 +42481,6 @@ class ReviewView(APIView):
             
             # Handle product if provided
             if product_id:
-                # Check for existing review
-                existing_review = Review.objects.filter(
-                    customer=customer,
-                    product_id=product_id
-                ).first()
-                
-                if existing_review:
-                    return Response({
-                        'status': 'error',
-                        'message': 'You have already reviewed this product',
-                        'data': {
-                            'existing_review_id': str(existing_review.id)
-                        }
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-                if variant_id:
-                    try:
-                        variant = Variants.objects.get(id=variant_id)
-                        data['variant'] = variant.id
-                    except Variants.DoesNotExist:
-                        pass
-
-                
                 # Get product
                 try:
                     product = Product.objects.get(id=product_id)
@@ -42417,24 +42491,17 @@ class ReviewView(APIView):
                         'status': 'error',
                         'message': f'Product with id {product_id} not found'
                     }, status=status.HTTP_404_NOT_FOUND)
+                
+                # Handle variant if provided
+                if variant_id:
+                    try:
+                        variant = Variants.objects.get(id=variant_id)
+                        data['variant'] = variant.id
+                    except Variants.DoesNotExist:
+                        pass  # Variant is optional, don't fail if not found
             
             # Handle rider if provided
             if rider_id:
-                # Check for existing review
-                existing_rider_review = Review.objects.filter(
-                    customer=customer,
-                    rider_id=rider_id
-                ).first()
-                
-                if existing_rider_review:
-                    return Response({
-                        'status': 'error',
-                        'message': 'You have already reviewed this rider',
-                        'data': {
-                            'existing_review_id': str(existing_rider_review.id)
-                        }
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
                 # Get rider
                 try:
                     rider = Rider.objects.get(rider_id=rider_id)
@@ -42509,6 +42576,7 @@ class ReviewView(APIView):
                 'message': 'Failed to create review',
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def put(self, request, review_id):
         """Handle PUT requests for full update"""
         return self._update_review(request, review_id, partial=False)
