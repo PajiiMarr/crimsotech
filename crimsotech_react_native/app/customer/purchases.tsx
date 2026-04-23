@@ -626,25 +626,24 @@ export default function PurchasesPage() {
 
         {/* Total and Action */}
         <View style={styles.footer}>
-          {/* <View style={styles.totalContainer}>
+          <View style={styles.totalContainer}>
             <Text style={styles.totalLabel}>Total:</Text>
             <Text style={styles.totalAmount}>{formatCurrency(parseFloat(item.order.total_amount))}</Text>
-          </View> */}
+          </View>
 
           {/* Action Buttons */}
-          {/* Action Buttons */}
-<View style={styles.actionButtons}>
-  {/* View Details button for returns - only for return_refund, not cancelled */}
-  {item.status === 'return_refund' && (
-    <TouchableOpacity 
-      style={[styles.actionButton, styles.detailsButton]}
-      onPress={() => router.push(`/customer/view-refund?orderId=${item.order_id}`)}
-    >
-      <MaterialIcons name="visibility" size={12} color="#6B7280" />
-      <Text style={styles.detailsButtonText}>Details</Text>
-    </TouchableOpacity>
-  )}
-</View>
+          <View style={styles.actionButtons}>
+            {/* View Details button for returns - only for return_refund, not cancelled */}
+            {item.status === 'return_refund' && (
+              <TouchableOpacity 
+                style={[styles.actionButton, styles.detailsButton]}
+                onPress={() => router.push(`/customer/view-refund?orderId=${item.order_id}`)}
+              >
+                <MaterialIcons name="visibility" size={12} color="#6B7280" />
+                <Text style={styles.detailsButtonText}>Details</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {/* Cancelled Reason - if available */}

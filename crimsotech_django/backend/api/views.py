@@ -24142,7 +24142,17 @@ class CheckoutView(viewsets.ViewSet):
 
                 # Update order total
                 order.total_amount = total_amount
-                order.save(update_fields=["total_amount"])
+                
+                # Calculate and store transaction fee: 5% of total, capped at ₱50
+                transaction_fee = min(total_amount * Decimal('0.05'), Decimal('50'))
+                order.transaction_fee = float(transaction_fee)
+                
+                # Calculate and store shipping fee: 5% of total, capped at ₱50, only for standard delivery
+                if delivery_method and delivery_method.lower() == "standard delivery":
+                    shipping_fee = min(total_amount * Decimal('0.05'), Decimal('50'))
+                    order.shipping_fee = float(shipping_fee)
+                
+                order.save(update_fields=["total_amount", "transaction_fee", "shipping_fee"])
 
                 # Clear cart
                 cart_items.delete()
@@ -27809,6 +27819,12 @@ class CheckoutOrder(viewsets.ViewSet):
 
             initial_status = 'pending'
             
+            # Calculate shipping fee: 5% of subtotal, capped at ₱50, only for standard delivery
+            shipping_fee = Decimal('0')
+            if shipping_method.lower() == "standard delivery":
+                shipping_fee = min(subtotal * Decimal('0.05'), Decimal('50'))
+                shipping_fee = shipping_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            
             order = Order.objects.create(
                 user=user,
                 shipping_address=shipping_address,
@@ -27816,7 +27832,9 @@ class CheckoutOrder(viewsets.ViewSet):
                 total_amount=total_amount,
                 payment_method=payment_method,
                 delivery_method=shipping_method,
-                delivery_address_text=delivery_address_text
+                delivery_address_text=delivery_address_text,
+                transaction_fee=float(transaction_fee),
+                shipping_fee=float(shipping_fee)
             )
             
             # Store transaction fee in metadata for reference
@@ -29112,7 +29130,6 @@ class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
             ) 
 
 class PurchasesBuyer(viewsets.ViewSet):
-    # Add this helper method at the beginning of the class
     def _auto_complete_if_needed(self, order):
         """Auto-complete order if picked_up or delivered for 24+ hours"""
         from django.utils import timezone
@@ -29999,11 +30016,12 @@ class PurchasesBuyer(viewsets.ViewSet):
             # Calculate order summary
             order_summary = {
                 'subtotal': str(subtotal),
-                'shipping_fee': '0.00',
+                'shipping_fee': str(float(order.shipping_fee) if order.shipping_fee else 0.00),
                 'tax': str(float(subtotal) * 0.12),
                 'discount': '0.00',
                 'total': str(order.total_amount),
-                'payment_fee': '0.00',
+                'transaction_fee': str(float(order.transaction_fee) if order.transaction_fee else 0.00),
+                'payment_fee': str(float(order.transaction_fee) if order.transaction_fee else 0.00),
             }
             
             # Prepare response
@@ -32057,7 +32075,7 @@ class RiderOrdersActive(viewsets.ViewSet):
 
             if not delivery:
                 # Calculate delivery fee - default ₱50.00 for standard delivery
-                delivery_fee = Decimal('50.00')
+                delivery_fee = Decimal('40.00')
                 
                 delivery = Delivery.objects.create(
                     order=order,
@@ -32069,7 +32087,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                 delivery.rider = rider
                 # Set delivery_fee if not already set
                 if not delivery.delivery_fee or delivery.delivery_fee == 0:
-                    delivery.delivery_fee = Decimal('50.00')
+                    delivery.delivery_fee = Decimal('40.00')
                     delivery.save()
 
         # Idempotent behavior for already-accepted/in-progress deliveries
@@ -39758,7 +39776,7 @@ class RiderDashboardViewSet(viewsets.ViewSet):
             Q(delivery_fee__isnull=True) | Q(delivery_fee=0)
         )
         if delivered_without_fee.exists():
-            delivered_without_fee.update(delivery_fee=Decimal('50.00'))
+            delivered_without_fee.update(delivery_fee=Decimal('40.00'))
         
         # 1. Basic counts (single query)
         status_counts = deliveries.aggregate(
@@ -40046,7 +40064,7 @@ class RiderEarningsViewSet(viewsets.ViewSet):
                     Q(delivery_fee__isnull=True) | Q(delivery_fee=0)
                 )
                 if deliveries_to_update.exists():
-                    deliveries_to_update.update(delivery_fee=Decimal('50.00'))
+                    deliveries_to_update.update(delivery_fee=Decimal('40.00'))
                 
                 # Refresh the queryset to get updated values
                 deliveries = Delivery.objects.filter(
@@ -40431,7 +40449,7 @@ class RiderDeliveryActionsViewSet(viewsets.ViewSet):
             
             # Ensure delivery_fee is set (for backward compatibility)
             if not delivery.delivery_fee or delivery.delivery_fee == 0:
-                delivery.delivery_fee = Decimal('50.00')
+                delivery.delivery_fee = Decimal('40.00')
             
             delivery.save()
             

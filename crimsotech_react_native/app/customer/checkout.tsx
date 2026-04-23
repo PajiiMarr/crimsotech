@@ -2336,6 +2336,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   itemVariantCompact: {
+  
     fontSize: 11,
     color: "#EA580C",
     fontWeight: "500",

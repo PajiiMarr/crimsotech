@@ -83,6 +83,7 @@ interface OrderSummary {
   discount: string;
   total: string;
   payment_fee: string;
+  transaction_fee?: string;
 }
 
 interface TimelineEvent {
@@ -260,17 +261,20 @@ const [cancellingItems, setCancellingItems] = useState(false);
         const rawSummary = data.order_summary || {};
         const computedSubtotal = data.items.reduce((sum: number, it: any) => sum + (parseFloat(it.subtotal || '0') || 0), 0).toFixed(2);
         const subtotalStr = rawSummary.subtotal ?? computedSubtotal;
-        const shippingFeeStr = rawSummary.shipping_fee ?? '0';
         const discountStr = rawSummary.discount ?? '0';
         const taxStr = rawSummary.tax ?? '0';
-        const totalStr = rawSummary.total ?? ((parseFloat(subtotalStr || '0') + parseFloat(shippingFeeStr || '0') - parseFloat(discountStr || '0') + parseFloat(taxStr || '0')).toFixed(2));
+        const totalStr = rawSummary.total ?? ((parseFloat(subtotalStr || '0') + parseFloat(discountStr || '0') + parseFloat(taxStr || '0')).toFixed(2));
+        
+        // Calculate shipping fee: min((total_amount - selling_price) * 0.05, 50)
+        const shippingFeeStr = Math.min((parseFloat(totalStr || '0') - parseFloat(subtotalStr || '0')) * 0.05, 50).toFixed(2);
   
         data.order_summary = {
           subtotal: subtotalStr,
-          shipping_fee: shippingFeeStr,
+          shipping_fee: rawSummary.shipping_fee ?? shippingFeeStr,
           tax: taxStr,
           discount: discountStr,
           total: totalStr,
+          transaction_fee: rawSummary.transaction_fee ?? '0',
           payment_fee: rawSummary.payment_fee ?? '0'
         };
   
@@ -1633,6 +1637,18 @@ const CancelConfirmationModal = ({
             <Text style={styles.summaryLabel}>Shipping Fee:</Text>
             <Text style={styles.summaryValue}>{formatCurrency(order_summary.shipping_fee)}</Text>
           </View>
+          {parseFloat(order_summary.tax || '0') > 0 && (
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Value Added Tax (VAT):</Text>
+              <Text style={styles.summaryValue}>{formatCurrency(order_summary.tax)}</Text>
+            </View>
+          )}
+          {parseFloat(order_summary.transaction_fee || '0') > 0 && (
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Transaction Fee:</Text>
+              <Text style={styles.summaryValue}>{formatCurrency(order_summary.transaction_fee || '0')}</Text>
+            </View>
+          )}
           {parseFloat(order_summary.discount) > 0 && (
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Discount:</Text>
