@@ -22,8 +22,8 @@ fi
 # echo ">>> flushing database"
 # python manage.py flush --noinput
 
-echo ">>> seeding data"
-python manage.py seed_data
+# echo ">>> seeding data"
+# python manage.py seed_data
 
 echo ">>> migrating tables..."
 python manage.py migrate --noinput
