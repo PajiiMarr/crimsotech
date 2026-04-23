@@ -631,41 +631,7 @@ export default function SellerViewOrder() {
                   </View>
                 </View>
               )}
-              
-              <Text style={styles.allRidersTitle}>All Assigned Riders ({allRiders.length})</Text>
-              
-              {allRiders.map((rider, index) => (
-                <View key={index} style={styles.riderModalItem}>
-                  <View style={styles.riderModalRank}>
-                    <Text style={styles.riderModalRankText}>{index + 1}</Text>
-                  </View>
-                  <View style={styles.riderModalInfo}>
-                    <Text style={styles.riderModalName}>{rider.rider_name}</Text>
-                    <Text style={styles.riderModalUsername}>@{rider.rider_username}</Text>
-                    <View style={styles.riderModalDetails}>
-                      <View style={styles.riderModalDetail}>
-                        <MaterialCommunityIcons name="motorbike" size={12} color="#6B7280" />
-                        <Text style={styles.riderModalDetailText}>{rider.vehicle_type || 'N/A'}</Text>
-                      </View>
-                      <View style={styles.riderModalDetail}>
-                        <MaterialIcons name="confirmation-number" size={12} color="#6B7280" />
-                        <Text style={styles.riderModalDetailText}>{rider.plate_number || 'N/A'}</Text>
-                      </View>
-                    </View>
-                  </View>
-                  <View style={styles.riderModalDistance}>
-                    <Text style={styles.riderModalDistanceValue}>{rider.total_distance_km} km</Text>
-                    <Text style={styles.riderModalDistanceLabel}>total</Text>
-                  </View>
-                </View>
-              ))}
             </ScrollView>
-            
-            <View style={styles.ridersModalFooter}>
-              <Text style={styles.ridersModalFooterText}>
-                First rider to accept gets the delivery
-              </Text>
-            </View>
           </View>
         </View>
       </Modal>
