@@ -40,6 +40,9 @@ import {
   Truck,
   DollarSign,
   PiggyBank,
+  Mail,
+  Calendar,
+  User,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import AxiosInstance from "~/components/axios/Axios";
@@ -69,6 +72,8 @@ import {
   DialogDescription,
 } from "~/components/ui/dialog";
 import { Progress } from "~/components/ui/progress";
+import { Avatar, AvatarFallback } from "~/components/ui/avatar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 
 export function meta(): Route.MetaDescriptors {
   return [{ title: "Shops | Admin" }];
@@ -107,6 +112,16 @@ interface Shop {
   completed_orders?: number;
   pending_orders?: number;
   total_orders?: number;
+  followers_list?: Follower[];
+}
+
+interface Follower {
+  customer_id: string;
+  customer_name: string;
+  customer_email: string;
+  followed_at: string;
+  shop_name?: string;
+  shop_id?: string;
 }
 
 interface ShopMetrics {
@@ -361,6 +376,215 @@ function SalesCard({
   );
 }
 
+// ── Followers Dialog Component ────────────────────────────────────────────────
+
+interface FollowersDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  followers: Follower[];
+  isLoading: boolean;
+}
+
+function FollowersDialog({ open, onOpenChange, followers, isLoading }: FollowersDialogProps) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "byShop">("list");
+
+  const filteredFollowers = followers.filter(follower =>
+    follower.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    follower.customer_email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    follower.shop_name?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  // Group followers by shop
+  const followersByShop = filteredFollowers.reduce((acc, follower) => {
+    const shopKey = follower.shop_id || follower.shop_name || "Unknown Shop";
+    if (!acc[shopKey]) {
+      acc[shopKey] = {
+        shopName: follower.shop_name || "Unknown Shop",
+        shopId: follower.shop_id,
+        followers: [],
+      };
+    }
+    acc[shopKey].followers.push(follower);
+    return acc;
+  }, {} as Record<string, { shopName: string; shopId?: string; followers: Follower[] }>);
+
+  const getInitials = (name: string) => {
+    return name
+      .split(" ")
+      .map(n => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-3xl max-w-[95vw] max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <div className="p-2 bg-purple-600 rounded-full">
+              <Users className="w-4 h-4 text-white" />
+            </div>
+            Total Followers ({followers.length})
+          </DialogTitle>
+          <DialogDescription>
+            List of all customers who follow shops on the platform
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="mt-4 space-y-4">
+          {/* Search Bar */}
+          <div className="relative">
+            <Input
+              placeholder="Search by customer name, email, or shop..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10"
+            />
+            <div className="absolute left-3 top-1/2 -translate-y-1/2">
+              <Users className="w-4 h-4 text-muted-foreground" />
+            </div>
+          </div>
+
+          {/* View Tabs */}
+          <Tabs defaultValue="list" onValueChange={(v) => setViewMode(v as "list" | "byShop")}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="list">List View</TabsTrigger>
+              <TabsTrigger value="byShop">Group by Shop</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="list" className="mt-4">
+              {isLoading ? (
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-20 w-full rounded-lg" />
+                  ))}
+                </div>
+              ) : filteredFollowers.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No followers found</p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-2">
+                  {filteredFollowers.map((follower, index) => (
+                    <div
+                      key={`${follower.customer_id}-${index}`}
+                      className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+                    >
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback className="bg-purple-100 text-purple-700">
+                          {getInitials(follower.customer_name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-medium text-sm truncate">
+                            {follower.customer_name}
+                          </p>
+                          {follower.shop_name && (
+                            <Badge variant="outline" className="text-xs">
+                              <Store className="w-3 h-3 mr-1" />
+                              {follower.shop_name}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Mail className="w-3 h-3" />
+                            {follower.customer_email || "No email"}
+                          </p>
+                          <p className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Calendar className="w-3 h-3" />
+                            Followed since {formatDate(follower.followed_at)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="byShop" className="mt-4">
+              {isLoading ? (
+                <div className="space-y-4">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-32 w-full rounded-lg" />
+                  ))}
+                </div>
+              ) : Object.keys(followersByShop).length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No followers found</p>
+                </div>
+              ) : (
+                <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-2">
+                  {Object.entries(followersByShop).map(([shopId, shopData]) => (
+                    <Card key={shopId} className="overflow-hidden">
+                      <CardHeader className="bg-muted/30 py-3">
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <Store className="w-4 h-4" />
+                          {shopData.shopName}
+                          <Badge variant="secondary" className="ml-2">
+                            {shopData.followers.length} follower{shopData.followers.length !== 1 ? "s" : ""}
+                          </Badge>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-3">
+                        <div className="space-y-2">
+                          {shopData.followers.map((follower, idx) => (
+                            <div
+                              key={`${shopId}-${follower.customer_id}-${idx}`}
+                              className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors"
+                            >
+                              <Avatar className="h-8 w-8">
+                                <AvatarFallback className="bg-purple-100 text-purple-700 text-xs">
+                                  {getInitials(follower.customer_name)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-sm truncate">
+                                  {follower.customer_name}
+                                </p>
+                                <p className="text-xs text-muted-foreground truncate">
+                                  {follower.customer_email || "No email"}
+                                </p>
+                              </div>
+                              <p className="text-xs text-muted-foreground whitespace-nowrap">
+                                {formatDate(follower.followed_at)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        <div className="flex justify-end pt-4">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Close
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Interactive Number Card Component ─────────────────────────────────────────
 
 interface InteractiveNumberCardProps {
@@ -377,6 +601,10 @@ interface InteractiveNumberCardProps {
   totalLabel?: string;
   onViewDetails?: () => void;
   suffix?: string;
+  // New props for followers
+  isFollowerCard?: boolean;
+  followersData?: Follower[];
+  onLoadFollowers?: () => Promise<Follower[]>;
 }
 
 function InteractiveNumberCard({
@@ -388,12 +616,31 @@ function InteractiveNumberCard({
   totalLabel = "Total",
   onViewDetails,
   suffix = "",
+  isFollowerCard = false,
+  followersData = [],
+  onLoadFollowers,
 }: InteractiveNumberCardProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [followers, setFollowers] = useState<Follower[]>(followersData);
+  const [isLoadingFollowers, setIsLoadingFollowers] = useState(false);
 
-  const handleClick = () => {
+  const handleClick = async () => {
     setIsDialogOpen(true);
     if (onViewDetails) onViewDetails();
+    
+    // If this is the Total Followers card and we need to load followers
+    if (isFollowerCard && followers.length === 0 && onLoadFollowers) {
+      setIsLoadingFollowers(true);
+      try {
+        const loadedFollowers = await onLoadFollowers();
+        setFollowers(loadedFollowers);
+      } catch (error) {
+        console.error("Error loading followers:", error);
+        toast.error("Failed to load followers list");
+      } finally {
+        setIsLoadingFollowers(false);
+      }
+    }
   };
 
   const totalBreakdownValue = breakdown.reduce((sum, item) => sum + (item.value || 0), 0);
@@ -425,98 +672,107 @@ function InteractiveNumberCard({
         </CardContent>
       </Card>
 
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-2xl max-w-[95vw] max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <div className={`p-2 ${color} rounded-full`}>
-                {icon}
-              </div>
-              {title} Breakdown
-            </DialogTitle>
-            <DialogDescription>
-              Detailed breakdown of {title.toLowerCase()} - Total: {formatValue(value)}{suffix}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="mt-4 space-y-6">
-            <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg p-4">
-              <div className="flex justify-between items-center">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Overall {title}</p>
-                  <p className="text-3xl font-bold">{formatValue(value)}{suffix}</p>
+      {isFollowerCard ? (
+        <FollowersDialog
+          open={isDialogOpen}
+          onOpenChange={setIsDialogOpen}
+          followers={followers}
+          isLoading={isLoadingFollowers}
+        />
+      ) : (
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogContent className="sm:max-w-2xl max-w-[95vw] max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <div className={`p-2 ${color} rounded-full`}>
+                  {icon}
                 </div>
-                <div className="text-right">
-                  <p className="text-sm text-muted-foreground">{totalLabel}</p>
-                  <p className="text-sm font-medium">{formatValue(totalBreakdownValue)} accounted</p>
-                </div>
-              </div>
-            </div>
+                {title} Breakdown
+              </DialogTitle>
+              <DialogDescription>
+                Detailed breakdown of {title.toLowerCase()} - Total: {formatValue(value)}{suffix}
+              </DialogDescription>
+            </DialogHeader>
 
-            <div className="space-y-3">
-              <h4 className="font-semibold text-lg">Breakdown</h4>
-              {breakdown.filter(item => item.value > 0 || item.label.includes("──")).map((item, index) => (
-                <div key={index} className="space-y-1">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      {item.color && item.color !== "bg-transparent" && (
-                        <div className={`w-3 h-3 rounded-full ${item.color}`} />
-                      )}
-                      <span className="text-sm font-medium">{item.label}</span>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <span className="text-sm font-semibold">{formatValue(item.value)}</span>
-                      {item.percentage !== undefined && (
-                        <span className="text-xs text-muted-foreground w-12 text-right">
-                          {item.percentage.toFixed(1)}%
-                        </span>
-                      )}
-                    </div>
+            <div className="mt-4 space-y-6">
+              <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg p-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Overall {title}</p>
+                    <p className="text-3xl font-bold">{formatValue(value)}{suffix}</p>
                   </div>
-                  {item.percentage !== undefined && item.value > 0 && (
-                    <Progress value={item.percentage} className="h-2" />
-                  )}
+                  <div className="text-right">
+                    <p className="text-sm text-muted-foreground">{totalLabel}</p>
+                    <p className="text-sm font-medium">{formatValue(totalBreakdownValue)} accounted</p>
+                  </div>
                 </div>
-              ))}
-            </div>
+              </div>
 
-            <div className="pt-4 border-t">
-              <h4 className="font-semibold text-lg mb-3">Distribution</h4>
-              <div className="flex flex-wrap gap-2">
-                {breakdown.filter(item => item.value > 0 && !item.label.includes("──")).map((item, index) => {
-                  const percentage = item.percentage || (totalBreakdownValue > 0 ? (item.value / totalBreakdownValue) * 100 : 0);
-                  return (
-                    <div
-                      key={index}
-                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50"
-                    >
-                      {item.color && item.color !== "bg-transparent" && (
-                        <div className={`w-2 h-2 rounded-full ${item.color}`} />
-                      )}
-                      <span className="text-xs">{item.label}</span>
-                      <span className="text-xs font-medium">{percentage.toFixed(1)}%</span>
+              <div className="space-y-3">
+                <h4 className="font-semibold text-lg">Breakdown</h4>
+                {breakdown.filter(item => item.value > 0 || item.label.includes("──")).map((item, index) => (
+                  <div key={index} className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        {item.color && item.color !== "bg-transparent" && (
+                          <div className={`w-3 h-3 rounded-full ${item.color}`} />
+                        )}
+                        <span className="text-sm font-medium">{item.label}</span>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <span className="text-sm font-semibold">{formatValue(item.value)}</span>
+                        {item.percentage !== undefined && (
+                          <span className="text-xs text-muted-foreground w-12 text-right">
+                            {item.percentage.toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  );
-                })}
+                    {item.percentage !== undefined && item.value > 0 && (
+                      <Progress value={item.percentage} className="h-2" />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-4 border-t">
+                <h4 className="font-semibold text-lg mb-3">Distribution</h4>
+                <div className="flex flex-wrap gap-2">
+                  {breakdown.filter(item => item.value > 0 && !item.label.includes("──")).map((item, index) => {
+                    const percentage = item.percentage || (totalBreakdownValue > 0 ? (item.value / totalBreakdownValue) * 100 : 0);
+                    return (
+                      <div
+                        key={index}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50"
+                      >
+                        {item.color && item.color !== "bg-transparent" && (
+                          <div className={`w-2 h-2 rounded-full ${item.color}`} />
+                        )}
+                        <span className="text-xs">{item.label}</span>
+                        <span className="text-xs font-medium">{percentage.toFixed(1)}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4">
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+                  Close
+                </Button>
+                {onViewDetails && (
+                  <Button onClick={() => {
+                    setIsDialogOpen(false);
+                    onViewDetails();
+                  }}>
+                    View All {title}
+                  </Button>
+                )}
               </div>
             </div>
-
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-                Close
-              </Button>
-              {onViewDetails && (
-                <Button onClick={() => {
-                  setIsDialogOpen(false);
-                  onViewDetails();
-                }}>
-                  View All {title}
-                </Button>
-              )}
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   );
 }
@@ -1326,6 +1582,7 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
             completed_orders: s.completed_orders || 0,
             pending_orders: s.pending_orders || 0,
             total_orders: s.total_orders || 0,
+            followers_list: s.followers_list || [],
           })),
         );
       }
@@ -1334,6 +1591,33 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
       setShops([]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Function to load all followers from all shops
+  const loadAllFollowers = async (): Promise<Follower[]> => {
+    try {
+      const params = new URLSearchParams();
+      const shopsResponse = await AxiosInstance.get(`/admin-shops/get_shops_list/?${params.toString()}`);
+      
+      if (shopsResponse.data.success) {
+        const allFollowers: Follower[] = [];
+        shopsResponse.data.shops.forEach((shop: any) => {
+          if (shop.followers_list && shop.followers_list.length > 0) {
+            allFollowers.push(...shop.followers_list.map((f: any) => ({
+              ...f,
+              shop_name: shop.name,
+              shop_id: shop.id,
+            })));
+          }
+        });
+        return allFollowers;
+      }
+      return [];
+    } catch (error) {
+      console.error("Error loading followers:", error);
+      toast.error("Failed to load followers list");
+      return [];
     }
   };
 
@@ -1609,6 +1893,8 @@ export default function Shops({ loaderData }: { loaderData: LoaderData }) {
                     ...followersBreakdown.byRange,
                   ]}
                   totalLabel="Shops"
+                  isFollowerCard={true}
+                  onLoadFollowers={loadAllFollowers}
                 />
 
                 <InteractiveNumberCard
