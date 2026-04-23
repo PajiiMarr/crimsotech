@@ -1123,6 +1123,8 @@ class Order(models.Model):
         blank=True,
         related_name='orders'
     )
+    transaction_fee = models.FloatField(null=True, blank=True)
+    shipping_fee = models.IntegerField(null=True, blank=True)
     approval = models.CharField(max_length=20, choices=[
         ('pending', 'Pending'),
         ('accepted', 'Accepted'),
