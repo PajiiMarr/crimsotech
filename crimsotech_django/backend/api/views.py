@@ -53757,3 +53757,4 @@ class ShopFollowersView(APIView):
             'total_followers': followers.count(),
             'followers': followers_data
         })
+        
