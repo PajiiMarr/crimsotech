@@ -17877,17 +17877,55 @@ class SellerDashboard(viewsets.ViewSet):
         refund_change = refund_requests - previous_refunds
         
         # Draft products count - only for this specific shop
+        # Draft products count - only for this specific shop
         draft_count = Product.objects.filter(
             shop=shop,
             upload_status='draft',
             is_removed=False
         ).count()
         
+        # Calculate total VAT, transaction fees, and shipping fees from orders
+        orders_in_period = Order.objects.filter(
+            checkout__cart_item__product__shop=shop,
+            created_at__range=[start_datetime, end_datetime],
+            status='delivered'
+        ).exclude(
+            status__in=['cancelled', 'refunded']
+        ).distinct()
+        
+        total_vat = Decimal('0.00')
+        total_transaction_fees = Decimal('0.00')
+        total_shipping_fees = Decimal('0.00')
+        
+        for order in orders_in_period:
+            # Calculate VAT from checkout items
+            checkout_items = Checkout.objects.filter(order=order)
+            for checkout_item in checkout_items:
+                if checkout_item.cart_item and checkout_item.cart_item.variant:
+                    variant = checkout_item.cart_item.variant
+                    if variant.value_added_tax:
+                        vat_percentage = Decimal(str(variant.value_added_tax))
+                        base_price = variant.price or Decimal('0.00')
+                        vat_amount = base_price * (vat_percentage / Decimal('100'))
+                        total_vat += vat_amount * checkout_item.quantity
+            
+            # Add transaction fee if present
+            if order.transaction_fee:
+                total_transaction_fees += Decimal(str(order.transaction_fee))
+            # Add shipping fee if present (only for standard delivery)
+            if order.shipping_fee and order.delivery_method and 'standard' in order.delivery_method.lower():
+                total_shipping_fees += Decimal(str(order.shipping_fee))
+        
         return {
             'period_sales': float(current_period_sales),
+            'period_receivable': float(current_period_sales),
+            'period_received': float(current_period_sales),
             'period_delivery_fees': 0,
             'period_earnings': float(current_period_earnings),
             'period_orders': current_period_order_count,
+            'total_vat': float(total_vat),
+            'total_transaction_fees': float(total_transaction_fees),
+            'total_shipping_fees': float(total_shipping_fees),
             'low_stock_count': low_stock_count,
             'refund_requests': refund_requests,
             'sales_change': round(float(sales_change), 1),
@@ -25079,7 +25117,7 @@ class SellerOrderList(viewsets.ViewSet):
         )
         
         is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
-                                                  for keyword in ['pickup', 'store', 'collect'])
+                                                for keyword in ['pickup', 'store', 'collect'])
         
         shop_checkouts = Checkout.objects.filter(
             order=order
@@ -25090,7 +25128,7 @@ class SellerOrderList(viewsets.ViewSet):
         ).prefetch_related('cart_item__product__productmedia_set')
         
         order_items = []
-        total_amount = float(order.total_amount) 
+        total_amount = 0  # FIX: Start from 0 instead of order.total_amount
         
         for checkout in shop_checkouts:
             if checkout.direct_product_id and not checkout.cart_item:
@@ -25126,6 +25164,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "shipping_method": None,
                     "estimated_delivery": None
                 })
+                total_amount += float(checkout.total_amount)  # Add checkout amount
                 continue
             
             cart_item = checkout.cart_item
@@ -25183,7 +25222,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "shipping_method": shipping_method,
                 "estimated_delivery": estimated_delivery
             })
-            total_amount += float(checkout.total_amount)
+            total_amount += float(checkout.total_amount)  # Add checkout amount
         
         delivery_address = None
         if order.shipping_address:
@@ -25212,7 +25251,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "phone": order.user.contact_number or None
             },
             "status": shipping_status,
-            "total_amount": total_amount,
+            "total_amount": total_amount,  # FIX: This now only includes the shop's portion
             "payment_method": order.payment_method,
             "delivery_method": order.delivery_method,
             "shipping_method": "Standard Shipping" if not is_pickup else "Store Pickup",
@@ -25236,6 +25275,9 @@ class SellerOrderList(viewsets.ViewSet):
                 order_data["metadata"]["nearest_rider"] = nearest_rider_data
         
         return order_data
+
+
+    
     
     @action(detail=False, methods=['get'])
     def order_list(self, request):
@@ -26215,6 +26257,15 @@ class SellerOrderList(viewsets.ViewSet):
                 latest_delivery.status if latest_delivery else None
             )
             
+            # Calculate total VAT from all checkout items
+            total_vat = Decimal('0.00')
+            for checkout in checkouts:
+                if checkout.cart_item and checkout.cart_item.variant:
+                    variant = checkout.cart_item.variant
+                    if variant.value_added_tax and variant.price:
+                        vat_amount = variant.price * (Decimal(str(variant.value_added_tax)) / Decimal('100'))
+                        total_vat += vat_amount * checkout.quantity
+            
             # Extract rider comparison data from the latest delivery's metadata
             rider_comparison_data = None
             nearest_rider_data = None
@@ -26239,6 +26290,9 @@ class SellerOrderList(viewsets.ViewSet):
                     },
                     'status': shipping_status,
                     'total_amount': total_amount,
+                    'shipping_fee': float(order.shipping_fee) if order.shipping_fee else None,
+                    'transaction_fee': float(order.transaction_fee) if order.transaction_fee else None,
+                    'total_vat': float(total_vat),
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,

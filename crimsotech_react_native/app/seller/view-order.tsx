@@ -65,6 +65,8 @@ interface OrderItem {
   is_processed?: boolean;
   shipping_status?: string;
   waybill_url?: string;
+  vat?: number;
+  variant_vat?: number;
 }
 interface RiderAssignment {
   rider_name: string;
@@ -104,6 +106,9 @@ interface OrderDetails {
   };
   status: string;
   total_amount: number;
+  shipping_fee?: number;
+  transaction_fee?: number;
+  total_vat?: number;
   payment_method: string | null;
   delivery_method: string | null;
   delivery_address: string | null;
@@ -1168,10 +1173,24 @@ export default function SellerViewOrder() {
               <Text style={styles.summaryLabel}>Subtotal</Text>
               <Text style={styles.summaryValue}>{formatCurrency(subtotal)}</Text>
             </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Shipping Fee</Text>
-              <Text style={styles.summaryValue}>{formatCurrency(0)}</Text>
-            </View>
+            {order?.total_vat ? (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>VAT (Value Added Tax)</Text>
+                <Text style={styles.summaryValue}>{formatCurrency(order.total_vat)}</Text>
+              </View>
+            ) : null}
+            {order?.shipping_fee ? (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Shipping Fee</Text>
+                <Text style={styles.summaryValue}>{formatCurrency(order.shipping_fee)}</Text>
+              </View>
+            ) : null}
+            {order?.transaction_fee ? (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Transaction Fee</Text>
+                <Text style={styles.summaryValue}>{formatCurrency(order.transaction_fee)}</Text>
+              </View>
+            ) : null}
             <View style={styles.dividerLight} />
             <View style={styles.totalSummaryRow}>
               <Text style={styles.totalSummaryLabel}>Total</Text>
