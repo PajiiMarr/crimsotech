@@ -19,6 +19,8 @@ import AxiosInstance from '../../contexts/axios';
 
 interface DashboardSummary {
   period_sales?: number;
+  period_receivable?: number;
+  period_received?: number;
   period_orders?: number;
   low_stock_count?: number;
   refund_requests?: number;
@@ -29,7 +31,10 @@ interface DashboardSummary {
   pending_sales?: number; 
   available_balance?: number; 
   total_sales?: number;     
-  deductions?: number;   
+  deductions?: number;
+  total_vat?: number;
+  total_transaction_fees?: number;
+  total_shipping_fees?: number;
 }
 
 interface ShopPerformance {
@@ -76,9 +81,13 @@ function BreakdownModal({ visible, onClose, title, data }: BreakdownModalProps) 
       case 'Total Sales':
         return (
           <>
-            {renderBreakdownItem('Total Sales', `₱${(data.period_sales || 0).toLocaleString('en-PH')}`, 'cash-outline')}
+            {renderBreakdownItem('Total Sales (Gross)', `₱${(data.period_sales || 0).toLocaleString('en-PH')}`, 'cash-outline')}
+            {renderBreakdownItem('Receivable Amount', `₱${(data.period_receivable || 0).toLocaleString('en-PH')}`, 'wallet-outline')}
+            {renderBreakdownItem('Received Amount', `₱${(data.period_received || 0).toLocaleString('en-PH')}`, 'checkmark-circle-outline')}
+            {renderBreakdownItem('VAT (Tax)', `₱${(data.total_vat || 0).toLocaleString('en-PH')}`, 'receipt-outline')}
+            {renderBreakdownItem('Transaction Fees', `₱${(data.total_transaction_fees || 0).toLocaleString('en-PH')}`, 'card-outline')}
+            {renderBreakdownItem('Shipping Fees', `₱${(data.total_shipping_fees || 0).toLocaleString('en-PH')}`, 'bicycle-outline')}
             {renderBreakdownItem('Period Earnings', `₱${(data.period_earnings || 0).toLocaleString('en-PH')}`, 'trending-up-outline')}
-            {renderBreakdownItem('Delivery Fees', `₱${(data.period_delivery_fees || 0).toLocaleString('en-PH')}`, 'bicycle-outline')}
             {renderBreakdownItem('Sales Change', `${data.sales_change >= 0 ? '+' : ''}${data.sales_change?.toFixed(1) || 0}%`, 'stats-chart-outline')}
             {renderBreakdownItem('Date Range', `${data.date_range_days || 0} days`, 'calendar-outline')}
           </>
@@ -438,6 +447,75 @@ export default function Dashboard() {
     </View>
     <Text style={styles.statValue}>{formatCurrency(summary.deductions || 0)}</Text>
     <Text style={styles.statLabel}>Deductions</Text>
+  </TouchableOpacity>
+</View>
+
+{/* Period Sales Breakdown Section */}
+<Text style={[styles.sectionLabel, styles.sectionMargin]}>Period Sales Breakdown (Last 30 Days)</Text>
+<View style={styles.statsGrid}>
+  {/* Period Receivable */}
+  <TouchableOpacity 
+    style={styles.statCard} 
+    onPress={() => showBreakdown('Period Receivable', 'summary')}
+    activeOpacity={0.7}
+  >
+    <View style={[styles.statIcon, { backgroundColor: '#E0E7FF' }]}>
+      <Ionicons name="wallet-outline" size={20} color="#4F46E5" />
+    </View>
+    <Text style={styles.statValue}>{formatCurrency(summary.period_receivable || 0)}</Text>
+    <Text style={styles.statLabel}>Receivable</Text>
+  </TouchableOpacity>
+
+  {/* Period Received */}
+  <TouchableOpacity 
+    style={styles.statCard} 
+    onPress={() => showBreakdown('Period Received', 'summary')}
+    activeOpacity={0.7}
+  >
+    <View style={[styles.statIcon, { backgroundColor: '#D1FAE5' }]}>
+      <Ionicons name="checkmark-circle-outline" size={20} color="#059669" />
+    </View>
+    <Text style={styles.statValue}>{formatCurrency(summary.period_received || 0)}</Text>
+    <Text style={styles.statLabel}>Received</Text>
+  </TouchableOpacity>
+
+  {/* VAT/Tax */}
+  <TouchableOpacity 
+    style={styles.statCard} 
+    onPress={() => showBreakdown('Total Sales', 'summary')}
+    activeOpacity={0.7}
+  >
+    <View style={[styles.statIcon, { backgroundColor: '#FEF3C7' }]}>
+      <Ionicons name="receipt-outline" size={20} color="#D97706" />
+    </View>
+    <Text style={styles.statValue}>{formatCurrency(summary.total_vat || 0)}</Text>
+    <Text style={styles.statLabel}>VAT</Text>
+  </TouchableOpacity>
+
+  {/* Transaction Fees */}
+  <TouchableOpacity 
+    style={styles.statCard} 
+    onPress={() => showBreakdown('Total Sales', 'summary')}
+    activeOpacity={0.7}
+  >
+    <View style={[styles.statIcon, { backgroundColor: '#FEE2E2' }]}>
+      <Ionicons name="card-outline" size={20} color="#DC2626" />
+    </View>
+    <Text style={styles.statValue}>{formatCurrency(summary.total_transaction_fees || 0)}</Text>
+    <Text style={styles.statLabel}>Transaction Fees</Text>
+  </TouchableOpacity>
+
+  {/* Shipping Fees */}
+  <TouchableOpacity 
+    style={styles.statCard} 
+    onPress={() => showBreakdown('Total Sales', 'summary')}
+    activeOpacity={0.7}
+  >
+    <View style={[styles.statIcon, { backgroundColor: '#F0FDF4' }]}>
+      <Ionicons name="bicycle-outline" size={20} color="#16A34A" />
+    </View>
+    <Text style={styles.statValue}>{formatCurrency(summary.total_shipping_fees || 0)}</Text>
+    <Text style={styles.statLabel}>Shipping Fees</Text>
   </TouchableOpacity>
 </View>
 

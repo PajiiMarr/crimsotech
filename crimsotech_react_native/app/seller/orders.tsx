@@ -447,6 +447,7 @@ const filterOrders = () => {
     const config = STATUS_CONFIG[statusKey] || STATUS_CONFIG.default;
     return config.color;
   };
+  const totalOrderAmount = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
 
   const counts = {
     all: orders.length,
@@ -526,8 +527,8 @@ const filterOrders = () => {
           >
             <View style={styles.statsContainer}>
               <View style={styles.statCard}>
-                <Text style={styles.statValue}>{counts.all}</Text>
-                <Text style={styles.statLabel}>Total</Text>
+                <Text style={styles.statValue}>{formatCurrency(totalOrderAmount)}</Text>
+                <Text style={styles.statLabel}>Total Amount</Text>
               </View>
               <View style={styles.statCard}>
                 <Text style={[styles.statValue, { color: "#f59e0b" }]}>
@@ -817,7 +818,7 @@ const filterOrders = () => {
                         {order.payment_method || "N/A"}
                       </Text>
                       <Text style={styles.totalAmount}>
-                        {formatCurrency(order.total_amount)}
+                        ₱{Number(order.total_amount).toFixed(2)}
                       </Text>
                     </View>
 
