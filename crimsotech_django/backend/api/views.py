@@ -17818,10 +17818,19 @@ class RiderStatus(viewsets.ViewSet):
         elif is_accepting_deliveries is None:
             is_accepting_deliveries = rider.is_accepting_deliveries
 
+        old_status = rider.availability_status
+        old_accepting = rider.is_accepting_deliveries
+
         rider.availability_status = availability_status
         rider.is_accepting_deliveries = bool(is_accepting_deliveries)
         rider.last_status_update = timezone.now()
         rider.save()
+
+        # Create log for rider status update
+        Logs.objects.create(
+            user=rider.rider,
+            action=f"Rider {rider.rider.username} updated status from {old_status} to {availability_status}, accepting deliveries: {old_accepting} -> {bool(is_accepting_deliveries)}"
+        )
 
         return Response({
             'success': True,
@@ -17834,7 +17843,6 @@ class RiderStatus(viewsets.ViewSet):
                 'last_status_update': rider.last_status_update,
             }
         }, status=status.HTTP_200_OK)
-
 
 class CustomerShops(APIView):
 
@@ -18163,6 +18171,22 @@ class CustomerShops(APIView):
 
                 shop.save()
 
+                # Create log for shop creation
+                Logs.objects.create(
+                    user=user,
+                    action=f"Customer {user.username} created shop '{shop.name}' (pending approval)"
+                )
+
+                # Geocoding result notification (only if geocoding failed)
+                if not latitude or not longitude:
+                    Notification.objects.create(
+                        user=user,
+                        title='Shop Location Notice',
+                        type='system',
+                        message=f'Your shop "{shop.name}" was created but we could not automatically determine its coordinates. Please ensure your address is correct.',
+                        is_read=False
+                    )
+
                 # Log geocoding result
                 if latitude and longitude:
                     logger.info(f"📍 Shop '{shop.name}' created with coordinates: ({latitude}, {longitude})")
@@ -18174,7 +18198,7 @@ class CustomerShops(APIView):
                     Notification.objects.create(
                         user=admin_user,
                         title='New Shop Pending Approval',
-                        type='shop_pending_approval',
+                        type='system',
                         message=f'A new shop "{shop.name}" has been submitted with legal documents and is awaiting your approval.'
                     )
 
@@ -18313,6 +18337,12 @@ class CustomerShops(APIView):
             
             shop.save()
 
+            # Create log for address update
+            Logs.objects.create(
+                user=customer.customer,
+                action=f"Customer {customer.customer.username} updated return address for shop '{shop.name}'"
+            )
+
             # Get final coordinates for response
             final_lat = float(shop.latitude) if shop.latitude else (float(latitude) if latitude else None)
             final_lng = float(shop.longitude) if shop.longitude else (float(longitude) if longitude else None)
@@ -18340,7 +18370,6 @@ class CustomerShops(APIView):
             return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
 
 
 class CustomerShopsAddSeller(viewsets.ViewSet):
@@ -18353,6 +18382,18 @@ class CustomerShopsAddSeller(viewsets.ViewSet):
 
             serializer = ShopSerializer(shop, context={'request': request})
 
+            # Create log for shop access
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    user = User.objects.get(id=user_id)
+                    Logs.objects.create(
+                        user=user,
+                        action=f"User {user.username} accessed shop details for shop '{shop.name}'"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             return Response({
                 'success': True,
                 'shop': serializer.data
@@ -18362,6 +18403,7 @@ class CustomerShopsAddSeller(viewsets.ViewSet):
                 'success': False,
                 'message': 'Shop not found'
             }, status=status.HTTP_404_NOT_FOUND)
+
 
 class SellerDashboard(viewsets.ViewSet):
     """
@@ -18392,6 +18434,18 @@ class SellerDashboard(viewsets.ViewSet):
                     {'error': 'Shop not found', 'success': False},
                     status=status.HTTP_404_NOT_FOUND
                 )
+            
+            # Create log for seller accessing dashboard
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    user = User.objects.get(id=user_id)
+                    Logs.objects.create(
+                        user=user,
+                        action=f"Seller {user.username} accessed dashboard for shop '{shop.name}'"
+                    )
+                except User.DoesNotExist:
+                    pass
             
             # Parse dates
             if start_date:
@@ -18632,7 +18686,6 @@ class SellerDashboard(viewsets.ViewSet):
         
         refund_change = refund_requests - previous_refunds
         
-        # Draft products count - only for this specific shop
         # Draft products count - only for this specific shop
         draft_count = Product.objects.filter(
             shop=shop,
@@ -18966,6 +19019,18 @@ class SellerDashboard(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
+            # Create log for seller accessing low stock products
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    user = User.objects.get(id=user_id)
+                    Logs.objects.create(
+                        user=user,
+                        action=f"Seller {user.username} accessed low stock products list"
+                    )
+                except User.DoesNotExist:
+                    pass
+            
             low_stock_variants = Variants.objects.filter(
                 product__shop_id=shop_id,
                 product__upload_status='published',
@@ -19141,8 +19206,7 @@ class SellerDashboard(viewsets.ViewSet):
                 {'error': str(e), 'success': False},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
+        
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
@@ -19165,6 +19229,16 @@ class SellerProducts(viewsets.ModelViewSet):
 
         if str(product.customer.customer_id) != str(user_id):
             return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Create log for product status update
+        try:
+            user = User.objects.get(id=user_id)
+            Logs.objects.create(
+                user=user,
+                action=f"Seller {user.username} performed {action_type} on product '{product.name}' (ID: {product_id})"
+            )
+        except User.DoesNotExist:
+            pass
 
         if action_type == 'archive':
             if product.upload_status != 'published':
@@ -19246,6 +19320,16 @@ class SellerProducts(viewsets.ModelViewSet):
         # Ownership check
         if str(product.customer.customer_id) != str(user_id):
             return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Create log for product update
+        try:
+            user = User.objects.get(id=user_id)
+            Logs.objects.create(
+                user=user,
+                action=f"Seller {user.username} updated product '{product.name}' (ID: {pk})"
+            )
+        except User.DoesNotExist:
+            pass
 
         # Collect update fields
         update_fields = []
@@ -19953,6 +20037,12 @@ class SellerProducts(viewsets.ModelViewSet):
                 # Save product
                 product = serializer.save()
                 
+                # Create log for product creation
+                Logs.objects.create(
+                    user=seller.customer,
+                    action=f"Seller {seller.customer.username} created product '{product.name}'"
+                )
+                
                 # Handle media files
                 media_files = request.FILES.getlist('media_files')
                 if len(media_files) < 3:
@@ -20199,10 +20289,6 @@ class SellerProducts(viewsets.ModelViewSet):
                 
                 # --- VAT HANDLING ---
                 # Get price for VAT calculation
-                                # --- VAT HANDLING ---
-                # Get price for VAT calculation
-                                # --- VAT HANDLING ---
-                # Get price for VAT calculation
                 price = variant_fields.get('price', Decimal('0'))
                 
                 # Check if VAT value is provided in the variant data
@@ -20396,6 +20482,12 @@ class SellerProducts(viewsets.ModelViewSet):
             # Validate UUID format
             uuid.UUID(str(user_id))
             seller = Customer.objects.select_related('customer').get(customer_id=user_id)
+            
+            # Create log for seller viewing products list
+            Logs.objects.create(
+                user=seller.customer,
+                action=f"Seller {seller.customer.username} viewed products list"
+            )
             
             queryset = Product.objects.filter(customer=seller)\
                 .select_related('shop', 'category_admin', 'category')\
@@ -20684,6 +20776,16 @@ class SellerProducts(viewsets.ModelViewSet):
                     "error": "You don't have permission to view this product"
                 }, status=status.HTTP_403_FORBIDDEN)
 
+            # Create log for seller viewing product
+            try:
+                user = User.objects.get(id=user_id)
+                Logs.objects.create(
+                    user=user,
+                    action=f"Seller {user.username} viewed product '{product.name}' (ID: {pk})"
+                )
+            except User.DoesNotExist:
+                pass
+
             variants_data = []
             for variant in product.variants.all():
                 options = []
@@ -20886,6 +20988,17 @@ class SellerProducts(viewsets.ModelViewSet):
                 return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
             if product.upload_status != 'draft':
                 return Response({"error": "Only draft products can be deleted"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create log for product deletion
+            try:
+                user = User.objects.get(id=user_id)
+                Logs.objects.create(
+                    user=user,
+                    action=f"Seller {user.username} deleted draft product '{product.name}' (ID: {pk})"
+                )
+            except User.DoesNotExist:
+                pass
+            
             product.delete()
             return Response({"success": True, "message": "Draft deleted successfully"}, status=status.HTTP_200_OK)
         except Product.DoesNotExist:
@@ -20970,6 +21083,17 @@ class SellerProducts(viewsets.ModelViewSet):
         # Ownership check — user_id is optional but enforced if provided
         if user_id and str(product.customer.customer_id) != str(user_id):
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Create log for variant bulk update
+        if user_id:
+            try:
+                user = User.objects.get(id=user_id)
+                Logs.objects.create(
+                    user=user,
+                    action=f"Seller {user.username} performed bulk update on variants for product '{product.name}' (ID: {pk})"
+                )
+            except User.DoesNotExist:
+                pass
 
         variants_data = request.data.get('variants', [])
         if not isinstance(variants_data, list):
@@ -21079,7 +21203,6 @@ class SellerProducts(viewsets.ModelViewSet):
                             errors.append({'id': variant_id, 'field': field, 'error': f'Invalid decimal value for {field}'})
 
             # VAT field at variant level
-                        # VAT field at variant level
             if 'value_added_tax' in v_data:
                 vat_val = v_data['value_added_tax']
                 if vat_val is None or vat_val == '':
@@ -21276,7 +21399,6 @@ class SellerProducts(viewsets.ModelViewSet):
             'success': True,
             'message': 'Media deleted successfully',
         }, status=status.HTTP_200_OK)
-
 
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
@@ -21686,6 +21808,18 @@ class CustomerProducts(viewsets.ModelViewSet):
         """
         Create a new personal listing with variants and media (no shop)
         """
+        # Create log for personal listing creation
+        user_id = request.data.get("customer_id")
+        if user_id:
+            try:
+                user = User.objects.get(id=user_id)
+                Logs.objects.create(
+                    user=user,
+                    action=f"Customer {user.username} created a new personal listing"
+                )
+            except User.DoesNotExist:
+                pass
+
         # Validate required fields - NO SHOP REQUIRED
         required_fields = ["name", "description", "condition", "customer_id"]
         missing_fields = [f for f in required_fields if f not in request.data]
@@ -22026,6 +22160,15 @@ class CustomerProducts(viewsets.ModelViewSet):
                 "price": str(variant.price) if variant.price else None,
                 "compare_price": str(variant.compare_price) if variant.compare_price else None,
                 "quantity": variant.quantity,
+                # Dimension fields
+                "length": str(variant.length) if variant.length else None,
+                "width": str(variant.width) if variant.width else None,
+                "height": str(variant.height) if variant.height else None,
+                "dimension_unit": variant.dimension_unit,
+                # VAT field at variant level
+                "value_added_tax": str(variant.value_added_tax) if variant.value_added_tax else "12.00",
+                "value_added_tax_amount": str(variant.vat_amount) if variant.price else "0.00",
+                "price_with_vat": str(variant.price_with_vat) if variant.price else None,
                 "is_active": variant.is_active,
                 "is_refundable": variant.is_refundable,
                 "refund_days": variant.refund_days,
@@ -22109,6 +22252,12 @@ class CustomerProducts(viewsets.ModelViewSet):
             uuid.UUID(str(user_id))
             customer = Customer.objects.select_related('customer').get(customer_id=user_id)
             
+            # Create log for customer viewing personal listings
+            Logs.objects.create(
+                user=customer.customer,
+                action=f"Customer {customer.customer.username} viewed personal listings"
+            )
+            
             # Only get personal listings (no shop)
             queryset = Product.objects.filter(customer=customer, shop__isnull=True)\
                 .select_related('category_admin', 'category')\
@@ -22129,6 +22278,15 @@ class CustomerProducts(viewsets.ModelViewSet):
                         "price": str(variant.price) if variant.price else None,
                         "compare_price": str(variant.compare_price) if variant.compare_price else None,
                         "quantity": variant.quantity,
+                        # Dimension fields
+                        "length": str(variant.length) if variant.length else None,
+                        "width": str(variant.width) if variant.width else None,
+                        "height": str(variant.height) if variant.height else None,
+                        "dimension_unit": variant.dimension_unit,
+                        # VAT field at variant level
+                        "value_added_tax": str(variant.value_added_tax) if variant.value_added_tax else "12.00",
+                        "value_added_tax_amount": str(variant.vat_amount) if variant.price else "0.00",
+                        "price_with_vat": str(variant.price_with_vat) if variant.price else None,
                         "is_active": variant.is_active,
                         "is_refundable": variant.is_refundable,
                         "refund_days": variant.refund_days,
@@ -22141,7 +22299,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                         "weight_unit": variant.weight_unit,
                         "critical_trigger": variant.critical_trigger,
                         "critical_stock": variant.critical_stock,
-                        "image": get_media_url(variant.image) if variant.image else None,  # FIXED: Use imported get_media_url
+                        "image": get_media_url(variant.image) if variant.image else None,
                         "original_price": str(variant.original_price) if variant.original_price else None,
                         "usage_period": variant.usage_period,
                         "usage_unit": variant.usage_unit,
@@ -22215,6 +22373,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                 "success": False,
                 "error": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
     @csrf_exempt
     @action(detail=False, methods=['post'], url_path='predict-from-image')
     def predict_category_from_image(self, request):
@@ -22373,8 +22532,8 @@ class CustomerProducts(viewsets.ModelViewSet):
             return Response({
                 'success': False,
                 'error': f'Image prediction failed: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)        
+
 class PublicProducts(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
 
@@ -22599,13 +22758,22 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     
     def list(self, request, *args, **kwargs):
         """Return list of products with all necessary info for display including VAT"""
+        # Create log for browsing public products
+        user_id = request.headers.get('X-User-Id')
+        if user_id:
+            try:
+                user = User.objects.get(id=user_id)
+                Logs.objects.create(
+                    user=user,
+                    action=f"User {user.username} browsed public products"
+                )
+            except User.DoesNotExist:
+                pass
+
         queryset = self.get_queryset()
         
         # Debug logging
         print(f"PublicProducts.list: Found {queryset.count()} products")
-        
-        # Get user_id for favorite checking
-        user_id = request.headers.get('X-User-Id')
         
         # Get ordered quantities for all products in the queryset
         product_ids = [str(p.id) for p in queryset]
@@ -22763,6 +22931,18 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     
     def retrieve(self, request, pk=None):
         """Return a single product with all variant details including VAT and ownership info"""
+        # Create log for viewing single product
+        user_id = request.headers.get('X-User-Id')
+        if user_id:
+            try:
+                user = User.objects.get(id=user_id)
+                Logs.objects.create(
+                    user=user,
+                    action=f"User {user.username} viewed product details for product ID: {pk}"
+                )
+            except User.DoesNotExist:
+                pass
+
         try:
             product = self.get_detail_queryset().get(pk=pk)
         except Product.DoesNotExist:
@@ -23295,7 +23475,8 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             import traceback
             traceback.print_exc()
             return Response({"error": str(e)}, status=500)
-        
+
+
 class AddToCartView(APIView):
     """
     Add a product/variant to the user's cart.
@@ -23382,6 +23563,12 @@ class AddToCartView(APIView):
                 existing_cart_item.quantity = new_quantity
                 existing_cart_item.save()
                 
+                # Create log for cart update
+                Logs.objects.create(
+                    user=user,
+                    action=f"User {user.username} updated cart item quantity to {new_quantity} for product '{product.name}' (variant: {variant.title})"
+                )
+                
                 print(f"Updated existing cart item {existing_cart_item.id} qty to {new_quantity}")
                 
                 return Response({
@@ -23413,6 +23600,12 @@ class AddToCartView(APIView):
                 existing_ordered_item.quantity = quantity
                 existing_ordered_item.save()
                 
+                # Create log for cart addition
+                Logs.objects.create(
+                    user=user,
+                    action=f"User {user.username} added product '{product.name}' (variant: {variant.title}) to cart, quantity: {quantity}"
+                )
+                
                 return Response({
                     "success": True,
                     "message": "Item added to cart successfully",
@@ -23429,6 +23622,12 @@ class AddToCartView(APIView):
                 variant=variant,
                 quantity=quantity,
                 is_ordered=False
+            )
+            
+            # Create log for cart addition
+            Logs.objects.create(
+                user=user,
+                action=f"User {user.username} added product '{product.name}' (variant: {variant.title}) to cart, quantity: {quantity}"
             )
             
             print(f"Created new cart item {cart_item.id}")
@@ -23449,6 +23648,7 @@ class AddToCartView(APIView):
                 "error": "Failed to add item to cart",
                 "details": str(e)
             }, status=500)
+
 
 class CartListView(APIView):
 
@@ -23685,6 +23885,12 @@ class CartListView(APIView):
             return Response({"error": "User not found"}, status=404)
 
         try:
+            # Create log for viewing cart
+            Logs.objects.create(
+                user=user,
+                action=f"User {user.username} viewed their cart"
+            )
+
             cart_items = CartItem.objects.filter(user=user, is_ordered=False)\
                 .select_related("product", "product__shop", "variant", "variant__product")\
                 .prefetch_related('product__productmedia_set')\
@@ -23841,6 +24047,17 @@ class CartListView(APIView):
             else:
                 return Response({"error": "Cart item has no product or variant"}, status=400)
 
+            # Create log for cart update
+            try:
+                user = User.objects.get(id=user_id)
+                product_name = cart_item.product.name if cart_item.product else "Unknown Product"
+                Logs.objects.create(
+                    user=user,
+                    action=f"User {user.username} updated cart quantity for '{product_name}' from {cart_item.quantity} to {quantity}"
+                )
+            except User.DoesNotExist:
+                pass
+
             # Update quantity
             cart_item.quantity = quantity
             cart_item.save()
@@ -23890,6 +24107,16 @@ class CartListView(APIView):
                 "variant_id": str(cart_item.variant.id) if cart_item.variant else None,
                 "name": cart_item.product.name if cart_item.product else "Unknown Product"
             }
+
+            # Create log for cart removal
+            try:
+                user = User.objects.get(id=user_id)
+                Logs.objects.create(
+                    user=user,
+                    action=f"User {user.username} removed '{item_info['name']}' from cart"
+                )
+            except User.DoesNotExist:
+                pass
 
             cart_item.delete()
             
@@ -24002,6 +24229,13 @@ class CartListView(APIView):
                             is_ordered=False
                         )
                         created = True
+                
+                # Create log for adding to cart
+                product_name = variant.product.name if variant.product else "Unknown Product"
+                Logs.objects.create(
+                    user=user,
+                    action=f"User {user.username} added product '{product_name}' (variant: {variant.title}) to cart, quantity: {quantity}"
+                )
 
         except IntegrityError as e:
             try:
@@ -24078,6 +24312,12 @@ class CartListView(APIView):
                     'success': False,
                     'error': 'User not found'
                 }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Create log for viewing vouchers
+            Logs.objects.create(
+                user=user,
+                action=f"User {user.username} viewed available vouchers"
+            )
             
             # Get current date for status calculation
             now = timezone.now().date()
@@ -24277,6 +24517,7 @@ class CartListView(APIView):
         
         return Response(variant_data)
 
+
 class CartBulkUpdateView(APIView):
     """
     Handle bulk updates to cart (update multiple quantities at once)
@@ -24298,6 +24539,12 @@ class CartBulkUpdateView(APIView):
         
         try:
             user = User.objects.get(pk=user_id)
+            
+            # Create log for bulk cart update
+            Logs.objects.create(
+                user=user,
+                action=f"User {user.username} performed bulk update on cart ({len(updates)} items)"
+            )
             
             for update in updates:
                 item_id = update.get("id")
@@ -24322,10 +24569,12 @@ class CartBulkUpdateView(APIView):
                     
                     if quantity < 1:
                         # If quantity is 0 or negative, remove the item
+                        product_name = cart_item.product.name if cart_item.product else "Unknown Product"
                         cart_item.delete()
                         results["success"].append({
                             "id": item_id,
-                            "action": "removed"
+                            "action": "removed",
+                            "product_name": product_name
                         })
                         continue
                     
@@ -24379,6 +24628,13 @@ class CartClearView(APIView):
         
         try:
             user = User.objects.get(pk=user_id)
+            
+            # Create log for clearing cart
+            Logs.objects.create(
+                user=user,
+                action=f"User {user.username} cleared their cart"
+            )
+            
             deleted_count, _ = CartItem.objects.filter(
                 user=user, 
                 is_ordered=False
@@ -24394,7 +24650,6 @@ class CartClearView(APIView):
             return Response({"error": "User not found"}, status=404)
         except Exception as e:
             return Response({"error": str(e)}, status=500)
-
 
 class CartItemDetailView(APIView):
     """
@@ -24419,6 +24674,17 @@ class CartItemDetailView(APIView):
                 is_ordered=False
             )
             
+            # Create log for viewing cart item details
+            try:
+                user = User.objects.get(id=user_id)
+                product_name = cart_item.product.name if cart_item.product else "Unknown Product"
+                Logs.objects.create(
+                    user=user,
+                    action=f"User {user.username} viewed cart item details for '{product_name}'"
+                )
+            except User.DoesNotExist:
+                pass
+            
             serializer = CartItemSerializer(cart_item, context={"request": request})
             return Response({
                 "success": True,
@@ -24429,7 +24695,6 @@ class CartItemDetailView(APIView):
             return Response({"error": "Cart item not found"}, status=404)
         except Exception as e:
             return Response({"error": str(e)}, status=500)
-
 
 
 class CartCountView(APIView):
@@ -24460,7 +24725,6 @@ class CartCountView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=500)
 
-
 class CartItemDetailView(APIView):
     """
     Get details of a single cart item
@@ -24484,6 +24748,17 @@ class CartItemDetailView(APIView):
                 is_ordered=False
             )
             
+            # Create log for viewing cart item details
+            try:
+                user = User.objects.get(id=user_id)
+                product_name = cart_item.product.name if cart_item.product else "Unknown Product"
+                Logs.objects.create(
+                    user=user,
+                    action=f"User {user.username} viewed cart item details for '{product_name}'"
+                )
+            except User.DoesNotExist:
+                pass
+            
             serializer = CartItemSerializer(cart_item, context={"request": request})
             return Response({
                 "success": True,
@@ -24494,7 +24769,6 @@ class CartItemDetailView(APIView):
             return Response({"error": "Cart item not found"}, status=404)
         except Exception as e:
             return Response({"error": str(e)}, status=500)
-
 
 class CartBulkUpdateView(APIView):
     """
@@ -24517,6 +24791,12 @@ class CartBulkUpdateView(APIView):
         
         try:
             user = User.objects.get(pk=user_id)
+            
+            # Create log for bulk cart update
+            Logs.objects.create(
+                user=user,
+                action=f"User {user.username} performed bulk update on cart ({len(updates)} items)"
+            )
             
             for update in updates:
                 item_id = update.get("id")
@@ -24541,10 +24821,12 @@ class CartBulkUpdateView(APIView):
                     
                     if quantity < 1:
                         # If quantity is 0 or negative, remove the item
+                        product_name = cart_item.product.name if cart_item.product else "Unknown Product"
                         cart_item.delete()
                         results["success"].append({
                             "id": item_id,
-                            "action": "removed"
+                            "action": "removed",
+                            "product_name": product_name
                         })
                         continue
                     
@@ -24598,6 +24880,13 @@ class CartClearView(APIView):
         
         try:
             user = User.objects.get(pk=user_id)
+            
+            # Create log for clearing cart
+            Logs.objects.create(
+                user=user,
+                action=f"User {user.username} cleared their cart"
+            )
+            
             deleted_count, _ = CartItem.objects.filter(
                 user=user, 
                 is_ordered=False
@@ -24613,7 +24902,6 @@ class CartClearView(APIView):
             return Response({"error": "User not found"}, status=404)
         except Exception as e:
             return Response({"error": str(e)}, status=500)
-
 
 class CartSummaryView(APIView):
     """
@@ -24631,6 +24919,12 @@ class CartSummaryView(APIView):
             return Response({"error": "User not found"}, status=404)
         
         try:
+            # Create log for viewing cart summary
+            Logs.objects.create(
+                user=user,
+                action=f"User {user.username} viewed cart summary"
+            )
+            
             cart_items = CartItem.objects.filter(user=user, is_ordered=False)\
                 .select_related("product", "variant")
             
@@ -24645,12 +24939,12 @@ class CartSummaryView(APIView):
                 
                 # Calculate value based on variant price or use product min price as fallback
                 if item.variant and item.variant.price:
-                    item_value = item.variant.price * item.quantity
+                    item_value = float(item.variant.price) * item.quantity
                     total_value += item_value
                 elif item.product:
                     # Use min price as estimate if no variant selected
                     min_price = item.product.min_price or 0
-                    item_value = min_price * item.quantity
+                    item_value = float(min_price) * item.quantity
                     total_value += item_value
                 
                 # Group by shop
@@ -24665,16 +24959,16 @@ class CartSummaryView(APIView):
                     
                     items_by_shop[shop_id]['item_count'] += item.quantity
                     if item.variant and item.variant.price:
-                        items_by_shop[shop_id]['total_value'] += item.variant.price * item.quantity
+                        items_by_shop[shop_id]['total_value'] += float(item.variant.price) * item.quantity
                     elif item.product.min_price:
-                        items_by_shop[shop_id]['total_value'] += item.product.min_price * item.quantity
+                        items_by_shop[shop_id]['total_value'] += float(item.product.min_price) * item.quantity
             
             return Response({
                 "success": True,
                 "summary": {
                     "total_items": total_items,
                     "unique_products": len(unique_products),
-                    "total_value": str(total_value),
+                    "total_value": float(total_value),
                     "items_by_shop": items_by_shop
                 }
             })
@@ -24708,6 +25002,12 @@ class BulkCartAddView(APIView):
             user = User.objects.get(pk=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
+        
+        # Create log for bulk cart addition
+        Logs.objects.create(
+            user=user,
+            action=f"User {user.username} performed bulk add to cart ({len(items)} items)"
+        )
         
         results = {
             "success": [],
@@ -24796,6 +25096,18 @@ class BulkCartAddView(APIView):
                 cart_item.quantity = new_quantity
                 cart_item.save()
                 
+                # Create individual log for each successful addition
+                if created:
+                    Logs.objects.create(
+                        user=user,
+                        action=f"User {user.username} added product '{product.name}' to cart, quantity: {quantity}"
+                    )
+                else:
+                    Logs.objects.create(
+                        user=user,
+                        action=f"User {user.username} updated cart quantity for '{product.name}' to {new_quantity}"
+                    )
+                
                 serializer = CartItemSerializer(cart_item, context={"request": request})
                 results["success"].append(serializer.data)
                 
@@ -24808,8 +25120,9 @@ class BulkCartAddView(APIView):
         return Response({
             "success": True,
             "results": results
-        })
-    
+        })    
+
+
 class CheckoutView(viewsets.ViewSet):
     """
     Simplified Checkout ViewSet
