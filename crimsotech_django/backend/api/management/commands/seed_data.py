@@ -29,17 +29,17 @@ class Command(BaseCommand):
                 admin_user = self.create_admin_user()
                 
                 # Create customers and shops matching frontend data
-                customers, shops = self.create_customers_and_shops()
+                # customers, shops = self.create_customers_and_shops()
                 
                 # Create categories
-                categories = self.create_categories(shops, admin_user)
+                categories = self.create_categories(admin_user)
                 
                 # # Create products matching frontend data
                 # products = self.create_products(customers, shops, categories, admin_user)
                 # self.create_engagement_data()
                 
                 # # Create boosts and boost plans
-                self.create_boosts_and_plans(shops, customers, admin_user)
+                self.create_boosts_and_plans(admin_user)
                 
                 # # Create shop follows (followers)
                 # self.create_shop_follows(shops, customers)
@@ -63,7 +63,7 @@ class Command(BaseCommand):
                 # # Create checkout analytics data
                 # self.create_order_analytics_data()
                 # # Create rider data
-                self.create_rider_data(customers, shops, admin_user)
+                # self.create_rider_data(customers, shops, admin_user)
                 
                 # # CREATE REFUND DATA
                 # # self.create_refund_data(products, customers, shops, admin_user)
@@ -6623,7 +6623,7 @@ class Command(BaseCommand):
     
     
     
-    def create_boosts_and_plans(self, shops, customers, admin_user):
+    def create_boosts_and_plans(self, admin_user):
         """Create boost plans, features, and active boosts with real references"""
         # First, let's clean up duplicate BoostPlans if they exist
         self.cleanup_duplicate_boost_plans()
