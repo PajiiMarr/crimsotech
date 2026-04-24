@@ -649,13 +649,13 @@ class GetRegistration(APIView):
 
 class Login(APIView):
     def get(self, request):
-        user_id = request.headers.get("X-User-Id")  # get from headers
+        user_id = request.headers.get("X-User-Id")
 
         if user_id:
             try:
                 user = User.objects.get(id=user_id)
                 data = {
-                    "user_id": str(user.id),  # Keep key as "user_id" but value from user.id
+                    "user_id": str(user.id),
                     "username": user.username,
                     "email": user.email,
                     "is_admin": user.is_admin,
@@ -687,6 +687,11 @@ class Login(APIView):
             
             # Check password using Django's check_password
             if not check_password(password, user.password):
+                # Create log for failed login attempt
+                Logs.objects.create(
+                    user=user,
+                    action=f"Failed login attempt for user {username}"
+                )
                 return Response(
                     {"error": "Invalid credentials"}, 
                     status=status.HTTP_401_UNAUTHORIZED
@@ -698,10 +703,16 @@ class Login(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
+        # Create log for successful login
+        Logs.objects.create(
+            user=user,
+            action=f"User {username} logged in successfully"
+        )
+        
         # Login successful
         return Response({
             "message": "Login successful",
-            "user_id": str(user.id),  # Keep key as "user_id" but value from user.id
+            "user_id": str(user.id),
             "username": user.username,
             "email": user.email,
             "is_admin": user.is_admin,
@@ -710,7 +721,7 @@ class Login(APIView):
             "is_moderator": user.is_moderator,
             "registration_stage": user.registration_stage
         })
-    
+
 class Register(APIView):
     def get(self, request):
         user_id = request.headers.get("X-User-Id")
@@ -776,6 +787,20 @@ class Register(APIView):
                 user.registration_stage = 2
                 user.save()
                 
+                # Create log for rider registration completion
+                Logs.objects.create(
+                    user=user,
+                    action=f"Rider {username} completed registration"
+                )
+                
+                # Create notification for rider registration completion
+                Notification.objects.create(
+                    user=user,
+                    title="Rider Registration Complete",
+                    message="Your rider account has been successfully created. Please wait for admin verification.",
+                    type="system"
+                )
+                
                 return Response({
                     "user_id": user.id,
                     "username": user.username,
@@ -809,6 +834,20 @@ class Register(APIView):
                         }
                     )
                     
+                    # Create log for customer registration
+                    Logs.objects.create(
+                        user=user,
+                        action=f"New customer {user.username} registered"
+                    )
+                    
+                    # Create welcome notification for new customer
+                    Notification.objects.create(
+                        user=user,
+                        title="Welcome to Ambasing!",
+                        message=f"Welcome {user.username}! Your account has been successfully created.",
+                        type="system"
+                    )
+                    
                     return Response({
                         "user_id": user.id,
                         "username": user.username,
@@ -834,8 +873,15 @@ class Register(APIView):
         serializer = UserSerializer(user, data=request.data, partial=True)
         if serializer.is_valid(raise_exception=True):
             serializer.save()
+            
+            # Create log for profile update
+            Logs.objects.create(
+                user=user,
+                action=f"User {user.username} updated their profile"
+            )
+            
             return Response(serializer.data)
-        
+               
 class Profiling(APIView):
     
     def _get_coordinates_from_address(self, street, barangay, city, province, country="Philippines"):
@@ -939,6 +985,12 @@ class Profiling(APIView):
         serializer = UserSerializer(data=data)
         if serializer.is_valid(raise_exception=True):
             saved_user = serializer.save()
+            
+            # Create log for user profiling creation
+            Logs.objects.create(
+                user=saved_user,
+                action=f"User {saved_user.username} created profile"
+            )
             
             response_data = serializer.data.copy()
             response_data['user_id'] = saved_user.id
@@ -1053,6 +1105,22 @@ class Profiling(APIView):
             # Log error but don't fail the profiling update
             print(f"[PROFILE] Error creating/updating shipping address: {str(e)}")
         
+        # Create log for profile update
+        Logs.objects.create(
+            user=updated_user,
+            action=f"User {updated_user.username} updated their profile information"
+        )
+        
+        # Create notification for profile update (only for important fields)
+        important_fields = ['contact_number', 'street', 'barangay', 'city', 'province']
+        if any(field in request.data for field in important_fields):
+            Notification.objects.create(
+                user=updated_user,
+                title="Profile Updated",
+                message="Your contact and address information has been updated successfully.",
+                type="system"
+            )
+        
         # Transform response to maintain frontend compatibility
         response_data = serializer.data.copy()
         response_data['user_id'] = updated_user.id
@@ -1063,7 +1131,7 @@ class Profiling(APIView):
             response_data['longitude'] = float(longitude)
         
         return Response(response_data, status=status.HTTP_200_OK)
-    
+        
 class VerifyNumber(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def user(self, request):
@@ -1239,8 +1307,7 @@ class VerifyNumber(viewsets.ViewSet):
 
         else:
             return Response({"error": "Invalid action type"}, status=400)
-
-            
+          
 class RiderRegistration(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='register')
     def register(self, request):
@@ -1350,6 +1417,32 @@ class RiderRegistration(viewsets.ViewSet):
             
             rider.save()
             
+            # Create log entry
+            Logs.objects.create(
+                user=user,
+                action=f"Rider registration submitted - Vehicle: {vehicle_type}, Plate: {plate_number}"
+            )
+            
+            # Create notification for admins/moderators
+            admin_users = User.objects.filter(is_admin=True)
+            for admin in admin_users:
+                Notification.objects.create(
+                    user=admin,
+                    title="New Rider Registration",
+                    message=f"New rider {user.username} has submitted registration. Please review their documents.",
+                    type="system",
+                    action_type="rider_verification",
+                    action_id=str(rider.rider_id)
+                )
+            
+            # Create notification for the rider
+            Notification.objects.create(
+                user=user,
+                title="Registration Submitted",
+                message="Your rider registration has been submitted successfully. Our team will review your application and notify you once approved.",
+                type="system"
+            )
+            
             return Response({
                 "message": "Rider application submitted successfully",
                 "user_id": str(user.id),
@@ -1409,6 +1502,18 @@ class AdminDashboard(viewsets.ViewSet):
             user_data = self._get_user_analytics_data(start_date, end_date, date_range_type)
             product_data = self._get_product_analytics_data(start_date, end_date)
             shop_data = self._get_shop_analytics_data(start_date, end_date)
+
+            # Create log for admin dashboard access
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed comprehensive dashboard for date range {start_date} to {end_date}"
+                    )
+                except User.DoesNotExist:
+                    pass
 
             comprehensive_data = {
                 'success': True,
@@ -1485,7 +1590,6 @@ class AdminDashboard(viewsets.ViewSet):
             current_platform_fees = current_completed_revenue * Decimal('0.05')
 
             # Calculate VAT collected from successful/completed orders
-            # VAT is calculated as price * (vat_percentage / 100) for each variant in completed orders
             vat_collected = Decimal('0')
             
             # Get all checkouts from completed orders
@@ -2337,7 +2441,6 @@ class AdminDashboard(viewsets.ViewSet):
         }
         return color_map.get(status.lower(), '#6b7280')
 
-
 class AdminAnalytics(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_comprehensive_analytics(self, request):
@@ -2405,6 +2508,13 @@ class AdminAnalytics(viewsets.ViewSet):
                 'refund_return_analytics': refund_return_data,
                 'report_moderation_analytics': report_moderation_data,
             }
+            
+            # Create log entry
+            if request.user and request.user.is_authenticated:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f"Admin analytics accessed - Range: {date_range_type}, Dates: {start_date} to {end_date}"
+                )
             
             return Response(comprehensive_data, status=status.HTTP_200_OK)
             
@@ -3276,7 +3386,7 @@ class AdminAnalytics(viewsets.ViewSet):
             4: 'Stage 4: Complete',
         }
         return stages.get(stage, f'Stage {stage or 0}')
-
+    
 class AdminProduct(viewsets.ViewSet):
     """
     Admin viewset for managing products with comprehensive data
@@ -3544,6 +3654,13 @@ class AdminProduct(viewsets.ViewSet):
                 'data_source': 'database'
             }
             
+            # Create log entry
+            if request.user and request.user.is_authenticated:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f"Admin accessed product metrics - Range: {range_type}, Products: {total_products}"
+                )
+            
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -3792,6 +3909,13 @@ class AdminProduct(viewsets.ViewSet):
                 'message': f'{total_count} products retrieved successfully',
                 'data_source': 'database'
             }
+            
+            # Create log entry
+            if request.user and request.user.is_authenticated:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f"Admin viewed products list - Search: '{search}', Category: {category}, Total: {total_count}"
+                )
             
             return Response(response_data, status=status.HTTP_200_OK)
             
@@ -4093,6 +4217,13 @@ class AdminProduct(viewsets.ViewSet):
                 "variants_with_proof": active_variants.filter(proof_image__isnull=False).count()
             }
             
+            # Create log entry
+            if request.user and request.user.is_authenticated:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f"Admin viewed product details: {product.name} (ID: {product_id})"
+                )
+            
             return Response({
                 "success": True,
                 "product": product_data,
@@ -4249,12 +4380,14 @@ class AdminProduct(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
+                    product_name = product.name
+                    
                     if product.customer:
                         product.customer.decrement_product_count()
                     
                     Logs.objects.create(
                         user=admin_user,
-                        action=f"Deleted draft product: {product.name}"
+                        action=f"Deleted draft product: {product_name}"
                     )
                     
                     product.delete()
@@ -4592,6 +4725,13 @@ class AdminProduct(viewsets.ViewSet):
                 
                 print(f"Created category: {category.name}, user: {category.user}")
             
+            # Create log entry
+            if request.user and request.user.is_authenticated:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f"Added new category: {clean_name}"
+                )
+            
             return Response({
                 'success': True,
                 'message': 'Category added successfully',
@@ -4641,6 +4781,13 @@ class AdminProduct(viewsets.ViewSet):
                 'message': f'{len(categories_data)} categories retrieved successfully'
             }
             
+            # Create log entry
+            if request.user and request.user.is_authenticated:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f"Admin viewed categories list - Total: {len(categories_data)}"
+                )
+            
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -4650,7 +4797,7 @@ class AdminProduct(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving categories: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-         
+                 
 class AdminShops(viewsets.ViewSet):
     """
     ViewSet for admin shop management with comprehensive endpoints
@@ -4959,6 +5106,18 @@ class AdminShops(viewsets.ViewSet):
                     status__in=['pending', 'under_review']
                 ).values('reported_shop').annotate(active_reports=Count('id'))
             }
+
+            # Create log for admin accessing all shops
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed all shops list"
+                    )
+                except User.DoesNotExist:
+                    pass
 
             shops_data = []
             total_completed_revenue_all = 0
@@ -5279,6 +5438,18 @@ class AdminShops(viewsets.ViewSet):
 
             # Calculate total revenue (completed + pending)
             total_revenue = completed_revenue + pending_revenue
+
+            # Create log for admin accessing shop metrics
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed shop metrics"
+                    )
+                except User.DoesNotExist:
+                    pass
 
             return Response({
                 'success': True,
@@ -5619,6 +5790,18 @@ class AdminShops(viewsets.ViewSet):
                 'order_status_breakdown': sales_breakdown['order_status_breakdown'],
                 **self.build_shop_legal_docs(shop),
             }
+
+            # Create log for admin viewing shop details
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} viewed shop details for '{shop.name}' (ID: {shop.id})"
+                    )
+                except User.DoesNotExist:
+                    pass
 
             return Response({
                 'success': True,
@@ -6628,6 +6811,13 @@ class AdminBoosting(viewsets.ViewSet):
                 }
             }
             
+            # Create log entry
+            if request.user and request.user.is_authenticated:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f"Admin accessed boost metrics - Range: {range_type}, Total boosts: {total_boosts}"
+                )
+            
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -6729,6 +6919,13 @@ class AdminBoosting(viewsets.ViewSet):
                 }
             }
             
+            # Create log entry
+            if request.user and request.user.is_authenticated:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f"Admin viewed boost plans - Total plans: {len(plans_data)}"
+                )
+            
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -6817,6 +7014,13 @@ class AdminBoosting(viewsets.ViewSet):
                 'message': 'Boosts retrieved successfully'
             }
             
+            # Create log entry
+            if request.user and request.user.is_authenticated:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f"Admin viewed boosts list - Total boosts: {len(boosts_data)}"
+                )
+            
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -6904,6 +7108,13 @@ class AdminBoosting(viewsets.ViewSet):
                     except BoostFeature.DoesNotExist:
                         print(f"Feature {feature_id} not found")
             
+            # Create log entry
+            if user:
+                Logs.objects.create(
+                    user=user,
+                    action=f"Created new boost plan: {boost_plan.name} - Price: {boost_plan.price}, Duration: {boost_plan.duration} {boost_plan.time_unit}"
+                )
+            
             response_data = {
                 'success': True,
                 'boost_plan': {
@@ -6954,6 +7165,14 @@ class AdminBoosting(viewsets.ViewSet):
                     setattr(boost_plan, field, request.data[field])
             
             boost_plan.save()
+            
+            # Create log entry
+            user = request.user if request.user.is_authenticated else None
+            if user:
+                Logs.objects.create(
+                    user=user,
+                    action=f"Updated boost plan: {boost_plan.name} (ID: {boost_plan_id})"
+                )
             
             response_data = {
                 'success': True,
@@ -7032,6 +7251,14 @@ class AdminBoosting(viewsets.ViewSet):
             
             boost_plan.save()
             
+            # Create log entry
+            user = request.user if request.user.is_authenticated else None
+            if user:
+                Logs.objects.create(
+                    user=user,
+                    action=f"Updated boost plan status: {boost_plan.name} - Action: {action_type}"
+                )
+            
             return Response({
                 'success': True,
                 'message': message,
@@ -7080,6 +7307,14 @@ class AdminBoosting(viewsets.ViewSet):
             # Soft delete by archiving
             boost_plan.status = 'archived'
             boost_plan.save()
+            
+            # Create log entry
+            user = request.user if request.user.is_authenticated else None
+            if user:
+                Logs.objects.create(
+                    user=user,
+                    action=f"Deleted (archived) boost plan: {boost_plan.name} (ID: {boost_plan_id})"
+                )
             
             response_data = {
                 'success': True,
@@ -7278,6 +7513,13 @@ class AdminBoosting(viewsets.ViewSet):
                 'actions': actions,
             }
             
+            # Create log entry
+            if request.user and request.user.is_authenticated:
+                Logs.objects.create(
+                    user=request.user,
+                    action=f"Admin viewed boost details: {boost.id} - Plan: {boost.boost_plan.name if boost.boost_plan else 'No plan'}"
+                )
+            
             return Response({
                 'success': True,
                 'boost': boost_data,
@@ -7382,6 +7624,17 @@ class AdminBoosting(viewsets.ViewSet):
                 boost.payment_verified_by = admin_user
                 message = "Boost approved successfully"
                 
+                # Create notification for the customer
+                if boost.customer and boost.customer.customer:
+                    notification = Notification.objects.create(
+                        user=boost.customer.customer,
+                        title="Boost Plan Approved",
+                        type="boost_approved",
+                        message=f"Your boost plan '{boost.boost_plan.name if boost.boost_plan else 'boost'}' has been approved and is now active.",
+                        is_read=False
+                    )
+                    self._send_websocket_notification(boost.customer.customer.id, notification)
+                
             elif action_type == 'reject':
                 # Reject pending boost
                 if boost.status != 'pending':
@@ -7399,6 +7652,17 @@ class AdminBoosting(viewsets.ViewSet):
                 boost.status = 'cancelled'
                 boost.payment_verified = False
                 message = "Boost rejected successfully"
+                
+                # Create notification for the customer
+                if boost.customer and boost.customer.customer:
+                    notification = Notification.objects.create(
+                        user=boost.customer.customer,
+                        title="Boost Plan Rejected",
+                        type="boost_rejected",
+                        message=f"Your boost plan '{boost.boost_plan.name if boost.boost_plan else 'boost'}' has been rejected. Reason: {reason}",
+                        is_read=False
+                    )
+                    self._send_websocket_notification(boost.customer.customer.id, notification)
                 
             elif action_type == 'suspend':
                 # Suspend active boost
@@ -7424,6 +7688,17 @@ class AdminBoosting(viewsets.ViewSet):
                 boost.status = 'suspended'
                 message = f"Boost suspended for {suspension_days} days"
                 
+                # Create notification for the customer
+                if boost.customer and boost.customer.customer:
+                    notification = Notification.objects.create(
+                        user=boost.customer.customer,
+                        title="Boost Plan Suspended",
+                        type="boost_suspended",
+                        message=f"Your boost plan has been suspended for {suspension_days} days. Reason: {reason}",
+                        is_read=False
+                    )
+                    self._send_websocket_notification(boost.customer.customer.id, notification)
+                
             elif action_type == 'resume':
                 # Resume suspended boost
                 if boost.status != 'suspended':
@@ -7434,6 +7709,17 @@ class AdminBoosting(viewsets.ViewSet):
                 
                 boost.status = 'active'
                 message = "Boost resumed successfully"
+                
+                # Create notification for the customer
+                if boost.customer and boost.customer.customer:
+                    notification = Notification.objects.create(
+                        user=boost.customer.customer,
+                        title="Boost Plan Resumed",
+                        type="boost_resumed",
+                        message=f"Your boost plan has been resumed.",
+                        is_read=False
+                    )
+                    self._send_websocket_notification(boost.customer.customer.id, notification)
                 
             elif action_type == 'cancel':
                 # Cancel active or suspended boost
@@ -7451,6 +7737,17 @@ class AdminBoosting(viewsets.ViewSet):
                 
                 boost.status = 'cancelled'
                 message = "Boost cancelled successfully"
+                
+                # Create notification for the customer
+                if boost.customer and boost.customer.customer:
+                    notification = Notification.objects.create(
+                        user=boost.customer.customer,
+                        title="Boost Plan Cancelled",
+                        type="boost_cancelled",
+                        message=f"Your boost plan has been cancelled. Reason: {reason}",
+                        is_read=False
+                    )
+                    self._send_websocket_notification(boost.customer.customer.id, notification)
                 
             elif action_type == 'renew':
                 # Renew expired boost
@@ -7482,6 +7779,17 @@ class AdminBoosting(viewsets.ViewSet):
                 boost.payment_verified_by = admin_user
                 message = "Boost renewed successfully"
                 
+                # Create notification for the customer
+                if boost.customer and boost.customer.customer:
+                    notification = Notification.objects.create(
+                        user=boost.customer.customer,
+                        title="Boost Plan Renewed",
+                        type="boost_renewed",
+                        message=f"Your boost plan has been renewed and is now active until {boost.end_date.strftime('%Y-%m-%d')}.",
+                        is_read=False
+                    )
+                    self._send_websocket_notification(boost.customer.customer.id, notification)
+                
             elif action_type == 'restore':
                 # Restore cancelled boost
                 if boost.status != 'cancelled':
@@ -7492,11 +7800,22 @@ class AdminBoosting(viewsets.ViewSet):
                 
                 boost.status = 'active'
                 message = "Boost restored successfully"
+                
+                # Create notification for the customer
+                if boost.customer and boost.customer.customer:
+                    notification = Notification.objects.create(
+                        user=boost.customer.customer,
+                        title="Boost Plan Restored",
+                        type="boost_restored",
+                        message=f"Your boost plan has been restored and is now active.",
+                        is_read=False
+                    )
+                    self._send_websocket_notification(boost.customer.customer.id, notification)
             
             # Save changes
             boost.save()
             
-            # Log the action (optional)
+            # Log the action
             Logs.objects.create(
                 user=admin_user,
                 action=f"Boost {action_type}: {boost.id} - {message}"
@@ -7517,6 +7836,46 @@ class AdminBoosting(viewsets.ViewSet):
                 {'success': False, 'error': f'Error updating boost status: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _send_websocket_notification(self, user_id, notification):
+        """
+        Send real-time notification via WebSocket to specific user
+        """
+        try:
+            channel_layer = get_channel_layer()
+            group_name = f'notifications_{user_id}'
+            
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': 'notification',
+                    'notification_id': str(notification.id),
+                    'title': notification.title,
+                    'message': notification.message,
+                    'notification_type': notification.type,
+                    'created_at': str(notification.created_at),
+                    'data': {}
+                }
+            )
+            
+            unread_count = Notification.objects.filter(
+                user_id=user_id,
+                is_read=False
+            ).count()
+            
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': 'unread_count',
+                    'count': unread_count
+                }
+            )
+            
+            print(f"WebSocket notification sent to user {user_id}")
+        except Exception as e:
+            print(f"Error sending websocket notification: {str(e)}")
+            traceback.print_exc()
+
 
 class AdminOrders(viewsets.ViewSet):
     def parse_date(self, date_str):
@@ -7833,6 +8192,18 @@ class AdminOrders(viewsets.ViewSet):
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
             
+            # Create log for admin accessing order metrics
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed order metrics"
+                    )
+                except User.DoesNotExist:
+                    pass
+            
             order_metrics = {
                 'total_orders': total_orders_in_period,
                 'pending_orders': pending_orders_in_period,
@@ -7922,6 +8293,18 @@ class AdminOrders(viewsets.ViewSet):
                 order=order_id
             )
             
+            # Create log for admin viewing order details
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} viewed order details for order #{order_id[:8]}"
+                    )
+                except User.DoesNotExist:
+                    pass
+            
             return JsonResponse({
                 'success': True,
                 'order': self._serialize_order(order)
@@ -7949,8 +8332,32 @@ class AdminOrders(viewsets.ViewSet):
         
         try:
             order = Order.objects.get(order=order_id)
+            old_status = order.status
             order.status = new_status
             order.save()
+            
+            # Create log for admin updating order status
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} updated order #{order_id[:8]} status from {old_status} to {new_status}"
+                    )
+                except User.DoesNotExist:
+                    pass
+            
+            # Create notification for customer about status change
+            Notification.objects.create(
+                user=order.user,
+                title='Order Status Updated',
+                type='order_update',
+                message=f'Your order #{order_id[:8]} status has been updated to {new_status}.',
+                related_order=order,
+                is_read=False
+            )
+            
             return Response({'success': True, 'message': f'Order status updated to {new_status}'})
         except Order.DoesNotExist:
             return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -7974,17 +8381,28 @@ class AdminOrders(viewsets.ViewSet):
             
             order.status = 'shipped'
             order.save()
+            
+            # Create log for admin marking order as shipped
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} marked order #{order_id[:8]} as shipped"
+                    )
+                except User.DoesNotExist:
+                    pass
 
-            try:
-                Notification.objects.create(
-                    user=order.user,
-                    title='Order Shipped',
-                    type='order',
-                    message=f'Your order #{str(order.order)[:8]} has been shipped.',
-                    is_read=False
-                )
-            except Exception as notif_error:
-                print(f"Failed to create notification: {notif_error}")
+            # Create notification for customer
+            Notification.objects.create(
+                user=order.user,
+                title='Order Shipped',
+                type='order_update',
+                message=f'Your order #{str(order.order)[:8]} has been shipped.',
+                related_order=order,
+                is_read=False
+            )
 
             return Response({'success': True, 'message': 'Order marked as shipped'})
         except Order.DoesNotExist:
@@ -8010,6 +8428,18 @@ class AdminOrders(viewsets.ViewSet):
             order.status = 'delivered'
             order.completed_at = timezone.now()
             order.save()
+            
+            # Create log for admin marking order as delivered
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} marked order #{order_id[:8]} as delivered"
+                    )
+                except User.DoesNotExist:
+                    pass
 
             # Release pending wallet balance to available for sellers
             try:
@@ -8042,23 +8472,22 @@ class AdminOrders(viewsets.ViewSet):
                         Notification.objects.create(
                             user=seller,
                             title='Payment Released',
-                            type='wallet',
+                            type='payment',
                             message=f'₱{shop_total:,.2f} from order #{str(order.order)[:8]} is now available in your wallet.',
                             is_read=False
                         )
             except Exception as wallet_error:
                 print(f"Error releasing wallet balance: {wallet_error}")
 
-            try:
-                Notification.objects.create(
-                    user=order.user,
-                    title='Order Delivered',
-                    type='order',
-                    message=f'Your order #{str(order.order)[:8]} has been delivered.',
-                    is_read=False
-                )
-            except Exception as notif_error:
-                print(f"Failed to create notification: {notif_error}")
+            # Create notification for customer
+            Notification.objects.create(
+                user=order.user,
+                title='Order Delivered',
+                type='order_update',
+                message=f'Your order #{str(order.order)[:8]} has been delivered.',
+                related_order=order,
+                is_read=False
+            )
 
             return Response({'success': True, 'message': 'Order marked as delivered'})
         except Order.DoesNotExist:
@@ -8087,17 +8516,28 @@ class AdminOrders(viewsets.ViewSet):
 
             order.status = 'refunded'
             order.save()
+            
+            # Create log for admin issuing refund
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} issued refund for order #{order_id[:8]} with reason: {reason}"
+                    )
+                except User.DoesNotExist:
+                    pass
 
-            try:
-                Notification.objects.create(
-                    user=order.user,
-                    title='Order Refunded',
-                    type='order',
-                    message=f'Your order #{str(order.order)[:8]} has been refunded. Reason: {reason}',
-                    is_read=False
-                )
-            except Exception as notif_error:
-                print(f"Failed to create notification: {notif_error}")
+            # Create notification for customer
+            Notification.objects.create(
+                user=order.user,
+                title='Order Refunded',
+                type='refund_update',
+                message=f'Your order #{str(order.order)[:8]} has been refunded. Reason: {reason}',
+                related_order=order,
+                is_read=False
+            )
 
             return Response({'success': True, 'message': 'Refund issued successfully'})
         except Order.DoesNotExist:
@@ -8217,12 +8657,24 @@ class AdminOrders(viewsets.ViewSet):
             rider_wallet.available_balance += compensation_amount
             rider_wallet.save()
             
+            # Create log for admin compensating rider
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} compensated rider {rider_user.username} with ₱{compensation_amount:,.2f} for failed delivery order #{order_id[:8]}"
+                    )
+                except User.DoesNotExist:
+                    pass
+            
             # Create transaction record
             WalletTransaction.objects.create(
                 wallet=rider_wallet,
                 amount=compensation_amount,
                 transaction_type='credit',
-                source_type='delivery_compensation',
+                source_type='withdrawal',
                 status='completed',
                 order=order,
                 user=rider_user
@@ -8232,8 +8684,9 @@ class AdminOrders(viewsets.ViewSet):
             Notification.objects.create(
                 user=rider_user,
                 title='Delivery Compensation',
-                type='wallet',
+                type='payment',
                 message=f'You have received ₱{compensation_amount:,.2f} compensation for failed delivery #{str(order.order)[:8]}.',
+                related_order=order,
                 is_read=False
             )
             
@@ -8247,8 +8700,6 @@ class AdminOrders(viewsets.ViewSet):
             return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-
 
 class AdminRiders(viewsets.ViewSet):
     def parse_date(self, date_str):
@@ -8413,6 +8864,18 @@ class AdminRiders(viewsets.ViewSet):
             all_time_total_riders = Rider.objects.all().count()
             all_time_total_deliveries = Delivery.objects.all().count()
             all_time_completed_deliveries = Delivery.objects.filter(status='delivered').count()
+            
+            # Create log for admin accessing rider metrics
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed rider metrics"
+                    )
+                except User.DoesNotExist:
+                    pass
             
             # Compile metrics - use date-filtered values for consistency
             rider_metrics = {
@@ -8722,6 +9185,18 @@ class AdminRiders(viewsets.ViewSet):
                 'delivery_set__order'
             ).get(rider_id=rider_id)
             
+            # Create log for admin viewing rider details
+            admin_user_id = request.headers.get('X-User-Id')
+            if admin_user_id:
+                try:
+                    admin_user = User.objects.get(id=admin_user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} viewed rider details for {rider.rider.username}"
+                    )
+                except User.DoesNotExist:
+                    pass
+            
             # Get rider's delivery history with date range filter
             deliveries_qs = rider.delivery_set.select_related('order').all()
             if start_date and end_date:
@@ -8913,11 +9388,29 @@ class AdminRiders(viewsets.ViewSet):
                 rider.approval_date = timezone.now()
                 rider.approved_by = admin_user
                 message = 'Rider approved successfully'
+                
+                # Create notification for rider
+                Notification.objects.create(
+                    user=rider.rider,
+                    title='Rider Application Approved',
+                    type='system',
+                    message=f'Your rider application has been approved! You can now start accepting deliveries.',
+                    is_read=False
+                )
             elif action_type == 'reject':
                 rider.verified = False
                 rider.approval_date = timezone.now()
                 rider.approved_by = admin_user
                 message = 'Rider rejected successfully'
+                
+                # Create notification for rider
+                Notification.objects.create(
+                    user=rider.rider,
+                    title='Rider Application Rejected',
+                    type='system',
+                    message=f'Your rider application has been rejected. Please contact support for more information.',
+                    is_read=False
+                )
             else:
                 return Response({
                     'success': False,
@@ -8925,6 +9418,12 @@ class AdminRiders(viewsets.ViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             rider.save()
+            
+            # Create log for admin action
+            Logs.objects.create(
+                user=admin_user,
+                action=f"Admin {admin_user.username} {action_type}d rider: {rider.rider.username}"
+            )
             
             return Response({
                 'success': True,
@@ -9067,6 +9566,7 @@ class AdminRiders(viewsets.ViewSet):
                 'error': 'User not found'
             }, status=status.HTTP_404_NOT_FOUND)
 
+
 class AdminVouchers(viewsets.ViewSet):
     
     @action(detail=False, methods=['post'])
@@ -9114,6 +9614,18 @@ class AdminVouchers(viewsets.ViewSet):
             serializer = VoucherSerializer(data=data)
             if serializer.is_valid():
                 voucher = serializer.save()
+                
+                # Create log for admin adding voucher
+                user_id = request.headers.get('X-User-Id')
+                if user_id:
+                    try:
+                        admin_user = User.objects.get(id=user_id, is_admin=True)
+                        Logs.objects.create(
+                            user=admin_user,
+                            action=f"Admin {admin_user.username} created voucher: {voucher.code}"
+                        )
+                    except User.DoesNotExist:
+                        pass
                 
                 return Response({
                     'success': True,
@@ -9214,6 +9726,18 @@ class AdminVouchers(viewsets.ViewSet):
             total_discount = UserVoucherUsage.objects.filter(**usage_filter).aggregate(
                 total=models.Sum('discount_amount')
             )['total'] or 0
+            
+            # Create log for admin accessing voucher metrics
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed voucher metrics"
+                    )
+                except User.DoesNotExist:
+                    pass
             
             metrics = {
                 'total_vouchers': total_vouchers,
@@ -9478,6 +10002,18 @@ class AdminVouchers(viewsets.ViewSet):
                     'last_name': voucher.created_by.last_name
                 }
             
+            # Create log for admin viewing voucher details
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} viewed voucher details: {voucher.code}"
+                    )
+                except User.DoesNotExist:
+                    pass
+            
             # FIXED: Determine status correctly
             start_date = voucher.start_date
             end_date = voucher.end_date
@@ -9595,6 +10131,18 @@ class AdminVouchers(viewsets.ViewSet):
             if serializer.is_valid():
                 updated_voucher = serializer.save()
                 
+                # Create log for admin updating voucher
+                user_id = request.headers.get('X-User-Id')
+                if user_id:
+                    try:
+                        admin_user = User.objects.get(id=user_id, is_admin=True)
+                        Logs.objects.create(
+                            user=admin_user,
+                            action=f"Admin {admin_user.username} updated voucher: {updated_voucher.code}"
+                        )
+                    except User.DoesNotExist:
+                        pass
+                
                 return Response({
                     'success': True,
                     'message': 'Voucher updated successfully',
@@ -9645,12 +10193,26 @@ class AdminVouchers(viewsets.ViewSet):
                     'error': 'Voucher not found'
                 }, status=status.HTTP_404_NOT_FOUND)
             
+            # Create log for admin deleting voucher
+            user_id = request.headers.get('X-User-Id')
+            
             # Check if voucher has been used
             usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
             if usage_count > 0:
                 # Instead of deleting, just deactivate it
                 voucher.is_active = False
                 voucher.save()
+                
+                if user_id:
+                    try:
+                        admin_user = User.objects.get(id=user_id, is_admin=True)
+                        Logs.objects.create(
+                            user=admin_user,
+                            action=f"Admin {admin_user.username} deactivated voucher (used): {voucher.code}"
+                        )
+                    except User.DoesNotExist:
+                        pass
+                
                 return Response({
                     'success': True,
                     'message': 'Voucher has been used and cannot be deleted. It has been deactivated instead.',
@@ -9658,6 +10220,16 @@ class AdminVouchers(viewsets.ViewSet):
                 })
             
             # Delete if not used
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} deleted voucher: {voucher.code}"
+                    )
+                except User.DoesNotExist:
+                    pass
+            
             voucher.delete()
             return Response({
                 'success': True,
@@ -9672,7 +10244,6 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
              
 class AdminRefunds(viewsets.ViewSet):
 
@@ -9680,6 +10251,18 @@ class AdminRefunds(viewsets.ViewSet):
     def get_metrics(self, request):
         """Get refund metrics for the admin dashboard."""
         try:
+            # Create log for admin accessing refund metrics
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed refund metrics"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             qs = (
                 Refund.objects
                 .select_related(
@@ -9776,6 +10359,18 @@ class AdminRefunds(viewsets.ViewSet):
     def get_analytics(self, request):
         """Get analytics data for charts."""
         try:
+            # Create log for admin accessing refund analytics
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed refund analytics"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             # Status distribution
             status_dist_qs = (
                 Refund.objects.values('status')
@@ -9869,6 +10464,18 @@ class AdminRefunds(viewsets.ViewSet):
     def refund_list(self, request):
         """Get all refund requests for the admin table (lightweight)."""
         try:
+            # Create log for admin accessing refund list
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed refund list"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             qs = (
                 Refund.objects
                 .select_related(
@@ -9964,6 +10571,12 @@ class AdminRefunds(viewsets.ViewSet):
 
         if not user.is_admin:
             return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Create log for admin viewing refund details
+        Logs.objects.create(
+            user=user,
+            action=f"Admin {user.username} viewed refund details for refund {pk}"
+        )
 
         try:
             refund = Refund.objects.select_related(
@@ -10117,6 +10730,12 @@ class AdminRefunds(viewsets.ViewSet):
             final_method = request.data.get('final_refund_method')
             notes = request.data.get('customer_note', '')
 
+            # Create log for admin processing refund
+            Logs.objects.create(
+                user=user,
+                action=f"Admin {user.username} processed refund {pk} - set_status: {set_status}, final_method: {final_method}"
+            )
+
             if set_status:
                 if set_status not in ['processing', 'completed', 'failed']:
                     return Response({'error': 'Invalid payment status'}, status=status.HTTP_400_BAD_REQUEST)
@@ -10133,6 +10752,17 @@ class AdminRefunds(viewsets.ViewSet):
 
                 refund.save(update_fields=['refund_payment_status', 'processed_at', 'processed_by'])
                 logger.info(f"Admin process refund - Updated payment status to {set_status} for refund {pk}")
+
+                # Create notification for user about refund status
+                if refund.requested_by:
+                    Notification.objects.create(
+                        user=refund.requested_by,
+                        title='Refund Status Updated',
+                        type='refund_update',
+                        message=f'Your refund for order #{str(refund.order_id.order)[:8]} has been updated to {set_status}.',
+                        related_refund=refund,
+                        is_read=False
+                    )
 
             if final_method:
                 refund.final_refund_method = final_method
@@ -10187,6 +10817,7 @@ class AdminRefunds(viewsets.ViewSet):
         except Exception as e:
             logger.exception(f"Unexpected error in admin_process_refund for refund {pk}: {e}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @action(detail=True, methods=['get'], url_path='full-details')
     def get_full_refund_details(self, request, pk=None):
         """
@@ -10212,6 +10843,12 @@ class AdminRefunds(viewsets.ViewSet):
         
         if not (user.is_admin or user.is_moderator):
             return Response({"error": "Admin or moderator access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Create log for admin viewing full refund details
+        Logs.objects.create(
+            user=user,
+            action=f"Admin {user.username} viewed full refund details for refund {pk}"
+        )
         
         try:
             # Fetch refund with all related data in one go
@@ -10591,7 +11228,6 @@ class AdminRefunds(viewsets.ViewSet):
             return "*" * len(account_str)
         return "*" * (len(account_str) - 4) + account_str[-4:]
 
-
 class AdminUsers(viewsets.ViewSet):
     
     from api.utils.storage_utils import convert_s3_to_public_url
@@ -10696,6 +11332,18 @@ class AdminUsers(viewsets.ViewSet):
     def get_metrics(self, request):
         """Get user metrics for admin dashboard"""
         try:
+            # Create log for admin accessing user metrics
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed user metrics"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             # Calculate today's date for new users calculation
             today = timezone.now().date()
             today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
@@ -10781,6 +11429,18 @@ class AdminUsers(viewsets.ViewSet):
     def get_analytics(self, request):
         """Get analytics data for charts"""
         try:
+            # Create log for admin accessing user analytics
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed user analytics"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             # Role distribution based on actual boolean fields
             role_distribution = []
             total_users = User.objects.count()
@@ -10902,6 +11562,17 @@ class AdminUsers(viewsets.ViewSet):
     def users_list(self, request):
         """Get paginated list of users with related data including wallet info"""
         try:
+            # Create log for admin accessing users list
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed users list"
+                    )
+                except User.DoesNotExist:
+                    pass
             
             # Get query parameters
             page = int(request.query_params.get('page', 1))
@@ -11079,6 +11750,18 @@ class AdminUsers(viewsets.ViewSet):
     def get_user(self, request, user_id=None):
         """Get single user by ID with shops, personal listings, and wallet info"""
         try:
+            # Create log for admin viewing specific user
+            admin_user_id = request.headers.get('X-User-Id')
+            if admin_user_id:
+                try:
+                    admin_user = User.objects.get(id=admin_user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} viewed user details for user ID: {user_id}"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             user = User.objects.select_related().get(id=user_id)
             
             # Get profile picture URL using helper
@@ -11224,12 +11907,24 @@ class AdminUsers(viewsets.ViewSet):
         except Exception as e:
             print(f"Error in get_user: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
 class AdminTeam(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_team_metrics(self, request):
         """Get team metrics for admin dashboard"""
         try:
+            # Create log for admin accessing team metrics
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed team metrics"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             # Calculate today's date for new team members
             today = timezone.now().date()
             today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
@@ -11281,6 +11976,18 @@ class AdminTeam(viewsets.ViewSet):
     def team_list(self, request):
         """Get paginated list of team members (admins and moderators)"""
         try:
+            # Create log for admin accessing team list
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed team list"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             # Get query parameters
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
@@ -11388,11 +12095,24 @@ class AdminTeam(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class AdminReports(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """Get report metrics for admin dashboard"""
         try:
+            # Create log for admin accessing report metrics
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed report metrics"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             # Calculate basic metrics
             total_reports = Report.objects.count()
             pending_reports = Report.objects.filter(status='pending').count()
@@ -11455,6 +12175,18 @@ class AdminReports(viewsets.ViewSet):
     def reports_list(self, request):
         """Get paginated list of reports with filtering and search"""
         try:
+            # Create log for admin accessing reports list
+            user_id = request.headers.get('X-User-Id')
+            if user_id:
+                try:
+                    admin_user = User.objects.get(id=user_id, is_admin=True)
+                    Logs.objects.create(
+                        user=admin_user,
+                        action=f"Admin {admin_user.username} accessed reports list"
+                    )
+                except User.DoesNotExist:
+                    pass
+
             # Get query parameters
             report_type = request.GET.get('type', None)
             status_filter = request.GET.get('status', None)
@@ -11599,9 +12331,22 @@ class AdminReports(viewsets.ViewSet):
             pass
         return 0
 
+
 class AdminLogs(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_logs(self, request):
+        # Create log for admin accessing logs
+        admin_user_id = request.headers.get('X-User-Id')
+        if admin_user_id:
+            try:
+                admin_user = User.objects.get(id=admin_user_id, is_admin=True)
+                Logs.objects.create(
+                    user=admin_user,
+                    action=f"Admin {admin_user.username} accessed system logs"
+                )
+            except User.DoesNotExist:
+                pass
+
         # Get query parameters for filtering
         role = request.query_params.get('role', None)
         user_id = request.query_params.get('user_id', None)
@@ -11664,6 +12409,18 @@ class AdminLogs(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def summary(self, request):
         """Get summary of logs grouped by role"""
+        # Create log for admin accessing logs summary
+        admin_user_id = request.headers.get('X-User-Id')
+        if admin_user_id:
+            try:
+                admin_user = User.objects.get(id=admin_user_id, is_admin=True)
+                Logs.objects.create(
+                    user=admin_user,
+                    action=f"Admin {admin_user.username} accessed logs summary"
+                )
+            except User.DoesNotExist:
+                pass
+
         days = request.query_params.get('days', 7)
         
         try:
@@ -11688,7 +12445,6 @@ class AdminLogs(viewsets.ViewSet):
         }
         
         return Response(summary)
-    
 
 class ModeratorDashboard(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
