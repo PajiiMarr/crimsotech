@@ -22,8 +22,8 @@ fi
 echo ">>> flushing database"
 python manage.py flush --noinput
 
-echo ">>> seeding data"
-python manage.py seed_data
+# echo ">>> seeding data"
+# python manage.py seed_data
 
 echo ">>> migrating tables..."
 python manage.py migrate --noinput
@@ -31,8 +31,8 @@ python manage.py migrate --noinput
 echo ">>> collecting static files"
 python manage.py collectstatic --noinput
 
-# echo ">>> seeding category data"
-# python manage.py seed_data
+echo ">>> seeding category data"
+python manage.py seed_data
 
 echo ">>> starting server with WebSocket support"s
 echo ">>> Workers: $WORKERS, Memory: ${MEMORY_LIMIT}MB"
