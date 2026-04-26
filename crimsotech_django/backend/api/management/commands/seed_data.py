@@ -232,7 +232,7 @@ class Command(BaseCommand):
         
         return customers, shops
 
-    def create_categories(self, shops, admin_user):
+    def create_categories(self, admin_user):
         """Create product categories"""
         categories_data = [
             'Audio Devices',
