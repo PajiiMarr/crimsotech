@@ -649,13 +649,13 @@ class GetRegistration(APIView):
 
 class Login(APIView):
     def get(self, request):
-        user_id = request.headers.get("X-User-Id")
+        user_id = request.headers.get("X-User-Id")  # get from headers
 
         if user_id:
             try:
                 user = User.objects.get(id=user_id)
                 data = {
-                    "user_id": str(user.id),
+                    "user_id": str(user.id),  # Keep key as "user_id" but value from user.id
                     "username": user.username,
                     "email": user.email,
                     "is_admin": user.is_admin,
@@ -687,11 +687,6 @@ class Login(APIView):
             
             # Check password using Django's check_password
             if not check_password(password, user.password):
-                # Create log for failed login attempt
-                Logs.objects.create(
-                    user=user,
-                    action=f"Failed login attempt for user {username}"
-                )
                 return Response(
                     {"error": "Invalid credentials"}, 
                     status=status.HTTP_401_UNAUTHORIZED
@@ -703,16 +698,10 @@ class Login(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
-        # Create log for successful login
-        Logs.objects.create(
-            user=user,
-            action=f"User {username} logged in successfully"
-        )
-        
         # Login successful
         return Response({
             "message": "Login successful",
-            "user_id": str(user.id),
+            "user_id": str(user.id),  # Keep key as "user_id" but value from user.id
             "username": user.username,
             "email": user.email,
             "is_admin": user.is_admin,
@@ -721,7 +710,7 @@ class Login(APIView):
             "is_moderator": user.is_moderator,
             "registration_stage": user.registration_stage
         })
-
+    
 class Register(APIView):
     def get(self, request):
         user_id = request.headers.get("X-User-Id")
@@ -787,20 +776,6 @@ class Register(APIView):
                 user.registration_stage = 2
                 user.save()
                 
-                # Create log for rider registration completion
-                Logs.objects.create(
-                    user=user,
-                    action=f"Rider {username} completed registration"
-                )
-                
-                # Create notification for rider registration completion
-                Notification.objects.create(
-                    user=user,
-                    title="Rider Registration Complete",
-                    message="Your rider account has been successfully created. Please wait for admin verification.",
-                    type="system"
-                )
-                
                 return Response({
                     "user_id": user.id,
                     "username": user.username,
@@ -834,20 +809,6 @@ class Register(APIView):
                         }
                     )
                     
-                    # Create log for customer registration
-                    Logs.objects.create(
-                        user=user,
-                        action=f"New customer {user.username} registered"
-                    )
-                    
-                    # Create welcome notification for new customer
-                    Notification.objects.create(
-                        user=user,
-                        title="Welcome to Ambasing!",
-                        message=f"Welcome {user.username}! Your account has been successfully created.",
-                        type="system"
-                    )
-                    
                     return Response({
                         "user_id": user.id,
                         "username": user.username,
@@ -873,15 +834,8 @@ class Register(APIView):
         serializer = UserSerializer(user, data=request.data, partial=True)
         if serializer.is_valid(raise_exception=True):
             serializer.save()
-            
-            # Create log for profile update
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} updated their profile"
-            )
-            
             return Response(serializer.data)
-               
+        
 class Profiling(APIView):
     
     def _get_coordinates_from_address(self, street, barangay, city, province, country="Philippines"):
@@ -985,12 +939,6 @@ class Profiling(APIView):
         serializer = UserSerializer(data=data)
         if serializer.is_valid(raise_exception=True):
             saved_user = serializer.save()
-            
-            # Create log for user profiling creation
-            Logs.objects.create(
-                user=saved_user,
-                action=f"User {saved_user.username} created profile"
-            )
             
             response_data = serializer.data.copy()
             response_data['user_id'] = saved_user.id
@@ -1105,22 +1053,6 @@ class Profiling(APIView):
             # Log error but don't fail the profiling update
             print(f"[PROFILE] Error creating/updating shipping address: {str(e)}")
         
-        # Create log for profile update
-        Logs.objects.create(
-            user=updated_user,
-            action=f"User {updated_user.username} updated their profile information"
-        )
-        
-        # Create notification for profile update (only for important fields)
-        important_fields = ['contact_number', 'street', 'barangay', 'city', 'province']
-        if any(field in request.data for field in important_fields):
-            Notification.objects.create(
-                user=updated_user,
-                title="Profile Updated",
-                message="Your contact and address information has been updated successfully.",
-                type="system"
-            )
-        
         # Transform response to maintain frontend compatibility
         response_data = serializer.data.copy()
         response_data['user_id'] = updated_user.id
@@ -1131,7 +1063,7 @@ class Profiling(APIView):
             response_data['longitude'] = float(longitude)
         
         return Response(response_data, status=status.HTTP_200_OK)
-        
+    
 class VerifyNumber(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def user(self, request):
@@ -1307,7 +1239,8 @@ class VerifyNumber(viewsets.ViewSet):
 
         else:
             return Response({"error": "Invalid action type"}, status=400)
-          
+
+            
 class RiderRegistration(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='register')
     def register(self, request):
@@ -1417,32 +1350,6 @@ class RiderRegistration(viewsets.ViewSet):
             
             rider.save()
             
-            # Create log entry
-            Logs.objects.create(
-                user=user,
-                action=f"Rider registration submitted - Vehicle: {vehicle_type}, Plate: {plate_number}"
-            )
-            
-            # Create notification for admins/moderators
-            admin_users = User.objects.filter(is_admin=True)
-            for admin in admin_users:
-                Notification.objects.create(
-                    user=admin,
-                    title="New Rider Registration",
-                    message=f"New rider {user.username} has submitted registration. Please review their documents.",
-                    type="system",
-                    action_type="rider_verification",
-                    action_id=str(rider.rider_id)
-                )
-            
-            # Create notification for the rider
-            Notification.objects.create(
-                user=user,
-                title="Registration Submitted",
-                message="Your rider registration has been submitted successfully. Our team will review your application and notify you once approved.",
-                type="system"
-            )
-            
             return Response({
                 "message": "Rider application submitted successfully",
                 "user_id": str(user.id),
@@ -1502,18 +1409,6 @@ class AdminDashboard(viewsets.ViewSet):
             user_data = self._get_user_analytics_data(start_date, end_date, date_range_type)
             product_data = self._get_product_analytics_data(start_date, end_date)
             shop_data = self._get_shop_analytics_data(start_date, end_date)
-
-            # Create log for admin dashboard access
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed comprehensive dashboard for date range {start_date} to {end_date}"
-                    )
-                except User.DoesNotExist:
-                    pass
 
             comprehensive_data = {
                 'success': True,
@@ -1590,6 +1485,7 @@ class AdminDashboard(viewsets.ViewSet):
             current_platform_fees = current_completed_revenue * Decimal('0.05')
 
             # Calculate VAT collected from successful/completed orders
+            # VAT is calculated as price * (vat_percentage / 100) for each variant in completed orders
             vat_collected = Decimal('0')
             
             # Get all checkouts from completed orders
@@ -2441,6 +2337,7 @@ class AdminDashboard(viewsets.ViewSet):
         }
         return color_map.get(status.lower(), '#6b7280')
 
+
 class AdminAnalytics(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_comprehensive_analytics(self, request):
@@ -2508,13 +2405,6 @@ class AdminAnalytics(viewsets.ViewSet):
                 'refund_return_analytics': refund_return_data,
                 'report_moderation_analytics': report_moderation_data,
             }
-            
-            # Create log entry
-            if request.user and request.user.is_authenticated:
-                Logs.objects.create(
-                    user=request.user,
-                    action=f"Admin analytics accessed - Range: {date_range_type}, Dates: {start_date} to {end_date}"
-                )
             
             return Response(comprehensive_data, status=status.HTTP_200_OK)
             
@@ -3386,7 +3276,7 @@ class AdminAnalytics(viewsets.ViewSet):
             4: 'Stage 4: Complete',
         }
         return stages.get(stage, f'Stage {stage or 0}')
-    
+
 class AdminProduct(viewsets.ViewSet):
     """
     Admin viewset for managing products with comprehensive data
@@ -3654,13 +3544,6 @@ class AdminProduct(viewsets.ViewSet):
                 'data_source': 'database'
             }
             
-            # Create log entry
-            if request.user and request.user.is_authenticated:
-                Logs.objects.create(
-                    user=request.user,
-                    action=f"Admin accessed product metrics - Range: {range_type}, Products: {total_products}"
-                )
-            
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -3909,13 +3792,6 @@ class AdminProduct(viewsets.ViewSet):
                 'message': f'{total_count} products retrieved successfully',
                 'data_source': 'database'
             }
-            
-            # Create log entry
-            if request.user and request.user.is_authenticated:
-                Logs.objects.create(
-                    user=request.user,
-                    action=f"Admin viewed products list - Search: '{search}', Category: {category}, Total: {total_count}"
-                )
             
             return Response(response_data, status=status.HTTP_200_OK)
             
@@ -4217,13 +4093,6 @@ class AdminProduct(viewsets.ViewSet):
                 "variants_with_proof": active_variants.filter(proof_image__isnull=False).count()
             }
             
-            # Create log entry
-            if request.user and request.user.is_authenticated:
-                Logs.objects.create(
-                    user=request.user,
-                    action=f"Admin viewed product details: {product.name} (ID: {product_id})"
-                )
-            
             return Response({
                 "success": True,
                 "product": product_data,
@@ -4380,14 +4249,12 @@ class AdminProduct(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    product_name = product.name
-                    
                     if product.customer:
                         product.customer.decrement_product_count()
                     
                     Logs.objects.create(
                         user=admin_user,
-                        action=f"Deleted draft product: {product_name}"
+                        action=f"Deleted draft product: {product.name}"
                     )
                     
                     product.delete()
@@ -4725,13 +4592,6 @@ class AdminProduct(viewsets.ViewSet):
                 
                 print(f"Created category: {category.name}, user: {category.user}")
             
-            # Create log entry
-            if request.user and request.user.is_authenticated:
-                Logs.objects.create(
-                    user=request.user,
-                    action=f"Added new category: {clean_name}"
-                )
-            
             return Response({
                 'success': True,
                 'message': 'Category added successfully',
@@ -4781,13 +4641,6 @@ class AdminProduct(viewsets.ViewSet):
                 'message': f'{len(categories_data)} categories retrieved successfully'
             }
             
-            # Create log entry
-            if request.user and request.user.is_authenticated:
-                Logs.objects.create(
-                    user=request.user,
-                    action=f"Admin viewed categories list - Total: {len(categories_data)}"
-                )
-            
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -4797,7 +4650,7 @@ class AdminProduct(viewsets.ViewSet):
                 {'success': False, 'error': f'Error retrieving categories: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-                 
+         
 class AdminShops(viewsets.ViewSet):
     """
     ViewSet for admin shop management with comprehensive endpoints
@@ -5106,18 +4959,6 @@ class AdminShops(viewsets.ViewSet):
                     status__in=['pending', 'under_review']
                 ).values('reported_shop').annotate(active_reports=Count('id'))
             }
-
-            # Create log for admin accessing all shops
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed all shops list"
-                    )
-                except User.DoesNotExist:
-                    pass
 
             shops_data = []
             total_completed_revenue_all = 0
@@ -5438,18 +5279,6 @@ class AdminShops(viewsets.ViewSet):
 
             # Calculate total revenue (completed + pending)
             total_revenue = completed_revenue + pending_revenue
-
-            # Create log for admin accessing shop metrics
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed shop metrics"
-                    )
-                except User.DoesNotExist:
-                    pass
 
             return Response({
                 'success': True,
@@ -5790,18 +5619,6 @@ class AdminShops(viewsets.ViewSet):
                 'order_status_breakdown': sales_breakdown['order_status_breakdown'],
                 **self.build_shop_legal_docs(shop),
             }
-
-            # Create log for admin viewing shop details
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} viewed shop details for '{shop.name}' (ID: {shop.id})"
-                    )
-                except User.DoesNotExist:
-                    pass
 
             return Response({
                 'success': True,
@@ -6811,13 +6628,6 @@ class AdminBoosting(viewsets.ViewSet):
                 }
             }
             
-            # Create log entry
-            if request.user and request.user.is_authenticated:
-                Logs.objects.create(
-                    user=request.user,
-                    action=f"Admin accessed boost metrics - Range: {range_type}, Total boosts: {total_boosts}"
-                )
-            
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -6919,13 +6729,6 @@ class AdminBoosting(viewsets.ViewSet):
                 }
             }
             
-            # Create log entry
-            if request.user and request.user.is_authenticated:
-                Logs.objects.create(
-                    user=request.user,
-                    action=f"Admin viewed boost plans - Total plans: {len(plans_data)}"
-                )
-            
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -7014,13 +6817,6 @@ class AdminBoosting(viewsets.ViewSet):
                 'message': 'Boosts retrieved successfully'
             }
             
-            # Create log entry
-            if request.user and request.user.is_authenticated:
-                Logs.objects.create(
-                    user=request.user,
-                    action=f"Admin viewed boosts list - Total boosts: {len(boosts_data)}"
-                )
-            
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -7108,13 +6904,6 @@ class AdminBoosting(viewsets.ViewSet):
                     except BoostFeature.DoesNotExist:
                         print(f"Feature {feature_id} not found")
             
-            # Create log entry
-            if user:
-                Logs.objects.create(
-                    user=user,
-                    action=f"Created new boost plan: {boost_plan.name} - Price: {boost_plan.price}, Duration: {boost_plan.duration} {boost_plan.time_unit}"
-                )
-            
             response_data = {
                 'success': True,
                 'boost_plan': {
@@ -7165,14 +6954,6 @@ class AdminBoosting(viewsets.ViewSet):
                     setattr(boost_plan, field, request.data[field])
             
             boost_plan.save()
-            
-            # Create log entry
-            user = request.user if request.user.is_authenticated else None
-            if user:
-                Logs.objects.create(
-                    user=user,
-                    action=f"Updated boost plan: {boost_plan.name} (ID: {boost_plan_id})"
-                )
             
             response_data = {
                 'success': True,
@@ -7251,14 +7032,6 @@ class AdminBoosting(viewsets.ViewSet):
             
             boost_plan.save()
             
-            # Create log entry
-            user = request.user if request.user.is_authenticated else None
-            if user:
-                Logs.objects.create(
-                    user=user,
-                    action=f"Updated boost plan status: {boost_plan.name} - Action: {action_type}"
-                )
-            
             return Response({
                 'success': True,
                 'message': message,
@@ -7307,14 +7080,6 @@ class AdminBoosting(viewsets.ViewSet):
             # Soft delete by archiving
             boost_plan.status = 'archived'
             boost_plan.save()
-            
-            # Create log entry
-            user = request.user if request.user.is_authenticated else None
-            if user:
-                Logs.objects.create(
-                    user=user,
-                    action=f"Deleted (archived) boost plan: {boost_plan.name} (ID: {boost_plan_id})"
-                )
             
             response_data = {
                 'success': True,
@@ -7513,13 +7278,6 @@ class AdminBoosting(viewsets.ViewSet):
                 'actions': actions,
             }
             
-            # Create log entry
-            if request.user and request.user.is_authenticated:
-                Logs.objects.create(
-                    user=request.user,
-                    action=f"Admin viewed boost details: {boost.id} - Plan: {boost.boost_plan.name if boost.boost_plan else 'No plan'}"
-                )
-            
             return Response({
                 'success': True,
                 'boost': boost_data,
@@ -7624,17 +7382,6 @@ class AdminBoosting(viewsets.ViewSet):
                 boost.payment_verified_by = admin_user
                 message = "Boost approved successfully"
                 
-                # Create notification for the customer
-                if boost.customer and boost.customer.customer:
-                    notification = Notification.objects.create(
-                        user=boost.customer.customer,
-                        title="Boost Plan Approved",
-                        type="boost_approved",
-                        message=f"Your boost plan '{boost.boost_plan.name if boost.boost_plan else 'boost'}' has been approved and is now active.",
-                        is_read=False
-                    )
-                    self._send_websocket_notification(boost.customer.customer.id, notification)
-                
             elif action_type == 'reject':
                 # Reject pending boost
                 if boost.status != 'pending':
@@ -7652,17 +7399,6 @@ class AdminBoosting(viewsets.ViewSet):
                 boost.status = 'cancelled'
                 boost.payment_verified = False
                 message = "Boost rejected successfully"
-                
-                # Create notification for the customer
-                if boost.customer and boost.customer.customer:
-                    notification = Notification.objects.create(
-                        user=boost.customer.customer,
-                        title="Boost Plan Rejected",
-                        type="boost_rejected",
-                        message=f"Your boost plan '{boost.boost_plan.name if boost.boost_plan else 'boost'}' has been rejected. Reason: {reason}",
-                        is_read=False
-                    )
-                    self._send_websocket_notification(boost.customer.customer.id, notification)
                 
             elif action_type == 'suspend':
                 # Suspend active boost
@@ -7688,17 +7424,6 @@ class AdminBoosting(viewsets.ViewSet):
                 boost.status = 'suspended'
                 message = f"Boost suspended for {suspension_days} days"
                 
-                # Create notification for the customer
-                if boost.customer and boost.customer.customer:
-                    notification = Notification.objects.create(
-                        user=boost.customer.customer,
-                        title="Boost Plan Suspended",
-                        type="boost_suspended",
-                        message=f"Your boost plan has been suspended for {suspension_days} days. Reason: {reason}",
-                        is_read=False
-                    )
-                    self._send_websocket_notification(boost.customer.customer.id, notification)
-                
             elif action_type == 'resume':
                 # Resume suspended boost
                 if boost.status != 'suspended':
@@ -7709,17 +7434,6 @@ class AdminBoosting(viewsets.ViewSet):
                 
                 boost.status = 'active'
                 message = "Boost resumed successfully"
-                
-                # Create notification for the customer
-                if boost.customer and boost.customer.customer:
-                    notification = Notification.objects.create(
-                        user=boost.customer.customer,
-                        title="Boost Plan Resumed",
-                        type="boost_resumed",
-                        message=f"Your boost plan has been resumed.",
-                        is_read=False
-                    )
-                    self._send_websocket_notification(boost.customer.customer.id, notification)
                 
             elif action_type == 'cancel':
                 # Cancel active or suspended boost
@@ -7737,17 +7451,6 @@ class AdminBoosting(viewsets.ViewSet):
                 
                 boost.status = 'cancelled'
                 message = "Boost cancelled successfully"
-                
-                # Create notification for the customer
-                if boost.customer and boost.customer.customer:
-                    notification = Notification.objects.create(
-                        user=boost.customer.customer,
-                        title="Boost Plan Cancelled",
-                        type="boost_cancelled",
-                        message=f"Your boost plan has been cancelled. Reason: {reason}",
-                        is_read=False
-                    )
-                    self._send_websocket_notification(boost.customer.customer.id, notification)
                 
             elif action_type == 'renew':
                 # Renew expired boost
@@ -7779,17 +7482,6 @@ class AdminBoosting(viewsets.ViewSet):
                 boost.payment_verified_by = admin_user
                 message = "Boost renewed successfully"
                 
-                # Create notification for the customer
-                if boost.customer and boost.customer.customer:
-                    notification = Notification.objects.create(
-                        user=boost.customer.customer,
-                        title="Boost Plan Renewed",
-                        type="boost_renewed",
-                        message=f"Your boost plan has been renewed and is now active until {boost.end_date.strftime('%Y-%m-%d')}.",
-                        is_read=False
-                    )
-                    self._send_websocket_notification(boost.customer.customer.id, notification)
-                
             elif action_type == 'restore':
                 # Restore cancelled boost
                 if boost.status != 'cancelled':
@@ -7800,22 +7492,11 @@ class AdminBoosting(viewsets.ViewSet):
                 
                 boost.status = 'active'
                 message = "Boost restored successfully"
-                
-                # Create notification for the customer
-                if boost.customer and boost.customer.customer:
-                    notification = Notification.objects.create(
-                        user=boost.customer.customer,
-                        title="Boost Plan Restored",
-                        type="boost_restored",
-                        message=f"Your boost plan has been restored and is now active.",
-                        is_read=False
-                    )
-                    self._send_websocket_notification(boost.customer.customer.id, notification)
             
             # Save changes
             boost.save()
             
-            # Log the action
+            # Log the action (optional)
             Logs.objects.create(
                 user=admin_user,
                 action=f"Boost {action_type}: {boost.id} - {message}"
@@ -7836,46 +7517,6 @@ class AdminBoosting(viewsets.ViewSet):
                 {'success': False, 'error': f'Error updating boost status: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
-    def _send_websocket_notification(self, user_id, notification):
-        """
-        Send real-time notification via WebSocket to specific user
-        """
-        try:
-            channel_layer = get_channel_layer()
-            group_name = f'notifications_{user_id}'
-            
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {
-                    'type': 'notification',
-                    'notification_id': str(notification.id),
-                    'title': notification.title,
-                    'message': notification.message,
-                    'notification_type': notification.type,
-                    'created_at': str(notification.created_at),
-                    'data': {}
-                }
-            )
-            
-            unread_count = Notification.objects.filter(
-                user_id=user_id,
-                is_read=False
-            ).count()
-            
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {
-                    'type': 'unread_count',
-                    'count': unread_count
-                }
-            )
-            
-            print(f"WebSocket notification sent to user {user_id}")
-        except Exception as e:
-            print(f"Error sending websocket notification: {str(e)}")
-            traceback.print_exc()
-
 
 class AdminOrders(viewsets.ViewSet):
     def parse_date(self, date_str):
@@ -8192,18 +7833,6 @@ class AdminOrders(viewsets.ViewSet):
                 total_revenue=Sum('total_amount')
             )['total_revenue'] or Decimal('0')
             
-            # Create log for admin accessing order metrics
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed order metrics"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             order_metrics = {
                 'total_orders': total_orders_in_period,
                 'pending_orders': pending_orders_in_period,
@@ -8293,18 +7922,6 @@ class AdminOrders(viewsets.ViewSet):
                 order=order_id
             )
             
-            # Create log for admin viewing order details
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} viewed order details for order #{order_id[:8]}"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             return JsonResponse({
                 'success': True,
                 'order': self._serialize_order(order)
@@ -8332,32 +7949,8 @@ class AdminOrders(viewsets.ViewSet):
         
         try:
             order = Order.objects.get(order=order_id)
-            old_status = order.status
             order.status = new_status
             order.save()
-            
-            # Create log for admin updating order status
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} updated order #{order_id[:8]} status from {old_status} to {new_status}"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
-            # Create notification for customer about status change
-            Notification.objects.create(
-                user=order.user,
-                title='Order Status Updated',
-                type='order_update',
-                message=f'Your order #{order_id[:8]} status has been updated to {new_status}.',
-                related_order=order,
-                is_read=False
-            )
-            
             return Response({'success': True, 'message': f'Order status updated to {new_status}'})
         except Order.DoesNotExist:
             return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -8381,28 +7974,17 @@ class AdminOrders(viewsets.ViewSet):
             
             order.status = 'shipped'
             order.save()
-            
-            # Create log for admin marking order as shipped
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} marked order #{order_id[:8]} as shipped"
-                    )
-                except User.DoesNotExist:
-                    pass
 
-            # Create notification for customer
-            Notification.objects.create(
-                user=order.user,
-                title='Order Shipped',
-                type='order_update',
-                message=f'Your order #{str(order.order)[:8]} has been shipped.',
-                related_order=order,
-                is_read=False
-            )
+            try:
+                Notification.objects.create(
+                    user=order.user,
+                    title='Order Shipped',
+                    type='order',
+                    message=f'Your order #{str(order.order)[:8]} has been shipped.',
+                    is_read=False
+                )
+            except Exception as notif_error:
+                print(f"Failed to create notification: {notif_error}")
 
             return Response({'success': True, 'message': 'Order marked as shipped'})
         except Order.DoesNotExist:
@@ -8428,18 +8010,6 @@ class AdminOrders(viewsets.ViewSet):
             order.status = 'delivered'
             order.completed_at = timezone.now()
             order.save()
-            
-            # Create log for admin marking order as delivered
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} marked order #{order_id[:8]} as delivered"
-                    )
-                except User.DoesNotExist:
-                    pass
 
             # Release pending wallet balance to available for sellers
             try:
@@ -8472,22 +8042,23 @@ class AdminOrders(viewsets.ViewSet):
                         Notification.objects.create(
                             user=seller,
                             title='Payment Released',
-                            type='payment',
+                            type='wallet',
                             message=f'₱{shop_total:,.2f} from order #{str(order.order)[:8]} is now available in your wallet.',
                             is_read=False
                         )
             except Exception as wallet_error:
                 print(f"Error releasing wallet balance: {wallet_error}")
 
-            # Create notification for customer
-            Notification.objects.create(
-                user=order.user,
-                title='Order Delivered',
-                type='order_update',
-                message=f'Your order #{str(order.order)[:8]} has been delivered.',
-                related_order=order,
-                is_read=False
-            )
+            try:
+                Notification.objects.create(
+                    user=order.user,
+                    title='Order Delivered',
+                    type='order',
+                    message=f'Your order #{str(order.order)[:8]} has been delivered.',
+                    is_read=False
+                )
+            except Exception as notif_error:
+                print(f"Failed to create notification: {notif_error}")
 
             return Response({'success': True, 'message': 'Order marked as delivered'})
         except Order.DoesNotExist:
@@ -8516,28 +8087,17 @@ class AdminOrders(viewsets.ViewSet):
 
             order.status = 'refunded'
             order.save()
-            
-            # Create log for admin issuing refund
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} issued refund for order #{order_id[:8]} with reason: {reason}"
-                    )
-                except User.DoesNotExist:
-                    pass
 
-            # Create notification for customer
-            Notification.objects.create(
-                user=order.user,
-                title='Order Refunded',
-                type='refund_update',
-                message=f'Your order #{str(order.order)[:8]} has been refunded. Reason: {reason}',
-                related_order=order,
-                is_read=False
-            )
+            try:
+                Notification.objects.create(
+                    user=order.user,
+                    title='Order Refunded',
+                    type='order',
+                    message=f'Your order #{str(order.order)[:8]} has been refunded. Reason: {reason}',
+                    is_read=False
+                )
+            except Exception as notif_error:
+                print(f"Failed to create notification: {notif_error}")
 
             return Response({'success': True, 'message': 'Refund issued successfully'})
         except Order.DoesNotExist:
@@ -8657,24 +8217,12 @@ class AdminOrders(viewsets.ViewSet):
             rider_wallet.available_balance += compensation_amount
             rider_wallet.save()
             
-            # Create log for admin compensating rider
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} compensated rider {rider_user.username} with ₱{compensation_amount:,.2f} for failed delivery order #{order_id[:8]}"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             # Create transaction record
             WalletTransaction.objects.create(
                 wallet=rider_wallet,
                 amount=compensation_amount,
                 transaction_type='credit',
-                source_type='withdrawal',
+                source_type='delivery_compensation',
                 status='completed',
                 order=order,
                 user=rider_user
@@ -8684,9 +8232,8 @@ class AdminOrders(viewsets.ViewSet):
             Notification.objects.create(
                 user=rider_user,
                 title='Delivery Compensation',
-                type='payment',
+                type='wallet',
                 message=f'You have received ₱{compensation_amount:,.2f} compensation for failed delivery #{str(order.order)[:8]}.',
-                related_order=order,
                 is_read=False
             )
             
@@ -8700,6 +8247,8 @@ class AdminOrders(viewsets.ViewSet):
             return Response({'success': False, 'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
 
 class AdminRiders(viewsets.ViewSet):
     def parse_date(self, date_str):
@@ -8864,18 +8413,6 @@ class AdminRiders(viewsets.ViewSet):
             all_time_total_riders = Rider.objects.all().count()
             all_time_total_deliveries = Delivery.objects.all().count()
             all_time_completed_deliveries = Delivery.objects.filter(status='delivered').count()
-            
-            # Create log for admin accessing rider metrics
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed rider metrics"
-                    )
-                except User.DoesNotExist:
-                    pass
             
             # Compile metrics - use date-filtered values for consistency
             rider_metrics = {
@@ -9185,18 +8722,6 @@ class AdminRiders(viewsets.ViewSet):
                 'delivery_set__order'
             ).get(rider_id=rider_id)
             
-            # Create log for admin viewing rider details
-            admin_user_id = request.headers.get('X-User-Id')
-            if admin_user_id:
-                try:
-                    admin_user = User.objects.get(id=admin_user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} viewed rider details for {rider.rider.username}"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             # Get rider's delivery history with date range filter
             deliveries_qs = rider.delivery_set.select_related('order').all()
             if start_date and end_date:
@@ -9388,29 +8913,11 @@ class AdminRiders(viewsets.ViewSet):
                 rider.approval_date = timezone.now()
                 rider.approved_by = admin_user
                 message = 'Rider approved successfully'
-                
-                # Create notification for rider
-                Notification.objects.create(
-                    user=rider.rider,
-                    title='Rider Application Approved',
-                    type='system',
-                    message=f'Your rider application has been approved! You can now start accepting deliveries.',
-                    is_read=False
-                )
             elif action_type == 'reject':
                 rider.verified = False
                 rider.approval_date = timezone.now()
                 rider.approved_by = admin_user
                 message = 'Rider rejected successfully'
-                
-                # Create notification for rider
-                Notification.objects.create(
-                    user=rider.rider,
-                    title='Rider Application Rejected',
-                    type='system',
-                    message=f'Your rider application has been rejected. Please contact support for more information.',
-                    is_read=False
-                )
             else:
                 return Response({
                     'success': False,
@@ -9418,12 +8925,6 @@ class AdminRiders(viewsets.ViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             rider.save()
-            
-            # Create log for admin action
-            Logs.objects.create(
-                user=admin_user,
-                action=f"Admin {admin_user.username} {action_type}d rider: {rider.rider.username}"
-            )
             
             return Response({
                 'success': True,
@@ -9566,7 +9067,6 @@ class AdminRiders(viewsets.ViewSet):
                 'error': 'User not found'
             }, status=status.HTTP_404_NOT_FOUND)
 
-
 class AdminVouchers(viewsets.ViewSet):
     
     @action(detail=False, methods=['post'])
@@ -9614,18 +9114,6 @@ class AdminVouchers(viewsets.ViewSet):
             serializer = VoucherSerializer(data=data)
             if serializer.is_valid():
                 voucher = serializer.save()
-                
-                # Create log for admin adding voucher
-                user_id = request.headers.get('X-User-Id')
-                if user_id:
-                    try:
-                        admin_user = User.objects.get(id=user_id, is_admin=True)
-                        Logs.objects.create(
-                            user=admin_user,
-                            action=f"Admin {admin_user.username} created voucher: {voucher.code}"
-                        )
-                    except User.DoesNotExist:
-                        pass
                 
                 return Response({
                     'success': True,
@@ -9726,18 +9214,6 @@ class AdminVouchers(viewsets.ViewSet):
             total_discount = UserVoucherUsage.objects.filter(**usage_filter).aggregate(
                 total=models.Sum('discount_amount')
             )['total'] or 0
-            
-            # Create log for admin accessing voucher metrics
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed voucher metrics"
-                    )
-                except User.DoesNotExist:
-                    pass
             
             metrics = {
                 'total_vouchers': total_vouchers,
@@ -10002,18 +9478,6 @@ class AdminVouchers(viewsets.ViewSet):
                     'last_name': voucher.created_by.last_name
                 }
             
-            # Create log for admin viewing voucher details
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} viewed voucher details: {voucher.code}"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             # FIXED: Determine status correctly
             start_date = voucher.start_date
             end_date = voucher.end_date
@@ -10131,18 +9595,6 @@ class AdminVouchers(viewsets.ViewSet):
             if serializer.is_valid():
                 updated_voucher = serializer.save()
                 
-                # Create log for admin updating voucher
-                user_id = request.headers.get('X-User-Id')
-                if user_id:
-                    try:
-                        admin_user = User.objects.get(id=user_id, is_admin=True)
-                        Logs.objects.create(
-                            user=admin_user,
-                            action=f"Admin {admin_user.username} updated voucher: {updated_voucher.code}"
-                        )
-                    except User.DoesNotExist:
-                        pass
-                
                 return Response({
                     'success': True,
                     'message': 'Voucher updated successfully',
@@ -10193,26 +9645,12 @@ class AdminVouchers(viewsets.ViewSet):
                     'error': 'Voucher not found'
                 }, status=status.HTTP_404_NOT_FOUND)
             
-            # Create log for admin deleting voucher
-            user_id = request.headers.get('X-User-Id')
-            
             # Check if voucher has been used
             usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
             if usage_count > 0:
                 # Instead of deleting, just deactivate it
                 voucher.is_active = False
                 voucher.save()
-                
-                if user_id:
-                    try:
-                        admin_user = User.objects.get(id=user_id, is_admin=True)
-                        Logs.objects.create(
-                            user=admin_user,
-                            action=f"Admin {admin_user.username} deactivated voucher (used): {voucher.code}"
-                        )
-                    except User.DoesNotExist:
-                        pass
-                
                 return Response({
                     'success': True,
                     'message': 'Voucher has been used and cannot be deleted. It has been deactivated instead.',
@@ -10220,16 +9658,6 @@ class AdminVouchers(viewsets.ViewSet):
                 })
             
             # Delete if not used
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} deleted voucher: {voucher.code}"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             voucher.delete()
             return Response({
                 'success': True,
@@ -10244,6 +9672,7 @@ class AdminVouchers(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
              
 class AdminRefunds(viewsets.ViewSet):
 
@@ -10251,18 +9680,6 @@ class AdminRefunds(viewsets.ViewSet):
     def get_metrics(self, request):
         """Get refund metrics for the admin dashboard."""
         try:
-            # Create log for admin accessing refund metrics
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed refund metrics"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             qs = (
                 Refund.objects
                 .select_related(
@@ -10359,18 +9776,6 @@ class AdminRefunds(viewsets.ViewSet):
     def get_analytics(self, request):
         """Get analytics data for charts."""
         try:
-            # Create log for admin accessing refund analytics
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed refund analytics"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             # Status distribution
             status_dist_qs = (
                 Refund.objects.values('status')
@@ -10464,18 +9869,6 @@ class AdminRefunds(viewsets.ViewSet):
     def refund_list(self, request):
         """Get all refund requests for the admin table (lightweight)."""
         try:
-            # Create log for admin accessing refund list
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed refund list"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             qs = (
                 Refund.objects
                 .select_related(
@@ -10571,12 +9964,6 @@ class AdminRefunds(viewsets.ViewSet):
 
         if not user.is_admin:
             return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
-
-        # Create log for admin viewing refund details
-        Logs.objects.create(
-            user=user,
-            action=f"Admin {user.username} viewed refund details for refund {pk}"
-        )
 
         try:
             refund = Refund.objects.select_related(
@@ -10730,12 +10117,6 @@ class AdminRefunds(viewsets.ViewSet):
             final_method = request.data.get('final_refund_method')
             notes = request.data.get('customer_note', '')
 
-            # Create log for admin processing refund
-            Logs.objects.create(
-                user=user,
-                action=f"Admin {user.username} processed refund {pk} - set_status: {set_status}, final_method: {final_method}"
-            )
-
             if set_status:
                 if set_status not in ['processing', 'completed', 'failed']:
                     return Response({'error': 'Invalid payment status'}, status=status.HTTP_400_BAD_REQUEST)
@@ -10752,17 +10133,6 @@ class AdminRefunds(viewsets.ViewSet):
 
                 refund.save(update_fields=['refund_payment_status', 'processed_at', 'processed_by'])
                 logger.info(f"Admin process refund - Updated payment status to {set_status} for refund {pk}")
-
-                # Create notification for user about refund status
-                if refund.requested_by:
-                    Notification.objects.create(
-                        user=refund.requested_by,
-                        title='Refund Status Updated',
-                        type='refund_update',
-                        message=f'Your refund for order #{str(refund.order_id.order)[:8]} has been updated to {set_status}.',
-                        related_refund=refund,
-                        is_read=False
-                    )
 
             if final_method:
                 refund.final_refund_method = final_method
@@ -10817,7 +10187,6 @@ class AdminRefunds(viewsets.ViewSet):
         except Exception as e:
             logger.exception(f"Unexpected error in admin_process_refund for refund {pk}: {e}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
     @action(detail=True, methods=['get'], url_path='full-details')
     def get_full_refund_details(self, request, pk=None):
         """
@@ -10843,12 +10212,6 @@ class AdminRefunds(viewsets.ViewSet):
         
         if not (user.is_admin or user.is_moderator):
             return Response({"error": "Admin or moderator access required"}, status=status.HTTP_403_FORBIDDEN)
-        
-        # Create log for admin viewing full refund details
-        Logs.objects.create(
-            user=user,
-            action=f"Admin {user.username} viewed full refund details for refund {pk}"
-        )
         
         try:
             # Fetch refund with all related data in one go
@@ -11228,6 +10591,7 @@ class AdminRefunds(viewsets.ViewSet):
             return "*" * len(account_str)
         return "*" * (len(account_str) - 4) + account_str[-4:]
 
+
 class AdminUsers(viewsets.ViewSet):
     
     from api.utils.storage_utils import convert_s3_to_public_url
@@ -11332,18 +10696,6 @@ class AdminUsers(viewsets.ViewSet):
     def get_metrics(self, request):
         """Get user metrics for admin dashboard"""
         try:
-            # Create log for admin accessing user metrics
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed user metrics"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             # Calculate today's date for new users calculation
             today = timezone.now().date()
             today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
@@ -11429,18 +10781,6 @@ class AdminUsers(viewsets.ViewSet):
     def get_analytics(self, request):
         """Get analytics data for charts"""
         try:
-            # Create log for admin accessing user analytics
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed user analytics"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             # Role distribution based on actual boolean fields
             role_distribution = []
             total_users = User.objects.count()
@@ -11562,17 +10902,6 @@ class AdminUsers(viewsets.ViewSet):
     def users_list(self, request):
         """Get paginated list of users with related data including wallet info"""
         try:
-            # Create log for admin accessing users list
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed users list"
-                    )
-                except User.DoesNotExist:
-                    pass
             
             # Get query parameters
             page = int(request.query_params.get('page', 1))
@@ -11750,18 +11079,6 @@ class AdminUsers(viewsets.ViewSet):
     def get_user(self, request, user_id=None):
         """Get single user by ID with shops, personal listings, and wallet info"""
         try:
-            # Create log for admin viewing specific user
-            admin_user_id = request.headers.get('X-User-Id')
-            if admin_user_id:
-                try:
-                    admin_user = User.objects.get(id=admin_user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} viewed user details for user ID: {user_id}"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             user = User.objects.select_related().get(id=user_id)
             
             # Get profile picture URL using helper
@@ -11907,24 +11224,12 @@ class AdminUsers(viewsets.ViewSet):
         except Exception as e:
             print(f"Error in get_user: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        
 class AdminTeam(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_team_metrics(self, request):
         """Get team metrics for admin dashboard"""
         try:
-            # Create log for admin accessing team metrics
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed team metrics"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             # Calculate today's date for new team members
             today = timezone.now().date()
             today_start = timezone.make_aware(timezone.datetime.combine(today, timezone.datetime.min.time()))
@@ -11976,18 +11281,6 @@ class AdminTeam(viewsets.ViewSet):
     def team_list(self, request):
         """Get paginated list of team members (admins and moderators)"""
         try:
-            # Create log for admin accessing team list
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed team list"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             # Get query parameters
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
@@ -12095,24 +11388,11 @@ class AdminTeam(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
 class AdminReports(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """Get report metrics for admin dashboard"""
         try:
-            # Create log for admin accessing report metrics
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed report metrics"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             # Calculate basic metrics
             total_reports = Report.objects.count()
             pending_reports = Report.objects.filter(status='pending').count()
@@ -12175,18 +11455,6 @@ class AdminReports(viewsets.ViewSet):
     def reports_list(self, request):
         """Get paginated list of reports with filtering and search"""
         try:
-            # Create log for admin accessing reports list
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    admin_user = User.objects.get(id=user_id, is_admin=True)
-                    Logs.objects.create(
-                        user=admin_user,
-                        action=f"Admin {admin_user.username} accessed reports list"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             # Get query parameters
             report_type = request.GET.get('type', None)
             status_filter = request.GET.get('status', None)
@@ -12331,22 +11599,9 @@ class AdminReports(viewsets.ViewSet):
             pass
         return 0
 
-
 class AdminLogs(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_logs(self, request):
-        # Create log for admin accessing logs
-        admin_user_id = request.headers.get('X-User-Id')
-        if admin_user_id:
-            try:
-                admin_user = User.objects.get(id=admin_user_id, is_admin=True)
-                Logs.objects.create(
-                    user=admin_user,
-                    action=f"Admin {admin_user.username} accessed system logs"
-                )
-            except User.DoesNotExist:
-                pass
-
         # Get query parameters for filtering
         role = request.query_params.get('role', None)
         user_id = request.query_params.get('user_id', None)
@@ -12409,18 +11664,6 @@ class AdminLogs(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def summary(self, request):
         """Get summary of logs grouped by role"""
-        # Create log for admin accessing logs summary
-        admin_user_id = request.headers.get('X-User-Id')
-        if admin_user_id:
-            try:
-                admin_user = User.objects.get(id=admin_user_id, is_admin=True)
-                Logs.objects.create(
-                    user=admin_user,
-                    action=f"Admin {admin_user.username} accessed logs summary"
-                )
-            except User.DoesNotExist:
-                pass
-
         days = request.query_params.get('days', 7)
         
         try:
@@ -12445,6 +11688,7 @@ class AdminLogs(viewsets.ViewSet):
         }
         
         return Response(summary)
+    
 
 class ModeratorDashboard(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
@@ -17818,19 +17062,10 @@ class RiderStatus(viewsets.ViewSet):
         elif is_accepting_deliveries is None:
             is_accepting_deliveries = rider.is_accepting_deliveries
 
-        old_status = rider.availability_status
-        old_accepting = rider.is_accepting_deliveries
-
         rider.availability_status = availability_status
         rider.is_accepting_deliveries = bool(is_accepting_deliveries)
         rider.last_status_update = timezone.now()
         rider.save()
-
-        # Create log for rider status update
-        Logs.objects.create(
-            user=rider.rider,
-            action=f"Rider {rider.rider.username} updated status from {old_status} to {availability_status}, accepting deliveries: {old_accepting} -> {bool(is_accepting_deliveries)}"
-        )
 
         return Response({
             'success': True,
@@ -17843,6 +17078,7 @@ class RiderStatus(viewsets.ViewSet):
                 'last_status_update': rider.last_status_update,
             }
         }, status=status.HTTP_200_OK)
+
 
 class CustomerShops(APIView):
 
@@ -18171,22 +17407,6 @@ class CustomerShops(APIView):
 
                 shop.save()
 
-                # Create log for shop creation
-                Logs.objects.create(
-                    user=user,
-                    action=f"Customer {user.username} created shop '{shop.name}' (pending approval)"
-                )
-
-                # Geocoding result notification (only if geocoding failed)
-                if not latitude or not longitude:
-                    Notification.objects.create(
-                        user=user,
-                        title='Shop Location Notice',
-                        type='system',
-                        message=f'Your shop "{shop.name}" was created but we could not automatically determine its coordinates. Please ensure your address is correct.',
-                        is_read=False
-                    )
-
                 # Log geocoding result
                 if latitude and longitude:
                     logger.info(f"📍 Shop '{shop.name}' created with coordinates: ({latitude}, {longitude})")
@@ -18198,7 +17418,7 @@ class CustomerShops(APIView):
                     Notification.objects.create(
                         user=admin_user,
                         title='New Shop Pending Approval',
-                        type='system',
+                        type='shop_pending_approval',
                         message=f'A new shop "{shop.name}" has been submitted with legal documents and is awaiting your approval.'
                     )
 
@@ -18337,12 +17557,6 @@ class CustomerShops(APIView):
             
             shop.save()
 
-            # Create log for address update
-            Logs.objects.create(
-                user=customer.customer,
-                action=f"Customer {customer.customer.username} updated return address for shop '{shop.name}'"
-            )
-
             # Get final coordinates for response
             final_lat = float(shop.latitude) if shop.latitude else (float(latitude) if latitude else None)
             final_lng = float(shop.longitude) if shop.longitude else (float(longitude) if longitude else None)
@@ -18370,6 +17584,7 @@ class CustomerShops(APIView):
             return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 
 
 class CustomerShopsAddSeller(viewsets.ViewSet):
@@ -18382,18 +17597,6 @@ class CustomerShopsAddSeller(viewsets.ViewSet):
 
             serializer = ShopSerializer(shop, context={'request': request})
 
-            # Create log for shop access
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} accessed shop details for shop '{shop.name}'"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             return Response({
                 'success': True,
                 'shop': serializer.data
@@ -18403,7 +17606,6 @@ class CustomerShopsAddSeller(viewsets.ViewSet):
                 'success': False,
                 'message': 'Shop not found'
             }, status=status.HTTP_404_NOT_FOUND)
-
 
 class SellerDashboard(viewsets.ViewSet):
     """
@@ -18434,18 +17636,6 @@ class SellerDashboard(viewsets.ViewSet):
                     {'error': 'Shop not found', 'success': False},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            
-            # Create log for seller accessing dashboard
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"Seller {user.username} accessed dashboard for shop '{shop.name}'"
-                    )
-                except User.DoesNotExist:
-                    pass
             
             # Parse dates
             if start_date:
@@ -18693,48 +17883,11 @@ class SellerDashboard(viewsets.ViewSet):
             is_removed=False
         ).count()
         
-        # Calculate total VAT, transaction fees, and shipping fees from orders
-        orders_in_period = Order.objects.filter(
-            checkout__cart_item__product__shop=shop,
-            created_at__range=[start_datetime, end_datetime],
-            status='delivered'
-        ).exclude(
-            status__in=['cancelled', 'refunded']
-        ).distinct()
-        
-        total_vat = Decimal('0.00')
-        total_transaction_fees = Decimal('0.00')
-        total_shipping_fees = Decimal('0.00')
-        
-        for order in orders_in_period:
-            # Calculate VAT from checkout items
-            checkout_items = Checkout.objects.filter(order=order)
-            for checkout_item in checkout_items:
-                if checkout_item.cart_item and checkout_item.cart_item.variant:
-                    variant = checkout_item.cart_item.variant
-                    if variant.value_added_tax:
-                        vat_percentage = Decimal(str(variant.value_added_tax))
-                        base_price = variant.price or Decimal('0.00')
-                        vat_amount = base_price * (vat_percentage / Decimal('100'))
-                        total_vat += vat_amount * checkout_item.quantity
-            
-            # Add transaction fee if present
-            if order.transaction_fee:
-                total_transaction_fees += Decimal(str(order.transaction_fee))
-            # Add shipping fee if present (only for standard delivery)
-            if order.shipping_fee and order.delivery_method and 'standard' in order.delivery_method.lower():
-                total_shipping_fees += Decimal(str(order.shipping_fee))
-        
         return {
             'period_sales': float(current_period_sales),
-            'period_receivable': float(current_period_sales),
-            'period_received': float(current_period_sales),
             'period_delivery_fees': 0,
             'period_earnings': float(current_period_earnings),
             'period_orders': current_period_order_count,
-            'total_vat': float(total_vat),
-            'total_transaction_fees': float(total_transaction_fees),
-            'total_shipping_fees': float(total_shipping_fees),
             'low_stock_count': low_stock_count,
             'refund_requests': refund_requests,
             'sales_change': round(float(sales_change), 1),
@@ -19019,18 +18172,6 @@ class SellerDashboard(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Create log for seller accessing low stock products
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"Seller {user.username} accessed low stock products list"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             low_stock_variants = Variants.objects.filter(
                 product__shop_id=shop_id,
                 product__upload_status='published',
@@ -19206,7 +18347,8 @@ class SellerDashboard(viewsets.ViewSet):
                 {'error': str(e), 'success': False},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+
+
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
@@ -19229,16 +18371,6 @@ class SellerProducts(viewsets.ModelViewSet):
 
         if str(product.customer.customer_id) != str(user_id):
             return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
-
-        # Create log for product status update
-        try:
-            user = User.objects.get(id=user_id)
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} performed {action_type} on product '{product.name}' (ID: {product_id})"
-            )
-        except User.DoesNotExist:
-            pass
 
         if action_type == 'archive':
             if product.upload_status != 'published':
@@ -19320,16 +18452,6 @@ class SellerProducts(viewsets.ModelViewSet):
         # Ownership check
         if str(product.customer.customer_id) != str(user_id):
             return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
-
-        # Create log for product update
-        try:
-            user = User.objects.get(id=user_id)
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} updated product '{product.name}' (ID: {pk})"
-            )
-        except User.DoesNotExist:
-            pass
 
         # Collect update fields
         update_fields = []
@@ -20037,12 +19159,6 @@ class SellerProducts(viewsets.ModelViewSet):
                 # Save product
                 product = serializer.save()
                 
-                # Create log for product creation
-                Logs.objects.create(
-                    user=seller.customer,
-                    action=f"Seller {seller.customer.username} created product '{product.name}'"
-                )
-                
                 # Handle media files
                 media_files = request.FILES.getlist('media_files')
                 if len(media_files) < 3:
@@ -20289,6 +19405,10 @@ class SellerProducts(viewsets.ModelViewSet):
                 
                 # --- VAT HANDLING ---
                 # Get price for VAT calculation
+                                # --- VAT HANDLING ---
+                # Get price for VAT calculation
+                                # --- VAT HANDLING ---
+                # Get price for VAT calculation
                 price = variant_fields.get('price', Decimal('0'))
                 
                 # Check if VAT value is provided in the variant data
@@ -20482,12 +19602,6 @@ class SellerProducts(viewsets.ModelViewSet):
             # Validate UUID format
             uuid.UUID(str(user_id))
             seller = Customer.objects.select_related('customer').get(customer_id=user_id)
-            
-            # Create log for seller viewing products list
-            Logs.objects.create(
-                user=seller.customer,
-                action=f"Seller {seller.customer.username} viewed products list"
-            )
             
             queryset = Product.objects.filter(customer=seller)\
                 .select_related('shop', 'category_admin', 'category')\
@@ -20776,16 +19890,6 @@ class SellerProducts(viewsets.ModelViewSet):
                     "error": "You don't have permission to view this product"
                 }, status=status.HTTP_403_FORBIDDEN)
 
-            # Create log for seller viewing product
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"Seller {user.username} viewed product '{product.name}' (ID: {pk})"
-                )
-            except User.DoesNotExist:
-                pass
-
             variants_data = []
             for variant in product.variants.all():
                 options = []
@@ -20988,17 +20092,6 @@ class SellerProducts(viewsets.ModelViewSet):
                 return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
             if product.upload_status != 'draft':
                 return Response({"error": "Only draft products can be deleted"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create log for product deletion
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"Seller {user.username} deleted draft product '{product.name}' (ID: {pk})"
-                )
-            except User.DoesNotExist:
-                pass
-            
             product.delete()
             return Response({"success": True, "message": "Draft deleted successfully"}, status=status.HTTP_200_OK)
         except Product.DoesNotExist:
@@ -21083,17 +20176,6 @@ class SellerProducts(viewsets.ModelViewSet):
         # Ownership check — user_id is optional but enforced if provided
         if user_id and str(product.customer.customer_id) != str(user_id):
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-
-        # Create log for variant bulk update
-        if user_id:
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"Seller {user.username} performed bulk update on variants for product '{product.name}' (ID: {pk})"
-                )
-            except User.DoesNotExist:
-                pass
 
         variants_data = request.data.get('variants', [])
         if not isinstance(variants_data, list):
@@ -21203,6 +20285,7 @@ class SellerProducts(viewsets.ModelViewSet):
                             errors.append({'id': variant_id, 'field': field, 'error': f'Invalid decimal value for {field}'})
 
             # VAT field at variant level
+                        # VAT field at variant level
             if 'value_added_tax' in v_data:
                 vat_val = v_data['value_added_tax']
                 if vat_val is None or vat_val == '':
@@ -21399,6 +20482,7 @@ class SellerProducts(viewsets.ModelViewSet):
             'success': True,
             'message': 'Media deleted successfully',
         }, status=status.HTTP_200_OK)
+
 
 class CustomerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
@@ -21808,18 +20892,6 @@ class CustomerProducts(viewsets.ModelViewSet):
         """
         Create a new personal listing with variants and media (no shop)
         """
-        # Create log for personal listing creation
-        user_id = request.data.get("customer_id")
-        if user_id:
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"Customer {user.username} created a new personal listing"
-                )
-            except User.DoesNotExist:
-                pass
-
         # Validate required fields - NO SHOP REQUIRED
         required_fields = ["name", "description", "condition", "customer_id"]
         missing_fields = [f for f in required_fields if f not in request.data]
@@ -22160,15 +21232,6 @@ class CustomerProducts(viewsets.ModelViewSet):
                 "price": str(variant.price) if variant.price else None,
                 "compare_price": str(variant.compare_price) if variant.compare_price else None,
                 "quantity": variant.quantity,
-                # Dimension fields
-                "length": str(variant.length) if variant.length else None,
-                "width": str(variant.width) if variant.width else None,
-                "height": str(variant.height) if variant.height else None,
-                "dimension_unit": variant.dimension_unit,
-                # VAT field at variant level
-                "value_added_tax": str(variant.value_added_tax) if variant.value_added_tax else "12.00",
-                "value_added_tax_amount": str(variant.vat_amount) if variant.price else "0.00",
-                "price_with_vat": str(variant.price_with_vat) if variant.price else None,
                 "is_active": variant.is_active,
                 "is_refundable": variant.is_refundable,
                 "refund_days": variant.refund_days,
@@ -22252,12 +21315,6 @@ class CustomerProducts(viewsets.ModelViewSet):
             uuid.UUID(str(user_id))
             customer = Customer.objects.select_related('customer').get(customer_id=user_id)
             
-            # Create log for customer viewing personal listings
-            Logs.objects.create(
-                user=customer.customer,
-                action=f"Customer {customer.customer.username} viewed personal listings"
-            )
-            
             # Only get personal listings (no shop)
             queryset = Product.objects.filter(customer=customer, shop__isnull=True)\
                 .select_related('category_admin', 'category')\
@@ -22278,15 +21335,6 @@ class CustomerProducts(viewsets.ModelViewSet):
                         "price": str(variant.price) if variant.price else None,
                         "compare_price": str(variant.compare_price) if variant.compare_price else None,
                         "quantity": variant.quantity,
-                        # Dimension fields
-                        "length": str(variant.length) if variant.length else None,
-                        "width": str(variant.width) if variant.width else None,
-                        "height": str(variant.height) if variant.height else None,
-                        "dimension_unit": variant.dimension_unit,
-                        # VAT field at variant level
-                        "value_added_tax": str(variant.value_added_tax) if variant.value_added_tax else "12.00",
-                        "value_added_tax_amount": str(variant.vat_amount) if variant.price else "0.00",
-                        "price_with_vat": str(variant.price_with_vat) if variant.price else None,
                         "is_active": variant.is_active,
                         "is_refundable": variant.is_refundable,
                         "refund_days": variant.refund_days,
@@ -22299,7 +21347,7 @@ class CustomerProducts(viewsets.ModelViewSet):
                         "weight_unit": variant.weight_unit,
                         "critical_trigger": variant.critical_trigger,
                         "critical_stock": variant.critical_stock,
-                        "image": get_media_url(variant.image) if variant.image else None,
+                        "image": get_media_url(variant.image) if variant.image else None,  # FIXED: Use imported get_media_url
                         "original_price": str(variant.original_price) if variant.original_price else None,
                         "usage_period": variant.usage_period,
                         "usage_unit": variant.usage_unit,
@@ -22373,7 +21421,6 @@ class CustomerProducts(viewsets.ModelViewSet):
                 "success": False,
                 "error": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
     @csrf_exempt
     @action(detail=False, methods=['post'], url_path='predict-from-image')
     def predict_category_from_image(self, request):
@@ -22532,8 +21579,8 @@ class CustomerProducts(viewsets.ModelViewSet):
             return Response({
                 'success': False,
                 'error': f'Image prediction failed: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)        
-
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 class PublicProducts(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProductSerializer
 
@@ -22758,22 +21805,13 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     
     def list(self, request, *args, **kwargs):
         """Return list of products with all necessary info for display including VAT"""
-        # Create log for browsing public products
-        user_id = request.headers.get('X-User-Id')
-        if user_id:
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} browsed public products"
-                )
-            except User.DoesNotExist:
-                pass
-
         queryset = self.get_queryset()
         
         # Debug logging
         print(f"PublicProducts.list: Found {queryset.count()} products")
+        
+        # Get user_id for favorite checking
+        user_id = request.headers.get('X-User-Id')
         
         # Get ordered quantities for all products in the queryset
         product_ids = [str(p.id) for p in queryset]
@@ -22931,18 +21969,6 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
     
     def retrieve(self, request, pk=None):
         """Return a single product with all variant details including VAT and ownership info"""
-        # Create log for viewing single product
-        user_id = request.headers.get('X-User-Id')
-        if user_id:
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} viewed product details for product ID: {pk}"
-                )
-            except User.DoesNotExist:
-                pass
-
         try:
             product = self.get_detail_queryset().get(pk=pk)
         except Product.DoesNotExist:
@@ -23475,8 +22501,7 @@ class PublicProducts(viewsets.ReadOnlyModelViewSet):
             import traceback
             traceback.print_exc()
             return Response({"error": str(e)}, status=500)
-
-
+        
 class AddToCartView(APIView):
     """
     Add a product/variant to the user's cart.
@@ -23563,12 +22588,6 @@ class AddToCartView(APIView):
                 existing_cart_item.quantity = new_quantity
                 existing_cart_item.save()
                 
-                # Create log for cart update
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} updated cart item quantity to {new_quantity} for product '{product.name}' (variant: {variant.title})"
-                )
-                
                 print(f"Updated existing cart item {existing_cart_item.id} qty to {new_quantity}")
                 
                 return Response({
@@ -23600,12 +22619,6 @@ class AddToCartView(APIView):
                 existing_ordered_item.quantity = quantity
                 existing_ordered_item.save()
                 
-                # Create log for cart addition
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} added product '{product.name}' (variant: {variant.title}) to cart, quantity: {quantity}"
-                )
-                
                 return Response({
                     "success": True,
                     "message": "Item added to cart successfully",
@@ -23622,12 +22635,6 @@ class AddToCartView(APIView):
                 variant=variant,
                 quantity=quantity,
                 is_ordered=False
-            )
-            
-            # Create log for cart addition
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} added product '{product.name}' (variant: {variant.title}) to cart, quantity: {quantity}"
             )
             
             print(f"Created new cart item {cart_item.id}")
@@ -23648,7 +22655,6 @@ class AddToCartView(APIView):
                 "error": "Failed to add item to cart",
                 "details": str(e)
             }, status=500)
-
 
 class CartListView(APIView):
 
@@ -23885,12 +22891,6 @@ class CartListView(APIView):
             return Response({"error": "User not found"}, status=404)
 
         try:
-            # Create log for viewing cart
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} viewed their cart"
-            )
-
             cart_items = CartItem.objects.filter(user=user, is_ordered=False)\
                 .select_related("product", "product__shop", "variant", "variant__product")\
                 .prefetch_related('product__productmedia_set')\
@@ -24047,17 +23047,6 @@ class CartListView(APIView):
             else:
                 return Response({"error": "Cart item has no product or variant"}, status=400)
 
-            # Create log for cart update
-            try:
-                user = User.objects.get(id=user_id)
-                product_name = cart_item.product.name if cart_item.product else "Unknown Product"
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} updated cart quantity for '{product_name}' from {cart_item.quantity} to {quantity}"
-                )
-            except User.DoesNotExist:
-                pass
-
             # Update quantity
             cart_item.quantity = quantity
             cart_item.save()
@@ -24107,16 +23096,6 @@ class CartListView(APIView):
                 "variant_id": str(cart_item.variant.id) if cart_item.variant else None,
                 "name": cart_item.product.name if cart_item.product else "Unknown Product"
             }
-
-            # Create log for cart removal
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} removed '{item_info['name']}' from cart"
-                )
-            except User.DoesNotExist:
-                pass
 
             cart_item.delete()
             
@@ -24229,13 +23208,6 @@ class CartListView(APIView):
                             is_ordered=False
                         )
                         created = True
-                
-                # Create log for adding to cart
-                product_name = variant.product.name if variant.product else "Unknown Product"
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} added product '{product_name}' (variant: {variant.title}) to cart, quantity: {quantity}"
-                )
 
         except IntegrityError as e:
             try:
@@ -24312,12 +23284,6 @@ class CartListView(APIView):
                     'success': False,
                     'error': 'User not found'
                 }, status=status.HTTP_404_NOT_FOUND)
-            
-            # Create log for viewing vouchers
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} viewed available vouchers"
-            )
             
             # Get current date for status calculation
             now = timezone.now().date()
@@ -24517,7 +23483,6 @@ class CartListView(APIView):
         
         return Response(variant_data)
 
-
 class CartBulkUpdateView(APIView):
     """
     Handle bulk updates to cart (update multiple quantities at once)
@@ -24539,12 +23504,6 @@ class CartBulkUpdateView(APIView):
         
         try:
             user = User.objects.get(pk=user_id)
-            
-            # Create log for bulk cart update
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} performed bulk update on cart ({len(updates)} items)"
-            )
             
             for update in updates:
                 item_id = update.get("id")
@@ -24569,12 +23528,10 @@ class CartBulkUpdateView(APIView):
                     
                     if quantity < 1:
                         # If quantity is 0 or negative, remove the item
-                        product_name = cart_item.product.name if cart_item.product else "Unknown Product"
                         cart_item.delete()
                         results["success"].append({
                             "id": item_id,
-                            "action": "removed",
-                            "product_name": product_name
+                            "action": "removed"
                         })
                         continue
                     
@@ -24628,13 +23585,6 @@ class CartClearView(APIView):
         
         try:
             user = User.objects.get(pk=user_id)
-            
-            # Create log for clearing cart
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} cleared their cart"
-            )
-            
             deleted_count, _ = CartItem.objects.filter(
                 user=user, 
                 is_ordered=False
@@ -24650,6 +23600,7 @@ class CartClearView(APIView):
             return Response({"error": "User not found"}, status=404)
         except Exception as e:
             return Response({"error": str(e)}, status=500)
+
 
 class CartItemDetailView(APIView):
     """
@@ -24674,17 +23625,6 @@ class CartItemDetailView(APIView):
                 is_ordered=False
             )
             
-            # Create log for viewing cart item details
-            try:
-                user = User.objects.get(id=user_id)
-                product_name = cart_item.product.name if cart_item.product else "Unknown Product"
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} viewed cart item details for '{product_name}'"
-                )
-            except User.DoesNotExist:
-                pass
-            
             serializer = CartItemSerializer(cart_item, context={"request": request})
             return Response({
                 "success": True,
@@ -24695,6 +23635,7 @@ class CartItemDetailView(APIView):
             return Response({"error": "Cart item not found"}, status=404)
         except Exception as e:
             return Response({"error": str(e)}, status=500)
+
 
 
 class CartCountView(APIView):
@@ -24725,6 +23666,7 @@ class CartCountView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=500)
 
+
 class CartItemDetailView(APIView):
     """
     Get details of a single cart item
@@ -24748,17 +23690,6 @@ class CartItemDetailView(APIView):
                 is_ordered=False
             )
             
-            # Create log for viewing cart item details
-            try:
-                user = User.objects.get(id=user_id)
-                product_name = cart_item.product.name if cart_item.product else "Unknown Product"
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} viewed cart item details for '{product_name}'"
-                )
-            except User.DoesNotExist:
-                pass
-            
             serializer = CartItemSerializer(cart_item, context={"request": request})
             return Response({
                 "success": True,
@@ -24769,6 +23700,7 @@ class CartItemDetailView(APIView):
             return Response({"error": "Cart item not found"}, status=404)
         except Exception as e:
             return Response({"error": str(e)}, status=500)
+
 
 class CartBulkUpdateView(APIView):
     """
@@ -24791,12 +23723,6 @@ class CartBulkUpdateView(APIView):
         
         try:
             user = User.objects.get(pk=user_id)
-            
-            # Create log for bulk cart update
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} performed bulk update on cart ({len(updates)} items)"
-            )
             
             for update in updates:
                 item_id = update.get("id")
@@ -24821,12 +23747,10 @@ class CartBulkUpdateView(APIView):
                     
                     if quantity < 1:
                         # If quantity is 0 or negative, remove the item
-                        product_name = cart_item.product.name if cart_item.product else "Unknown Product"
                         cart_item.delete()
                         results["success"].append({
                             "id": item_id,
-                            "action": "removed",
-                            "product_name": product_name
+                            "action": "removed"
                         })
                         continue
                     
@@ -24880,13 +23804,6 @@ class CartClearView(APIView):
         
         try:
             user = User.objects.get(pk=user_id)
-            
-            # Create log for clearing cart
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} cleared their cart"
-            )
-            
             deleted_count, _ = CartItem.objects.filter(
                 user=user, 
                 is_ordered=False
@@ -24902,6 +23819,7 @@ class CartClearView(APIView):
             return Response({"error": "User not found"}, status=404)
         except Exception as e:
             return Response({"error": str(e)}, status=500)
+
 
 class CartSummaryView(APIView):
     """
@@ -24919,12 +23837,6 @@ class CartSummaryView(APIView):
             return Response({"error": "User not found"}, status=404)
         
         try:
-            # Create log for viewing cart summary
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} viewed cart summary"
-            )
-            
             cart_items = CartItem.objects.filter(user=user, is_ordered=False)\
                 .select_related("product", "variant")
             
@@ -24939,12 +23851,12 @@ class CartSummaryView(APIView):
                 
                 # Calculate value based on variant price or use product min price as fallback
                 if item.variant and item.variant.price:
-                    item_value = float(item.variant.price) * item.quantity
+                    item_value = item.variant.price * item.quantity
                     total_value += item_value
                 elif item.product:
                     # Use min price as estimate if no variant selected
                     min_price = item.product.min_price or 0
-                    item_value = float(min_price) * item.quantity
+                    item_value = min_price * item.quantity
                     total_value += item_value
                 
                 # Group by shop
@@ -24959,16 +23871,16 @@ class CartSummaryView(APIView):
                     
                     items_by_shop[shop_id]['item_count'] += item.quantity
                     if item.variant and item.variant.price:
-                        items_by_shop[shop_id]['total_value'] += float(item.variant.price) * item.quantity
+                        items_by_shop[shop_id]['total_value'] += item.variant.price * item.quantity
                     elif item.product.min_price:
-                        items_by_shop[shop_id]['total_value'] += float(item.product.min_price) * item.quantity
+                        items_by_shop[shop_id]['total_value'] += item.product.min_price * item.quantity
             
             return Response({
                 "success": True,
                 "summary": {
                     "total_items": total_items,
                     "unique_products": len(unique_products),
-                    "total_value": float(total_value),
+                    "total_value": str(total_value),
                     "items_by_shop": items_by_shop
                 }
             })
@@ -25002,12 +23914,6 @@ class BulkCartAddView(APIView):
             user = User.objects.get(pk=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
-        
-        # Create log for bulk cart addition
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} performed bulk add to cart ({len(items)} items)"
-        )
         
         results = {
             "success": [],
@@ -25096,18 +24002,6 @@ class BulkCartAddView(APIView):
                 cart_item.quantity = new_quantity
                 cart_item.save()
                 
-                # Create individual log for each successful addition
-                if created:
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} added product '{product.name}' to cart, quantity: {quantity}"
-                    )
-                else:
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} updated cart quantity for '{product.name}' to {new_quantity}"
-                    )
-                
                 serializer = CartItemSerializer(cart_item, context={"request": request})
                 results["success"].append(serializer.data)
                 
@@ -25120,8 +24014,8 @@ class BulkCartAddView(APIView):
         return Response({
             "success": True,
             "results": results
-        })    
-
+        })
+    
 class CheckoutView(viewsets.ViewSet):
     """
     Simplified Checkout ViewSet
@@ -25166,16 +24060,10 @@ class CheckoutView(viewsets.ViewSet):
             except User.DoesNotExist:
                 return Response({"error": "User not found"}, status=404)
 
-            cart_items = CartItem.objects.select_related("product", "variant").filter(user=user)
+            cart_items = CartItem.objects.select_related("product").filter(user=user)
 
             if not cart_items.exists():
                 return Response({"error": "Cart is empty"}, status=400)
-
-            # Create log for checkout attempt
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} initiated checkout with {cart_items.count()} items"
-            )
 
             # ---- TRANSACTION ----
             with transaction.atomic():
@@ -25191,40 +24079,40 @@ class CheckoutView(viewsets.ViewSet):
                     total_amount=0  # temporary
                 )
 
-                # Create log for order creation
-                Logs.objects.create(
-                    user=user,
-                    action=f"Order {order.order} created for user {user.username}"
-                )
-
                 for cart_item in cart_items:
                     product = cart_item.product
-                    variant = cart_item.variant
 
                     if not product:
                         continue
 
-                    # Handle variant pricing and stock
-                    if variant:
-                        if variant.quantity < cart_item.quantity:
-                            raise Exception(f"Insufficient stock for {product.name} - Variant {variant.title}")
-                        unit_price = variant.price if variant.price is not None else product.price
+                    # Handle SKU-aware stock and pricing
+                    if getattr(cart_item, 'sku', None) and cart_item.sku:
+                        sku = cart_item.sku
+                        if sku.quantity < cart_item.quantity:
+                            raise Exception(f"Insufficient SKU stock for {product.name} - SKU {sku.sku_code}")
+                        unit_price = sku.price if sku.price is not None else product.price
                         line_total = unit_price * cart_item.quantity
                         total_amount += line_total
 
-                        # Deduct variant stock
-                        variant.quantity -= cart_item.quantity
-                        variant.save(update_fields=['quantity'])
+                        # Deduct SKU stock
+                        sku.quantity -= cart_item.quantity
+                        sku.save(update_fields=['quantity'])
 
-                        # Update product total stock from variants
+                        # Recalculate and sync product.quantity from SKU totals
                         try:
-                            total = product.variants.filter(is_active=True).aggregate(total=Coalesce(Sum('quantity'), 0))['total']
+                            total = product.skus.filter(is_active=True).aggregate(total=Coalesce(Sum('quantity'), 0))['total']
                             product.quantity = int(total or 0)
                             product.save(update_fields=['quantity'])
+
+                            # Debug: product state after SKU sync
+                            try:
+                                shop = product.shop
+                                print(f"POST-CHECKOUT SKU SYNC: product={product.id} name={product.name} quantity={product.quantity} is_removed={product.is_removed} upload_status={product.upload_status} shop_verified={getattr(shop, 'verified', None)} shop_status={getattr(shop, 'status', None)}")
+                            except Exception as _e:
+                                print("POST-CHECKOUT SKU SYNC: failed to log product state", _e)
                         except Exception:
                             pass
                     else:
-                        # Fallback to product stock (should not happen in new system)
                         if product.quantity < cart_item.quantity:
                             raise Exception(f"Insufficient stock for {product.name}")
 
@@ -25235,6 +24123,13 @@ class CheckoutView(viewsets.ViewSet):
                         # Deduct stock
                         product.quantity -= cart_item.quantity
                         product.save(update_fields=["quantity"])
+
+                        # Debug: product state after product stock decrement
+                        try:
+                            shop = product.shop
+                            print(f"POST-CHECKOUT PROD DECR: product={product.id} name={product.name} quantity={product.quantity} is_removed={product.is_removed} upload_status={product.upload_status} shop_verified={getattr(shop, 'verified', None)} shop_status={getattr(shop, 'status', None)}")
+                        except Exception as _e:
+                            print("POST-CHECKOUT PROD DECR: failed to log product state", _e)
 
                     # Create checkout row
                     Checkout.objects.create(
@@ -25259,16 +24154,6 @@ class CheckoutView(viewsets.ViewSet):
                 
                 order.save(update_fields=["total_amount", "transaction_fee", "shipping_fee"])
 
-                # Create notification for customer
-                Notification.objects.create(
-                    user=user,
-                    title="Order Placed Successfully",
-                    type="order_update",
-                    message=f"Your order #{str(order.order)[:8]} has been placed successfully. Total amount: ₱{total_amount:,.2f}",
-                    related_order=order,
-                    is_read=False
-                )
-
                 # Clear cart
                 cart_items.delete()
 
@@ -25288,24 +24173,14 @@ class CheckoutView(viewsets.ViewSet):
                 status=500
             )
 
+
+
 class CustomerBoostPlan(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_boost_plans(self, request):
         try: 
             plans = BoostPlan.objects.all()
             serializer = BoostPlanSerializer(plans, many=True)
-
-            # Create log for viewing boost plans
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} viewed boost plans"
-                    )
-                except User.DoesNotExist:
-                    pass
 
             return Response({
                 'success': True,
@@ -25315,7 +24190,8 @@ class CustomerBoostPlan(viewsets.ViewSet):
             return Response({
                 'success': False,
                 'message': str(e),
-            })        
+            })
+        
 
 
 
@@ -25413,12 +24289,6 @@ class CustomerFavoritesView(APIView):
                     'favorites': [],
                     'message': 'Customer profile not available'
                 })
-
-            # Create log for viewing favorites
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} viewed their favorites list"
-            )
 
             favorites = self.get_favorites_queryset(customer)
             
@@ -25524,12 +24394,6 @@ class CustomerFavoritesView(APIView):
                 product=product
             )
             
-            # Create log for adding to favorites
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} added product '{product.name}' to favorites"
-            )
-            
             # Get favorite with related data for response
             favorite_with_details = self.get_favorites_queryset(customer).get(id=favorite.id)
             favorite_data = {
@@ -25616,12 +24480,6 @@ class CustomerFavoritesView(APIView):
             
             favorite.delete()
             
-            # Create log for removing from favorites
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} removed product '{product_name}' from favorites"
-            )
-            
             logger.info(f"Favorite removed - Product: {product_name}, User: {user_id}")
             
             return Response({
@@ -25636,7 +24494,6 @@ class CustomerFavoritesView(APIView):
                 "message": "An error occurred while removing from favorites",
                 "error": str(e) if settings.DEBUG else None
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
     def get_product_details(self, product):
         """Helper method to get detailed product information including variants"""
         if not product:
@@ -25689,19 +24546,14 @@ class CustomerFavoritesView(APIView):
             'created_at': product.created_at,
             'updated_at': product.updated_at
         }
-    
+
+# backend/api/views/rider_views.py (add this to your rider views)
 class RiderDeliveryViewSet(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def pending_offers(self, request):
         """Get all pending delivery offers for the authenticated rider"""
         rider = request.user.rider
-        
-        # Create log for viewing pending offers
-        Logs.objects.create(
-            user=request.user,
-            action=f"Rider {request.user.username} viewed pending delivery offers"
-        )
         
         pending_deliveries = Delivery.objects.filter(
             rider=rider,
@@ -25757,12 +24609,6 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
                 'message': 'Response must be accept or reject'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Create log for responding to offer
-        Logs.objects.create(
-            user=request.user,
-            action=f"Rider {request.user.username} {response}ed delivery offer for order {delivery.order.order}"
-        )
-        
         if response == 'accept':
             delivery.status = 'accepted'
             delivery.save()
@@ -25772,16 +24618,6 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
             rider.availability_status = 'busy'
             rider.is_accepting_deliveries = False
             rider.save()
-            
-            # Create notification for the customer
-            Notification.objects.create(
-                user=delivery.order.user,
-                title='Delivery Accepted',
-                type='delivery',
-                message=f'Your delivery has been accepted and is being processed.',
-                related_delivery=delivery,
-                is_read=False
-            )
             
             message = 'Delivery offer accepted'
         else:
@@ -25793,7 +24629,6 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
             'success': True,
             'message': message
         })
-
 
 class SellerOrderList(viewsets.ViewSet):
     
@@ -25877,15 +24712,10 @@ class SellerOrderList(viewsets.ViewSet):
             if response_type not in ['accept', 'reject']:
                 return Response({"success": False, "message": "Response must be 'accept' or 'reject'"}, status=status.HTTP_400_BAD_REQUEST)
             
+            # Changed from 'pending_offer' to 'pending'
             delivery = Delivery.objects.filter(order=order, rider=rider, status='pending').first()
             if not delivery:
                 return Response({"success": False, "message": "No pending delivery found for this rider"}, status=status.HTTP_404_NOT_FOUND)
-            
-            # Create log for rider response
-            Logs.objects.create(
-                user=request.user,
-                action=f"Rider {request.user.username} {response_type}ed delivery offer for order {order.order}"
-            )
             
             if response_type == 'accept':
                 delivery.status = 'accepted'
@@ -26058,12 +24888,6 @@ class SellerOrderList(viewsets.ViewSet):
             # Sort by total distance (nearest first)
             rider_distances.sort(key=lambda x: x['total_distance'])
             rider_comparison.sort(key=lambda x: x['total_distance_km'])
-            
-            # Create log for assigning deliveries
-            Logs.objects.create(
-                user=request.user,
-                action=f"Admin {request.user.username} assigned deliveries for order {order.order}"
-            )
             
             # SELECT ONLY THE NEAREST RIDER
             nearest = rider_distances[0]
@@ -26255,7 +25079,7 @@ class SellerOrderList(viewsets.ViewSet):
         )
         
         is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
-                                                for keyword in ['pickup', 'store', 'collect'])
+                                                  for keyword in ['pickup', 'store', 'collect'])
         
         shop_checkouts = Checkout.objects.filter(
             order=order
@@ -26266,7 +25090,7 @@ class SellerOrderList(viewsets.ViewSet):
         ).prefetch_related('cart_item__product__productmedia_set')
         
         order_items = []
-        total_amount = 0
+        total_amount = float(order.total_amount) 
         
         for checkout in shop_checkouts:
             if checkout.direct_product_id and not checkout.cart_item:
@@ -26302,7 +25126,6 @@ class SellerOrderList(viewsets.ViewSet):
                     "shipping_method": None,
                     "estimated_delivery": None
                 })
-                total_amount += float(checkout.total_amount)
                 continue
             
             cart_item = checkout.cart_item
@@ -26413,9 +25236,6 @@ class SellerOrderList(viewsets.ViewSet):
                 order_data["metadata"]["nearest_rider"] = nearest_rider_data
         
         return order_data
-
-
-    
     
     @action(detail=False, methods=['get'])
     def order_list(self, request):
@@ -26475,6 +25295,7 @@ class SellerOrderList(viewsets.ViewSet):
             'picked_up': 'picked_up',
         }
         
+        # Changed from 'pending_offer' to 'pending'
         if delivery_status in ('pending',):
             return 'waiting_for_rider'
         
@@ -26635,12 +25456,6 @@ class SellerOrderList(viewsets.ViewSet):
             
             if not has_shop_items:
                 return Response({"success": False, "message": "Order does not contain items from your shop"}, status=status.HTTP_403_FORBIDDEN)
-            
-            # Create log for order status update
-            Logs.objects.create(
-                user=request.user,
-                action=f"Seller {request.user.username} updated order {order.order} status to {action_type}"
-            )
             
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                       for keyword in ['pickup', 'store', 'collect'])
@@ -27266,12 +26081,7 @@ class SellerOrderList(viewsets.ViewSet):
             if not checkouts.exists():
                 return Response({'success': False, 'message': 'No items found for this shop in the order'}, status=status.HTTP_404_NOT_FOUND)
             
-            # Create log for seller viewing order
-            Logs.objects.create(
-                user=request.user,
-                action=f"Seller {request.user.username} viewed order {order_id} details"
-            )
-            
+            # FIX: Get the latest ACCEPTED delivery, not just the first one
             delivery_info = None
             proof_images = []
             
@@ -27405,15 +26215,6 @@ class SellerOrderList(viewsets.ViewSet):
                 latest_delivery.status if latest_delivery else None
             )
             
-            # Calculate total VAT from all checkout items
-            total_vat = Decimal('0.00')
-            for checkout in checkouts:
-                if checkout.cart_item and checkout.cart_item.variant:
-                    variant = checkout.cart_item.variant
-                    if variant.value_added_tax and variant.price:
-                        vat_amount = variant.price * (Decimal(str(variant.value_added_tax)) / Decimal('100'))
-                        total_vat += vat_amount * checkout.quantity
-            
             # Extract rider comparison data from the latest delivery's metadata
             rider_comparison_data = None
             nearest_rider_data = None
@@ -27438,9 +26239,6 @@ class SellerOrderList(viewsets.ViewSet):
                     },
                     'status': shipping_status,
                     'total_amount': total_amount,
-                    'shipping_fee': float(order.shipping_fee) if order.shipping_fee else None,
-                    'transaction_fee': float(order.transaction_fee) if order.transaction_fee else None,
-                    'total_vat': float(total_vat),
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
@@ -27500,12 +26298,6 @@ class SellerOrderList(viewsets.ViewSet):
             
             if not has_shop_items:
                 return Response({"success": False, "message": "No items from your shop"}, status=403)
-            
-            # Create log for generating waybill
-            Logs.objects.create(
-                user=request.user,
-                action=f"Seller {request.user.username} generated waybill for order {order.order}"
-            )
             
             delivery = Delivery.objects.filter(order=order).select_related('rider__rider').first()
             
@@ -27723,7 +26515,8 @@ class SellerOrderList(viewsets.ViewSet):
         except Exception as e:
             import traceback
             print(traceback.format_exc())
-            return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)
+            return Response({"success": False, "message": f"Waybill generation failed: {str(e)}"}, status=500)    
+
 
 class CheckoutOrder(viewsets.ViewSet):
     
@@ -27931,16 +26724,6 @@ class CheckoutOrder(viewsets.ViewSet):
 
         if not user_id:
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Create log for checkout items retrieval
-        try:
-            user = User.objects.get(id=user_id)
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} accessed checkout items"
-            )
-        except User.DoesNotExist:
-            pass
 
         # Determine which entry point was used
         if cart_id:
@@ -28814,12 +27597,6 @@ class CheckoutOrder(viewsets.ViewSet):
         try:
             from decimal import Decimal
             user = get_object_or_404(User, id=user_id)
-            
-            # Create log for order creation
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} created a new order"
-            )
 
             shipping_address = None
             delivery_address_text = "Pickup from Store"
@@ -29183,16 +27960,6 @@ class CheckoutOrder(viewsets.ViewSet):
 
             # Decrease stock for the order items
             self._decrease_stock_for_order(order)
-            
-            # Create notification for customer
-            Notification.objects.create(
-                user=user,
-                title='Order Placed Successfully',
-                type='order_update',
-                message=f'Your order #{str(order.order)[:8]} has been placed successfully. Total amount: ₱{total_amount:,.2f}',
-                related_order=order,
-                is_read=False
-            )
 
             response_data = {
                 "success": True,
@@ -29977,7 +28744,7 @@ class CheckoutOrder(viewsets.ViewSet):
 
         return stock_errors
 
-class ShippingAddressViewSet(viewsets.ViewSet):
+class ShippingAddressViewSet(viewsets.ViewSet):  # Renamed to avoid conflict
     @action(detail=False, methods=['GET'])
     def get_shipping_addresses(self, request):
         """
@@ -29990,16 +28757,6 @@ class ShippingAddressViewSet(viewsets.ViewSet):
             return Response({"error": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Create log for viewing shipping addresses
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} viewed their shipping addresses"
-                )
-            except User.DoesNotExist:
-                pass
-
             # Use the actual model, not the viewset class
             addresses = list(
                 ShippingAddress.objects.filter(
@@ -30058,7 +28815,7 @@ class ShippingAddressViewSet(viewsets.ViewSet):
             
             return Response({
                 "success": True,
-                "shipping_addresses": formatted_addresses or None,
+                "shipping_addresses": formatted_addresses or None,  # Return None if empty
                 "default_shipping_address": default_address,
                 "count": len(formatted_addresses)
             })
@@ -30106,12 +28863,6 @@ class ShippingAddressViewSet(viewsets.ViewSet):
         
         try:
             user = get_object_or_404(User, id=user_id)
-            
-            # Create log for adding shipping address
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} added a new shipping address"
-            )
             
             # Create address
             address = ShippingAddress.objects.create(
@@ -30188,17 +28939,6 @@ class ShippingAddressViewSet(viewsets.ViewSet):
         
         try:
             address = get_object_or_404(ShippingAddress, id=address_id, user_id=user_id)
-            
-            # Create log for deleting shipping address
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} deleted a shipping address"
-                )
-            except User.DoesNotExist:
-                pass
-            
             address.delete()
             
             return Response({
@@ -30233,16 +28973,6 @@ class ShippingAddressViewSet(viewsets.ViewSet):
         
         try:
             address = get_object_or_404(ShippingAddress, id=address_id, user_id=user_id)
-            
-            # Create log for setting default address
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} set a default shipping address"
-                )
-            except User.DoesNotExist:
-                pass
             
             # Update all addresses to not default
             ShippingAddress.objects.filter(user_id=user_id).update(is_default=False)
@@ -30280,16 +29010,6 @@ class ShippingAddressViewSet(viewsets.ViewSet):
         
         try:
             address = get_object_or_404(ShippingAddress, id=address_id, user_id=user_id)
-            
-            # Create log for viewing address by ID
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} viewed a specific shipping address"
-                )
-            except User.DoesNotExist:
-                pass
             
             # Format address
             parts = [
@@ -30362,16 +29082,6 @@ class ShippingAddressViewSet(viewsets.ViewSet):
         try:
             address = get_object_or_404(ShippingAddress, id=address_id, user_id=user_id)
             
-            # Create log for updating shipping address
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} updated a shipping address"
-                )
-            except User.DoesNotExist:
-                pass
-            
             # Update fields if provided
             update_fields = [
                 'recipient_name', 'recipient_phone', 'street', 'barangay',
@@ -30417,7 +29127,7 @@ class ShippingAddressViewSet(viewsets.ViewSet):
             return Response(
                 {"error": "Failed to update shipping address", "details": str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            ) 
 
 class PurchasesBuyer(viewsets.ViewSet):
     def _auto_complete_if_needed(self, order):
@@ -30473,12 +29183,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 {'error': 'User not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        # Create log for viewing purchases
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} viewed their purchases"
-        )
         
         try:
             # Get all orders for this user
@@ -30910,12 +29614,6 @@ class PurchasesBuyer(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Create log for viewing status counts
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} viewed order status counts"
-        )
-
         try:
             processing = Order.objects.filter(user=user, status__in=['pending', 'processing']).count()
             shipped = Order.objects.filter(user=user, status='shipped').count()
@@ -30944,12 +29642,6 @@ class PurchasesBuyer(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Create log for cancellation attempt
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} attempted to cancel order {pk}"
-        )
-
         try:
             order = Order.objects.get(order=pk, user=user)
         except Order.DoesNotExist:
@@ -30962,23 +29654,8 @@ class PurchasesBuyer(viewsets.ViewSet):
         try:
             order.status = 'cancelled'
             order.save()
-            
-            # Create notification for user
-            Notification.objects.create(
-                user=user,
-                title='Order Cancelled',
-                type='order_update',
-                message=f'Your order #{str(order.order)[:8]} has been cancelled successfully.',
-                related_order=order,
-                is_read=False
-            )
-            
-            # Create log for successful cancellation
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} successfully cancelled order {pk}"
-            )
-            
+
+            # Optionally: create a log entry or send notification here
             return Response({'success': True, 'message': 'Order cancelled successfully'}, status=status.HTTP_200_OK)
         except Exception as e:
             logger.exception('Error cancelling order: %s', e)
@@ -31002,12 +29679,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 {"error": "User not found"}, 
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        # Create log for viewing order
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} viewed order {pk}"
-        )
         
         try:
             order = Order.objects.get(order=pk, user=user)
@@ -31176,12 +29847,6 @@ class PurchasesBuyer(viewsets.ViewSet):
         except Exception as exc:
             logger.exception('view_order_detail user lookup failed: %s', exc)
             return Response({'error': 'Invalid user ID'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Create log for viewing order detail
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} viewed order details for order {pk}"
-        )
         
         try:
             order = Order.objects.get(order=pk, user=user)
@@ -31558,16 +30223,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'success': False, 
                 'message': f'Order is not in a completable state. Current status: {order.status}'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Create log for order completion
-        try:
-            user = User.objects.get(id=user_id)
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} marked order {pk} as completed"
-            )
-        except User.DoesNotExist:
-            pass
 
         try:
             from django.utils import timezone
@@ -31588,16 +30243,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 delivery.status = 'completed'
                 delivery.delivered_at = timezone.now()
                 delivery.save(update_fields=['status', 'delivered_at'])
-            
-            # Create notification for user
-            Notification.objects.create(
-                user=order.user,
-                title='Order Completed',
-                type='order_update',
-                message=f'Your order #{str(order.order)[:8]} has been marked as completed. Thank you for shopping with us!',
-                related_order=order,
-                is_read=False
-            )
 
             return Response({
                 'success': True, 
@@ -31622,12 +30267,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Create log for viewing shipping timeline
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} viewed shipping timeline for order {pk}"
-        )
 
         try:
             order = Order.objects.get(order=pk, user=user)
@@ -31851,12 +30490,6 @@ class PurchasesBuyer(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Create log for item cancellation attempt
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} attempted to cancel items from order {pk}"
-        )
-
         try:
             order = Order.objects.get(order=pk, user=user)
         except Order.DoesNotExist:
@@ -31938,23 +30571,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 message = 'All items cancelled. Order has been cancelled.'
             else:
                 message = f'{cancelled_count} item(s) cancelled successfully.'
-            
-            # Create notification for user
-            if cancelled_count > 0:
-                Notification.objects.create(
-                    user=user,
-                    title='Items Cancelled',
-                    type='order_update',
-                    message=f'{cancelled_count} item(s) from your order #{str(order.order)[:8]} have been cancelled.',
-                    related_order=order,
-                    is_read=False
-                )
-            
-            # Create log for successful cancellation
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} successfully cancelled {cancelled_count} items from order {pk}"
-            )
 
             return Response({
                 'success': True,
@@ -31981,18 +30597,6 @@ class ViewShopAPIView(APIView):
     """View details of a single shop including products, categories, and followers"""
 
     def get(self, request, shop_id):
-        # Create log for viewing shop
-        user_id = request.headers.get('X-User-Id')
-        if user_id:
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} viewed shop {shop_id}"
-                )
-            except User.DoesNotExist:
-                pass
-
         # Fetch shop if exists (including suspended) so frontend can show suspended UI
         shop = Shop.objects.filter(id=shop_id).first()
         if not shop:
@@ -32194,17 +30798,6 @@ class ViewShopAPIView(APIView):
             return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Create log for following shop
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} followed shop {shop_id}"
-        )
-
-        try:
             customer = Customer.objects.filter(customer__id=user_id).first()
             if not customer:
                 return Response({'error': 'Customer profile not found for user'}, status=status.HTTP_404_NOT_FOUND)
@@ -32227,17 +30820,6 @@ class ViewShopAPIView(APIView):
             return Response({'error': 'User ID required'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Create log for unfollowing shop
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} unfollowed shop {shop_id}"
-        )
-
-        try:
             customer = Customer.objects.filter(customer__id=user_id).first()
             if not customer:
                 return Response({'error': 'Customer profile not found for user'}, status=status.HTTP_404_NOT_FOUND)
@@ -32253,7 +30835,10 @@ class ViewShopAPIView(APIView):
             print(f"Error unfollowing shop: {e}")
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
     
+
+
 
 class OrderSuccessful(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
@@ -32271,16 +30856,6 @@ class OrderSuccessful(viewsets.ViewSet):
             )
         
         try:
-            # Create log for viewing order successful page
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} viewed order successful page for order {pk}"
-                )
-            except User.DoesNotExist:
-                pass
-
             # Get the order and verify it belongs to the user
             order = get_object_or_404(
                 Order.objects.select_related(
@@ -32442,6 +31017,7 @@ class OrderSuccessful(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+
 class UserPaymentMethodViewSet(viewsets.ViewSet):
     """User's saved payment methods"""
     
@@ -32454,13 +31030,6 @@ class UserPaymentMethodViewSet(viewsets.ViewSet):
         
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for viewing payment methods
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} viewed their payment methods"
-            )
-            
             methods = UserPaymentMethod.objects.filter(user=user)
             serializer = UserPaymentMethodSerializer(methods, many=True)
             return Response(serializer.data)
@@ -32489,12 +31058,6 @@ class UserPaymentMethodViewSet(viewsets.ViewSet):
             if serializer.is_valid():
                 method = serializer.save()
                 
-                # Create log for adding payment method
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} added a new payment method: {method_type}"
-                )
-                
                 return Response({
                     "message": "Payment method added successfully",
                     "method_id": str(method.id)
@@ -32519,13 +31082,6 @@ class UserPaymentMethodViewSet(viewsets.ViewSet):
             serializer = UserPaymentMethodSerializer(method, data=request.data, partial=True)
             if serializer.is_valid():
                 serializer.save()
-                
-                # Create log for updating payment method
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} updated payment method {pk}"
-                )
-                
                 return Response({
                     "message": "Payment method updated",
                     "method_id": str(method.id)
@@ -32547,16 +31103,7 @@ class UserPaymentMethodViewSet(viewsets.ViewSet):
             user = User.objects.get(id=user_id)
             method = get_object_or_404(UserPaymentMethod, id=pk, user=user)
             
-            method_type = method.method_type
-            
             method.delete()
-            
-            # Create log for deleting payment method
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} deleted payment method: {method_type}"
-            )
-            
             return Response({
                 "message": "Payment method deleted",
                 "method_id": str(pk)
@@ -32583,12 +31130,6 @@ class UserPaymentMethodViewSet(viewsets.ViewSet):
             method.is_default = True
             method.save()
             
-            # Create log for setting default payment method
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} set payment method {pk} as default"
-            )
-            
             return Response({
                 "message": "Payment method set as default",
                 "method_id": str(method.id)
@@ -32596,6 +31137,7 @@ class UserPaymentMethodViewSet(viewsets.ViewSet):
             
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
     
 class ArrangeShipment(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
@@ -32612,18 +31154,6 @@ class ArrangeShipment(viewsets.ViewSet):
                     "success": False,
                     "message": "Shop ID is required"
                 }, status=status.HTTP_400_BAD_REQUEST)
-
-            # Create log for accessing order details
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} accessed order details for shipment arrangement - Order {pk}"
-                    )
-                except User.DoesNotExist:
-                    pass
 
             # Import models
             from .models import Order, User, ShippingAddress, Checkout, CartItem, Product, Shop, Variants
@@ -32787,18 +31317,6 @@ class ArrangeShipment(viewsets.ViewSet):
                     "message": "Shop ID is required"
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Create log for accessing available riders
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} viewed available riders for order {pk}"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             # Import models
             from .models import Order, Shop, User, Rider
             
@@ -32890,18 +31408,6 @@ class ArrangeShipment(viewsets.ViewSet):
                     "message": "Invalid offer amount"
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Create log for submitting shipment offer
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} submitted shipment offer for order {pk} to rider {rider_id}"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             # Import models
             from .models import Order, Shop, User, Rider, Delivery
 
@@ -32951,15 +31457,14 @@ class ArrangeShipment(viewsets.ViewSet):
                 order.status = 'processing'
                 order.save()
 
-            # Create notification for rider
-            Notification.objects.create(
-                user=rider.rider,
-                title='New Shipment Offer',
-                type='delivery',
-                message=f'You have a new shipment offer for order #{str(order.order)[:8]}. Amount: ₱{offer_amount:.2f}',
-                related_delivery=delivery,
-                is_read=False
-            )
+            # Create notification for rider (you'll need to implement this)
+            # Notification.objects.create(
+            #     user=rider.rider,
+            #     title='New Shipment Offer',
+            #     type='shipment_offer',
+            #     message=f'You have a new shipment offer for order {order.order}',
+            #     is_read=False
+            # )
 
             return Response({
                 "success": True,
@@ -32982,6 +31487,7 @@ class ArrangeShipment(viewsets.ViewSet):
                 "success": False,
                 "message": f"Error submitting offer: {str(e)}"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
         
 class RiderOrdersActive(viewsets.ViewSet):
     def _get_media_url(self, request, file_field):
@@ -33027,7 +31533,7 @@ class RiderOrdersActive(viewsets.ViewSet):
         
         return Delivery.objects.filter(
             rider=rider,
-            status='declined',
+            status='cancelled',  # Changed from 'declined' to 'cancelled'
             updated_at__range=[today_start, today_end]
         ).count()
 
@@ -33081,14 +31587,6 @@ class RiderOrdersActive(viewsets.ViewSet):
             return Response(
                 {"error": "Invalid order ID format. Must be a valid UUID."},
                 status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Create log for viewing order details
-        rider = self._get_rider(request)
-        if rider:
-            Logs.objects.create(
-                user=rider.rider,
-                action=f"Rider {rider.rider.username} viewed order details for order {order_id}"
             )
 
         # Get the order with related data
@@ -33255,12 +31753,6 @@ class RiderOrdersActive(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Create log for viewing metrics
-        Logs.objects.create(
-            user=rider.rider,
-            action=f"Rider {rider.rider.username} viewed dashboard metrics"
-        )
-        
         # Current time for calculations
         now = timezone.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -33284,7 +31776,7 @@ class RiderOrdersActive(viewsets.ViewSet):
         )
         
         total_earnings = active_deliveries.aggregate(
-            total=Sum('delivery_fee')
+            total=Sum('order__total_amount')
         )['total'] or 0
         
         # Calculate delivery time metrics
@@ -33332,7 +31824,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             status='delivered',
             delivered_at__gte=week_ago
         ).aggregate(
-            total=Sum('delivery_fee')
+            total=Sum('order__total_amount')
         )['total'] or 0
         
         metrics = {
@@ -33582,7 +32074,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                 )
 
             if not delivery:
-                # Calculate delivery fee - default ₱40.00 for standard delivery
+                # Calculate delivery fee - default ₱50.00 for standard delivery
                 delivery_fee = Decimal('40.00')
                 
                 delivery = Delivery.objects.create(
@@ -33597,12 +32089,6 @@ class RiderOrdersActive(viewsets.ViewSet):
                 if not delivery.delivery_fee or delivery.delivery_fee == 0:
                     delivery.delivery_fee = Decimal('40.00')
                     delivery.save()
-
-            # Create log for accepting order
-            Logs.objects.create(
-                user=rider.rider,
-                action=f"Rider {rider.rider.username} accepted order {order.order}"
-            )
 
         # Idempotent behavior for already-accepted/in-progress deliveries
         if delivery.status in ['accepted', 'picked_up', 'in_progress']:
@@ -33688,12 +32174,6 @@ class RiderOrdersActive(viewsets.ViewSet):
                 {"success": False, "error": "This delivery is not assigned to you"},
                 status=status.HTTP_403_FORBIDDEN
             )
-
-        # Create log for status update
-        Logs.objects.create(
-            user=rider.rider,
-            action=f"Rider {rider.rider.username} updated delivery {delivery_id} status to {status_value}"
-        )
 
         # Check if delivery is in a valid state for the requested transition
         if status_value == 'picked_up' and delivery.status not in ['accepted', 'pending']:
@@ -33818,12 +32298,6 @@ class RiderOrdersActive(viewsets.ViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Create log for pickup
-        Logs.objects.create(
-            user=rider.rider,
-            action=f"Rider {rider.rider.username} picked up order {delivery.order.order}"
-        )
-        
         # Verify delivery status allows pickup
         if delivery.status not in ['pending', 'accepted']:
             return Response(
@@ -33891,12 +32365,6 @@ class RiderOrdersActive(viewsets.ViewSet):
                 {"success": False, "error": "This delivery is not assigned to you"},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        # Create log for delivery
-        Logs.objects.create(
-            user=rider.rider,
-            action=f"Rider {rider.rider.username} delivered order {delivery.order.order}"
-        )
         
         # Verify delivery status allows delivery
         if delivery.status != 'picked_up':
@@ -33992,12 +32460,8 @@ class RiderOrdersActive(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Create log for decline
-        Logs.objects.create(
-            user=rider.rider,
-            action=f"Rider {rider.rider.username} declined order {delivery.order.order}" + (f" Reason: {reason}" if reason else "")
-        )
-
+        # FIX: Instead of 'declined', set to 'cancelled' or delete it
+        # Option 1: Set to 'cancelled' (so seller can reassign)
         delivery.status = 'declined'
         delivery.updated_at = timezone.now()
         delivery.save()
@@ -34044,6 +32508,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             }
         })
 
+
 class ProofManagementViewSet(viewsets.ViewSet):
     """ViewSet for managing delivery proofs"""
     
@@ -34065,12 +32530,6 @@ class ProofManagementViewSet(viewsets.ViewSet):
         rider = self._get_rider(request)
         if not rider:
             return Response({"success": False, "error": "Rider not found"}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Create log for viewing proofs
-        Logs.objects.create(
-            user=rider.rider,
-            action=f"Rider {rider.rider.username} viewed delivery proofs"
-        )
         
         delivery_id = request.GET.get('delivery_id')
         if not delivery_id:
@@ -34163,12 +32622,6 @@ class ProofManagementViewSet(viewsets.ViewSet):
                 {"success": False, "error": "Delivery not found or not assigned to you"},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        # Create log for uploading proofs
-        Logs.objects.create(
-            user=rider.rider,
-            action=f"Rider {rider.rider.username} uploaded proofs for delivery {delivery_id}"
-        )
         
         # Check if delivery can accept proofs - allow adding proofs for delivered deliveries
         if delivery.status in ['cancelled']:
@@ -34289,6 +32742,8 @@ class ProofManagementViewSet(viewsets.ViewSet):
         else:
             return 'other'
 
+
+
 class SwapViewset(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def get_swap(self, request):
@@ -34305,12 +32760,6 @@ class SwapViewset(viewsets.ViewSet):
             if user_id:
                 try:
                     current_user = User.objects.get(id=user_id)
-                    
-                    # Create log for viewing swap items
-                    Logs.objects.create(
-                        user=current_user,
-                        action=f"User {current_user.username} viewed swap products"
-                    )
                 except User.DoesNotExist:
                     pass
             
@@ -34518,8 +32967,7 @@ class SwapViewset(viewsets.ViewSet):
                 'total': 0,
                 'message': 'Error fetching swap products'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
+        
 class CustomerProductViewSet(viewsets.ViewSet):
     """
     Comprehensive ViewSet for customer product management 
@@ -34530,18 +32978,6 @@ class CustomerProductViewSet(viewsets.ViewSet):
     def global_categories(self, request):
         """Get all global categories (no shop) for customer products"""
         try:
-            # Create log for viewing categories
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} viewed global categories"
-                    )
-                except User.DoesNotExist:
-                    pass
-
             categories = Category.objects.filter(shop__isnull=True).order_by('name')
             categories_data = []
             
@@ -34597,16 +33033,6 @@ class CustomerProductViewSet(viewsets.ViewSet):
                 return Response({
                     "error": "User ID is required"
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create log for product creation attempt
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"Customer {user.username} attempted to create a product"
-                )
-            except User.DoesNotExist:
-                pass
             
             # Get customer profile
             try:
@@ -34746,16 +33172,6 @@ class CustomerProductViewSet(viewsets.ViewSet):
                     # Increment customer's product count
                     customer.increment_product_count()
                     
-                    # Create success log
-                    try:
-                        user = User.objects.get(id=user_id)
-                        Logs.objects.create(
-                            user=user,
-                            action=f"Customer {user.username} successfully created product '{product.name}'"
-                        )
-                    except User.DoesNotExist:
-                        pass
-                    
                     # Return comprehensive success response
                     return Response({
                         "success": True,
@@ -34817,6 +33233,321 @@ class CustomerProductViewSet(viewsets.ViewSet):
                     return default
             
             # Normalize refundable flag
+            try:
+                if 'is_refundable' in variant_data:
+                    ref_flag = variant_data.get('is_refundable')
+                elif 'refundable' in variant_data:
+                    ref_flag = variant_data.get('refundable')
+                else:
+                    ref_flag = product.is_refundable if product and getattr(product, 'is_refundable', False) else False
+                    
+                if isinstance(ref_flag, bool):
+                    is_refundable_val = ref_flag
+                else:
+                    is_refundable_val = str(ref_flag).strip().lower() in ('true','1','yes','y')
+            except Exception:
+                is_refundable_val = False
+
+            # Get swap data
+            allow_swap = variant_data.get('allow_swap', False)
+            swap_type = variant_data.get('swap_type', 'direct_swap')
+            min_payment = variant_data.get('minimum_additional_payment', 0)
+            max_payment = variant_data.get('maximum_additional_payment', 0)
+            
+            # Create variant
+            variant = Variants.objects.create(
+                product=product,
+                shop=None,  # Customer products have no shop
+                title=variant_data.get('title', ''),
+                option_title=variant_data.get('option_title', ''),
+                option_ids=variant_data.get('option_ids', []),
+                option_map=variant_data.get('option_map', {}),
+                sku_code=variant_data.get('sku_code', ''),
+                price=safe_decimal(variant_data.get('price'), None),
+                compare_price=safe_decimal(variant_data.get('compare_price'), None),
+                quantity=int(variant_data.get('quantity', 0)),
+                weight=safe_decimal(variant_data.get('weight'), None),
+                weight_unit=variant_data.get('weight_unit', 'g'),
+                critical_trigger=int(variant_data.get('critical_trigger')) if variant_data.get('critical_trigger') not in (None, '') else None,
+                is_active=True,
+                allow_swap=bool(allow_swap),
+                swap_type=swap_type if allow_swap else 'direct_swap',
+                minimum_additional_payment=safe_decimal(min_payment, Decimal('0.00')),
+                maximum_additional_payment=safe_decimal(max_payment, Decimal('0.00')),
+                swap_description=variant_data.get('swap_description', ''),
+                is_refundable=is_refundable_val,
+                refund_days=int(variant_data.get('refund_days', 0)) if variant_data.get('refund_days') else 0,
+                original_price=safe_decimal(variant_data.get('original_price'), None),
+                usage_period=float(variant_data.get('usage_period')) if variant_data.get('usage_period') else None,
+                usage_unit=variant_data.get('usage_unit', None),
+                depreciation_rate=float(variant_data.get('depreciation_rate')) if variant_data.get('depreciation_rate') else None,
+                critical_stock=int(variant_data.get('critical_stock')) if variant_data.get('critical_stock') not in (None, '') else None
+            )
+            
+            print(f"Created variant: {variant.id} - {variant.title}")
+            
+            # Handle variant image
+            variant_id = variant_data.get('id')
+            file_key = f"variant_image_{variant_id}" if variant_id else None
+            
+            if file_key and file_key in files:
+                variant.image = files[file_key]
+                variant.save()
+                print(f"Added image to variant {variant.id}")
+
+    def _get_product_detail_data(self, product):
+        """Get detailed product data for response"""
+        # Get media files
+        media_files = []
+        for media in product.productmedia_set.all():
+            media_files.append({
+                "id": str(media.id),
+                "file_data": media.file_data.url if media.file_data else None,
+                "file_type": media.file_type
+            })
+        
+        # Get variants
+        variants = []
+        for variant in product.variants.all():
+            variant_data = {
+                "id": str(variant.id),
+                "title": variant.title,
+                "option_title": variant.option_title,
+                "option_ids": variant.option_ids,
+                "option_map": variant.option_map,
+                "sku_code": variant.sku_code,
+                "price": str(variant.price) if variant.price else None,
+                "compare_price": str(variant.compare_price) if variant.compare_price else None,
+                "quantity": variant.quantity,
+                "weight": str(variant.weight) if variant.weight else None,
+                "weight_unit": variant.weight_unit,
+                "allow_swap": variant.allow_swap,
+                "swap_type": variant.swap_type,
+                "minimum_additional_payment": str(variant.minimum_additional_payment) if variant.minimum_additional_payment else "0.00",
+                "maximum_additional_payment": str(variant.maximum_additional_payment) if variant.maximum_additional_payment else "0.00",
+                "swap_description": variant.swap_description,
+                "image": variant.image.url if variant.image else None,
+                "is_refundable": variant.is_refundable,
+                "refund_days": variant.refund_days,
+                "original_price": str(variant.original_price) if variant.original_price else None,
+                "usage_period": variant.usage_period,
+                "usage_unit": variant.usage_unit,
+                "depreciation_rate": variant.depreciation_rate,
+                "critical_stock": variant.critical_stock,
+                "is_active": variant.is_active,
+                "created_at": variant.created_at.isoformat() if variant.created_at else None,
+            }
+            variants.append(variant_data)
+        
+        return {
+            "id": str(product.id),
+            "name": product.name,
+            "description": product.description,
+            "upload_status": product.upload_status,
+            "status": product.status,
+            "condition": product.condition,
+            "category_admin": {
+                "id": str(product.category_admin.id),
+                "name": product.category_admin.name
+            } if product.category_admin else None,
+            "media_files": media_files,
+            "variants": variants,
+            "created_at": product.created_at.isoformat(),
+            "updated_at": product.updated_at.isoformat(),
+            "is_refundable": getattr(product, 'is_refundable', False),
+        }
+    
+    @action(detail=False, methods=['post'])
+    def predict_category(self, request):
+        """
+        Predict category for a product - Customer version
+        """
+        try:
+            import pandas as pd
+            import numpy as np
+            import tensorflow as tf
+            import joblib
+            import os
+            
+            CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+            MODEL_DIR = os.path.join(os.path.dirname(CURRENT_DIR), 'model')
+            
+            print(f"Looking for models in: {MODEL_DIR}")
+
+            # Load the trained models
+            try:
+                category_le = joblib.load(os.path.join(MODEL_DIR, 'category_label_encoder.pkl'))
+                scaler = joblib.load(os.path.join(MODEL_DIR, 'scaler.pkl'))
+                model = tf.keras.models.load_model(os.path.join(MODEL_DIR, 'category_classifier.keras'))
+                feature_columns = joblib.load(os.path.join(MODEL_DIR, 'feature_columns.pkl'))
+                
+                print(f"✅ Models loaded successfully!")
+                
+            except FileNotFoundError as e:
+                print(f"❌ Model file not found: {str(e)}")
+                return Response(
+                    {'success': False, 'error': f'Model files not found. Please train the model first.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Extract data from request
+            data = request.data
+            required_fields = ['name', 'description', 'quantity', 'price', 'condition']
+            
+            for field in required_fields:
+                if field not in data:
+                    return Response(
+                        {'success': False, 'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Prepare item data
+            item_data = {
+                'name': str(data['name']),
+                'description': str(data['description']),
+                'quantity': int(data['quantity']),
+                'price': float(data['price']),
+                'condition': str(data['condition'])
+            }
+            
+            print(f"\n=== PREDICTION STARTED ===")
+            print(f"Product: {item_data['name']}")
+            
+            # Initialize all features
+            features = {col: 0 for col in feature_columns}
+            price = item_data['price']
+            quantity = item_data['quantity']
+            
+            # Set numeric features
+            if 'price' in feature_columns:
+                features['price'] = price
+            if 'quantity' in feature_columns:
+                features['quantity'] = quantity
+            if 'price_quantity_interaction' in feature_columns:
+                features['price_quantity_interaction'] = price * np.log1p(quantity + 1)
+            if 'log_price' in feature_columns:
+                features['log_price'] = np.log1p(price)
+            if 'price_per_unit' in feature_columns:
+                features['price_per_unit'] = price / (quantity + 1)
+            
+            # Condition features
+            condition_lower = item_data['condition'].lower()
+            if 'condition_score' in feature_columns:
+                if 'new' in condition_lower:
+                    features['condition_score'] = 3
+                elif 'excellent' in condition_lower:
+                    features['condition_score'] = 0
+                elif 'good' in condition_lower:
+                    features['condition_score'] = -1
+                else:
+                    features['condition_score'] = 0
+            
+            # Text features
+            all_text = item_data['name'].lower() + ' ' + item_data['description'].lower()
+            if 'name_length' in feature_columns:
+                features['name_length'] = len(item_data['name'])
+            if 'desc_length' in feature_columns:
+                features['desc_length'] = len(item_data['description'])
+            
+            # Keyword features
+            for feature in feature_columns:
+                if feature.startswith('has_'):
+                    keyword = feature[4:]
+                    features[feature] = 1 if keyword in all_text else 0
+            
+            # Create DataFrame
+            X_item = pd.DataFrame([features])
+            for col in feature_columns:
+                if col not in X_item.columns:
+                    X_item[col] = 0
+            X_item = X_item[feature_columns]
+            
+            # Scale and predict
+            try:
+                X_scaled = scaler.transform(X_item)
+            except Exception:
+                X_scaled = X_item.values.astype(np.float32)
+            
+            prediction_probs = model.predict(X_scaled, verbose=0)
+            predicted_class = np.argmax(prediction_probs, axis=1)[0]
+            confidence = np.max(prediction_probs, axis=1)[0]
+            predicted_label = category_le.inverse_transform([predicted_class])[0]
+            
+            print(f"✅ Predicted: {predicted_label} ({confidence:.2%})")
+            
+            # Get UUID from database
+            try:
+                category_obj = Category.objects.filter(
+                    name__iexact=predicted_label,
+                    shop__isnull=True
+                ).first()
+                
+                if category_obj:
+                    category_uuid = str(category_obj.id)
+                    category_name = category_obj.name
+                else:
+                    first_category = Category.objects.filter(shop__isnull=True).first()
+                    if first_category:
+                        category_uuid = str(first_category.id)
+                        category_name = first_category.name
+                    else:
+                        category_uuid = None
+                        category_name = predicted_label
+            except Exception:
+                category_uuid = None
+                category_name = predicted_label
+            
+            # Get all categories
+            try:
+                all_categories_objs = Category.objects.filter(shop__isnull=True)
+                all_categories_list = [{'uuid': str(cat.id), 'name': cat.name, 'id': str(cat.id)} for cat in all_categories_objs]
+            except Exception:
+                all_categories_list = []
+            
+            # Top 3 categories
+            top_3_indices = np.argsort(prediction_probs[0])[-3:][::-1]
+            top_categories = []
+            for idx in top_3_indices:
+                category_label = category_le.inverse_transform([idx])[0]
+                try:
+                    cat_obj = Category.objects.filter(name__iexact=category_label, shop__isnull=True).first()
+                    category_uuid_alt = str(cat_obj.id) if cat_obj else None
+                except Exception:
+                    category_uuid_alt = None
+                
+                top_categories.append({
+                    'category_id': int(idx),
+                    'category_uuid': category_uuid_alt,
+                    'category_name': category_label,
+                    'confidence': float(prediction_probs[0][idx])
+                })
+            
+            result = {
+                'success': True,
+                'predicted_category': {
+                    'category_id': int(predicted_class),
+                    'category_uuid': category_uuid,
+                    'category_name': predicted_label,
+                    'confidence': float(confidence)
+                },
+                'alternative_categories': top_categories[1:] if len(top_categories) > 1 else [],
+                'all_categories': all_categories_list,
+                'feature_insights': {
+                    'keywords_found': [col.replace('has_', '') for col in feature_columns if col.startswith('has_') and features.get(col, 0) == 1],
+                    'price': float(price),
+                    'quantity': int(quantity),
+                    'condition': item_data['condition']
+                }
+            }
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"\n❌ PREDICTION ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response({'success': False, 'error': f'Prediction failed: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class CustomerProductsList(viewsets.ViewSet):
     """
@@ -34837,16 +33568,6 @@ class CustomerProductsList(viewsets.ViewSet):
                     "success": False,
                     "error": "User ID is required in headers"
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Create log for viewing personal products list
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"Customer {user.username} viewed their personal products list"
-                )
-            except User.DoesNotExist:
-                pass
             
             # Get customer profile
             try:
@@ -35243,16 +33964,6 @@ class CustomerProductsList(viewsets.ViewSet):
                     "error": "Product ID is required"
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Create log for viewing personal product detail
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"Customer {user.username} viewed personal product detail for product {product_id}"
-                )
-            except User.DoesNotExist:
-                pass
-            
             # Verify customer owns the personal product
             try:
                 customer = Customer.objects.get(customer_id=user_id)
@@ -35314,16 +34025,6 @@ class CustomerProductsList(viewsets.ViewSet):
                     "error": "User ID is required"
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Create log for viewing shop products
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"Customer {user.username} viewed their shop products list"
-                )
-            except User.DoesNotExist:
-                pass
-            
             try:
                 customer = Customer.objects.get(customer_id=user_id)
             except Customer.DoesNotExist:
@@ -35375,6 +34076,13 @@ class CustomerProductsList(viewsets.ViewSet):
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+
+# Refund and Return Views
+# views.py
+# Refund and Return Views based on new model structure
+
+# Refund and Return Views based on new model structure
 class RefundViewSet(viewsets.ViewSet):
     """
     Refund Management API for buyers, sellers, and admins based on new model structure
@@ -35445,12 +34153,6 @@ class RefundViewSet(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Create log for viewing refunds
-        Logs.objects.create(
-            user=user,
-            action=f"User {user.username} viewed their refunds"
-        )
-
         try:
             refunds = Refund.objects.filter(requested_by=user).order_by('-requested_at')
 
@@ -35491,6 +34193,147 @@ class RefundViewSet(viewsets.ViewSet):
                 "error": "Internal server error",
                 "detail": str(e)  # Only in development; remove in production
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    # @action(detail=False, methods=['post'])
+    # def create_refund_request(self, request):
+    #     """
+    #     BUYER VIEW: Create a new refund request
+    #     """
+    #     try:
+    #         user_id = request.headers.get('X-User-Id')
+    #         if not user_id:
+    #             return Response({"error": "User ID required"}, 
+    #                             status=status.HTTP_400_BAD_REQUEST)
+            
+    #         user = User.objects.get(id=user_id)
+            
+    #         # Validate required fields
+    #         required_fields = ['order_id', 'reason', 'refund_type', 'buyer_preferred_refund_method']
+    #         for field in required_fields:
+    #             if field not in request.data:
+    #                 return Response({"error": f"{field.replace('_', ' ').title()} is required"}, 
+    #                                 status=status.HTTP_400_BAD_REQUEST)
+            
+    #         # Get order
+    #         try:
+    #             order = Order.objects.get(order=request.data['order_id'], user=user)
+    #         except Order.DoesNotExist:
+    #             return Response({"error": "Order not found or does not belong to user"}, 
+    #                             status=status.HTTP_404_NOT_FOUND)
+            
+    #         # Check if refund already exists for this order
+    #         existing_refund = Refund.objects.filter(
+    #             order_id=order, 
+    #             requested_by=user,
+    #             status__in=['pending', 'approved', 'negotiation', 'dispute']
+    #         ).first()
+            
+    #         if existing_refund:
+    #             return Response({
+    #                 "error": "A refund request for this order is already in progress",
+    #                 "refund_id": str(existing_refund.refund_id),
+    #             }, status=status.HTTP_400_BAD_REQUEST)
+            
+    #         # Create refund
+    #         refund_data = {
+    #             'order_id': order,
+    #             'requested_by': user,
+    #             'reason': request.data['reason'],
+    #             'detailed_reason': request.data.get('detailed_reason', ''),
+    #             'refund_type': request.data['refund_type'],
+    #             'buyer_preferred_refund_method': request.data['buyer_preferred_refund_method'],
+    #             'customer_note': request.data.get('customer_note', ''),
+    #             'status': 'pending'
+    #         }
+
+    #         # Optional: accept total_refund_amount (from frontend) and convert to Decimal
+    #         try:
+    #             if request.data.get('total_refund_amount') is not None:
+    #                 refund_data['total_refund_amount'] = Decimal(str(request.data.get('total_refund_amount')))
+    #         except Exception:
+    #             # ignore parse errors here and leave field unset
+    #             pass
+            
+    #         refund = Refund.objects.create(**refund_data)
+            
+    #         # Handle payment method details based on buyer's preferred method
+    #         refund_method = request.data['buyer_preferred_refund_method']
+            
+    #         if refund_method == 'wallet':
+    #             wallet_data = request.data.get('wallet_details')
+    #             if wallet_data:
+    #                 RefundWallet.objects.create(
+    #                     refund_id=refund,
+    #                     provider=wallet_data.get('provider', ''),
+    #                     account_name=wallet_data.get('account_name', ''),
+    #                     account_number=wallet_data.get('account_number', ''),
+    #                     contact_number=wallet_data.get('contact_number', '')
+    #                 )
+            
+    #         elif refund_method == 'bank':
+    #             bank_data = request.data.get('bank_details')
+    #             if bank_data:
+    #                 RefundBank.objects.create(
+    #                     refund_id=refund,
+    #                     bank_name=bank_data.get('bank_name', ''),
+    #                     account_name=bank_data.get('account_name', ''),
+    #                     account_number=bank_data.get('account_number', ''),
+    #                     account_type=bank_data.get('account_type', ''),
+    #                     branch=bank_data.get('branch', '')
+    #                 )
+            
+    #         elif refund_method == 'remittance':
+    #             remittance_data = request.data.get('remittance_details')
+    #             if remittance_data:
+    #                 RefundRemittance.objects.create(
+    #                     refund_id=refund,
+    #                     provider=remittance_data.get('provider', ''),
+    #                     first_name=remittance_data.get('first_name', ''),
+    #                     middle_name=remittance_data.get('middle_name', ''),
+    #                     last_name=remittance_data.get('last_name', ''),
+    #                     contact_number=remittance_data.get('contact_number', ''),
+    #                     country=remittance_data.get('country', ''),
+    #                     city=remittance_data.get('city', ''),
+    #                     province=remittance_data.get('province', ''),
+    #                     zip_code=remittance_data.get('zip_code', ''),
+    #                     barangay=remittance_data.get('barangay', ''),
+    #                     street=remittance_data.get('street', ''),
+    #                     valid_id_type=remittance_data.get('valid_id_type', ''),
+    #                     valid_id_number=remittance_data.get('valid_id_number', '')
+    #                 )
+            
+    #         # Handle evidence files
+    #         files = request.FILES.getlist('evidence_files')
+    #         for file in files:
+    #             file_type = file.content_type.split('/')[0] if file.content_type else 'unknown'
+    #             RefundMedia.objects.create(
+    #                 refund_id=refund,
+    #                 file_data=file,
+    #                 file_type=file_type,
+    #                 uploaded_by=user
+    #             )
+            
+    #         # If refund_type is 'return', create a return request
+    #         if request.data['refund_type'] == 'return':
+    #             ReturnRequestItem.objects.create(
+    #                 refund_id=refund,
+    #                 return_method=request.data.get('return_method', 'courier'),
+    #                 logistic_service=request.data.get('logistic_service', ''),
+    #                 tracking_number=request.data.get('tracking_number', ''),
+    #                 return_deadline=timezone.now() + timedelta(days=7)  # 7 days return deadline
+    #             )
+            
+    #         serializer = RefundSerializer(refund, context={'request': request})
+    #         return Response({
+    #             "message": "Refund request created successfully",
+    #             "refund": serializer.data
+    #         }, status=status.HTTP_201_CREATED)
+            
+    #     except User.DoesNotExist:
+    #         return Response({"error": "User not found"}, 
+    #                         status=status.HTTP_404_NOT_FOUND)
+    #     except Exception as e:
+    #         return Response({"error": f"Failed to create refund: {str(e)}"}, 
+    #                         status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['post'])
     def create_refund(self, request):
@@ -35520,12 +34363,6 @@ class RefundViewSet(viewsets.ViewSet):
                 user = User.objects.get(id=user_id)
             except User.DoesNotExist:
                 return JsonResponse({'error': 'User not found'}, status=404)
-            
-            # Create log for refund creation attempt
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} attempted to create a refund"
-            )
             
             # Parse refund data from form data
             refund_data_str = request.data.get('refund_data') or request.POST.get('refund_data')
@@ -35627,6 +34464,7 @@ class RefundViewSet(viewsets.ViewSet):
                 # ========== End file validation ==========
 
                 # ========== Create Refund Items with quantity and amount ==========
+                # ========== Create Refund Items with quantity and amount ==========
                 total_refund_amount = Decimal('0.00')
                 created_items = []
 
@@ -35687,12 +34525,6 @@ class RefundViewSet(viewsets.ViewSet):
                 if created_items:
                     refund.customer_note = (refund.customer_note or '') + f"\n\nSelected Checkout IDs: {', '.join(created_items)}"
                     refund.save(update_fields=['customer_note'])
-                
-                # Create success log
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} successfully created refund for order {order.order}"
-                )
 
                 return JsonResponse({
                     'message': 'Refund request created successfully',
@@ -35715,12 +34547,6 @@ class RefundViewSet(viewsets.ViewSet):
         
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for viewing refund detail
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} viewed refund details for refund {pk}"
-            )
             
             # Get refund
             try:
@@ -35756,12 +34582,6 @@ class RefundViewSet(viewsets.ViewSet):
         try:
             user = User.objects.get(id=user_id)
             
-            # Create log for cancellation attempt
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} attempted to cancel refund {pk}"
-            )
-            
             # Get refund
             try:
                 refund = Refund.objects.get(refund_id=pk)
@@ -35782,12 +34602,6 @@ class RefundViewSet(viewsets.ViewSet):
             # Update refund status
             refund.status = 'cancelled'
             refund.save()
-            
-            # Create success log
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} cancelled refund {pk}"
-            )
             
             return Response({"message": "Refund cancelled successfully"})
             
@@ -35813,12 +34627,6 @@ class RefundViewSet(viewsets.ViewSet):
         
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for viewing shop refunds
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} viewed shop refunds"
-            )
             
             # Get shops owned by user
             shops = Shop.objects.filter(customer__customer=user)
@@ -35899,12 +34707,6 @@ class RefundViewSet(viewsets.ViewSet):
                     {"error": "User not found"},
                     status=status.HTTP_404_NOT_FOUND
                 )
-
-            # Create log for viewing seller refund details
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} viewed refund details for refund {pk}"
-            )
 
             # =========================
             # GET REFUND
@@ -35998,12 +34800,6 @@ class RefundViewSet(viewsets.ViewSet):
         
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for seller response
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} responded to refund {pk}"
-            )
             
             # Validate refund id format early to avoid 500s when 'undefined' or invalid ids are used
             # Defensive: explicitly reject common invalid token values sent by broken frontends
@@ -36257,12 +35053,6 @@ class RefundViewSet(viewsets.ViewSet):
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for negotiation response
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} responded to negotiation for refund {pk}"
-            )
 
             try:
                 refund = Refund.objects.get(refund_id=pk)
@@ -36371,7 +35161,6 @@ class RefundViewSet(viewsets.ViewSet):
 
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def process_refund(self, request, pk=None):
         """
@@ -36388,13 +35177,6 @@ class RefundViewSet(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST)
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for processing refund
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} processed refund {pk}"
-            )
-            
             try:
                 refund = Refund.objects.get(refund_id=pk)
             except Refund.DoesNotExist:
@@ -36511,12 +35293,6 @@ class RefundViewSet(viewsets.ViewSet):
 
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for notifying buyer
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} notified buyer for refund {pk}"
-            )
 
             # Get refund
             try:
@@ -36538,15 +35314,7 @@ class RefundViewSet(viewsets.ViewSet):
             # Do NOT change the refund.status here — keep the status as 'approved' for return refunds
             refund.save()
 
-            # Create notification for buyer
-            Notification.objects.create(
-                user=refund.requested_by,
-                title='Refund Approved',
-                type='refund_update',
-                message=f'Your refund request for order #{str(refund.order_id.order)[:8]} has been approved and processed.',
-                related_refund=refund,
-                is_read=False
-            )
+            # TODO: integrate actual notification (email/push) if available
 
             data = self._get_refund_details_data(refund, request, user)
             return Response({"message": "Buyer notified", "refund": data})
@@ -36566,12 +35334,6 @@ class RefundViewSet(viewsets.ViewSet):
 
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for setting return address
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} set return address for refund {pk}"
-            )
 
             # Get refund
             try:
@@ -36671,12 +35433,6 @@ class RefundViewSet(viewsets.ViewSet):
 
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for starting return process
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} started return process for refund {pk}"
-            )
 
             # Get refund
             try:
@@ -36724,12 +35480,6 @@ class RefundViewSet(viewsets.ViewSet):
 
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for updating tracking
-            Logs.objects.create(
-                user=user,
-                action=f"User {user.username} updated tracking for refund {pk}"
-            )
 
             try:
                 refund = Refund.objects.get(refund_id=pk)
@@ -36886,7 +35636,6 @@ class RefundViewSet(viewsets.ViewSet):
             import traceback
             traceback.print_exc()
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def add_proof(self, request, pk=None):
         """
@@ -36903,12 +35652,6 @@ class RefundViewSet(viewsets.ViewSet):
 
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for adding proof
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} added proof for refund {pk}"
-            )
 
             try:
                 try:
@@ -36976,12 +35719,6 @@ class RefundViewSet(viewsets.ViewSet):
 
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for adding refund proof
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} added refund proof for refund {pk}"
-            )
 
             try:
                 refund = Refund.objects.get(refund_id=pk)
@@ -37045,7 +35782,7 @@ class RefundViewSet(viewsets.ViewSet):
                         file_data=file,
                         file_type=file_type,
                         uploaded_by=user,
-                        uploaded_by_entity='seller'
+                        uploaded_by_entity='seller'  # <-- ADD THIS LINE
                     )
                     created_media.append({
                         'id': str(media.refundmedia),
@@ -37090,12 +35827,6 @@ class RefundViewSet(viewsets.ViewSet):
         
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for updating return status
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} updated return status for refund {pk}"
-            )
             
             # Get refund
             try:
@@ -37201,12 +35932,6 @@ class RefundViewSet(viewsets.ViewSet):
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for item verification
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} verified return item for refund {pk}"
-            )
 
             # Validate refund id
             try:
@@ -37333,12 +36058,6 @@ class RefundViewSet(viewsets.ViewSet):
         try:
             user = User.objects.get(id=user_id)
             
-            # Create log for admin viewing all refunds
-            Logs.objects.create(
-                user=user,
-                action=f"Admin {user.username} viewed all refunds"
-            )
-            
             # Check if user is admin
             if not user.is_admin:
                 return Response({"error": "Admin access required"}, 
@@ -37388,12 +36107,6 @@ class RefundViewSet(viewsets.ViewSet):
 
         if not user.is_admin:
             return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
-        
-        # Create log for admin viewing refund details
-        Logs.objects.create(
-            user=user,
-            action=f"Admin {user.username} viewed refund details for refund {pk}"
-        )
 
         try:
             refund = Refund.objects.select_related(
@@ -37447,6 +36160,1187 @@ class RefundViewSet(viewsets.ViewSet):
 
         # --- Seller & Shop information (derived from order items) ---
         seller_info = None
+        shop_info = None
+        products = []
+
+        for refund_item in refund.items.select_related('checkout__cart_item__product__shop__customer').all():
+            cart_item = refund_item.checkout.cart_item
+            product = cart_item.product
+            variant = cart_item.variant
+            shop = product.shop
+            seller = shop.customer if shop else None
+
+            # Capture seller and shop (use the first item as representative)
+            if seller and not seller_info:
+                seller_info = {
+                    "id": str(seller.customer.id),
+                    "username": seller.customer.username,
+                    "email": seller.customer.email,
+                    "contact_number": seller.customer.contact_number,
+                }
+            if shop and not shop_info:
+                shop_info = {
+                    "id": str(shop.id),
+                    "name": shop.name,
+                    "description": shop.description,
+                    "contact_number": shop.contact_number,
+                    "address": {
+                        "street": shop.street,
+                        "barangay": shop.barangay,
+                        "city": shop.city,
+                        "province": shop.province,
+                        "zip_code": shop.zip_code,
+                    }
+                }
+
+            # Collect product details for each refund item
+            products.append({
+                "product_id": str(product.id),
+                "product_name": product.name,
+                "variant_id": str(variant.id) if variant else None,
+                "variant_title": variant.title if variant else None,
+                "sku_code": variant.sku_code if variant else None,
+                "quantity": refund_item.quantity,
+                "price_per_unit": float(refund_item.amount / refund_item.quantity) if refund_item.amount and refund_item.quantity else None,
+                "total_amount": float(refund_item.amount) if refund_item.amount else None,
+                "image_url": get_media_url(variant.image) if variant and variant.image else get_media_url(product.productmedia_set.first().file_data if product.productmedia_set.exists() else None),
+            })
+
+        data['seller'] = seller_info
+        data['shop'] = shop_info
+        data['products'] = products
+
+        # --- Payment Details (from UserPaymentDetail) ---
+        if refund.payment_detail:
+            data['payment_detail'] = {
+                "payment_id": str(refund.payment_detail.payment_id),
+                "payment_method": refund.payment_detail.payment_method,
+                "bank_name": refund.payment_detail.bank_name,
+                "account_name": refund.payment_detail.account_name,
+                "account_number": refund.payment_detail.account_number,  # consider masking
+                "is_default": refund.payment_detail.is_default,
+                "verified_by": {
+                    "id": str(refund.payment_detail.verified_by.id) if refund.payment_detail.verified_by else None,
+                    "username": refund.payment_detail.verified_by.username if refund.payment_detail.verified_by else None,
+                } if refund.payment_detail.verified_by else None,
+            }
+        else:
+            data['payment_detail'] = None
+
+        # --- Refund method details (wallet/bank/remittance) ---
+        if refund.final_refund_method == 'wallet' and hasattr(refund, 'wallet'):
+            data['refund_method_details'] = {
+                "type": "wallet",
+                "provider": refund.wallet.provider,
+                "account_name": refund.wallet.account_name,
+                "account_number": refund.wallet.account_number,
+                "contact_number": refund.wallet.contact_number,
+            }
+        elif refund.final_refund_method == 'bank' and hasattr(refund, 'bank'):
+            data['refund_method_details'] = {
+                "type": "bank",
+                "bank_name": refund.bank.bank_name,
+                "account_name": refund.bank.account_name,
+                "account_number": refund.bank.account_number,
+                "account_type": refund.bank.account_type,
+                "branch": refund.bank.branch,
+            }
+        elif refund.final_refund_method == 'remittance' and hasattr(refund, 'remittance'):
+            data['refund_method_details'] = {
+                "type": "remittance",
+                "provider": refund.remittance.provider,
+                "first_name": refund.remittance.first_name,
+                "last_name": refund.remittance.last_name,
+                "contact_number": refund.remittance.contact_number,
+                "address": {
+                    "street": refund.remittance.street,
+                    "barangay": refund.remittance.barangay,
+                    "city": refund.remittance.city,
+                    "province": refund.remittance.province,
+                    "zip_code": refund.remittance.zip_code,
+                    "country": refund.remittance.country,
+                },
+                "valid_id": {
+                    "type": refund.remittance.valid_id_type,
+                    "number": refund.remittance.valid_id_number,
+                }
+            }
+        else:
+            data['refund_method_details'] = None
+
+        # --- Return address (if return request exists) ---
+        if hasattr(refund, 'return_request') and refund.return_request:
+            return_addr = getattr(refund, 'return_address', None)
+            if return_addr:
+                data['return_address'] = {
+                    "recipient_name": return_addr.recipient_name,
+                    "contact_number": return_addr.contact_number,
+                    "address": f"{return_addr.street}, {return_addr.barangay}, {return_addr.city}, {return_addr.province} {return_addr.zip_code}, {return_addr.country}",
+                    "notes": return_addr.notes,
+                }
+            else:
+                data['return_address'] = None
+        else:
+            data['return_address'] = None
+
+        # --- Admin notes ---
+        admin_notes = getattr(refund, 'admin_notes', None)
+        if not admin_notes and hasattr(refund, 'dispute') and refund.dispute:
+            admin_notes = refund.dispute.admin_notes
+        data['admin_notes'] = admin_notes
+
+        # --- Processed by ---
+        if refund.processed_by:
+            data['processed_by'] = {
+                "id": str(refund.processed_by.id),
+                "username": refund.processed_by.username,
+                "email": refund.processed_by.email,
+            }
+        else:
+            data['processed_by'] = None
+
+        # --- Proofs ---
+        data['proofs'] = []
+        for proof in refund.proofs.all():
+            data['proofs'].append({
+                "id": str(proof.id),
+                "file_url": get_media_url(proof.file_data),
+                "file_type": proof.file_type,
+                "notes": proof.notes,
+                "uploaded_by": {
+                    "id": str(proof.uploaded_by.id),
+                    "username": proof.uploaded_by.username,
+                },
+                "created_at": proof.created_at.isoformat(),
+            })
+
+        # --- Disputes ---
+        disputes = DisputeRequest.objects.filter(refund_id=refund).order_by('-created_at')
+        data['disputes'] = []
+        for d in disputes:
+            data['disputes'].append({
+                "id": str(d.id),
+                "requested_by": {
+                    "id": str(d.requested_by.id),
+                    "username": d.requested_by.username,
+                    "email": d.requested_by.email,
+                },
+                "reason": d.reason,
+                "status": d.status,
+                "admin_notes": d.admin_notes,
+                "case_category": d.case_category,
+                "created_at": d.created_at.isoformat(),
+                "resolved_at": d.resolved_at.isoformat() if d.resolved_at else None,
+            })
+
+        # --- Counter requests ---
+        counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
+        data['counter_requests'] = []
+        for cr in counter_requests:
+            data['counter_requests'].append({
+                "counter_id": str(cr.counter_id),
+                "requested_by": cr.requested_by,
+                "seller": {
+                    "id": str(cr.seller_id.id),
+                    "username": cr.seller_id.username,
+                    "email": cr.seller_id.email,
+                },
+                "shop": {
+                    "id": str(cr.shop_id.id),
+                    "name": cr.shop_id.name,
+                },
+                "counter_refund_method": cr.counter_refund_method,
+                "counter_refund_type": cr.counter_refund_type,
+                "counter_refund_amount": float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
+                "notes": cr.notes,
+                "status": cr.status,
+                "requested_at": cr.requested_at.isoformat(),
+            })
+
+        # --- Return request (including tracking number) ---
+        if hasattr(refund, 'return_request') and refund.return_request:
+            ret = refund.return_request
+            data['return_request'] = {
+                "return_id": str(ret.return_id),
+                "return_method": ret.return_method,
+                "logistic_service": ret.logistic_service,
+                "tracking_number": ret.tracking_number,   # <-- correct field
+                "status": ret.status,
+                "shipped_at": ret.shipped_at.isoformat() if ret.shipped_at else None,
+                "received_at": ret.received_at.isoformat() if ret.received_at else None,
+                "notes": ret.notes,
+                "medias": [
+                    {
+                        "id": str(media.id),
+                        "file_url": get_media_url(media.file_data),
+                        "file_type": media.file_type,
+                        "uploaded_at": media.uploaded_at.isoformat(),
+                    }
+                    for media in ret.medias.all()
+                ]
+            }
+        else:
+            data['return_request'] = None
+
+        return Response(data)
+    @action(detail=True, methods=['post'])
+    def admin_update_refund(self, request, pk=None):
+        """
+        ADMIN VIEW: Admin updates refund status or information
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Check if user is admin
+            if not user.is_admin:
+                return Response({"error": "Admin access required"}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, 
+                                status=status.HTTP_404_NOT_FOUND)
+
+            # New admin_process_refund action: allow admin/moderator to process refund (multipart, with proofs)
+            # This mirrors seller.process_refund but is available to admins
+            # Usage: POST to /return-refund/<id>/admin_process_refund/ with multipart/form-data keys:
+            #   - file_data (file) (optional, can be multiple)
+            #   - final_refund_method (optional)
+            #   - set_status (one of processing/completed/failed) (optional)
+            #   - customer_note (optional)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def admin_process_refund(self, request, pk=None):
+        """
+        ADMIN VIEW: Process a refund payment as admin/moderator. Accepts multipart form for uploading proofs and setting payment status.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            # Require admin or moderator
+            if not (user.is_admin or user.is_moderator):
+                return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except (ValueError, TypeError):
+                return Response({"error": "Invalid refund id"}, status=status.HTTP_400_BAD_REQUEST)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # Handle files (optional)
+            files = request.FILES.getlist('file_data') or []
+            if not files:
+                single = request.FILES.get('file')
+                if single:
+                    files = [single]
+
+            if files:
+                existing_count = RefundProof.objects.filter(refund=refund).count()
+                if existing_count + len(files) > 4:
+                    remaining = max(0, 4 - existing_count)
+                    return Response({"error": f"Cannot upload: only {remaining} proof(s) remaining"}, status=status.HTTP_400_BAD_REQUEST)
+                created = []
+                for f in files:
+                    file_type = request.data.get('file_type') or f.content_type or ''
+                    notes = request.data.get('notes', '')
+                    try:
+                        rp = RefundProof.objects.create(
+                            refund=refund,
+                            uploaded_by=user,
+                            file_type=file_type,
+                            file_data=f,
+                            notes=notes
+                        )
+                        created.append(str(rp.id))
+                    except Exception as e:
+                        print('Failed to save refund proof in admin_process_refund', e)
+
+            final_method = request.data.get('final_refund_method')
+            set_status = request.data.get('set_status')
+
+            # Validate status
+            if set_status:
+                if set_status not in ['processing', 'completed', 'failed']:
+                    return Response({"error": "Invalid payment status"}, status=status.HTTP_400_BAD_REQUEST)
+
+                if set_status == 'completed':
+                    if not RefundProof.objects.filter(refund=refund).exists():
+                        return Response({"error": "Proof required before completing refund"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if final_method:
+                refund.final_refund_method = final_method
+            else:
+                refund.final_refund_method = refund.final_refund_method or getattr(refund, 'buyer_preferred_refund_method', None)
+
+            if set_status:
+                refund.refund_payment_status = set_status
+                if set_status == 'completed':
+                    try:
+                        refund.processed_at = timezone.now()
+                        refund.processed_by = user
+                    except Exception:
+                        pass
+
+                    # If there's an associated dispute, mark it resolved when payment is completed
+                    try:
+                        dispute_obj = getattr(refund, 'dispute', None)
+                        if dispute_obj and dispute_obj.status != 'resolved':
+                            dispute_obj.status = 'resolved'
+                            dispute_obj.processed_by = user
+                            dispute_obj.resolved_at = timezone.now()
+                            dispute_obj.save()
+                            print('[admin_process_refund] dispute auto-resolved on payment completion', {
+                                'refund_id': str(refund.refund_id),
+                                'dispute_id': str(dispute_obj.id),
+                                'processed_by': str(user.id)
+                            })
+                    except Exception as e:
+                        print('Failed to auto-resolve dispute during admin_process_refund', e)
+
+            refund.save()
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Refund payment updated by admin", "refund": data})
+
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+            # Allow admin to set an approved refund amount
+            if 'approved_refund_amount' in request.data:
+                try:
+                    update_fields['approved_refund_amount'] = Decimal(str(request.data.get('approved_refund_amount')))
+                except Exception:
+                    pass
+            
+            if update_fields:
+                # If payment status is set to completed and refund is currently approved,
+                # promote refund.status to 'completed' unless admin explicitly provided a different status.
+                # Previously we promoted refund.status to 'completed' when refund_payment_status was set to 'completed'.
+                # Keep refund.status unchanged (remain 'approved') and use refund.refund_payment_status to indicate completion.
+                # Do not auto-promote refund.status here to avoid conflating approval state with payment completion.
+
+                update_fields['processed_by'] = user
+                update_fields['processed_at'] = timezone.now()
+
+                for field, value in update_fields.items():
+                    setattr(refund, field, value)
+
+                refund.save()
+            
+            # Handle dispute resolution
+            if 'resolve_dispute' in request.data:
+                dispute_id = request.data.get('dispute_id')
+                dispute_action = request.data.get('dispute_action')  # 'approve', 'reject', 'resolve'
+                dispute_notes = request.data.get('dispute_notes', '')
+                
+                if dispute_id:
+                    try:
+                        dispute = DisputeRequest.objects.get(id=dispute_id, refund_id=refund)
+                        print('[admin_process_refund] resolve_dispute start', {
+                            'refund_id': str(refund.refund_id),
+                            'dispute_id': str(dispute_id),
+                            'current_status': str(dispute.status),
+                            'action': str(dispute_action),
+                            'user': str(user.id)
+                        })
+                        
+                        if dispute_action == 'approve':
+                            dispute.status = 'approved'
+                            refund.refund_payment_status = 'processing'
+                            # record which admin processed the dispute
+                            refund.processed_by = user
+                            refund.processed_at = timezone.now()
+                            refund.save()
+                        elif dispute_action == 'reject':
+                            dispute.status = 'rejected'
+                            refund.status = 'rejected'
+                            refund.processed_by = user
+                            refund.processed_at = timezone.now()
+                            refund.save()
+                        elif dispute_action == 'resolve':
+                            dispute.status = 'resolved'
+                            # For resolve, also record admin as the processor of the refund if not already set
+                            refund.processed_by = user
+                            refund.processed_at = timezone.now()
+                            refund.save()
+                        
+                        dispute.admin_notes = dispute_notes
+                        dispute.processed_by = user
+                        dispute.resolved_at = timezone.now()
+                        dispute.save()
+                        print('[admin_process_refund] resolve_dispute persisted', {
+                            'refund_id': str(refund.refund_id),
+                            'dispute_id': str(dispute.id),
+                            'new_status': str(dispute.status),
+                            'refund_status': str(refund.status),
+                            'refund_payment_status': str(refund.refund_payment_status)
+                        })
+                        
+                    except DisputeRequest.DoesNotExist:
+                        return Response({"error": "Dispute not found"}, 
+                                        status=status.HTTP_404_NOT_FOUND)
+            
+            serializer = RefundSerializer(refund, context={'request': request})
+            return Response({
+                "message": "Refund updated successfully",
+                "refund": serializer.data
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+
+    # ========== COMMON/UTILITY METHODS ==========
+
+    def _get_refund_details_data(self, refund, request, user):
+        """Get detailed refund data (common for buyer, seller, and admin views)"""
+        data = RefundSerializer(refund, context={'request': request}).data
+
+        # Expose requester info
+        data['requested_by_username'] = refund.requested_by.username if refund.requested_by else None
+        data['requested_by_email'] = refund.requested_by.email if refund.requested_by else None
+
+        # Add order information
+        if refund.order_id:
+            order = refund.order_id
+            data['order'] = {
+                "order_id": str(order.order),
+                "total_amount": float(order.total_amount) if order.total_amount else None,
+                "status": order.status,
+                "created_at": order.created_at.isoformat() if order.created_at else None,
+                "payment_method": order.payment_method if hasattr(order, 'payment_method') else None,
+                "delivery_method": order.delivery_method if hasattr(order, 'delivery_method') else None,
+                "customer_username": order.user.username if order.user else None,
+                "customer_email": order.user.email if order.user else None,
+                "delivery_address_text": order.delivery_address_text or (order.shipping_address.get_full_address() if order.shipping_address else None),
+                "shipping_address": {
+                    "recipient_name": order.shipping_address.recipient_name if order.shipping_address else None,
+                    "recipient_phone": order.shipping_address.recipient_phone if order.shipping_address else None,
+                    "full_address": order.shipping_address.get_full_address() if order.shipping_address else (order.delivery_address_text or None)
+                } if order.shipping_address or order.delivery_address_text else None,
+            }
+
+            data['order_items'] = self._get_order_items_for_refund(refund, request)
+            try:
+                if getattr(refund, 'total_refund_amount', None) is not None:
+                    data['total_refund_amount'] = float(refund.total_refund_amount)
+                else:
+                    total_refund_amount = 0.0
+                    for it in data.get('order_items', []):
+                        itm_total = it.get('total')
+                        if itm_total is None:
+                            price = it.get('price') or 0
+                            qty = it.get('quantity') or 0
+                            itm_total = float(price) * int(qty)
+                        total_refund_amount += float(itm_total)
+                    data['total_refund_amount'] = round(total_refund_amount, 2) if total_refund_amount > 0 else None
+            except Exception:
+                data['total_refund_amount'] = None
+
+        # Payment details from payment_detail
+        payment_details = {}
+        if refund.payment_detail:
+            pd = refund.payment_detail
+            payment_details['selected_payment'] = {
+                "payment_id": str(pd.payment_id),
+                "payment_method": pd.payment_method,
+                "account_name": pd.account_name,
+                "account_number": pd.account_number,
+                "bank_name": pd.bank_name,
+                "is_default": pd.is_default,
+            }
+        data['payment_details'] = payment_details
+
+        # Add evidence/media files
+        media_files = RefundMedia.objects.filter(refund_id=refund)
+        data['evidence'] = [
+            {
+                "id": str(media.refundmedia),
+                "file_url": request.build_absolute_uri(media.file_data.url) if media.file_data else None,
+                "file_type": media.file_type,
+                "uploaded_by": str(media.uploaded_by.id),
+                "uploaded_by_username": media.uploaded_by.username if media.uploaded_by else None,
+                "uploaded_by_email": media.uploaded_by.email if media.uploaded_by else None,
+                "uploaded_by_entity": media.uploaded_by_entity, 
+                "uploaded_at": media.uploaded_at.isoformat()
+            }
+            for media in media_files
+        ]
+
+        proofs_queryset = refund.proofs.all()  # uses related_name='proofs'
+        data['proofs'] = RefundProofSerializer(proofs_queryset, many=True, context={'request': request}).data
+
+        # Add seller-uploaded proofs
+        
+        # Seller delivery proofs (if any)
+        try:
+            from .models import Delivery, Proof
+            delivery = Delivery.objects.filter(order=refund.order_id).first()
+            if delivery:
+                seller_proofs = Proof.objects.filter(delivery=delivery, proof_type='seller').order_by('-uploaded_at')
+                data['seller_delivery_proofs'] = [
+                    {
+                        "id": str(p.id),
+                        "file_url": request.build_absolute_uri(p.file_data.url) if p.file_data else None,
+                        "file_type": p.file_type,
+                        "uploaded_at": p.uploaded_at.isoformat() if p.uploaded_at else None,
+                    }
+                    for p in seller_proofs
+                ]
+            else:
+                data['seller_delivery_proofs'] = []
+        except Exception:
+            data['seller_delivery_proofs'] = []
+
+        # Return request information
+        # Return request information
+        # if refund.refund_type in ['return', 'replace']:
+        #     try:
+        #         return_request = refund.return_request
+        #         data['return_request'] = {
+        #             "return_id": str(return_request.return_id),
+        #             "return_method": return_request.return_method,
+        #             "logistic_service": return_request.logistic_service,
+        #             "tracking_number": return_request.tracking_number,
+        #             "status": return_request.status,
+        #             "shipped_at": return_request.shipped_at.isoformat() if return_request.shipped_at else None,
+        #             "received_at": return_request.received_at.isoformat() if return_request.received_at else None,
+        #             "return_deadline": return_request.return_deadline.isoformat() if return_request.return_deadline else None,
+        #             "notes": return_request.notes
+        #         }
+                
+        #         # Get return request media
+        #         return_media = ReturnRequestMedia.objects.filter(return_id=return_request).order_by('-uploaded_at')
+                
+        #         # Create media array with proper URLs
+        #         media_array = []
+        #         for rm in return_media:
+        #             if rm.file_data:
+        #                 # Build absolute URL
+        #                 file_url = request.build_absolute_uri(rm.file_data.url)
+        #                 media_array.append({
+        #                     "id": str(rm.id),
+        #                     "file_url": file_url,
+        #                     "file_type": rm.file_type,
+        #                     "notes": rm.notes,
+        #                     "uploaded_at": rm.uploaded_at.isoformat(),
+        #                     "uploaded_by": str(rm.uploaded_by.id) if rm.uploaded_by else None
+        #                 })
+                
+        #         # Add media to return_request in multiple formats for frontend compatibility
+        #         data['return_request']['media'] = media_array
+        #         data['return_request']['medias'] = media_array  # For backward compatibility
+        #         data['return_request']['media_files'] = media_array  # For backward compatibility
+                
+        #     except ReturnRequestItem.DoesNotExist:
+        #         data['return_request'] = None
+
+        # Return address
+        try:
+            ra = refund.return_address
+            data['return_address'] = {
+                'id': str(ra.id),
+                'recipient_name': ra.recipient_name,
+                'contact_number': ra.contact_number,
+                'country': ra.country,
+                'province': ra.province,
+                'city': ra.city,
+                'barangay': ra.barangay,
+                'street': ra.street,
+                'zip_code': ra.zip_code,
+                'notes': ra.notes,
+                'created_by': str(ra.created_by.id) if ra.created_by else None,
+                'created_at': ra.created_at.isoformat() if ra.created_at else None,
+                'shop': {
+                    'id': str(ra.shop.id) if ra.shop else None,
+                    'name': ra.shop.name if ra.shop else None
+                } if ra.shop else None,
+                'seller': {
+                    'id': str(ra.seller.id) if ra.seller else None,
+                    'username': ra.seller.username if ra.seller else None
+                } if ra.seller else None
+            }
+        except ReturnAddress.DoesNotExist:
+            data['return_address'] = None
+
+        # Timeline
+        timeline = []
+
+        timeline.append({
+            "event": "refund_requested",
+            "timestamp": refund.requested_at.isoformat(),
+            "user": str(refund.requested_by.id),
+            "details": f"Refund requested: {refund.reason}"
+        })
+
+        if refund.processed_at:
+            timeline.append({
+                "event": "status_changed",
+                "timestamp": refund.processed_at.isoformat(),
+                "user": str(refund.processed_by.id) if refund.processed_by else None,
+                "details": f"Status changed to {refund.status}"
+            })
+
+        if refund.buyer_notified_at:
+            timeline.append({
+                "event": "buyer_notified",
+                "timestamp": refund.buyer_notified_at.isoformat(),
+                "details": "Buyer notified about refund approval"
+            })
+
+        counter_requests = CounterRefundRequest.objects.filter(refund_id=refund).order_by('-requested_at')
+        for cr in counter_requests:
+            timeline.append({
+                "event": "counter_request",
+                "timestamp": cr.requested_at.isoformat(),
+                "user": str(cr.seller_id.id),
+                "details": f"Counter offer: {cr.counter_refund_method} - Status: {cr.status}"
+            })
+
+        # Expose structured counter request list
+        try:
+            data['counter_requests'] = [
+                {
+                    'id': str(cr.counter_id),
+                    'requested_by': cr.requested_by,
+                    'seller_id': str(cr.seller_id.id) if cr.seller_id else None,
+                    'seller_username': cr.seller_id.username if cr.seller_id else None,
+                    'counter_refund_method': cr.counter_refund_method,
+                    'counter_refund_type': cr.counter_refund_type,
+                    'counter_refund_amount': float(cr.counter_refund_amount) if cr.counter_refund_amount is not None else None,
+                    'notes': cr.notes,
+                    'status': cr.status,
+                    'requested_at': cr.requested_at.isoformat(),
+                    'updated_at': cr.updated_at.isoformat()
+                }
+                for cr in counter_requests
+            ]
+            latest_cr = counter_requests.first()
+            if latest_cr:
+                data['seller_suggested_method'] = latest_cr.counter_refund_method
+                data['seller_suggested_type'] = latest_cr.counter_refund_type
+                data['seller_suggested_amount'] = float(latest_cr.counter_refund_amount) if latest_cr.counter_refund_amount is not None else None
+            else:
+                data['seller_suggested_method'] = None
+                data['seller_suggested_type'] = None
+                data['seller_suggested_amount'] = None
+        except Exception:
+            data['counter_requests'] = []
+            data['seller_suggested_method'] = None
+            data['seller_suggested_type'] = None
+            data['seller_suggested_amount'] = None
+
+        # Return request activities
+        if refund.refund_type in ['return', 'replace']:
+            try:
+                return_request = refund.return_request
+                if return_request.shipped_at:
+                    timeline.append({
+                        "event": "item_shipped",
+                        "timestamp": return_request.shipped_at.isoformat(),
+                        "user": str(return_request.shipped_by.id) if return_request.shipped_by else None,
+                        "details": f"Item shipped via {return_request.logistic_service}"
+                    })
+
+                if return_request.received_at:
+                    timeline.append({
+                        "event": "item_received",
+                        "timestamp": return_request.received_at.isoformat(),
+                        "details": "Item received by seller"
+                    })
+
+                if return_request.updated_at and return_request.updated_by:
+                    timeline.append({
+                        "event": "return_updated",
+                        "timestamp": return_request.updated_at.isoformat(),
+                        "user": str(return_request.updated_by.id),
+                        "details": f"Return status updated to {return_request.status}"
+                    })
+            except ReturnRequestItem.DoesNotExist:
+                pass
+
+        # Dispute activities
+        try:
+            dispute = refund.dispute
+            if dispute.resolved_at:
+                timeline.append({
+                    "event": "dispute_resolved",
+                    "timestamp": dispute.resolved_at.isoformat(),
+                    "user": str(dispute.processed_by.id) if dispute.processed_by else None,
+                    "details": f"Dispute resolved: {dispute.status}"
+                })
+        except DisputeRequest.DoesNotExist:
+            pass
+
+        timeline.sort(key=lambda x: x['timestamp'], reverse=True)
+        data['timeline'] = timeline
+
+        data['available_actions'] = self._get_available_actions(refund, user)
+        try:
+            data['status'] = str(refund.status).lower()
+        except Exception:
+            pass
+
+        return data
+    
+    @action(detail=True, methods=['post'])
+    def add_refund_payment_detail(self, request, pk=None):
+        """Allow buyer to provide refund-specific account details for this refund (wallet/bank/remittance).
+        The saved details are attached to the refund via RefundWallet/RefundBank/RefundRemittance models and
+        included in subsequent refund detail responses.
+        """
+        user_id = request.headers.get('X-User-Id')
+        user = None
+        if user_id:
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                user = None
+
+        try:
+            refund = Refund.objects.get(refund_id=pk)
+        except Refund.DoesNotExist:
+            return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Authorization: only refund requester (buyer) or admin/moderator may set refund payment detail
+        if user and refund.requested_by and str(refund.requested_by.id) != str(user.id):
+            if not (getattr(user, 'is_admin', False) or getattr(user, 'is_moderator', False)):
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+
+        method = (request.data.get('method') or request.data.get('method_type') or '').strip().lower()
+        if not method:
+            return Response({"error": "Method is required (wallet|bank|remittance)"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            if method == 'wallet':
+                provider = request.data.get('provider', '')
+                account_name = request.data.get('account_name', '')
+                account_number = request.data.get('account_number', '')
+                contact_number = request.data.get('contact_number', '')
+                RefundWallet.objects.update_or_create(
+                    refund_id=refund,
+                    defaults={
+                        'provider': provider,
+                        'account_name': account_name,
+                        'account_number': account_number,
+                        'contact_number': contact_number,
+                    }
+                )
+
+            elif method == 'bank':
+                bank_name = request.data.get('bank_name', '')
+                account_name = request.data.get('account_name', '')
+                account_number = request.data.get('account_number', '')
+                account_type = request.data.get('account_type', '')
+                branch = request.data.get('branch', '')
+                RefundBank.objects.update_or_create(
+                    refund_id=refund,
+                    defaults={
+                        'bank_name': bank_name,
+                        'account_name': account_name,
+                        'account_number': account_number,
+                        'account_type': account_type,
+                        'branch': branch,
+                    }
+                )
+
+            elif method == 'remittance':
+                provider = request.data.get('provider', '')
+                first_name = request.data.get('first_name', '')
+                last_name = request.data.get('last_name', '')
+                contact_number = request.data.get('contact_number', '')
+                country = request.data.get('country', '')
+                city = request.data.get('city', '')
+                province = request.data.get('province', '')
+                zip_code = request.data.get('zip_code', '')
+                barangay = request.data.get('barangay', '')
+                street = request.data.get('street', '')
+                valid_id_type = request.data.get('valid_id_type', '')
+                valid_id_number = request.data.get('valid_id_number', '')
+                RefundRemittance.objects.update_or_create(
+                    refund_id=refund,
+                    defaults={
+                        'provider': provider,
+                        'first_name': first_name,
+                        'last_name': last_name,
+                        'contact_number': contact_number,
+                        'country': country,
+                        'city': city,
+                        'province': province,
+                        'zip_code': zip_code,
+                        'barangay': barangay,
+                        'street': street,
+                        'valid_id_type': valid_id_type,
+                        'valid_id_number': valid_id_number,
+                    }
+                )
+            else:
+                return Response({"error": "Unsupported method"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Return fresh refund details
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({"message": "Saved", "refund": data}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": "Failed to save payment detail", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _get_product_image_url(self, product, request):
+        try:
+            if product.productmedia_set.exists():
+                media = product.productmedia_set.first()
+                if media and media.file_data:
+                    return get_media_url(media.file_data)   # use the helper
+        except Exception:
+            pass
+        return None
+
+    def _get_order_items_for_refund(self, refund, request):
+        """Return order items (checkout details) linked to this refund."""
+        if not refund.order_id:
+            return []
+
+        # Get the checkout IDs from RefundItem
+        checkout_ids = refund.items.values_list('checkout', flat=True)
+        if not checkout_ids:
+            return []
+
+        # Fetch the checkouts with related product info
+        checkouts = Checkout.objects.filter(
+            id__in=checkout_ids,
+            order=refund.order_id
+        ).select_related('cart_item__product__shop')
+
+        order_items = []
+        for checkout in checkouts:
+            cart_item = checkout.cart_item
+            if cart_item and cart_item.product:
+                product = cart_item.product
+                variant = cart_item.variant
+                price = variant.price if variant else product.min_price or product.price if hasattr(product, 'price') else None
+
+                order_items.append({
+                    "checkout_id": str(checkout.id),
+                    "product_name": product.name,
+                    "shop_name": product.shop.name if product.shop else '',
+                    "quantity": checkout.quantity,
+                    "price": str(price) if price else '0',
+                    "subtotal": str(checkout.total_amount),
+                    "product_image": self._get_product_image_url(product, request),
+                    "shop": {
+                        "id": str(product.shop.id) if product.shop else None,
+                        "name": product.shop.name if product.shop else None
+                    }
+                })
+        return order_items
+    def _get_available_actions(self, refund, user):
+        """Get available actions based on refund status and user role"""
+        actions = []
+        
+        # Check if user is the buyer
+        is_buyer = str(refund.requested_by.id) == str(user.id)
+        
+        # Check if user is seller (owns shop with items in the order)
+        is_seller = False
+        try:
+            shop_ids = list(Checkout.objects.filter(
+                order=refund.order_id,
+                cart_item__product__shop__customer__customer=user,
+            ).values_list('cart_item__product__shop_id', flat=True).distinct())
+            is_seller = len(shop_ids) > 0
+        except:
+            pass
+        
+        # Check if user is admin
+        is_admin = user.is_admin
+        
+        # Actions based on refund status
+        if refund.status == 'pending':
+            if is_buyer:
+                actions.append('cancel')
+                actions.append('upload_evidence')
+            if is_seller:
+                actions.append('approve')
+                actions.append('reject')
+                actions.append('negotiate')
+        
+        elif refund.status == 'negotiation':
+            if is_buyer:
+                actions.append('accept_counter_offer')
+                actions.append('reject_counter_offer')
+                actions.append('file_dispute')
+            if is_seller:
+                actions.append('update_counter_offer')
+                actions.append('withdraw_counter_offer')
+        
+        elif refund.status == 'approved':
+            if is_buyer and refund.refund_type in ['return', 'replace']:
+                actions.append('start_return')
+                actions.append('upload_shipping_info')
+            if is_seller:
+                actions.append('notify_buyer')
+                actions.append('process_payment')
+        
+        elif refund.status == 'to_process':
+            if is_seller:
+                actions.append('process_payment')
+                actions.append('mark_as_completed')
+        
+        elif refund.status == 'dispute':
+            if is_admin:
+                actions.append('resolve_dispute')
+                actions.append('request_additional_info')
+            if is_buyer or is_seller:
+                actions.append('upload_dispute_evidence')
+        
+        # Common actions
+        if is_buyer:
+            actions.append('contact_support')
+        
+        if is_seller:
+            actions.append('contact_buyer')
+        
+        if is_admin:
+            actions.append('update_status')
+            actions.append('add_admin_note')
+            actions.append('escalate')
+        
+        return list(set(actions))  # Remove duplicates
+
+    # ========== COMMON ENDPOINTS ==========
+
+    @action(detail=False, methods=['get'])
+    def get_refund_stats(self, request):
+        """
+        COMMON VIEW: Get refund statistics for dashboard
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Check user role and get appropriate stats
+            if user.is_admin:
+                # Admin stats - all refunds
+                refunds = Refund.objects.all()
+                stats = self._calculate_stats(refunds)
+                stats['role'] = 'admin'
+                
+            else:
+                # Check if user is a seller
+                shops = Shop.objects.filter(customer__customer=user)
+                if shops.exists():
+                    # Seller stats
+                    refunds = Refund.objects.filter(
+                        order_id__checkout__cart_item__product__shop__in=shops
+                    ).distinct()
+                    stats = self._calculate_stats(refunds)
+                    stats['role'] = 'seller'
+                    stats['shops_count'] = shops.count()
+                    
+                else:
+                    # Buyer stats
+                    refunds = Refund.objects.filter(requested_by=user)
+                    stats = self._calculate_stats(refunds)
+                    stats['role'] = 'buyer'
+            
+            return Response(stats)
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, 
+                            status=status.HTTP_404_NOT_FOUND)
+    
+    def _calculate_stats(self, refunds):
+        """Calculate statistics for refunds queryset"""
+        total = refunds.count()
+        
+        return {
+            'total': total,
+            'pending': refunds.filter(status='pending').count(),
+            'approved': refunds.filter(status='approved').count(),
+            'negotiation': refunds.filter(status='negotiation').count(),
+            'rejected': refunds.filter(status='rejected').count(),
+            'dispute': refunds.filter(status='dispute').count(),
+            'cancelled': refunds.filter(status='cancelled').count(),
+            'completed': refunds.filter(refund_payment_status='completed').count(),
+            'return_refunds': refunds.filter(refund_type='return').count(),
+            'keep_refunds': refunds.filter(refund_type='keep').count(),
+            'average_processing_time': None,  # Can be calculated if needed
+        }
+
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser, JSONParser])
+    def file_dispute(self, request, pk=None):
+        """
+        BUYER/SELLER VIEW: File a dispute for this refund. Accepts optional files.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            refund = Refund.objects.get(refund_id=pk)
+        except Refund.DoesNotExist:
+            return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Determine requested_by_entity and get buyer/seller/rider
+        is_buyer = str(refund.requested_by.id) == str(user.id)
+        seller_user = None
+        rider_user = None
+        
+        # Get seller from the refund's order items
+        try:
+            first_checkout = Checkout.objects.filter(
+                order=refund.order_id
+            ).select_related('cart_item__product__shop__customer__customer').first()
+            
+            if first_checkout and first_checkout.cart_item and first_checkout.cart_item.product and first_checkout.cart_item.product.shop:
+                shop = first_checkout.cart_item.product.shop
+                if shop.customer and shop.customer.customer:
+                    seller_user = shop.customer.customer  # This is already a User instance
+        except Exception as e:
+            print(f"Error getting seller: {e}")
+        
+        # Get rider from the order's delivery - FIX HERE: get the User, not Rider model
+        try:
+            from .models import Delivery
+            delivery = Delivery.objects.filter(order=refund.order_id, status='delivered').select_related('rider__rider').first()
+            if delivery and delivery.rider:
+                # delivery.rider is a Rider model instance, we need the underlying User
+                rider_user = delivery.rider.rider  # This gets the User instance from the Rider model
+        except Exception as e:
+            print(f"Error getting rider: {e}")
+
+        # Authorization check
+        is_seller = seller_user and str(seller_user.id) == str(user.id)
+        if not (is_buyer or is_seller or user.is_admin):
+            return Response({"error": "Not authorized to file dispute"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Prevent duplicate disputes
+        existing = DisputeRequest.objects.filter(refund_id=refund).first()
+        if existing:
+            return Response({"error": "A dispute has already been filed for this refund", "dispute_id": str(existing.id)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get the reason from request
+        reason = request.data.get('dispute_reason') or request.data.get('reason') or ''
+        if not reason:
+            return Response({"error": "Dispute reason is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Determine requested_by_entity
+        requested_by_entity = 'buyer'
+        if is_seller:
+            requested_by_entity = 'seller'
+        elif rider_user and str(rider_user.id) == str(user.id):
+            requested_by_entity = 'rider'
+
+        try:
+            with transaction.atomic():
+                # Create dispute with all party references
+                dispute = DisputeRequest.objects.create(
+                    refund_id=refund,
+                    requested_by_entity=requested_by_entity,
+                    reason=reason,
+                    status='filed',
+                    buyer=refund.requested_by,  # This is already a User instance
+                    seller=seller_user,          # This is a User instance
+                    rider=rider_user,            # This is now a User instance (fixed!)
+                )
+                
+                # If case_category was provided, set it
+                case_category = request.data.get('case_category')
+                if case_category:
+                    dispute.case_category = case_category
+                    dispute.save(update_fields=['case_category'])
+
+                # Attach uploaded files as evidence
+                files = request.FILES.getlist('file') or request.FILES.getlist('files') or []
+                for f in files:
+                    try:
+                        ev = DisputeEvidence()
+                        ev.dispute_id = dispute
+                        ev.uploaded_by = user
+                        if hasattr(ev, 'file'):
+                            ev.file = f
+                        elif hasattr(ev, 'file_data'):
+                            ev.file_data = f
+                        else:
+                            ev.file = f
+                        ev.save()
+                    except Exception as e:
+                        print(f"Failed to save dispute evidence: {e}")
+
+                # Update refund status
+                refund.status = 'dispute'
+                if hasattr(refund, 'dispute_reason'):
+                    refund.dispute_reason = reason
+                    refund.dispute_filed_by = user
+                    refund.dispute_filed_at = timezone.now()
+                    refund.save(update_fields=['status', 'dispute_reason', 'dispute_filed_by', 'dispute_filed_at'])
+                else:
+                    refund.save(update_fields=['status'])
+
+                # Serialize and return
+                result_serializer = DisputeRequestSerializer(dispute, context={'request': request})
+                return Response({
+                    "message": "Dispute filed successfully",
+                    "dispute": result_serializer.data,
+                    "dispute_id": str(dispute.id)
+                }, status=status.HTTP_201_CREATED)
+                
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'])
+    def get_status_options(self, request):
+        """
+        COMMON VIEW: Get all available status options
+        """
+        return Response({
+            'refund_status_options': [
+                {'value': 'pending', 'label': 'Pending Review'},
+                {'value': 'approved', 'label': 'Approved'},
+                {'value': 'negotiation', 'label': 'Negotiation'},
+                {'value': 'rejected', 'label': 'Rejected'},
+                {'value': 'dispute', 'label': 'Dispute'},
+                {'value': 'cancelled', 'label': 'Cancelled'},
+            ],
+            'payment_status_options': [
+                {'value': 'pending', 'label': 'Pending'},
+                {'value': 'processing', 'label': 'Processing'},
+                {'value': 'failed', 'label': 'Failed'},
+                {'value': 'completed', 'label': 'Completed'},
+            ],
+            'refund_type_options': [
+                {'value': 'return', 'label': 'Return Item'},
+                {'value': 'keep', 'label': 'Keep Item'},
+            ],
+            'refund_method_options': [
+                {'value': 'wallet', 'label': 'E-wallet'},
+                {'value': 'bank', 'label': 'Bank Transfer'},
+                {'value': 'remittance', 'label': 'Remittance'},
+                {'value': 'voucher', 'label': 'Store Voucher'},
+            ]
+        })
+
 
 class ReturnAddressViewSet(viewsets.ViewSet):
     """
@@ -37458,16 +37352,8 @@ class ReturnAddressViewSet(viewsets.ViewSet):
         shop_id = request.headers.get('X-Shop-Id') or request.query_params.get('shop_id')
         if not user_id:
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for listing return addresses
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} listed return addresses"
-            )
-            
             shops = Shop.objects.filter(customer__customer=user)
             if not shops.exists():
                 return Response({"results": []})
@@ -37486,26 +37372,8 @@ class ReturnAddressViewSet(viewsets.ViewSet):
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
     def retrieve(self, request, pk=None):
-        user_id = request.headers.get('X-User-Id')
-        if not user_id:
-            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
         try:
-            user = User.objects.get(id=user_id)
-            
-            # Create log for viewing return address
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} viewed return address {pk}"
-            )
-            
             ra = ReturnAddress.objects.get(id=pk)
-            
-            # Authorization check
-            if not ra.shop or not ra.shop.customer or str(ra.shop.customer.customer.id) != str(user.id):
-                if not (user.is_admin or user.is_moderator):
-                    return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
-            
             serializer = ReturnAddressSerializer(ra, context={'request': request})
             return Response(serializer.data)
         except ReturnAddress.DoesNotExist:
@@ -37516,15 +37384,8 @@ class ReturnAddressViewSet(viewsets.ViewSet):
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for creating return address
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} created a return address"
-            )
 
             # Resolve shop: prefer header/query, else try refund
             shop_id = request.headers.get('X-Shop-Id') or request.data.get('shop_id') or request.query_params.get('shop_id')
@@ -37554,27 +37415,12 @@ class ReturnAddressViewSet(viewsets.ViewSet):
 
             # Authorization check: user must be shop owner
             if not shop.customer or str(shop.customer.customer.id) != str(user.id):
-                if not (user.is_admin or user.is_moderator):
-                    return Response({"error": "Not authorized for this shop"}, status=status.HTTP_403_FORBIDDEN)
+                return Response({"error": "Not authorized for this shop"}, status=status.HTTP_403_FORBIDDEN)
 
             required = ['recipient_name', 'contact_number', 'country', 'province', 'city', 'barangay', 'street', 'zip_code']
             missing = [f for f in required if not request.data.get(f)]
             if missing:
                 return Response({"error": f"Missing fields: {', '.join(missing)}"}, status=status.HTTP_400_BAD_REQUEST)
-
-            from decimal import Decimal
-            
-            # Validate coordinates if provided
-            latitude = request.data.get('latitude')
-            longitude = request.data.get('longitude')
-            try:
-                if latitude is not None:
-                    latitude = Decimal(str(latitude))
-                if longitude is not None:
-                    longitude = Decimal(str(longitude))
-            except (ValueError, TypeError, Decimal.InvalidOperation):
-                latitude = None
-                longitude = None
 
             ra = ReturnAddress.objects.create(
                 refund=Refund.objects.get(refund_id=request.data.get('refund_id')) if request.data.get('refund_id') else None,
@@ -37589,9 +37435,7 @@ class ReturnAddressViewSet(viewsets.ViewSet):
                 street=request.data.get('street'),
                 zip_code=request.data.get('zip_code'),
                 notes=request.data.get('notes', ''),
-                created_by=user,
-                latitude=latitude,
-                longitude=longitude
+                created_by=user
             )
 
             serializer = ReturnAddressSerializer(ra, context={'request': request})
@@ -37599,86 +37443,43 @@ class ReturnAddressViewSet(viewsets.ViewSet):
 
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({"error": f"Failed to create return address: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def partial_update(self, request, pk=None):
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for updating return address
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} updated return address {pk}"
-            )
-            
             ra = ReturnAddress.objects.get(id=pk)
-            
             # Authorization: ensure seller owns the shop
             if not ra.shop or not ra.shop.customer or str(ra.shop.customer.customer.id) != str(user.id):
-                if not (user.is_admin or user.is_moderator):
-                    return Response({"error": "Not authorized to update this address"}, status=status.HTTP_403_FORBIDDEN)
+                return Response({"error": "Not authorized to update this address"}, status=status.HTTP_403_FORBIDDEN)
 
-            from decimal import Decimal
-            
             for field in ['recipient_name','contact_number','country','province','city','barangay','street','zip_code','notes']:
                 if field in request.data:
                     setattr(ra, field, request.data.get(field))
-            
-            # Handle coordinate updates
-            if 'latitude' in request.data:
-                try:
-                    latitude = Decimal(str(request.data.get('latitude'))) if request.data.get('latitude') else None
-                    ra.latitude = latitude
-                except (ValueError, TypeError, Decimal.InvalidOperation):
-                    pass
-            
-            if 'longitude' in request.data:
-                try:
-                    longitude = Decimal(str(request.data.get('longitude'))) if request.data.get('longitude') else None
-                    ra.longitude = longitude
-                except (ValueError, TypeError, Decimal.InvalidOperation):
-                    pass
-            
             ra.save()
             serializer = ReturnAddressSerializer(ra, context={'request': request})
             return Response(serializer.data)
         except (User.DoesNotExist, ReturnAddress.DoesNotExist):
             return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({"error": f"Failed to update return address: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def destroy(self, request, pk=None):
         user_id = request.headers.get('X-User-Id')
         if not user_id:
             return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
-        
         try:
             user = User.objects.get(id=user_id)
-            
-            # Create log for deleting return address
-            Logs.objects.create(
-                user=user,
-                action=f"Seller {user.username} deleted return address {pk}"
-            )
-            
             ra = ReturnAddress.objects.get(id=pk)
-            
             if not ra.shop or not ra.shop.customer or str(ra.shop.customer.customer.id) != str(user.id):
-                if not (user.is_admin or user.is_moderator):
-                    return Response({"error": "Not authorized to delete this address"}, status=status.HTTP_403_FORBIDDEN)
+                return Response({"error": "Not authorized to delete this address"}, status=status.HTTP_403_FORBIDDEN)
             ra.delete()
             return Response({"message": "Return address deleted"})
         except (User.DoesNotExist, ReturnAddress.DoesNotExist):
             return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({"error": f"Failed to delete return address: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-# Dispute views (placed at end for easy removal)
 
+
+# Dispute views (placed at end for easy removal)
 class DisputeViewSet(viewsets.ModelViewSet):
     """Admin-facing disputes endpoint. Allows partial updates (PATCH) and admin actions."""
     queryset = DisputeRequest.objects.all().order_by('-created_at')
@@ -37704,18 +37505,6 @@ class DisputeViewSet(viewsets.ModelViewSet):
         """
         try:
             dispute = self.get_object()
-            
-            # Create log for partial update
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} updated dispute {pk}"
-                    )
-                except User.DoesNotExist:
-                    pass
 
             # Only allow specific writable fields from the payload
             writable = ['case_category', 'admin_notes', 'status']
@@ -37769,18 +37558,6 @@ class DisputeViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
-        """Get dispute statistics"""
-        user_id = request.headers.get('X-User-Id')
-        if user_id:
-            try:
-                user = User.objects.get(id=user_id)
-                Logs.objects.create(
-                    user=user,
-                    action=f"User {user.username} viewed dispute stats"
-                )
-            except User.DoesNotExist:
-                pass
-                
         total = DisputeRequest.objects.count()
         filed = DisputeRequest.objects.filter(status='filed').count()
         under_review = DisputeRequest.objects.filter(status='under_review').count()
@@ -37800,18 +37577,6 @@ class DisputeViewSet(viewsets.ModelViewSet):
     def start_review(self, request, pk=None):
         try:
             dispute = self.get_object()
-            
-            # Create log for starting review
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} started review for dispute {pk}"
-                    )
-                except User.DoesNotExist:
-                    pass
             
             # Check if dispute can be reviewed
             if dispute.status not in ['filed', 'pending']:
@@ -37868,25 +37633,11 @@ class DisputeViewSet(viewsets.ModelViewSet):
                 {'error': str(e), 'traceback': traceback.format_exc()},
                 status=status.HTTP_400_BAD_REQUEST
             )
-            
     @action(detail=True, methods=['post'])
     def partial(self, request, pk=None):
         """Admin marks dispute decision as partial; does not process refund yet"""
         try:
             dispute = self.get_object()
-            
-            # Create log for partial decision
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"Admin {user.username} marked dispute {pk} as partial"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             dispute.status = 'partial'
             # Optionally record amount in admin_notes
             amt = request.data.get('partial_amount')
@@ -37945,19 +37696,6 @@ class DisputeViewSet(viewsets.ModelViewSet):
         """Admin accepts dispute: set status to 'approved' and mark resolved_by/at"""
         try:
             dispute = self.get_object()
-            
-            # Create log for accepting dispute
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"Admin {user.username} accepted dispute {pk}"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             dispute.status = 'approved'
             dispute.resolved_at = timezone.now()
             user_id = request.headers.get('X-User-Id')
@@ -38015,22 +37753,6 @@ class DisputeViewSet(viewsets.ModelViewSet):
                 pass
                 
             dispute.save(update_fields=['status', 'processed_by', 'resolved_at'])
-            
-            # Create notification for buyer
-            try:
-                from .models import Notification
-                if dispute.refund_id and dispute.refund_id.requested_by:
-                    Notification.objects.create(
-                        user=dispute.refund_id.requested_by,
-                        title='Dispute Approved',
-                        type='dispute',
-                        message=f'Your dispute has been reviewed and approved.',
-                        related_refund=dispute.refund_id,
-                        is_read=False
-                    )
-            except Exception as e:
-                print(f"Failed to create notification: {e}")
-                
             return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -38040,19 +37762,6 @@ class DisputeViewSet(viewsets.ModelViewSet):
         """Admin rejects dispute: set status to 'rejected' and store admin notes"""
         try:
             dispute = self.get_object()
-            
-            # Create log for rejecting dispute
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"Admin {user.username} rejected dispute {pk}"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             dispute.status = 'rejected'
             dispute.resolved_at = timezone.now()
             admin_notes = request.data.get('admin_notes')
@@ -38080,22 +37789,6 @@ class DisputeViewSet(viewsets.ModelViewSet):
             if resolved_user:
                 dispute.processed_by = resolved_user
             dispute.save(update_fields=['status', 'processed_by', 'resolved_at', 'admin_notes'])
-            
-            # Create notification for buyer
-            try:
-                from .models import Notification
-                if dispute.refund_id and dispute.refund_id.requested_by:
-                    Notification.objects.create(
-                        user=dispute.refund_id.requested_by,
-                        title='Dispute Rejected',
-                        type='dispute',
-                        message=f'Your dispute has been reviewed and rejected. {admin_notes or "Please contact support for more information."}',
-                        related_refund=dispute.refund_id,
-                        is_read=False
-                    )
-            except Exception as e:
-                print(f"Failed to create notification: {e}")
-                
             return Response(DisputeRequestSerializer(dispute, context={'request': request}).data)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -38105,19 +37798,6 @@ class DisputeViewSet(viewsets.ModelViewSet):
         """Buyer acknowledgement endpoint: mark dispute resolved and set refund.status to 'completed'"""
         try:
             dispute = self.get_object()
-            
-            # Create log for acknowledgement
-            user_id = request.headers.get('X-User-Id')
-            if user_id:
-                try:
-                    user = User.objects.get(id=user_id)
-                    Logs.objects.create(
-                        user=user,
-                        action=f"User {user.username} acknowledged dispute {pk}"
-                    )
-                except User.DoesNotExist:
-                    pass
-            
             refund = getattr(dispute, 'refund_id', None)
 
             # Update refund to completed when buyer acknowledges a rejected dispute
@@ -38156,12 +37836,6 @@ class DisputeViewSet(viewsets.ModelViewSet):
                 admin_user = User.objects.get(id=user_id)
             except User.DoesNotExist:
                 return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-            
-            # Create log for approving refund
-            Logs.objects.create(
-                user=admin_user,
-                action=f"Admin {admin_user.username} approved dispute refund"
-            )
             
             # Validate required fields
             refund_id = request.data.get('refund_id')
@@ -38323,7 +37997,6 @@ class DisputeViewSet(viewsets.ModelViewSet):
             traceback.print_exc()
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-            
 class SellerGifts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     
