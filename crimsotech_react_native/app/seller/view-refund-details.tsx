@@ -1825,7 +1825,7 @@ const getStatusDescription = () => {
           {refund.approved_refund_amount != null && (
             <InfoRow label="Approved Amount" value={formatCurrency(refund.approved_refund_amount)} />
           )}
-          {refund.customer_note && <InfoRow label="Customer Note" value={refund.customer_note} />}
+          {/* {refund.customer_note && <InfoRow label="Customer Note" value={refund.customer_note} />} */}
           {refund.seller_note && <InfoRow label="Seller Note" value={refund.seller_note} />}
         </View>
 

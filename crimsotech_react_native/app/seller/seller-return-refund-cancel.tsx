@@ -259,7 +259,7 @@ export default function Refunds() {
           image: r.order_items?.[0]?.product_image || ''
         },
         quantity: r.order_items?.[0]?.quantity || 1,
-        amount: Number(r.amount) || Number(r.order_items?.[0]?.total) || 0,
+        amount: Number(r.order_items?.[0]?.refund_amount) || Number(r.amount) || 0,
         type: r.refund_type === 'return' ? 'return' : 'refund',
         refund_type: r.refund_type || 'keep',
         status: r.status || 'pending',

@@ -581,60 +581,28 @@ export default function RequestRefundPage() {
   const calculateRefundAmounts = () => {
     if (!order || selectedItems.length === 0) return { fullAmount: 0, maxPartialAmount: 0 };
     
-    // Calculate the actual paid amount based on order.total_amount
-    // First, calculate the proportion of selected items relative to total order
-    const selectedSubtotal = selectedItemsDetails.reduce((sum, item) => 
-      sum + (parseFloat(item.price) * item.refundQuantity), 0
+    // Calculate the actual amount for selected items from their subtotal
+    // This is the actual price they paid for these items (including any discounts applied at item level)
+    const fullAmount = selectedItemsDetails.reduce((sum, item) => 
+        sum + (parseFloat(item.price) * item.refundQuantity), 0
     );
     
-    // Get total order amount (this is what the buyer actually paid)
-    const orderTotal = parseFloat(order.total_amount);
-    
-    // Get total subtotal of all items in the order
-    const totalItemsSubtotal = order.items.reduce((sum, item) => 
-      sum + parseFloat(item.subtotal), 0
-    );
-    
-    // Calculate the actual refund amount based on the proportion of the order total
-    // This accounts for shipping fees, discounts, and vouchers
-    let fullAmount = 0;
-    if (totalItemsSubtotal > 0) {
-      // Use proportion: (selected items value / total items value) * order total
-      fullAmount = (selectedSubtotal / totalItemsSubtotal) * orderTotal;
-    } else {
-      fullAmount = selectedSubtotal;
-    }
-    
+    // For partial refund (keep_item), max is 70% of the selected items' value
     const maxPartialAmount = fullAmount * 0.7;
+    
     return { fullAmount, maxPartialAmount };
-  };
+};
 
   const { fullAmount, maxPartialAmount } = calculateRefundAmounts();
 
   const computeRefundBreakdown = () => {
-    // Calculate the actual paid amount based on order.total_amount
-    const selectedSubtotal = selectedItemsDetails.reduce((sum, item) => 
-      sum + (parseFloat(item.price) * item.refundQuantity), 0
+    // Calculate base amount as the sum of selected items' prices (what they paid for these items)
+    let baseAmount = selectedItemsDetails.reduce((sum, item) => 
+        sum + (parseFloat(item.price) * item.refundQuantity), 0
     );
     
-    // Get total order amount (what the buyer actually paid)
-    const orderTotal = parseFloat(order?.total_amount || '0');
-    
-    // Get total subtotal of all items in the order
-    const totalItemsSubtotal = order?.items?.reduce((sum, item) => 
-      sum + parseFloat(item.subtotal), 0
-    ) || 0;
-    
-    // Calculate the actual refund base amount using proportion of order total
-    let baseAmount = selectedSubtotal;
-    if (totalItemsSubtotal > 0) {
-      baseAmount = (selectedSubtotal / totalItemsSubtotal) * orderTotal;
-    }
-    
     if (selectedRefundType && selectedRefundType.id === 'keep_item') {
-      baseAmount = partialAmount ? parseFloat(partialAmount) : maxPartialAmount;
-    } else if (selectedRefundType && (selectedRefundType.id === 'return_item' || selectedRefundType.id === 'replacement')) {
-      // Keep the calculated baseAmount
+        baseAmount = partialAmount ? parseFloat(partialAmount) : maxPartialAmount;
     }
     
     let fee = 0;
@@ -647,7 +615,7 @@ export default function RequestRefundPage() {
     
     const finalAmount = Math.max(0, baseAmount - fee);
     return { baseAmount, fee, finalAmount };
-  };
+};
 
   const breakdown = computeRefundBreakdown();
 

@@ -29160,7 +29160,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             order.status = 'completed'
             order.completed_at = timezone.now()
             # Set refund_expire_date to 3 days after completed_at
-            order.refund_expire_date = order.completed_at + timedelta(days=3)
+            order.refund_expire_date = order.completed_at + timedelta(days=1)
             order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
             return True
         
@@ -30233,7 +30233,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             order.completed_at = timezone.now()
             
             # Set refund_expire_date to 3 days after completed_at
-            order.refund_expire_date = order.completed_at + timedelta(days=3)
+            order.refund_expire_date = order.completed_at + timedelta(days=1)
             
             order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
 
@@ -34465,26 +34465,16 @@ class RefundViewSet(viewsets.ViewSet):
 
                 # ========== Create Refund Items with quantity and amount ==========
                 # ========== Create Refund Items with quantity and amount ==========
+                # ========== Create Refund Items with amount from frontend ==========
+                # ========== Create Refund Items with quantity and amount from frontend ==========
                 total_refund_amount = Decimal('0.00')
                 created_items = []
 
-                # First, calculate total order value to get proportions
-                order_total = Decimal(str(order.total_amount))
-                total_items_subtotal = Decimal('0.00')
+                # Use the frontend amounts directly - they already include quantity × price
                 for item_data in items_data:
                     checkout_id = item_data.get('checkout_id')
-                    try:
-                        checkout = Checkout.objects.get(id=checkout_id, order=order)
-                        # Use checkout.total_amount for the item's value in the order
-                        total_items_subtotal += checkout.total_amount
-                    except Checkout.DoesNotExist:
-                        pass
-
-                # Now create refund items with proportional amounts
-                for item_data in items_data:
-                    checkout_id = item_data.get('checkout_id')
-                    quantity = item_data.get('quantity')
-                    frontend_amount = Decimal(str(item_data.get('amount', 0)))
+                    quantity = item_data.get('quantity')  # This is the refund quantity (e.g., 1)
+                    frontend_amount = Decimal(str(item_data.get('amount', 0)))  # This is price × quantity
                     
                     if not checkout_id or quantity is None:
                         return JsonResponse({'error': 'Each refund item must have checkout_id and quantity'}, status=400)
@@ -34494,26 +34484,23 @@ class RefundViewSet(viewsets.ViewSet):
                     except Checkout.DoesNotExist:
                         return JsonResponse({'error': f'Checkout {checkout_id} not found in this order'}, status=400)
                     
-                    # Calculate proportional amount based on order total
-                    # Use checkout.total_amount (actual paid amount for this item)
-                    if total_items_subtotal > 0:
-                        # Proportional amount = (item's checkout total / all items total) * order total
-                        item_proportion = checkout.total_amount / total_items_subtotal
-                        proportional_amount = order_total * item_proportion
-                    else:
-                        proportional_amount = frontend_amount
+                    # USE THE FRONTEND AMOUNT DIRECTLY
+                    # The frontend already calculated: item.price × refundQuantity
+                    # Example: price=100, refundQuantity=1 → amount=100
+                    refund_amount = frontend_amount
                     
-                    # Adjust for partial quantity if needed
-                    if quantity < checkout.quantity:
-                        proportional_amount = proportional_amount * Decimal(str(quantity)) / Decimal(str(checkout.quantity))
+                    # Safety check: ensure refund amount doesn't exceed original checkout total
+                    max_possible = checkout.total_amount * Decimal(str(quantity)) / Decimal(str(checkout.quantity))
+                    if refund_amount > max_possible:
+                        refund_amount = max_possible
                     
-                    total_refund_amount += proportional_amount
+                    total_refund_amount += refund_amount
                     
                     RefundItem.objects.create(
                         refund=refund,
                         checkout=checkout,
                         quantity=quantity,
-                        amount=proportional_amount
+                        amount=refund_amount
                     )
                     created_items.append(str(checkout.id))
 
@@ -37030,14 +37017,21 @@ class RefundViewSet(viewsets.ViewSet):
                 product = cart_item.product
                 variant = cart_item.variant
                 price = variant.price if variant else product.min_price or product.price if hasattr(product, 'price') else None
+                
+                # Get the refund item amount for this checkout
+                refund_item = refund.items.filter(checkout=checkout).first()
+                refund_amount = refund_item.amount if refund_item and refund_item.amount else None
 
                 order_items.append({
                     "checkout_id": str(checkout.id),
+                    "product_id": str(product.id),
                     "product_name": product.name,
                     "shop_name": product.shop.name if product.shop else '',
                     "quantity": checkout.quantity,
+                    "refund_quantity": refund_item.quantity if refund_item else checkout.quantity,  # Add refund quantity
                     "price": str(price) if price else '0',
                     "subtotal": str(checkout.total_amount),
+                    "refund_amount": str(refund_amount) if refund_amount else '0',  # ADD THIS LINE
                     "product_image": self._get_product_image_url(product, request),
                     "shop": {
                         "id": str(product.shop.id) if product.shop else None,
