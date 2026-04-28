@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import {MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   SafeAreaView,
   View,
@@ -205,6 +206,8 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
   
   // Get return address - first from refund data, then from shop data
   const returnAddress = refund.return_address || shopReturnAddress || null;
+
+  
 
   // In your ApprovedStatus component, update the extractReturnProofUrls function:
   const extractReturnProofUrls = () => {
@@ -605,6 +608,8 @@ const ToVerifyStatus = () => (
   </View>
 );
 
+
+
 // ========== 7. RETURN ACCEPTED STATUS ==========
 const ReturnAcceptedStatus = () => (
   <View style={styles.statusSection}>
@@ -763,6 +768,7 @@ const DisputeStatus = ({ refund, formatCurrency, formatDate, onAcknowledgeDisput
   );
 };
 
+
 // ========== 12. COMPLETED STATUS ==========
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -886,6 +892,399 @@ const CancelledStatus = () => (
   </View>
 );
 
+// ========== 19. WAITING FOR RIDER PICKUP STATUS ==========
+const WaitingForRiderPickupStatus = ({ refund, formatCurrency }: { refund: any; formatCurrency: (amount: string | number) => string }) => {
+  const delivery = refund.delivery_info || {};
+  const returnRequest = refund.return_request || {};
+  
+  // Get rider details from delivery_info
+  const riderName = delivery.rider_name || 'Rider assigned';
+  const riderPhone = delivery.rider_phone || '';
+  const riderVehicle = delivery.vehicle_type || '';
+  const riderPlate = delivery.plate_number || '';
+  const distanceKm = delivery.distance_km || null;
+  const estimatedMinutes = delivery.estimated_minutes || null;
+  const deliveryFee = delivery.delivery_fee || 0;
+  
+  return (
+    <View style={styles.statusSection}>
+      <View style={styles.statusRow}>
+        <MaterialCommunityIcons name="motorbike" size={24} color="#F59E0B" />
+        <View style={styles.statusTextContainer}>
+          <Text style={[styles.statusTitle, { color: '#F59E0B' }]}>
+            Return - Waiting for Rider Pickup
+          </Text>
+          <Text style={styles.statusSubtitle}>
+            Your item is ready for pickup. The rider has been notified and will come to your location to pick up the return item.
+          </Text>
+        </View>
+      </View>
+      
+      {/* Rider Information Card */}
+      <View style={[styles.waitingForRiderCard, { marginTop: 12, backgroundColor: '#FEF3C7', borderRadius: 12, borderWidth: 1, borderColor: '#FDE68A', overflow: 'hidden' }]}>
+        {/* Rider Header */}
+        <View style={[styles.waitingForRiderHeader, { flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: '#FDE68A', gap: 8 }]}>
+          <MaterialCommunityIcons name="motorbike" size={20} color="#B45309" />
+          <Text style={[styles.waitingForRiderTitle, { fontSize: 14, fontWeight: '600', color: '#92400E', flex: 1 }]}>
+            Rider Details
+          </Text>
+        </View>
+        
+        {/* Rider Info Content */}
+        <View style={{ padding: 12, gap: 8 }}>
+          {/* Rider Name */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Ionicons name="person-outline" size={16} color="#6B7280" />
+            <Text style={{ fontSize: 14, fontWeight: '500', color: '#1F2937', flex: 1 }}>
+              {riderName}
+            </Text>
+          </View>
+          
+          {/* Rider Contact (if available) */}
+          {riderPhone ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="call-outline" size={16} color="#6B7280" />
+              <Text style={{ fontSize: 13, color: '#374151' }}>{riderPhone}</Text>
+            </View>
+          ) : null}
+          
+          {/* Vehicle Info */}
+          {riderVehicle && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <MaterialCommunityIcons name="car" size={16} color="#6B7280" />
+              <Text style={{ fontSize: 13, color: '#374151' }}>
+                {riderVehicle}{riderPlate ? ` (${riderPlate})` : ''}
+              </Text>
+            </View>
+          )}
+          
+          {/* Trip Details */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#FDE68A' }}>
+            {distanceKm && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <MaterialCommunityIcons name="map-marker-distance" size={14} color="#6B7280" />
+                <Text style={{ fontSize: 12, color: '#6B7280' }}>{distanceKm} km</Text>
+              </View>
+            )}
+            {estimatedMinutes && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <MaterialIcons name="access-time" size={14} color="#6B7280" />
+                <Text style={{ fontSize: 12, color: '#6B7280' }}>~{estimatedMinutes} mins</Text>
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <MaterialIcons name="attach-money" size={14} color="#6B7280" />
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#10B981' }}>₱{deliveryFee.toFixed(2)}</Text>
+            </View>
+          </View>
+        </View>
+      </View>
+      
+      {/* Instructions Card - Waiting for Rider */}
+      <View style={[styles.waitingForRiderInstructionCard, { marginTop: 12, backgroundColor: '#FEF3C7', borderRadius: 12, borderWidth: 1, borderColor: '#FDE68A' }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 }}>
+          <Ionicons name="time-outline" size={20} color="#B45309" />
+          <Text style={{ fontSize: 13, color: '#92400E', flex: 1, lineHeight: 18 }}>
+            Your item is ready for pickup. Please wait for the rider to arrive at your location.
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+};
+
+// ========== 17. RIDER ASSIGNED FOR RETURN PICKUP STATUS ==========
+const RiderAssignedForReturnStatus = ({ refund, formatCurrency }: { refund: any; formatCurrency: (amount: string | number) => string }) => {
+  const { width: SCREEN_WIDTH } = Dimensions.get('window'); // ADD THIS LINE
+  // Get rider information from delivery metadata or delivery_info
+  const delivery = refund.delivery || refund.delivery_info || {};
+  const riderName = delivery.rider_name || refund.rider_name || 'Rider assigned';
+  const riderPhone = delivery.rider_phone || refund.rider_phone || '';
+  const riderVehicle = delivery.vehicle_type || refund.vehicle_type || '';
+  const riderPlate = delivery.plate_number || refund.plate_number || '';
+  const distanceKm = delivery.distance_km || refund.distance_km || null;
+  const estimatedMinutes = delivery.estimated_minutes || refund.estimated_minutes || null;
+  
+  // Get nearest rider info from metadata if available
+  const nearestRider = refund.metadata?.nearest_rider || refund.nearest_rider;
+  const allRidersCompared = refund.metadata?.all_riders_compared || refund.all_riders_compared || [];
+  const [showRidersModal, setShowRidersModal] = useState(false);
+  
+  // Use nearest rider if no specific rider assigned yet
+  const displayRiderName = riderName || (nearestRider?.name || 'Waiting for rider');
+  const displayRiderUsername = refund.rider_username || nearestRider?.username || '';
+  const displayDistance = distanceKm || nearestRider?.total_distance_km;
+  const displayFee = delivery.delivery_fee || nearestRider?.delivery_fee || 0;
+  const displayEta = estimatedMinutes || nearestRider?.estimated_minutes;
+  
+  // Format distance display
+  const distanceText = displayDistance ? `${displayDistance} km` : 'Calculating distance...';
+  const etaText = displayEta ? `~${displayEta} mins` : '';
+  const feeText = displayFee > 0 ? `₱${displayFee.toFixed(2)}` : 'Free';
+  
+  return (
+    <View style={styles.statusSection}>
+      <View style={styles.statusRow}>
+        <MaterialCommunityIcons name="motorbike" size={24} color="#8B5CF6" />
+        <View style={styles.statusTextContainer}>
+          <Text style={[styles.statusTitle, { color: '#8B5CF6' }]}>
+            Return - Rider Assigned
+          </Text>
+          <Text style={styles.statusSubtitle}>
+            A rider has been assigned to pick up your return item. Waiting for the rider to accept the offer.
+          </Text>
+        </View>
+      </View>
+      
+      {/* Rider Information Card */}
+      <View style={[styles.riderAssignedCard, { marginTop: 12, backgroundColor: '#F5F3FF', borderRadius: 12, borderWidth: 1, borderColor: '#E9D5FF', overflow: 'hidden' }]}>
+        {/* Rider Header */}
+        <View style={[styles.riderAssignedHeader, { flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: '#EDE9FE', gap: 8 }]}>
+          <MaterialCommunityIcons name="motorbike" size={20} color="#7C3AED" />
+          <Text style={[styles.riderAssignedTitle, { fontSize: 14, fontWeight: '600', color: '#6B21A8', flex: 1 }]}>
+            Rider Details
+          </Text>
+          {allRidersCompared.length > 0 && (
+            <TouchableOpacity onPress={() => setShowRidersModal(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={{ fontSize: 12, color: '#7C3AED' }}>View All</Text>
+              <Ionicons name="chevron-forward" size={14} color="#7C3AED" />
+            </TouchableOpacity>
+          )}
+        </View>
+        
+        {/* Rider Info Content */}
+        <View style={{ padding: 12, gap: 8 }}>
+          {/* Rider Name */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Ionicons name="person-outline" size={16} color="#6B7280" />
+            <Text style={{ fontSize: 14, fontWeight: '500', color: '#1F2937', flex: 1 }}>
+              {displayRiderName}
+            </Text>
+            {displayRiderUsername && (
+              <Text style={{ fontSize: 12, color: '#6B7280' }}>@{displayRiderUsername}</Text>
+            )}
+          </View>
+          
+          {/* Rider Contact (if available) */}
+          {riderPhone ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="call-outline" size={16} color="#6B7280" />
+              <Text style={{ fontSize: 13, color: '#374151' }}>{riderPhone}</Text>
+            </View>
+          ) : null}
+          
+          {/* Vehicle Info */}
+          {riderVehicle && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <MaterialCommunityIcons name="car" size={16} color="#6B7280" />
+              <Text style={{ fontSize: 13, color: '#374151' }}>
+                {riderVehicle}{riderPlate ? ` (${riderPlate})` : ''}
+              </Text>
+            </View>
+          )}
+          
+          {/* Trip Details */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#E9D5FF' }}>
+            {distanceText && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <MaterialCommunityIcons name="map-marker-distance" size={14} color="#6B7280" />
+                <Text style={{ fontSize: 12, color: '#6B7280' }}>{distanceText}</Text>
+              </View>
+            )}
+            {etaText && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <MaterialIcons name="access-time" size={14} color="#6B7280" />
+                <Text style={{ fontSize: 12, color: '#6B7280' }}>{etaText}</Text>
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <MaterialIcons name="attach-money" size={14} color="#6B7280" />
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#10B981' }}>{feeText}</Text>
+            </View>
+          </View>
+        </View>
+      </View>
+      
+      {/* Status Message */}
+      <View style={[styles.walkInNotice, { backgroundColor: '#F5F3FF', marginTop: 12, borderColor: '#E9D5FF' }]}>
+        <Text style={[styles.walkInNoticeText, { color: '#6B21A8' }]}>
+          The rider has been notified. You will receive a notification once the rider accepts the pickup request.
+        </Text>
+      </View>
+      
+      {/* Riders Comparison Modal */}
+      {/* Riders Comparison Modal */}
+<Modal visible={showRidersModal} transparent={true} animationType="slide" onRequestClose={() => setShowRidersModal(false)}>
+  <View style={styles.modalOverlay}>
+    <View style={[styles.ridersModalContainer, { width: SCREEN_WIDTH - 32 }]}>
+      <View style={styles.ridersModalHeader}>
+        <Text style={styles.ridersModalTitle}>Rider Assignments</Text>
+        <TouchableOpacity onPress={() => setShowRidersModal(false)}>
+          <Ionicons name="close" size={24} color="#374151" />
+        </TouchableOpacity>
+      </View>
+      <ScrollView style={styles.ridersModalContent}>
+        {/* Nearest Rider Card */}
+        {nearestRider && (
+          <View style={styles.nearestRiderCard}>
+            <View style={styles.nearestRiderHeader}>
+              <MaterialCommunityIcons name="star-circle" size={24} color="#F59E0B" />
+              <Text style={styles.nearestRiderCardTitle}>Nearest Rider</Text>
+            </View>
+            <View style={styles.nearestRiderDetails}>
+              <Text style={styles.nearestRiderName}>{nearestRider.name}</Text>
+              <Text style={styles.nearestRiderUsername}>@{nearestRider.username}</Text>
+              <View style={styles.nearestRiderStats}>
+                <View style={styles.nearestRiderStat}>
+                  <MaterialCommunityIcons name="map-marker-distance" size={14} color="#6B7280" />
+                  <Text style={styles.nearestRiderStatText}>{nearestRider.total_distance_km} km</Text>
+                </View>
+                <View style={styles.nearestRiderStat}>
+                  <MaterialIcons name="attach-money" size={14} color="#6B7280" />
+                  <Text style={styles.nearestRiderStatText}>₱{nearestRider.delivery_fee?.toFixed(2)}</Text>
+                </View>
+                <View style={styles.nearestRiderStat}>
+                  <MaterialIcons name="access-time" size={14} color="#6B7280" />
+                  <Text style={styles.nearestRiderStatText}>{nearestRider.estimated_minutes} min</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
+        
+        {/* All Riders List */}
+        {allRidersCompared.length > 0 && (
+          <>
+            <Text style={styles.allRidersTitle}>All Available Riders</Text>
+            {allRidersCompared.map((rider: any, idx: number) => (
+              <View key={idx} style={styles.riderModalItem}>
+                <View style={styles.riderModalRank}>
+                  <Text style={styles.riderModalRankText}>{idx + 1}</Text>
+                </View>
+                <View style={styles.riderModalInfo}>
+                  <Text style={styles.riderModalName}>{rider.rider_name}</Text>
+                  <Text style={styles.riderModalUsername}>@{rider.rider_username}</Text>
+                  <View style={styles.riderModalDetails}>
+                    <Text style={styles.riderModalDetailText}>{rider.vehicle_type}</Text>
+                    <Text style={styles.riderModalDetailText}>{rider.plate_number}</Text>
+                  </View>
+                </View>
+                <View style={styles.riderModalDistance}>
+                  <Text style={styles.riderModalDistanceValue}>{rider.total_distance_km} km</Text>
+                  <Text style={styles.riderModalDistanceLabel}>total</Text>
+                </View>
+              </View>
+            ))}
+          </>
+        )}
+      </ScrollView>
+    </View>
+  </View>
+</Modal>
+    </View>
+  );
+};
+
+// ========== 18. RIDER ACCEPTED - READY FOR PICKUP STATUS ==========
+const RiderAcceptedForReturnStatus = ({ refund, formatCurrency }: { refund: any; formatCurrency: (amount: string | number) => string }) => {
+  const delivery = refund.delivery_info || {};
+  const returnRequest = refund.return_request || {};
+  
+  // Get rider details from delivery_info
+  const riderName = delivery.rider_name || 'Rider assigned';
+  const riderPhone = delivery.rider_phone || '';
+  const riderVehicle = delivery.vehicle_type || '';
+  const riderPlate = delivery.plate_number || '';
+  const distanceKm = delivery.distance_km || null;
+  const estimatedMinutes = delivery.estimated_minutes || null;
+  const deliveryFee = delivery.delivery_fee || 0;
+  
+  return (
+    <View style={styles.statusSection}>
+      <View style={styles.statusRow}>
+        <MaterialCommunityIcons name="motorbike" size={24} color="#10B981" />
+        <View style={styles.statusTextContainer}>
+          <Text style={[styles.statusTitle, { color: '#10B981' }]}>
+            Return - Rider Accepted
+          </Text>
+          <Text style={styles.statusSubtitle}>
+            A rider has accepted your return pickup. Please mark your item as ready for pickup when you're ready.
+          </Text>
+        </View>
+      </View>
+      
+      {/* Rider Information Card */}
+      <View style={[styles.riderAcceptedCard, { marginTop: 12, backgroundColor: '#ECFDF5', borderRadius: 12, borderWidth: 1, borderColor: '#A7F3D0', overflow: 'hidden' }]}>
+        {/* Rider Header */}
+        <View style={[styles.riderAcceptedHeader, { flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: '#D1FAE5', gap: 8 }]}>
+          <MaterialCommunityIcons name="motorbike" size={20} color="#059669" />
+          <Text style={[styles.riderAcceptedTitle, { fontSize: 14, fontWeight: '600', color: '#065F46', flex: 1 }]}>
+            Rider Details
+          </Text>
+        </View>
+        
+        {/* Rider Info Content */}
+        <View style={{ padding: 12, gap: 8 }}>
+          {/* Rider Name */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Ionicons name="person-outline" size={16} color="#6B7280" />
+            <Text style={{ fontSize: 14, fontWeight: '500', color: '#1F2937', flex: 1 }}>
+              {riderName}
+            </Text>
+          </View>
+          
+          {/* Rider Contact (if available) */}
+          {riderPhone ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="call-outline" size={16} color="#6B7280" />
+              <Text style={{ fontSize: 13, color: '#374151' }}>{riderPhone}</Text>
+            </View>
+          ) : null}
+          
+          {/* Vehicle Info */}
+          {riderVehicle && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <MaterialCommunityIcons name="car" size={16} color="#6B7280" />
+              <Text style={{ fontSize: 13, color: '#374151' }}>
+                {riderVehicle}{riderPlate ? ` (${riderPlate})` : ''}
+              </Text>
+            </View>
+          )}
+          
+          {/* Trip Details */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#A7F3D0' }}>
+            {distanceKm && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <MaterialCommunityIcons name="map-marker-distance" size={14} color="#6B7280" />
+                <Text style={{ fontSize: 12, color: '#6B7280' }}>{distanceKm} km</Text>
+              </View>
+            )}
+            {estimatedMinutes && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <MaterialIcons name="access-time" size={14} color="#6B7280" />
+                <Text style={{ fontSize: 12, color: '#6B7280' }}>~{estimatedMinutes} mins</Text>
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <MaterialIcons name="attach-money" size={14} color="#6B7280" />
+              <Text style={{ fontSize: 12, fontWeight: '600', color: '#10B981' }}>₱{deliveryFee.toFixed(2)}</Text>
+            </View>
+          </View>
+        </View>
+      </View>
+      
+      {/* Instructions Card - Mark as Ready for Pickup */}
+      <View style={[styles.readyForPickupCard, { marginTop: 12, backgroundColor: '#FEF3C7', borderRadius: 12, borderWidth: 1, borderColor: '#FDE68A' }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 }}>
+          <Ionicons name="alert-circle-outline" size={20} color="#B45309" />
+          <Text style={{ fontSize: 13, color: '#92400E', flex: 1, lineHeight: 18 }}>
+            Please mark your item as ready for pickup when you're ready. The rider will come to your location to pick up the return item.
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+};
 // ========== 16. APPROVED PICKUP STATUS (for cash pickup returns) ==========
 const ApprovedPickupStatus = () => (
   <View style={styles.statusSection}>
@@ -898,6 +1297,7 @@ const ApprovedPickupStatus = () => (
     </View>
   </View>
 );
+
 
 // ========== ACTION BUTTONS COMPONENTS ==========
 const PendingActions = ({ onCancel, loading }: { onCancel: () => void; loading: boolean }) => (
@@ -917,10 +1317,10 @@ const NegotiationActions = ({ onAccept, onReject, loading, isAccepting }: { onAc
   </>
 );
 
-const ReturnActions = ({ onAddTracking, onWalkIn, loading }: { onAddTracking: () => void; onWalkIn?: () => void; loading: boolean }) => (
+const ReturnActions = ({ onAssignRider, onWalkIn, loading }: { onAssignRider: () => void; onWalkIn?: () => void; loading: boolean }) => (
   <>
-    <TouchableOpacity style={[styles.primaryButton, loading && styles.disabledButton]} onPress={onAddTracking} disabled={loading}>
-      <Upload size={16} color="#FFF" /><Text style={styles.primaryButtonText}>Provide Shipping Info</Text>
+    <TouchableOpacity style={[styles.primaryButton, loading && styles.disabledButton]} onPress={onAssignRider} disabled={loading}>
+      <Truck size={16} color="#FFF" /><Text style={styles.primaryButtonText}>Assign Rider</Text>
     </TouchableOpacity>
     <TouchableOpacity style={[styles.secondaryButton, loading && styles.disabledButton]} onPress={onWalkIn} disabled={loading}>
       <Store size={16} color="#374151" /><Text style={styles.secondaryButtonText}>Walk in Return</Text>
@@ -1114,6 +1514,119 @@ useEffect(() => {
     }
   };
 
+  // Handle marking item as ready for pickup (when rider has accepted)
+  // Handle marking item as ready for pickup (when rider has accepted)
+  const handleMarkAsReadyForPickup = async () => {
+    Alert.alert(
+      'Confirm Ready for Pickup',
+      'Have you prepared the return item for pickup? The rider will come to your location to pick it up.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Yes, Ready for Pickup', 
+          onPress: async () => {
+            try {
+              setActionLoading(true);
+              
+              // Call endpoint to mark as ready for pickup
+              const response = await AxiosInstance.post(
+                `/return-refund/${refundId}/mark_ready_for_pickup/`,
+                {},
+                { headers: { 'X-User-Id': user?.id } }
+              );
+              
+              if (response.data?.success) {
+                Alert.alert('Success', 'Item marked as ready for pickup. The rider will be notified.');
+                await fetchRefund();
+              } else {
+                Alert.alert('Error', response.data?.message || 'Failed to mark as ready for pickup');
+              }
+            } catch (err: any) {
+              console.error('Error marking as ready:', err);
+              Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to mark as ready for pickup');
+            } finally {
+              setActionLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+  // Cancel rider assignment (when rider is assigned but not yet accepted)
+const handleCancelRiderAssignment = async () => {
+  Alert.alert(
+    'Cancel Rider Assignment',
+    'Are you sure you want to cancel the rider assignment? You will be able to request a new rider.',
+    [
+      { text: 'No', style: 'cancel' },
+      { 
+        text: 'Yes, Cancel', 
+        onPress: async () => {
+          try {
+            setActionLoading(true);
+            const response = await AxiosInstance.post(
+              `/return-refund/${refundId}/cancel_rider_assignment/`,
+              {},
+              { headers: { 'X-User-Id': user?.id } }
+            );
+            
+            if (response.data?.success) {
+              Alert.alert('Success', 'Rider assignment cancelled successfully');
+              await fetchRefund();
+            } else {
+              Alert.alert('Error', response.data?.message || 'Failed to cancel rider assignment');
+            }
+          } catch (err: any) {
+            console.error('Error cancelling rider assignment:', err);
+            Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to cancel rider assignment');
+          } finally {
+            setActionLoading(false);
+          }
+        }
+      }
+    ]
+  );
+};
+  const handleRequestRider = async () => {
+    if (!user?.id) {
+      Alert.alert('Error', 'Please login to continue');
+      return;
+    }
+    
+    Alert.alert(
+      'Request Rider Pickup',
+      'A rider will be assigned to pick up the item from your location. Do you want to proceed?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Yes, Request Rider', 
+          onPress: async () => {
+            try {
+              setActionLoading(true);
+              const response = await AxiosInstance.post(
+                `/return-refund/${refundId}/request_return_pickup/`,
+                {},
+                { headers: { 'X-User-Id': user.id } }
+              );
+              
+              if (response.data?.success) {
+                Alert.alert('Success', response.data.message || 'Rider assigned! You will be notified when the rider accepts.');
+                await fetchRefund();
+              } else {
+                Alert.alert('Error', response.data?.message || 'Failed to request rider');
+              }
+            } catch (err: any) {
+              console.error('Error requesting rider:', err);
+              Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to request rider');
+            } finally {
+              setActionLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const fetchRefund = async () => {
     if (!user?.id) {
       setLoading(false);
@@ -1190,11 +1703,18 @@ useEffect(() => {
       { text: 'Yes', onPress: async () => {
         try {
           setActionLoading(true);
-          await AxiosInstance.post(`/return-refund/${encodeURIComponent(String(id))}/cancel_refund/`, null, { headers: { 'X-User-Id': user?.id } });
-          Alert.alert('Success', 'Refund cancelled successfully');
+          const response = await AxiosInstance.post(`/return-refund/${encodeURIComponent(String(id))}/cancel_refund/`, null, { 
+            headers: { 'X-User-Id': user?.id } 
+          });
+          
+          Alert.alert('Success', 'Refund request cancelled');
           await fetchRefund();
-        } catch (err: any) { Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to cancel refund'); }
-        finally { setActionLoading(false); }
+        } catch (err: any) { 
+          Alert.alert('Error', err?.response?.data?.error || err?.message || 'Failed to cancel refund'); 
+        }
+        finally { 
+          setActionLoading(false); 
+        }
       }}
     ]);
   };
@@ -1585,9 +2105,42 @@ const handleSubmitTrackingForm = async () => {
 
   const renderRefundStatus = (status: string) => {
     const statusUpper = (status || '').toUpperCase();
+    const returnRequest = refund.return_request || {};
+    const deliveryInfo = refund.delivery_info || {};
+    
+    // CRITICAL FIX: The return delivery needs to be fetched separately
+    // For now, check if return_request.status is 'pickup_requested' - 
+    // This indicates a rider has been assigned, even if delivery info is missing
+    const isRiderAssignedForReturn = returnRequest.status === 'pickup_requested';
+
+    if (returnRequest.status === 'pickup_accepted' && deliveryInfo.status === 'accepted') {
+      console.log('Rendering RiderAcceptedForReturnStatus - Rider accepted the pickup');
+      return <RiderAcceptedForReturnStatus refund={refund} formatCurrency={formatCurrency} />;
+    }
+
+    if (returnRequest.status === 'ready_for_pickup' && deliveryInfo.status === 'accepted') {
+      console.log('Rendering WaitingForRiderPickupStatus - Item ready, waiting for rider');
+      return <WaitingForRiderPickupStatus refund={refund} formatCurrency={formatCurrency} />;
+    }
+
+    if (isRiderAssignedForReturn) {
+      return <RiderAssignedForReturnStatus refund={refund} formatCurrency={formatCurrency} />;
+    }
+    
+    console.log('Rider condition check:');
+    console.log('- returnRequest.status:', returnRequest.status);
+    console.log('- isRiderAssignedForReturn:', isRiderAssignedForReturn);
+    
+    if (isRiderAssignedForReturn) {
+      console.log('Rendering RiderAssignedForReturnStatus');
+      return <RiderAssignedForReturnStatus refund={refund} formatCurrency={formatCurrency} />;
+    }
+    
+    // ... rest of your existing renderRefundStatus code continues here
     const payStatusLog = String(refund.refund_payment_status || '').toLowerCase();
     const refundTypeLog = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
     const rrLog = refund.return_request || {};
+    
     const getReturnItemsLog = () => {
       if (Array.isArray(rrLog.items)) return rrLog.items;
       if (Array.isArray(refund.return_request_items)) return refund.return_request_items;
@@ -1596,12 +2149,14 @@ const handleSubmitTrackingForm = async () => {
       if (rrLog.items && typeof rrLog.items === 'object' && !Array.isArray(rrLog.items)) return Object.values(rrLog.items);
       return [];
     };
+    
     const returnItemsLog = getReturnItemsLog();
     const itemStatusesLog = Array.isArray(returnItemsLog) ? returnItemsLog.map((it: any) => String(it?.status || it?.item_status || it?.return_status || it?.status_display || it?.state || '').toLowerCase()) : [];
-
+  
     if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) return <PendingStatus refund={refund} />;
     if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) return <NegotiationStatus refund={refund} formatCurrency={formatCurrency} />;
     if (STATUS_CONDITIONS.showRejectedStatus(statusUpper)) return <RejectedStatus refund={refund} formatCurrency={formatCurrency} onDispute={handleDispute} />;
+    
     // early inspection/received checks
     {
       const payStatusEarly = String(refund.refund_payment_status || '').toLowerCase();
@@ -1631,21 +2186,22 @@ const handleSubmitTrackingForm = async () => {
         return <ReceivedStatus />;
       }
     }
-    // In renderRefundStatus function, update the ApprovedStatus call
-if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus 
-  refund={refund} 
-  onOpenTrackingDialog={handleAddTracking} 
-  formatCurrency={formatCurrency} 
-  formatDate={formatDate}
-  shopReturnAddress={shopReturnAddress}
-  onOpenProofViewer={openProofViewerFromUrls}
-/> 
+    
+    if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus 
+      refund={refund} 
+      onOpenTrackingDialog={handleAddTracking} 
+      formatCurrency={formatCurrency} 
+      formatDate={formatDate}
+      shopReturnAddress={shopReturnAddress}
+      onOpenProofViewer={openProofViewerFromUrls}
+    /> 
     if (STATUS_CONDITIONS.showWaitingStatus(statusUpper)) return <WaitingStatus refund={refund} onOpenTrackingDialog={handleAddTracking} formatDate={formatDate} onOpenProofViewer={openProofViewerFromUrls} />;
     if (STATUS_CONDITIONS.showToVerifyStatus(statusUpper)) return <ToVerifyStatus />;
     if (STATUS_CONDITIONS.showReturnAcceptedStatus(statusUpper)) return <ReturnAcceptedStatus />;
     if (STATUS_CONDITIONS.showReturnRejectedStatus(statusUpper)) return <ReturnRejectedStatus onDispute={handleDispute} />;
     if (STATUS_CONDITIONS.showShippedStatus(statusUpper)) return <ShippedStatus />;
     if (STATUS_CONDITIONS.showReceivedStatus(statusUpper)) return <ReceivedStatus />;
+    
     const drCheck = refund.dispute || refund.dispute_request || null;
     if (statusUpper === 'DISPUTE' && drCheck && drCheck.status?.toLowerCase() === 'resolved' && String(refund.refund_payment_status || '').toLowerCase() === 'completed') {
       return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
@@ -1655,6 +2211,7 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
     if (STATUS_CONDITIONS.showProcessingStatus(statusUpper)) return <ProcessingStatus refund={refund} formatCurrency={formatCurrency} />;
     if (STATUS_CONDITIONS.showReturnShipStatus(statusUpper)) return <ReturnShipStatus />;
     if (STATUS_CONDITIONS.showCancelledStatus(statusUpper)) return <CancelledStatus />;
+    
     const orderInfo = refund.order_info || {};
     const orderStatus = String(orderInfo.status || orderInfo.status_display || orderInfo.current_status || refund.order?.status || '').toLowerCase();
     const paymentMethod = String(orderInfo.payment_method || refund.order?.payment_method || '').toLowerCase();
@@ -1686,28 +2243,60 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
   
     const statusUpper = (refund.status || '').toUpperCase();
     const rrStatus = String(refund.return_request?.status || '').toLowerCase();
+    const deliveryStatus = String(refund.delivery_info?.status || '').toLowerCase();
     const payStatus = String(refund.refund_payment_status || '').toLowerCase();
     const finalType = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
     const isReturnAcceptedWaitingModeration = rrStatus === 'approved' && refund.status?.toLowerCase() === 'approved' && payStatus === 'pending' && finalType === 'return';
     const isReturnApproved = rrStatus === 'approved';
-
-    // UPDATE THIS CONDITION - Include both 'return' and 'replace' types
+  
+    // NEW: When ready_for_pickup - NO BUTTONS, only back button
+    if (rrStatus === 'ready_for_pickup' && deliveryStatus === 'accepted') {
+      return (
+        <View style={styles.stickyButtonContainer}>
+          <DefaultActions onBack={() => router.back()} />
+        </View>
+      );
+    }
+  
+    // NEW: Check for rider accepted - show "Mark as Ready for Pickup" button
+    if (rrStatus === 'pickup_accepted' && deliveryStatus === 'accepted') {
+      return (
+        <View style={styles.stickyButtonContainer}>
+          <TouchableOpacity 
+            style={[styles.primaryButton, { backgroundColor: '#10B981' }]} 
+            onPress={handleMarkAsReadyForPickup}
+            disabled={actionLoading}
+          >
+            {actionLoading ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <>
+                <CheckCircle2 size={16} color="#FFF" />
+                <Text style={styles.primaryButtonText}>Mark as Ready for Pickup</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.secondaryButton, { marginTop: 12 }]} onPress={() => router.back()}>
+            <ArrowLeft size={16} color="#374151" />
+            <Text style={styles.secondaryButtonText}>Back to Requests</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+  
+    // Update this condition - Include both 'return' and 'replace' types
     const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
     
     // Check if this is a walk-in return (already selected by buyer)
     const isWalkIn = refund.return_request?.logistic_service === 'Walk-in' && !refund.return_request?.tracking_number;
     
-    // For walk-in returns, show "Mark as Returned" button instead of shipping options
-    // For walk-in returns, show "Mark as Returned" button that opens modal
-    // In renderActionButtons function, find this section (around line 1185):
-
     // For walk-in returns, show "Mark as Returned" button that opens modal
     if (isWalkIn && statusUpper === 'APPROVED' && rrStatus !== 'received' && rrStatus !== 'inspected') {
       return (
         <View style={styles.stickyButtonContainer}>
-          {/* <TouchableOpacity 
+          <TouchableOpacity 
             style={[styles.primaryButton, { backgroundColor: '#10B981', marginBottom: 0 }]} 
-            onPress={() => setShowReturnMediaModal(true)}  // ← Change this line
+            onPress={() => setShowReturnMediaModal(true)}
             disabled={actionLoading}
           >
             {actionLoading ? (
@@ -1718,16 +2307,35 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
                 <Text style={styles.primaryButtonText}>Mark as Returned</Text>
               </>
             )}
-          </TouchableOpacity> */}
+          </TouchableOpacity>
         </View>
       );
     }
     
+    // For rider assigned status (pickup_requested) - show "Cancel Assignment" button
+    const isRiderAssigned = rrStatus === 'pickup_requested';
+    
+    // If rider is assigned, show Cancel Assignment button (not Cancel Refund)
+    if (isRiderAssigned && statusUpper === 'APPROVED') {
+      return (
+        <View style={styles.stickyButtonContainer}>
+          <TouchableOpacity 
+            style={[styles.secondaryButton, { borderColor: '#DC2626' }]} 
+            onPress={handleCancelRiderAssignment}
+            disabled={actionLoading}
+          >
+            <Ban size={16} color="#DC2626" />
+            <Text style={[styles.secondaryButtonText, { color: '#DC2626' }]}>Cancel Assignment</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+  
     const showAddTrackingAction = (
       !isReturnApproved &&
       (statusUpper === 'APPROVED' && 
        isReturnOrReplace && 
-       !['shipped', 'received', 'inspected'].includes(rrStatus) && 
+       !['shipped', 'received', 'inspected'].includes(rrStatus) &&
        !(rrStatus === 'approved' && ['processing', 'completed'].includes(payStatus)) && 
        !isReturnAcceptedWaitingModeration) ||
       STATUS_CONDITIONS.showWaitingStatus(statusUpper)
@@ -1736,10 +2344,11 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
     if (showAddTrackingAction) {
       return (
         <View style={styles.stickyButtonContainer}>
-          <ReturnActions onAddTracking={handleAddTracking} onWalkIn={handleOpenWalkInConfirm} loading={actionLoading} />
+          <ReturnActions onAssignRider={handleRequestRider} onWalkIn={handleOpenWalkInConfirm} loading={actionLoading} />
         </View>
       );
     }
+    
     if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) {
       return (
         <View style={styles.stickyButtonContainer}>
@@ -1747,6 +2356,7 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
         </View>
       );
     }
+    
     if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) {
       return (
         <View style={styles.stickyButtonContainer}>
@@ -1754,6 +2364,7 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
         </View>
       );
     }
+    
     if (STATUS_CONDITIONS.showRejectedStatus(statusUpper)) {
       return (
         <View style={styles.stickyButtonContainer}>
@@ -1761,6 +2372,7 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
         </View>
       );
     }
+    
     if (STATUS_CONDITIONS.showDisputeStatus(statusUpper)) {
       const dr = refund.dispute || refund.dispute_request || null;
       if (dr && dr.status?.toLowerCase() === 'rejected' && refund.status?.toLowerCase() === 'dispute') {
@@ -1771,6 +2383,8 @@ if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus
         );
       }
     }
+    
+    // Default: show back button only
     return (
       <View style={styles.stickyButtonContainer}>
         <DefaultActions onBack={() => router.back()} />
@@ -2597,4 +3211,213 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     marginLeft: 20,
   },
+  riderAssignedCard: {
+    marginTop: 12,
+    backgroundColor: '#F5F3FF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
+    overflow: 'hidden',
+  },
+  riderAssignedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#EDE9FE',
+    gap: 8,
+  },
+  riderAssignedTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B21A8',
+    flex: 1,
+  },
+  // Add these to your styles object (around line 2500-2600)
+
+ridersModalContainer: {
+  backgroundColor: '#FFFFFF',
+  borderRadius: 20,
+  maxHeight: '80%',
+  overflow: 'hidden',
+},
+ridersModalHeader: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  padding: 16,
+  borderBottomWidth: 1,
+  borderBottomColor: '#F0F0F0',
+},
+ridersModalTitle: {
+  fontSize: 18,
+  fontWeight: '600',
+  color: '#111827',
+},
+ridersModalContent: {
+  padding: 16,
+},
+nearestRiderCard: {
+  backgroundColor: '#FEF3C7',
+  borderRadius: 12,
+  padding: 12,
+  marginBottom: 16,
+},
+nearestRiderHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 6,
+  marginBottom: 8,
+},
+nearestRiderCardTitle: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#92400E',
+},
+nearestRiderDetails: {
+  paddingLeft: 30,
+},
+nearestRiderName: {
+  fontSize: 16,
+  fontWeight: '700',
+  color: '#111827',
+},
+nearestRiderUsername: {
+  fontSize: 12,
+  color: '#6B7280',
+  marginBottom: 8,
+},
+nearestRiderStats: {
+  flexDirection: 'row',
+  gap: 16,
+},
+nearestRiderStat: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 4,
+},
+nearestRiderStatText: {
+  fontSize: 12,
+  color: '#374151',
+},
+allRidersTitle: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#111827',
+  marginBottom: 12,
+},
+riderModalItem: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingVertical: 12,
+  borderBottomWidth: 0.5,
+  borderBottomColor: '#F3F4F6',
+},
+riderModalRank: {
+  width: 32,
+  height: 32,
+  borderRadius: 16,
+  backgroundColor: '#F3F4F6',
+  alignItems: 'center',
+  justifyContent: 'center',
+  marginRight: 12,
+},
+riderModalRankText: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#374151',
+},
+riderModalInfo: {
+  flex: 1,
+},
+riderModalName: {
+  fontSize: 14,
+  fontWeight: '500',
+  color: '#111827',
+},
+riderModalUsername: {
+  fontSize: 11,
+  color: '#6B7280',
+  marginBottom: 4,
+},
+riderModalDetails: {
+  flexDirection: 'row',
+  gap: 12,
+},
+riderModalDetail: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 4,
+},
+riderModalDetailText: {
+  fontSize: 10,
+  color: '#9CA3AF',
+},
+riderModalDistance: {
+  alignItems: 'flex-end',
+},
+riderModalDistanceValue: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#F97316',
+},
+riderModalDistanceLabel: {
+  fontSize: 10,
+  color: '#6B7280',
+},
+riderAcceptedCard: {
+  marginTop: 12,
+  backgroundColor: '#ECFDF5',
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: '#A7F3D0',
+  overflow: 'hidden',
+},
+riderAcceptedHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 12,
+  backgroundColor: '#D1FAE5',
+  gap: 8,
+},
+riderAcceptedTitle: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#065F46',
+  flex: 1,
+},
+readyForPickupCard: {
+  marginTop: 12,
+  backgroundColor: '#FEF3C7',
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: '#FDE68A',
+},
+waitingForRiderCard: {
+  marginTop: 12,
+  backgroundColor: '#FEF3C7',
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: '#FDE68A',
+  overflow: 'hidden',
+},
+waitingForRiderHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 12,
+  backgroundColor: '#FDE68A',
+  gap: 8,
+},
+waitingForRiderTitle: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#92400E',
+  flex: 1,
+},
+waitingForRiderInstructionCard: {
+  marginTop: 12,
+  backgroundColor: '#FEF3C7',
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: '#FDE68A',
+},
 });

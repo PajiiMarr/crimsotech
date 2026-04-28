@@ -61,6 +61,7 @@ interface Refund {
   refund: string;          // refund ID (from backend's refund_id)
   order_id: string;
   order_total_amount: number;
+  refund_amount?: number | null;
   requested_by_username: string;
   requested_by_email: string;
   processed_by_username?: string;
@@ -172,64 +173,65 @@ export async function loader({ request, context }: Route.LoaderArgs): Promise<Lo
       ? refundsResponse.data
       : (refundsResponse.data && Array.isArray(refundsResponse.data.refunds) ? refundsResponse.data.refunds : []);
 
-    if (rawRefunds.length) {
-      refundsList = rawRefunds.map((refund: any) => {
-        // Extract customer info from either flat fields or nested object
-        let customerUsername = refund.requested_by_username;
-        let customerEmail = refund.requested_by_email;
-        
-        // If flat fields are missing, try to get from nested requested_by object
-        if (!customerUsername && refund.requested_by) {
-          customerUsername = refund.requested_by.username || 
-                             (refund.requested_by.email ? refund.requested_by.email.split('@')[0] : null) ||
-                             'Unknown';
-          customerEmail = refund.requested_by.email || '';
-        }
-        
-        // Derive displayed status: prefer under_review when dispute is under review
-        const baseStatus = (refund.status || 'pending').toString().toLowerCase();
-        const disputeStatus = (
-          refund.dispute?.status ||
-          (Array.isArray(refund.disputes) && refund.disputes[0]?.status) ||
-          refund.dispute_details?.status ||
-          refund.dispute_request?.status ||
-          ''
-        ).toString().toLowerCase();
-        const disputeUnderReviewStates = ['under_review', 'investigating', 'in_review'];
-        const shouldForceUnderReview = disputeUnderReviewStates.includes(disputeStatus) && baseStatus === 'dispute' && String(refund.refund_payment_status || '').toLowerCase() === 'pending';
-        const displayedStatus = shouldForceUnderReview ? 'under_review' : baseStatus;
-
-        return {
-          // ✅ Use refund_id directly
-          refund: refund.refund_id,
-          order_id: refund.order_id || 'N/A',
-          order_total_amount: refund.order_total_amount || 0,
-          requested_by_username: customerUsername || 'Unknown',
-          requested_by_email: customerEmail || 'N/A',
-          processed_by_username: refund.processed_by_username,
-          processed_by_email: refund.processed_by_email,
-          reason: refund.reason || 'No reason provided',
-          requested_refund_amount: refund.requested_refund_amount != null ? refund.requested_refund_amount : null,
-          refund_fee: refund.refund_fee != null ? refund.refund_fee : null,
-          total_refund_amount: refund.total_refund_amount != null ? refund.total_refund_amount : null,
-          approved_refund_amount: refund.approved_refund_amount != null ? refund.approved_refund_amount : null,
-          status: displayedStatus || (refund.status || 'pending'),
-          requested_at: refund.requested_at,
-          logistic_service: refund.logistic_service,
-          tracking_number: refund.tracking_number,
-          final_refund_type: refund.final_refund_type || null,
-          refund_type: refund.refund_type || null,
-          refund_payment_status: refund.refund_payment_status || null,
-          has_return_request: refund.has_return_request || false,
-          return_request_status: refund.return_request_status || null,
-          preferred_refund_method: refund.preferred_refund_method,
-          final_refund_method: refund.final_refund_method,
-          processed_at: refund.processed_at,
-          has_media: refund.has_media || false,
-          media_count: refund.media_count || 0
-        };
-      });
-    }
+      if (rawRefunds.length) {
+        refundsList = rawRefunds.map((refund: any) => {
+          // Extract customer info from either flat fields or nested object
+          let customerUsername = refund.requested_by_username;
+          let customerEmail = refund.requested_by_email;
+          
+          // If flat fields are missing, try to get from nested requested_by object
+          if (!customerUsername && refund.requested_by) {
+            customerUsername = refund.requested_by.username || 
+                               (refund.requested_by.email ? refund.requested_by.email.split('@')[0] : null) ||
+                               'Unknown';
+            customerEmail = refund.requested_by.email || '';
+          }
+          
+          // Derive displayed status: prefer under_review when dispute is under review
+          const baseStatus = (refund.status || 'pending').toString().toLowerCase();
+          const disputeStatus = (
+            refund.dispute?.status ||
+            (Array.isArray(refund.disputes) && refund.disputes[0]?.status) ||
+            refund.dispute_details?.status ||
+            refund.dispute_request?.status ||
+            ''
+          ).toString().toLowerCase();
+          const disputeUnderReviewStates = ['under_review', 'investigating', 'in_review'];
+          const shouldForceUnderReview = disputeUnderReviewStates.includes(disputeStatus) && baseStatus === 'dispute' && String(refund.refund_payment_status || '').toLowerCase() === 'pending';
+          const displayedStatus = shouldForceUnderReview ? 'under_review' : baseStatus;
+      
+          return {
+            // ✅ Use refund_id directly
+            refund: refund.refund_id,
+            order_id: refund.order_id || 'N/A',
+            order_total_amount: refund.order_total_amount || 0,
+            refund_amount: refund.refund_amount != null ? refund.refund_amount : 0,  // ADD THIS LINE
+            requested_by_username: customerUsername || 'Unknown',
+            requested_by_email: customerEmail || 'N/A',
+            processed_by_username: refund.processed_by_username,
+            processed_by_email: refund.processed_by_email,
+            reason: refund.reason || 'No reason provided',
+            requested_refund_amount: refund.requested_refund_amount != null ? refund.requested_refund_amount : null,
+            refund_fee: refund.refund_fee != null ? refund.refund_fee : null,
+            total_refund_amount: refund.total_refund_amount != null ? refund.total_refund_amount : null,
+            approved_refund_amount: refund.approved_refund_amount != null ? refund.approved_refund_amount : null,
+            status: displayedStatus || (refund.status || 'pending'),
+            requested_at: refund.requested_at,
+            logistic_service: refund.logistic_service,
+            tracking_number: refund.tracking_number,
+            final_refund_type: refund.final_refund_type || null,
+            refund_type: refund.refund_type || null,
+            refund_payment_status: refund.refund_payment_status || null,
+            has_return_request: refund.has_return_request || false,
+            return_request_status: refund.return_request_status || null,
+            preferred_refund_method: refund.preferred_refund_method,
+            final_refund_method: refund.final_refund_method,
+            processed_at: refund.processed_at,
+            has_media: refund.has_media || false,
+            media_count: refund.media_count || 0
+          };
+        });
+      }
 
   } catch (error) {
     console.error('Error fetching refund data:', error);
@@ -507,26 +509,28 @@ const columns: ColumnDef<Refund>[] = [
     },
   },
   {
-    id: 'request',
-    header: 'Request',
-    cell: ({ row }: { row: any }) => {
-      const requested = row.original.requested_refund_amount;
-      const total = row.original.total_refund_amount;
+    accessorKey: "refund_amount",
+    header: ({ column }) => {
       return (
-        <div className="text-xs sm:text-sm">
-          {(requested != null || total != null) && (
-            <div className="text-muted-foreground text-xs mt-1">
-              {requested != null && <span>Requested: ₱{Number(requested).toLocaleString()}</span>}
-              {requested != null && total != null && <span className="mx-1">•</span>}
-              {total != null && <span>Net: ₱{Number(total).toLocaleString()}</span>}
-            </div>
-          )}
-          <div className="mt-1">
-            <Link to={`/admin/view-refund-details/${row.original.refund}`} className="text-blue-600 text-xs">View details</Link>
-          </div>
-        </div>
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="text-xs sm:text-sm"
+        >
+          Amount
+          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
+        </Button>
       )
-    }
+    },
+    cell: ({ row }: { row: any}) => {
+      const refundAmount = row.original.refund_amount;
+      return (
+        <div className="flex items-center gap-1 text-xs sm:text-sm font-medium">
+          <DollarSign className="w-3 h-3 text-muted-foreground" />
+          ₱{refundAmount ? refundAmount.toLocaleString() : '0.00'}
+        </div>
+      );
+    },
   },
   {
     accessorKey: "requested_at",
@@ -558,34 +562,15 @@ const columns: ColumnDef<Refund>[] = [
     },
   },
   {
-    accessorKey: "order_total_amount",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="text-xs sm:text-sm"
-        >
-          Amount
-          <ArrowUpDown className="ml-2 h-3 w-3 sm:h-4 sm:w-4" />
-        </Button>
-      )
-    },
-    cell: ({ row }: { row: any}) => (
-      <div className="flex items-center gap-1 text-xs sm:text-sm font-medium">
-        <DollarSign className="w-3 h-3 text-muted-foreground" />
-        ₱{parseFloat(row.getValue("order_total_amount")).toLocaleString()}
-      </div>
-    ),
-  },
-  {
     id: 'actions',
     header: 'Actions',
     cell: ({ row }: { row: any}) => {
       const refund = row.original;
       return (
         <div className="flex items-center gap-1">
-          <RefundActions refundId={refund.refund} />
+          <Link to={`/admin/view-refund-details/${refund.refund}`} className="text-blue-600 text-xs">
+            View details
+          </Link>
         </div>
       );
     },

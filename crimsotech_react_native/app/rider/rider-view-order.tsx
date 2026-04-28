@@ -83,7 +83,19 @@ interface OrderDetails {
     delivered_at: string | null;
     created_at: string;
     failed_reason?: string;
+    delivery_type?: string; 
+    refund_id?: string; 
   };
+  return_request?: {  // ADD THIS
+    status: string;
+    return_id: string;
+    return_method?: string;
+    refund_id?: string; 
+    tracking_number?: string;
+    logistic_service?: string;
+  };
+  refund_id?: string; 
+  refund_items?: RefundItem[]; 
   payment: {
     id: string;
     status: string;
@@ -93,11 +105,16 @@ interface OrderDetails {
   };
   items: OrderItem[];
 }
+interface RefundItem {
+  checkout_id: string;
+  quantity: number;
+  amount: string;
+}
 
 export default function RiderViewOrder() {
   const { user } = useAuth();
   const { deliveryId, orderId } = useLocalSearchParams<{ deliveryId: string; orderId: string }>();
-  
+  const [isReturnDelivery, setIsReturnDelivery] = useState(false);
   const [orderDetails, setOrderDetails] = useState<OrderDetails | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -181,7 +198,20 @@ const showConfirmationModal = (config: {
       });
       
       if (response.data) {
+        console.log('=== ORDER DETAILS RESPONSE ===');
+        console.log('delivery object:', response.data.delivery);
+        console.log('delivery_type:', response.data.delivery?.delivery_type);
+        
         setOrderDetails(response.data);
+        
+        // Check for delivery_type === 'return'
+        if (response.data.delivery?.delivery_type === 'return') {
+          console.log('✅ This is a RETURN delivery!');
+          setIsReturnDelivery(true);
+        } else {
+          console.log('❌ This is NOT a return delivery, delivery_type =', response.data.delivery?.delivery_type);
+        }
+        
         // Fetch proofs after getting delivery ID
         if (response.data.delivery?.id) {
           await fetchProofImages(response.data.delivery.id);
@@ -206,14 +236,18 @@ const showConfirmationModal = (config: {
     }
   };
 
-  // Handle accept delivery
-  // Handle accept delivery
   const handleAcceptDelivery = async () => {
     if (!orderDetails?.delivery?.id) return;
     
+    // Check if this is a return delivery
+    const isReturn = orderDetails.delivery?.delivery_type === 'return';
+    
+    // Get the refund_id from return_request object or top-level refund_id
+    const refundId = orderDetails?.return_request?.refund_id || orderDetails?.refund_id;
+    
     showConfirmationModal({
-      title: 'Accept Order',
-      message: 'Are you sure you want to accept this delivery?',
+      title: isReturn ? 'Accept Return Pickup' : 'Accept Order',
+      message: isReturn ? 'Are you sure you want to accept this return pickup?' : 'Are you sure you want to accept this delivery?',
       confirmText: 'Accept',
       confirmColor: '#EE4D2D',
       icon: 'checkmark-circle-outline',
@@ -221,22 +255,40 @@ const showConfirmationModal = (config: {
       onConfirm: async () => {
         try {
           setIsActionLoading(true);
-          const formData = new FormData();
-          formData.append('order_id', orderDetails.delivery.id);
-  
-          const response = await AxiosInstance.post('/rider-orders-active/accept_order/', formData, {
-            headers: { 'X-User-Id': user?.user_id }
-          });
+          
+          let response;
+          if (isReturn) {
+            // For return pickups, call the respond_to_return_pickup endpoint
+            if (!refundId) {
+              Alert.alert('Error', 'Cannot accept return: refund ID not found');
+              setIsActionLoading(false);
+              return;
+            }
+            
+            response = await AxiosInstance.post('/rider-orders-active/respond_to_return_pickup/', {
+              refund_id: refundId,
+              response: 'accept'
+            }, {
+              headers: { 'X-User-Id': user?.user_id }
+            });
+          } else {
+            // For regular orders, use accept_order
+            const formData = new FormData();
+            formData.append('order_id', orderDetails.delivery.id);
+            response = await AxiosInstance.post('/rider-orders-active/accept_order/', formData, {
+              headers: { 'X-User-Id': user?.user_id }
+            });
+          }
   
           if (response.data.success) {
-            Alert.alert('Success', 'Order accepted successfully');
+            Alert.alert('Success', isReturn ? 'Return pickup accepted successfully' : 'Order accepted successfully');
             fetchOrderDetails();
           } else {
-            Alert.alert('Error', response.data.error || 'Failed to accept order');
+            Alert.alert('Error', response.data.error || 'Failed to accept');
           }
         } catch (err: any) {
-          console.error('Error accepting delivery:', err);
-          Alert.alert('Error', err?.response?.data?.error || 'Failed to accept order');
+          console.error('Error accepting:', err);
+          Alert.alert('Error', err?.response?.data?.error || 'Failed to accept');
         } finally {
           setIsActionLoading(false);
         }
@@ -564,64 +616,145 @@ const handleCancelAcceptedOrder = async () => {
 
   // Get status color
   // Get status color
-const getStatusColor = (status: string) => {
-  switch (status?.toLowerCase()) {
-    case 'pending':
-      return '#F59E0B';
-    case 'pending_offer':
-      return '#F59E0B';
-    case 'accepted':
-      if (orderDetails?.order_status === 'waiting_for_rider') {
+  // Get status color
+  const getStatusColor = (status: string) => {
+    // For return deliveries, use purple theme
+    if (isReturnDelivery) {
+      // Check for return waiting for buyer - use amber/warning color
+      if (orderDetails?.delivery?.status === 'accepted' && 
+          orderDetails?.return_request?.status === 'pickup_accepted') {
+        return '#F59E0B'; // Amber/Warning color for waiting
+      }
+      
+      switch (status?.toLowerCase()) {
+        case 'pending':
+        case 'pending_offer':
+          return '#8B5CF6'; // Purple for pending return
+        case 'accepted':
+          if (orderDetails?.order_status === 'waiting_for_rider') {
+            return '#8B5CF6';
+          }
+          return '#8B5CF6';
+        case 'picked_up':
+          return '#8B5CF6';
+        case 'delivered':
+          return '#10B981';
+        case 'failed':
+          return '#EF4444';
+        case 'cancelled':
+          return '#EF4444';
+        default:
+          return '#8B5CF6';
+      }
+    }
+    
+    // Original colors for normal deliveries
+    switch (status?.toLowerCase()) {
+      case 'pending':
+        return '#F59E0B';
+      case 'pending_offer':
+        return '#F59E0B';
+      case 'accepted':
+        if (orderDetails?.order_status === 'waiting_for_rider') {
+          return '#10B981';
+        }
+        return '#F59E0B';
+      case 'picked_up':
+        return '#3B82F6';
+      case 'delivered':
         return '#10B981';
-      }
-      return '#F59E0B';
-    case 'picked_up':
-      return '#3B82F6';
-    case 'delivered':
-      return '#10B981';
-    case 'failed':
-      // Check if failed reason is return_to_seller for different color
-      if (orderDetails?.delivery?.failed_reason === 'return_to_seller') {
-        return '#D97706'; // Amber/Warning color for RTS
-      }
-      return '#EF4444';
-    case 'cancelled':
-      return '#EF4444';
-    case 'declined':
-      return '#EF4444';
-    default:
-      return '#6B7280';
-  }
-};
+      case 'failed':
+        if (orderDetails?.delivery?.failed_reason === 'return_to_seller') {
+          return '#D97706';
+        }
+        return '#EF4444';
+      case 'cancelled':
+        return '#EF4444';
+      case 'declined':
+        return '#EF4444';
+      default:
+        return '#6B7280';
+    }
+  };
 
 // Get status label
+// Get status label
 const getStatusLabel = (status: string) => {
+  // For return deliveries, add "Return" prefix
+  const prefix = isReturnDelivery ? 'Return: ' : '';
+  
+  // Check for return waiting for buyer
+  if (isReturnDelivery && 
+      orderDetails?.delivery?.status === 'accepted' && 
+      orderDetails?.return_request?.status === 'pickup_accepted') {
+    return prefix + 'Waiting for Buyer';
+  }
+  
   switch (status?.toLowerCase()) {
     case 'picked_up':
-      return 'In Transit';
+      return prefix + 'In Transit';
     case 'pending_offer':
-      return 'Pending';
+      return prefix + 'Pending';
     case 'accepted':
       if (orderDetails?.order_status === 'rider_assigned') {
-        return 'Accepted - Waiting for pick up';
+        return prefix + 'Accepted - Waiting for pickup';
       }
       if (orderDetails?.order_status === 'waiting_for_rider') {
-        return 'Approved - Waiting';
+        return prefix + 'Approved - Ready for pickup';
       }
-      return 'Accepted';
+      return prefix + 'Accepted';
     case 'failed':
-      // Special label for return_to_seller
       if (orderDetails?.delivery?.failed_reason === 'return_to_seller') {
-        return 'Failed - Return to Seller';
+        return prefix + 'Failed - Return to Seller';
       }
-      return 'Failed';
+      return prefix + 'Failed';
     default:
-      return status?.charAt(0).toUpperCase() + status?.slice(1) || 'Unknown';
+      return (status?.charAt(0).toUpperCase() + status?.slice(1)) || 'Unknown';
   }
 };
 
 // Get status message
+// Get status message
 const getStatusMessage = (status: string) => {
+  // Check for return delivery waiting for buyer
+  if (isReturnDelivery && 
+      orderDetails?.delivery?.status === 'accepted' && 
+      orderDetails?.return_request?.status === 'pickup_accepted') {
+    return 'Waiting for buyer to mark the item as ready for pickup. You will be notified once ready.';
+  }
+
+  if (isReturnDelivery && orderDetails?.return_request?.status === 'pickup_accepted') {
+    return 'You have accepted this return pickup. Please proceed to pick up the item from the buyer.';
+  }
+  
+  // For return deliveries, show return-specific messages
+  if (isReturnDelivery) {
+    switch (status?.toLowerCase()) {
+      case 'accepted':
+        if (orderDetails?.order_status === 'rider_assigned') {
+          return 'You have accepted this return delivery. Waiting for the buyer to mark the item as ready for pickup.';
+        }
+        if (orderDetails?.order_status === 'waiting_for_rider') {
+          return 'Return order is approved and ready for pickup. Please proceed to the buyer to pick up the returned item.';
+        }
+        return 'You have accepted this return delivery. Waiting for the buyer to mark it as ready for pickup.';
+      case 'pending':
+        return 'This return order is pending your response. Please accept or decline within the time limit.';
+      case 'picked_up':
+        return 'You have picked up the returned item from the buyer and are now on your way to deliver it back to the seller.';
+      case 'delivered':
+        return 'This return has been successfully delivered back to the seller.';
+      case 'failed':
+        if (orderDetails?.delivery?.failed_reason === 'return_to_seller') {
+          return 'Return delivery failed. Items are being returned to the seller.';
+        }
+        return 'This return delivery has failed. Please check the reason for more details.';
+      default:
+        return getDefaultStatusMessage(status);
+    }
+  }
+  
+  // Original messages for normal deliveries
   switch (status?.toLowerCase()) {
     case 'accepted':
       if (orderDetails?.order_status === 'rider_assigned') {
@@ -646,6 +779,18 @@ const getStatusMessage = (status: string) => {
       return 'This order has been cancelled.';
     case 'declined':
       return 'You have declined this delivery order.';
+    default:
+      return '';
+  }
+};
+
+// Helper function for default messages
+const getDefaultStatusMessage = (status: string) => {
+  switch (status?.toLowerCase()) {
+    case 'cancelled':
+      return 'This return has been cancelled.';
+    case 'declined':
+      return 'You have declined this return order.';
     default:
       return '';
   }
@@ -710,7 +855,15 @@ const getStatusMessage = (status: string) => {
   }
 
   const showAcceptDecline = orderDetails.delivery?.status === 'pending' || orderDetails.delivery?.status === 'pending_offer';
-  const showAcceptedActions = orderDetails.delivery?.status === 'accepted';
+  const isReturnPickupAccepted = orderDetails?.return_request?.status === 'pickup_accepted';
+  // Check if this is a return delivery waiting for buyer to mark as ready
+  const isReturnWaitingForBuyer = isReturnDelivery && 
+    orderDetails.delivery?.status === 'accepted' && 
+    orderDetails?.return_request?.status === 'pickup_accepted';
+  
+  // Show accepted actions ALWAYS when conditions are met (but we'll disable the button when waiting)
+  const showAcceptedActions = (orderDetails.delivery?.status === 'accepted') || 
+    (isReturnDelivery && isReturnPickupAccepted);
   const showInTransitActions = orderDetails.delivery?.status === 'picked_up';
   const showDelivered = orderDetails.delivery?.status === 'delivered';
   const statusMessage = getStatusMessage(orderDetails.delivery?.status);
@@ -726,20 +879,34 @@ const getStatusMessage = (status: string) => {
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
       {/* Custom Header with Back Button and Title - Edge to Edge */}
+      {/* Custom Header with Back Button and Title - Edge to Edge */}
+<View style={{ 
+  backgroundColor: '#FFFFFF', 
+  paddingTop: 12, 
+  paddingBottom: 12,
+  borderBottomWidth: 1,
+  borderBottomColor: '#F3F4F6'
+}}>
+  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
+    <TouchableOpacity onPress={() => router.back()} style={{ marginRight: 12 }}>
+      <Ionicons name="arrow-back" size={24} color="#1F2937" />
+    </TouchableOpacity>
+    <Text style={{ fontSize: 18, fontWeight: '600', color: '#1F2937' }}>
+      {isReturnDelivery ? 'Return Order Details' : 'Order Details'}
+    </Text>
+    {isReturnDelivery && (
       <View style={{ 
-        backgroundColor: '#FFFFFF', 
-        paddingTop: 12, 
-        paddingBottom: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6'
+        marginLeft: 8, 
+        backgroundColor: '#8B5CF6', 
+        paddingHorizontal: 8, 
+        paddingVertical: 2, 
+        borderRadius: 12 
       }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
-          <TouchableOpacity onPress={() => router.back()} style={{ marginRight: 12 }}>
-            <Ionicons name="arrow-back" size={24} color="#1F2937" />
-          </TouchableOpacity>
-          <Text style={{ fontSize: 18, fontWeight: '600', color: '#1F2937' }}>Order Details</Text>
-        </View>
+        <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '600' }}>RETURN</Text>
       </View>
+    )}
+  </View>
+</View>
       
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -950,70 +1117,138 @@ const getStatusMessage = (status: string) => {
         )}
 
         {/* CARD 1: Order Information (Buyer Info + Order Details) - Edge to Edge */}
-        <View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: -1, marginTop: -1 }}>
-          <View style={{ padding: 16 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-              <Ionicons name="receipt-outline" size={22} color="#EE4D2D" />
-              <Text style={{ fontSize: 16, fontWeight: '600', marginLeft: 8 }}>Order Information</Text>
-            </View>
-            
-            {/* Order Details */}
-            <View style={{ marginBottom: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text style={{ fontSize: 13, color: '#6B7280' }}>Order ID</Text>
-                <Text style={{ fontSize: 13, fontWeight: '500', color: '#1F2937' }}>#{orderDetails.order_id?.slice(-12)}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text style={{ fontSize: 13, color: '#6B7280' }}>Total Amount</Text>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#EE4D2D' }}>{formatCurrency(orderDetails.total_amount)}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text style={{ fontSize: 13, color: '#6B7280' }}>Delivery Fee</Text>
-                <Text style={{ fontSize: 13, fontWeight: '500', color: '#1F2937' }}>
-                    {formatCurrency(orderDetails.delivery?.delivery_fee || 0)}
-                </Text>
-                </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text style={{ fontSize: 13, color: '#6B7280' }}>Payment Method</Text>
-                <Text style={{ fontSize: 13, color: '#1F2937' }}>{orderDetails.payment_method || 'N/A'}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text style={{ fontSize: 13, color: '#6B7280' }}>Delivery Method</Text>
-                <Text style={{ fontSize: 13, color: '#1F2937' }}>{orderDetails.delivery_method || 'Standard'}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 13, color: '#6B7280' }}>Order Date</Text>
-                <Text style={{ fontSize: 13, color: '#1F2937' }}>{formatDate(orderDetails.created_at)}</Text>
-              </View>
-            </View>
-            
-            {/* Buyer Information - Using Shipping Address for contact */}
-            <View>
-              <Text style={{ fontSize: 14, fontWeight: '600', color: '#1F2937', marginBottom: 12 }}>Buyer Information</Text>
-              <Text style={{ fontSize: 14, fontWeight: '500', color: '#1F2937', marginBottom: 4 }}>
-                {orderDetails.shipping_address?.recipient_name || orderDetails.customer?.name || 'N/A'}
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <Ionicons name="call-outline" size={14} color="#6B7280" />
-                <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6 }}>
-                  {orderDetails.shipping_address?.recipient_phone || 'N/A'}
-                </Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <Ionicons name="mail-outline" size={14} color="#6B7280" />
-                <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6 }}>
-                  {orderDetails.customer?.email || 'N/A'}
-                </Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                <Ionicons name="location-outline" size={14} color="#6B7280" style={{ marginTop: 2 }} />
-                <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6, flex: 1 }}>
-                  {orderDetails.shipping_address?.full_address || 'N/A'}
-                </Text>
-              </View>
-            </View>
+        {/* CARD 1: Order/Refund Information - Edge to Edge */}
+<View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: -1, marginTop: -1 }}>
+  <View style={{ padding: 16 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+      <Ionicons name={isReturnDelivery ? "cash-outline" : "receipt-outline"} size={22} color="#EE4D2D" />
+      <Text style={{ fontSize: 16, fontWeight: '600', marginLeft: 8 }}>
+        {isReturnDelivery ? 'Refund Information' : 'Order Information'}
+      </Text>
+    </View>
+    
+    {/* For Return Deliveries - Show Refund Details */}
+    {isReturnDelivery ? (
+      <>
+        {/* Refund ID */}
+        <View style={{ marginBottom: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Refund ID</Text>
+            <Text style={{ fontSize: 13, fontWeight: '500', color: '#1F2937' }}>#{orderDetails.refund_id?.slice(-12) || 'N/A'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Refund Status</Text>
+            <Text style={{ fontSize: 13, fontWeight: '500', color: '#10B981' }}>
+              {orderDetails.return_request?.status?.replace(/_/g, ' ').toUpperCase() || 'N/A'}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Refund Type</Text>
+            <Text style={{ fontSize: 13, fontWeight: '500', color: '#1F2937' }}>Return Item</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Refund Method</Text>
+            <Text style={{ fontSize: 13, fontWeight: '500', color: '#1F2937' }}>
+              {orderDetails.return_request?.return_method || 'N/A'}
+            </Text>
           </View>
         </View>
+        
+        {/* Total Refund Amount - Highlighted */}
+        <View style={{ marginBottom: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: '#1F2937' }}>Total Refund Amount</Text>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#10B981' }}>
+              {formatCurrency(
+                orderDetails.refund_items?.reduce((sum, item) => sum + parseFloat(item.amount), 0) || 0
+              )}
+            </Text>
+          </View>
+        </View>
+        
+        {/* Original Order Details (collapsible/inline) */}
+        <View>
+          <Text style={{ fontSize: 13, fontWeight: '500', color: '#6B7280', marginBottom: 8 }}>Original Order Details</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+            <Text style={{ fontSize: 12, color: '#9CA3AF' }}>Order ID</Text>
+            <Text style={{ fontSize: 12, color: '#6B7280' }}>#{orderDetails.order_id?.slice(-12)}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+            <Text style={{ fontSize: 12, color: '#9CA3AF' }}>Original Total</Text>
+            <Text style={{ fontSize: 12, color: '#6B7280' }}>{formatCurrency(orderDetails.total_amount)}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+            <Text style={{ fontSize: 12, color: '#9CA3AF' }}>Payment Method</Text>
+            <Text style={{ fontSize: 12, color: '#6B7280' }}>{orderDetails.payment_method || 'N/A'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={{ fontSize: 12, color: '#9CA3AF' }}>Order Date</Text>
+            <Text style={{ fontSize: 12, color: '#6B7280' }}>{formatDate(orderDetails.created_at)}</Text>
+          </View>
+        </View>
+      </>
+    ) : (
+      // For Normal Deliveries - Show Order Details
+      <>
+        {/* Order Details */}
+        <View style={{ marginBottom: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Order ID</Text>
+            <Text style={{ fontSize: 13, fontWeight: '500', color: '#1F2937' }}>#{orderDetails.order_id?.slice(-12)}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Total Amount</Text>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: '#EE4D2D' }}>{formatCurrency(orderDetails.total_amount)}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Delivery Fee</Text>
+            <Text style={{ fontSize: 13, fontWeight: '500', color: '#1F2937' }}>
+              {formatCurrency(orderDetails.delivery?.delivery_fee || 0)}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Payment Method</Text>
+            <Text style={{ fontSize: 13, color: '#1F2937' }}>{orderDetails.payment_method || 'N/A'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Delivery Method</Text>
+            <Text style={{ fontSize: 13, color: '#1F2937' }}>{orderDetails.delivery_method || 'Standard'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={{ fontSize: 13, color: '#6B7280' }}>Order Date</Text>
+            <Text style={{ fontSize: 13, color: '#1F2937' }}>{formatDate(orderDetails.created_at)}</Text>
+          </View>
+        </View>
+        
+        {/* Buyer Information - Using Shipping Address for contact */}
+        <View>
+          <Text style={{ fontSize: 14, fontWeight: '600', color: '#1F2937', marginBottom: 12 }}>Buyer Information</Text>
+          <Text style={{ fontSize: 14, fontWeight: '500', color: '#1F2937', marginBottom: 4 }}>
+            {orderDetails.shipping_address?.recipient_name || orderDetails.customer?.name || 'N/A'}
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <Ionicons name="call-outline" size={14} color="#6B7280" />
+            <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6 }}>
+              {orderDetails.shipping_address?.recipient_phone || 'N/A'}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <Ionicons name="mail-outline" size={14} color="#6B7280" />
+            <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6 }}>
+              {orderDetails.customer?.email || 'N/A'}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <Ionicons name="location-outline" size={14} color="#6B7280" style={{ marginTop: 2 }} />
+            <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6, flex: 1 }}>
+              {orderDetails.shipping_address?.full_address || 'N/A'}
+            </Text>
+          </View>
+        </View>
+      </>
+    )}
+  </View>
+</View>
 
         {/* CARD 2: Seller Information - Edge to Edge */}
         <View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: -1, marginTop: -1 }}>
@@ -1044,70 +1279,103 @@ const getStatusMessage = (status: string) => {
       
 
         {/* CARD 3: Order Items - Edge to Edge */}
-        <View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: (showAcceptDecline || showAcceptedActions || showInTransitActions || showDelivered) ? 0 : 80, marginTop: -1 }}>
-          <View style={{ padding: 16 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-              <Ionicons name="cube-outline" size={22} color="#EE4D2D" />
-              <Text style={{ fontSize: 16, fontWeight: '600', marginLeft: 8 }}>Order Items</Text>
-              <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6 }}>({orderDetails.items?.length || 0})</Text>
+{/* CARD 3: Order Items - Edge to Edge */}
+<View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: (showAcceptDecline || showAcceptedActions || showInTransitActions || showDelivered) ? 0 : 80, marginTop: -1 }}>
+  <View style={{ padding: 16 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+      <Ionicons name="cube-outline" size={22} color="#EE4D2D" />
+      <Text style={{ fontSize: 16, fontWeight: '600', marginLeft: 8 }}>Order Items</Text>
+      <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6 }}>({orderDetails.items?.length || 0})</Text>
+    </View>
+    
+    {orderDetails.items && orderDetails.items.map((item, index) => {
+      // For return deliveries, find the refund amount from refund_items
+      let refundAmount = null;
+      if (isReturnDelivery && orderDetails.refund_items && orderDetails.refund_items.length > 0) {
+        const refundItem = orderDetails.refund_items.find(
+          (ri: any) => ri.checkout_id === item.checkout_id
+        );
+        if (refundItem) {
+          refundAmount = parseFloat(refundItem.amount);
+          console.log(`Found refund amount for ${item.product_name}: ${refundAmount}`);
+        } else {
+          console.log(`No refund item found for checkout_id: ${item.checkout_id}`);
+        }
+      }
+      
+      return (
+        <View key={item.checkout_id} style={{ marginBottom: index === orderDetails.items.length - 1 ? 0 : 16, paddingBottom: index === orderDetails.items.length - 1 ? 0 : 16, borderBottomWidth: index === orderDetails.items.length - 1 ? 0 : 1, borderBottomColor: '#F3F4F6' }}>
+          <View style={{ flexDirection: 'row' }}>
+            {/* Product Image */}
+            <View style={{ width: 70, height: 70, borderRadius: 8, backgroundColor: '#F3F4F6', marginRight: 12, overflow: 'hidden' }}>
+              {item.product_image && !imageErrors[item.product_id] ? (
+                <Image 
+                  source={{ uri: item.product_image }} 
+                  style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+                  onError={() => handleImageError(item.product_id)}
+                />
+              ) : (
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                  <Ionicons name="image-outline" size={24} color="#9CA3AF" />
+                </View>
+              )}
             </View>
             
-            {orderDetails.items && orderDetails.items.map((item, index) => (
-              <View key={item.checkout_id} style={{ marginBottom: index === orderDetails.items.length - 1 ? 0 : 16, paddingBottom: index === orderDetails.items.length - 1 ? 0 : 16, borderBottomWidth: index === orderDetails.items.length - 1 ? 0 : 1, borderBottomColor: '#F3F4F6' }}>
-                <View style={{ flexDirection: 'row' }}>
-                  {/* Product Image */}
-                  <View style={{ width: 70, height: 70, borderRadius: 8, backgroundColor: '#F3F4F6', marginRight: 12, overflow: 'hidden' }}>
-                    {item.product_image && !imageErrors[item.product_id] ? (
-                      <Image 
-                        source={{ uri: item.product_image }} 
-                        style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
-                        onError={() => handleImageError(item.product_id)}
-                      />
-                    ) : (
-                      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                        <Ionicons name="image-outline" size={24} color="#9CA3AF" />
-                      </View>
-                    )}
-                  </View>
-                  
-                  {/* Product Details */}
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#1F2937', marginBottom: 4 }}>{item.product_name}</Text>
-                    
-                    {item.variant_name && item.variant_name !== 'Default' && (
-                      <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 2 }}>
-                        Variant: {item.variant_name}
-                      </Text>
-                    )}
-                    
-                    {item.dimensions && (
-                      <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 2 }}>
-                        Dimensions: {item.dimensions}
-                      </Text>
-                    )}
-                    
-                    {item.weight && (
-                      <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 2 }}>
-                        Weight: {item.weight}
-                      </Text>
-                    )}
-                    
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                      <Text style={{ fontSize: 12, color: '#6B7280' }}>Quantity: {item.quantity}</Text>
-                      <Text style={{ fontSize: 14, fontWeight: '600', color: '#EE4D2D' }}>{formatCurrency(item.total)}</Text>
-                    </View>
-                    
-                    {item.remarks && (
-                      <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>
-                        Note: {item.remarks}
-                      </Text>
-                    )}
-                  </View>
-                </View>
+            {/* Product Details */}
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: '600', color: '#1F2937', marginBottom: 4 }}>{item.product_name}</Text>
+              
+              {item.variant_name && item.variant_name !== 'Default' && (
+                <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 2 }}>
+                  Variant: {item.variant_name}
+                </Text>
+              )}
+              
+              {item.dimensions && (
+                <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 2 }}>
+                  Dimensions: {item.dimensions}
+                </Text>
+              )}
+              
+              {item.weight && (
+                <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 2 }}>
+                  Weight: {item.weight}
+                </Text>
+              )}
+              
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                <Text style={{ fontSize: 12, color: '#6B7280' }}>Quantity: {item.quantity}</Text>
+                {/* Show refund amount for return deliveries, regular price for normal deliveries */}
+                {isReturnDelivery && refundAmount !== null ? (
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#10B981' }}>
+                    Refund: {formatCurrency(refundAmount)}
+                  </Text>
+                ) : (
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#EE4D2D' }}>
+                    {formatCurrency(item.total)}
+                  </Text>
+                )}
               </View>
-            ))}
+              
+              {/* Show original price for comparison on return deliveries */}
+              {isReturnDelivery && refundAmount !== null && (
+                <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>
+                  Original: {formatCurrency(item.total)}
+                </Text>
+              )}
+              
+              {item.remarks && (
+                <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>
+                  Note: {item.remarks}
+                </Text>
+              )}
+            </View>
           </View>
         </View>
+      );
+    })}
+  </View>
+</View>
       </ScrollView>
 
       {/* Custom Confirmation Modal */}
@@ -1457,7 +1725,8 @@ const getStatusMessage = (status: string) => {
           )}
 
       {/* Edge-to-Edge Action Buttons for Accepted Status - Mark as Picked Up and Cancel */}
-      {showAcceptedActions && (
+      {/* Edge-to-Edge Action Buttons for Accepted Status - Mark as Picked Up and Cancel */}
+{showAcceptedActions && (
   <View style={{ 
     backgroundColor: '#FFFFFF', 
     borderTopWidth: 1, 
@@ -1491,14 +1760,14 @@ const getStatusMessage = (status: string) => {
       
       <TouchableOpacity
         onPress={handleMarkPickedUp}
-        disabled={isActionLoading || orderDetails?.order_status === 'rider_assigned'}
+        disabled={isActionLoading || isReturnWaitingForBuyer || orderDetails?.order_status === 'rider_assigned'}
         style={{
           flex: 1,
-          backgroundColor: orderDetails?.order_status === 'rider_assigned' ? '#9CA3AF' : '#3B82F6',
+          backgroundColor: (isReturnWaitingForBuyer || orderDetails?.order_status === 'rider_assigned') ? '#9CA3AF' : '#3B82F6',
           paddingVertical: 14,
           borderRadius: 0,
           marginRight: 16,
-          opacity: orderDetails?.order_status === 'rider_assigned' ? 0.7 : 1,
+          opacity: (isReturnWaitingForBuyer || orderDetails?.order_status === 'rider_assigned') ? 0.7 : 1,
         }}
       >
         <Text style={{ 
@@ -1507,9 +1776,11 @@ const getStatusMessage = (status: string) => {
           color: '#FFFFFF', 
           textAlign: 'center' 
         }}>
-          {orderDetails?.order_status === 'rider_assigned' 
-            ? 'Waiting for Seller' 
-            : (isActionLoading ? 'Processing...' : 'Mark as Picked Up')}
+          {isReturnWaitingForBuyer 
+            ? 'Waiting for Buyer' 
+            : (orderDetails?.order_status === 'rider_assigned' 
+              ? 'Waiting for Seller' 
+              : (isActionLoading ? 'Processing...' : 'Mark as Picked Up'))}
         </Text>
       </TouchableOpacity>
     </View>

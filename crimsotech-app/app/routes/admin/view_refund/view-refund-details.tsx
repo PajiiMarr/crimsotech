@@ -1,40 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useLoaderData, useNavigate, useSearchParams } from 'react-router';
 import { Button } from '~/components/ui/button';
-
-// ===== TYPE DEFINITIONS =====
-interface RefundFlat {
-  refund: string;
-  refund_id?: string;
-  status?: string;
-  reason?: string;
-  requested_by_username?: string;
-  requested_by_email?: string;
-  order_id?: string;
-  order_total_amount?: number | string;
-  total_refund_amount?: number | string;
-  approved_refund_amount?: number | string;
-  preferred_refund_method?: string;
-  final_refund_method?: string;
-  refund_method?: string;
-  refund_payment_status?: string;
-  payment_refund_status?: string;
-  payment_status?: string;
-  paymentRefundStatus?: string;
-  requested_at?: string;
-  processed_at?: string;
-  processed_by_username?: string;
-  dispute_reason?: string;
-  logistic_service?: string;
-  tracking_number?: string;
-  has_media?: boolean;
-  media_count?: number;
-  order?: any;
-  default_shipping_address?: any;
-  [key: string]: any;
-}
 
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '~/components/ui/card';
 import { Badge } from '~/components/ui/badge';
@@ -42,91 +10,56 @@ import { Input } from '~/components/ui/input';
 import { Checkbox } from '~/components/ui/checkbox';
 import { Label } from '~/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '~/components/ui/dialog';
-import { Alert, AlertTitle, AlertDescription } from '~/components/ui/alert';
 import { useToast } from '~/hooks/use-toast';
 import AxiosInstance from '~/components/axios/Axios';
 import {
-  ArrowLeft, CheckCircle, XCircle, Eye, AlertTriangle, Package,
-  EyeOff, PackageCheck, Truck, Clock, MessageCircle, User, Wallet,
-  Calendar, RefreshCw, CheckSquare, ShieldAlert, Ban,
-  FileText, ShoppingBag, CreditCard, DollarSign, Shield, Camera,
-  Scale, Gavel, Search, Loader2, Send, AlertCircle, Info,
-  MapPin, Phone, Mail, Store, Bike, Package as PackageIcon,
-  Image as ImageIcon, File as FileIcon, Download, ExternalLink,
-  History, Tag, Receipt, Building, Globe, Star, ThumbsUp, ThumbsDown,
-  Flag, HelpCircle, ClipboardList, Box, Layers, Truck as TruckIcon,
-  UserCheck, UserX, ShieldCheck, Timer, DollarSign as MoneyIcon,
-  MessageSquare, Store as StoreIcon, User as UserIcon, ImagePlus
+  ArrowLeft,
+  CheckCircle,
+  XCircle,
+  UserCheck, 
+  Eye,
+  AlertTriangle,
+  Package,
+  EyeOff,
+  PackageCheck,
+  Truck,
+  Clock,
+  MessageCircle,
+  User,
+  Wallet,
+  Calendar,
+  RefreshCw,
+  CheckSquare,
+  ShieldAlert,
+  Ban,
+  FileText,
+  ShoppingBag,
+  CreditCard,
+  DollarSign,
+  Shield,
+  Camera,
+  Scale,
+  Gavel,
+  Loader2,
+  Info,
+  MapPin,
+  Phone,
+  Mail,
+  Store,
+  Bike,
+  Image as ImageIcon,
+  File as FileIcon,
+  ExternalLink,
+  Receipt,
+  User as UserIcon,
+  ImagePlus,
+  Upload,
 } from 'lucide-react';
 import type { Route } from './+types/view-refund-details';
 
-// ===== LIABILITY LABELS MAPPING =====
-const liabilityLabels: Record<string, string> = {
-  'merchant_fulfillment_issue': 'Merchant Fulfillment Issue (Seller)',
-  'logistics_delivery_issue': 'Logistics / Delivery Issue (Delivery Partner)',
-  'customer_related_issue': 'Customer-Related Issue (Customer)',
-  'shared_responsibility': 'Shared Responsibility',
-  'platform_system_issue': 'Platform / System Issue'
-};
-
 export function meta(): Route.MetaDescriptors {
-  return [{ title: "View Refund - Admin Investigation" }];
+  return [{ title: "View Refund - Admin" }];
 }
-
-const getRefundId = (refund: any) => {
-  if (!refund) return null;
-  return refund.refund_id || refund.refund || refund.id;
-};
-
-function formatCaseCategory(category: any): string {
-  if (!category) return '';
-  if (Array.isArray(category)) {
-    return category.map(c => {
-      if (typeof c === 'object' && c !== null) return liabilityLabels[c.id] || c.label || c.id || '';
-      if (typeof c === 'string') return liabilityLabels[c] || c.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      return String(c);
-    }).filter(Boolean).join(', ');
-  }
-  if (typeof category === 'string') {
-    if (category.includes(',')) {
-      return category.split(',').map(c => c.trim()).filter(Boolean).map(c => {
-        const clean = c.replace(/[\[\]"]/g, '').trim();
-        return liabilityLabels[clean] || clean.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      }).join(', ');
-    }
-    const clean = category.replace(/[\[\]"]/g, '').trim();
-    return liabilityLabels[clean] || clean.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-  }
-  return '';
-}
-
-function getActiveDispute(refund: RefundFlat & { [key: string]: any }) {
-  if (refund.dispute_details && Object.keys(refund.dispute_details).length > 0) return refund.dispute_details;
-  if (refund.dispute_request && Object.keys(refund.dispute_request).length > 0) return refund.dispute_request;
-  if (Array.isArray(refund.disputes) && refund.disputes.length > 0) {
-    return refund.disputes.sort((a: any, b: any) =>
-      new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-    )[0];
-  }
-  return null;
-}
-
-const formatMoney = (value: unknown) => {
-  try {
-    const num = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : NaN;
-    if (!Number.isFinite(num)) return '—';
-    return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(num);
-  } catch { return '—'; }
-};
-
-const formatDateTime = (dateStr: string | null | undefined) => {
-  if (!dateStr) return 'N/A';
-  try {
-    return new Date(dateStr).toLocaleString();
-  } catch {
-    return dateStr;
-  }
-};
 
 // ===== STATUS CONFIGURATION =====
 const statusConfig = {
@@ -146,482 +79,373 @@ const statusConfig = {
   cancelled: { label: 'Cancelled', color: 'bg-gray-50 text-gray-700 border-gray-200', icon: Ban, description: 'Request cancelled' }
 };
 
-function StatusBadge({ status }: { status: string }) {
-  const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.pending;
-  const Icon = config.icon;
-  return (
-    <Badge variant="outline" className={`${config.color} flex items-center gap-1 text-xs px-2 py-0.5`}>
-      <Icon className="h-3 w-3" />
-      {config.label}
-    </Badge>
-  );
-}
+// ===== HELPER FUNCTIONS =====
+const formatMoney = (value: unknown) => {
+  try {
+    const num = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : NaN;
+    if (!Number.isFinite(num)) return '—';
+    return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(num);
+  } catch { return '—'; }
+};
 
-// ===== MEDIA GALLERY =====
-function MediaGallery({ files, title }: { files: any[], title: string }) {
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  if (!files || files.length === 0) return null;
-  return (
-    <div className="space-y-2">
-      <p className="text-xs font-medium flex items-center gap-1">
-        <ImageIcon className="h-3 w-3" />
-        {title} ({files.length})
-      </p>
-      <div className="grid grid-cols-4 gap-2">
-        {files.map((file, index) => (
-          <div key={file.id || index} className="relative aspect-square rounded-md overflow-hidden border cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setSelectedImage(file.file_url)}>
-            {file.file_url && file.file_url.match(/\.(jpeg|jpg|png|gif|webp)$/i) ? (
-              <img src={file.file_url} alt={`Media ${index + 1}`} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-gray-100">
-                <FileIcon className="h-6 w-6 text-gray-400" />
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-      <Dialog open={!!selectedImage} onOpenChange={() => setSelectedImage(null)}>
-        <DialogContent className="sm:max-w-3xl">
-          <DialogHeader><DialogTitle>Image Preview</DialogTitle></DialogHeader>
-          <div className="mt-2 flex justify-center">
-            <img src={selectedImage || ''} alt="Preview" className="max-h-[70vh] object-contain rounded" />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => window.open(selectedImage || '', '_blank')}>
-              <ExternalLink className="h-4 w-4 mr-2" /> Open in new tab
-            </Button>
-            <Button onClick={() => setSelectedImage(null)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
+const formatDateTime = (dateStr: string | null | undefined) => {
+  if (!dateStr) return 'N/A';
+  try {
+    return new Date(dateStr).toLocaleString();
+  } catch {
+    return dateStr;
+  }
+};
 
-// ===== DELIVERY MEDIA CARD =====
-function DeliveryMediaCard({ proofs }: { proofs: any[] }) {
-  const deliveryProofs = proofs.filter(p => p.proof_type === 'delivery');
-  if (deliveryProofs.length === 0) return null;
-  
-  return (
-    <div className="mt-2 pt-2 border-t">
-      <span className="text-xs font-medium flex items-center gap-1 mb-2">
-        <Camera className="h-3 w-3" /> Delivery Proof Media ({deliveryProofs.length})
-      </span>
-      <div className="grid grid-cols-4 gap-2">
-        {deliveryProofs.map((proof, idx) => (
-          <div key={proof.id || idx} className="relative aspect-square rounded-md overflow-hidden border cursor-pointer" onClick={() => window.open(proof.file_url, '_blank')}>
-            {proof.file_url && proof.file_url.match(/\.(jpeg|jpg|png|gif|webp)$/i) ? (
-              <img src={proof.file_url} alt={`Delivery Proof ${idx + 1}`} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-gray-100">
-                <FileIcon className="h-6 w-6 text-gray-400" />
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-      <div className="mt-1 text-[10px] text-muted-foreground">
-        {deliveryProofs.map((proof, idx) => (
-          <div key={idx}>Uploaded: {formatDateTime(proof.uploaded_at)}</div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// ===== COMPLETED UI STATUS (When refund.refund_payment_status = 'completed') =====
+function CompletedRefundView({ refund, user }: { 
+  refund: any; 
+  user: any; 
+}) {
+  const navigate = useNavigate();
 
-// ===== BUYER REQUEST CARD =====
-function BuyerRequestCard({ refundMedia, refundDetails }: { refundMedia: any[], refundDetails: any }) {
-  const buyerMedia = refundMedia.filter(m => m.uploaded_by_entity === 'buyer' || m.uploaded_by_entity === 'Buyer');
-  
-  if (buyerMedia.length === 0 && !refundDetails?.detailed_reason && !refundDetails?.reason) return null;
-  
-  return (
-    <Card className="border-blue-200 bg-blue-50/30">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2 text-blue-700">
-          <UserIcon className="h-4 w-4" />
-          Buyer's Refund Request
-          <Badge className="bg-blue-100 text-blue-700 text-[10px]">Customer Evidence</Badge>
-        </CardTitle>
-        <CardDescription className="text-xs">The buyer's initial refund request and supporting evidence</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div>
-            <span className="text-muted-foreground">Refund Reason:</span>
-            <p className="font-medium mt-0.5">{refundDetails?.reason || 'N/A'}</p>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Requested Amount:</span>
-            <p className="font-medium mt-0.5 text-blue-600">{formatMoney(refundDetails?.total_refund_amount)}</p>
-          </div>
-        </div>
-        {refundDetails?.detailed_reason && (
-          <div>
-            <span className="text-xs text-muted-foreground block">Detailed Explanation:</span>
-            <p className="text-sm mt-1 p-2 bg-white rounded border">{refundDetails.detailed_reason}</p>
-          </div>
-        )}
-        {refundDetails?.customer_note && (
-          <div>
-            <span className="text-xs text-muted-foreground block">Additional Note:</span>
-            <p className="text-sm mt-1 p-2 bg-white rounded border italic">{refundDetails.customer_note}</p>
-          </div>
-        )}
-        {refundDetails?.preferred_refund_method && (
-          <div>
-            <span className="text-xs text-muted-foreground block">Preferred Refund Method:</span>
-            <p className="font-medium capitalize">{refundDetails.preferred_refund_method}</p>
-          </div>
-        )}
-        {buyerMedia.length > 0 && (
-          <div className="border-t pt-2 mt-1">
-            <span className="text-xs font-medium flex items-center gap-1 mb-2">
-              <ImagePlus className="h-3 w-3" /> Buyer's Evidence ({buyerMedia.length})
-            </span>
-            <MediaGallery files={buyerMedia} title="Buyer Evidence" />
-            <div className="mt-1 text-[10px] text-muted-foreground">
-              {buyerMedia.map((m, idx) => (
-                <div key={idx}>Uploaded: {formatDateTime(m.uploaded_at)}</div>
-              ))}
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ===== SELLER RESPONSE CARD =====
-function SellerResponseCard({ refundMedia, refundDetails }: { refundMedia: any[], refundDetails: any }) {
-  const sellerMedia = refundMedia.filter(m => m.uploaded_by_entity === 'seller' || m.uploaded_by_entity === 'Seller');
-  
-  const hasSellerResponse = refundDetails?.status === 'rejected' || 
-                            refundDetails?.reject_reason_code || 
-                            sellerMedia.length > 0;
-  
-  if (!hasSellerResponse) {
-    return (
-      <Card className="border-gray-200 bg-gray-50/30">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2 text-gray-600">
-            <StoreIcon className="h-4 w-4" />
-            Seller's Response
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground italic">Seller has not responded to this refund request yet.</p>
-        </CardContent>
-      </Card>
-    );
-  }
-  
-  return (
-    <Card className="border-orange-200 bg-orange-50/30">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2 text-orange-700">
-          <StoreIcon className="h-4 w-4" />
-          Seller's Response
-          <Badge className="bg-orange-100 text-orange-700 text-[10px]">Seller Evidence</Badge>
-        </CardTitle>
-        <CardDescription className="text-xs">The seller's response to the refund request</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {refundDetails?.status === 'rejected' && (
-          <div className="bg-red-50 border border-red-200 rounded p-2">
-            <div className="flex items-center gap-2">
-              <XCircle className="h-4 w-4 text-red-600" />
-              <span className="text-xs font-medium text-red-700">Refund Request Rejected by Seller</span>
-            </div>
-          </div>
-        )}
-        {refundDetails?.reject_reason_code && (
-          <div>
-            <span className="text-xs text-muted-foreground block">Rejection Code:</span>
-            <p className="text-sm mt-1 font-medium">{refundDetails.reject_reason_code}</p>
-            {refundDetails.reject_reason_details && (
-              <p className="text-sm mt-1 p-2 bg-white rounded border">{refundDetails.reject_reason_details}</p>
-            )}
-          </div>
-        )}
-        {sellerMedia.length > 0 && (
-          <div className="border-t pt-2 mt-1">
-            <span className="text-xs font-medium flex items-center gap-1 mb-2">
-              <ImagePlus className="h-3 w-3" /> Seller's Evidence ({sellerMedia.length})
-            </span>
-            <MediaGallery files={sellerMedia} title="Seller Evidence" />
-            <div className="mt-1 text-[10px] text-muted-foreground">
-              {sellerMedia.map((m, idx) => (
-                <div key={idx}>Uploaded: {formatDateTime(m.uploaded_at)}</div>
-              ))}
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ===== INVESTIGATION TIMELINE =====
-function InvestigationTimeline({ refund }: { refund: any }) {
-  const timelineEvents = [];
-  
-  if (refund.requested_at) {
-    timelineEvents.push({ date: refund.requested_at, title: 'Refund Requested', description: `Reason: ${refund.reason || 'N/A'}`, icon: FileText });
-  }
-  if (refund.dispute_details?.created_at) {
-    timelineEvents.push({ date: refund.dispute_details.created_at, title: 'Dispute Filed', description: refund.dispute_details.reason, icon: ShieldAlert });
-  }
-  if (refund.dispute_details?.status === 'under_review' && refund.dispute_details?.updated_at) {
-    timelineEvents.push({ date: refund.dispute_details.updated_at, title: 'Under Review', description: 'Admin review started', icon: Scale });
-  }
-  if (refund.processed_at) {
-    timelineEvents.push({ date: refund.processed_at, title: 'Refund Processed', description: `By: ${refund.processed_by?.username || 'Admin'}`, icon: CheckSquare });
-  }
-  if (refund.dispute_details?.resolved_at) {
-    timelineEvents.push({ date: refund.dispute_details.resolved_at, title: 'Dispute Resolved', description: `Status: ${refund.dispute_details.status}`, icon: Gavel });
-  }
-  
-  timelineEvents.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  
-  if (timelineEvents.length === 0) return null;
-  
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <History className="h-4 w-4" /> Investigation Timeline
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="relative pl-4 border-l-2 border-gray-200 space-y-4">
-          {timelineEvents.map((event, idx) => (
-            <div key={idx} className="relative">
-              <div className="absolute -left-[23px] mt-1">
-                <div className="w-3 h-3 rounded-full bg-blue-500 border-2 border-white"></div>
-              </div>
-              <div className="text-xs">
-                <p className="font-medium">{event.title}</p>
-                <p className="text-muted-foreground text-[10px]">{formatDateTime(event.date)}</p>
-                {event.description && <p className="text-[11px] mt-0.5">{event.description}</p>}
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ===== DISPUTE DETAILS CARD =====
-function DisputeDetailsCard({ dispute }: { dispute: any }) {
-  if (!dispute) return null;
-  const disputeStatus = dispute.status || 'filed';
-  const statusColors: Record<string, string> = {
-    filed: 'bg-yellow-50 text-yellow-700',
-    under_review: 'bg-purple-50 text-purple-700',
-    investigating: 'bg-purple-50 text-purple-700',
-    in_review: 'bg-purple-50 text-purple-700',
-    approved: 'bg-green-50 text-green-700',
-    rejected: 'bg-red-50 text-red-700',
-    resolved: 'bg-emerald-50 text-emerald-700',
-    partial: 'bg-blue-50 text-blue-700'
+  // Get payment detail for display
+  const getPaymentDetail = () => {
+    if (refund.payment_details) return refund.payment_details;
+    if (refund.payment_detail) return refund.payment_detail;
+    if (refund.paymentDetails) return refund.paymentDetails;
+    return null;
   };
 
-  return (
-    <Card className="border-purple-200 bg-purple-50/30">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2 text-purple-700">
-          <ShieldAlert className="h-4 w-4" />
-          Dispute Information
-          <Badge className={`${statusColors[disputeStatus] || 'bg-gray-50'} text-xs ml-2`}>
-            {disputeStatus.replace('_', ' ').toUpperCase()}
-          </Badge>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        {dispute.reason && (
+  const renderPaymentDetails = () => {
+    const pd = getPaymentDetail();
+    if (!pd) return null;
+
+    const paymentMethod = pd.payment_method ? String(pd.payment_method).toLowerCase() : '';
+    let providerDisplay = '';
+    switch (paymentMethod) {
+      case 'gcash': providerDisplay = 'GCash'; break;
+      case 'paymaya': providerDisplay = 'PayMaya'; break;
+      case 'bank': providerDisplay = 'Bank Transfer'; break;
+      case 'remittance': providerDisplay = 'Remittance'; break;
+      default: providerDisplay = paymentMethod || 'Wallet';
+    }
+
+    return (
+      <div className="bg-blue-50/50 rounded-md p-3 border border-blue-100">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
           <div>
-            <span className="text-xs text-muted-foreground block">Dispute Reason</span>
-            <p className="mt-1 p-2 bg-white rounded border text-sm">{dispute.reason}</p>
+            <span className="text-muted-foreground text-[10px]">Payment Method</span>
+            <p className="font-medium capitalize">{providerDisplay}</p>
           </div>
-        )}
-        {dispute.case_category && (
           <div>
-            <span className="text-xs text-muted-foreground block">Case Category</span>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {Array.isArray(dispute.case_category) ? (
-                dispute.case_category.map((cat: string, idx: number) => (
-                  <Badge key={idx} variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                    {liabilityLabels[cat] || cat.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
-                  </Badge>
-                ))
-              ) : (
-                <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                  {formatCaseCategory(dispute.case_category)}
-                </Badge>
-              )}
+            <span className="text-muted-foreground text-[10px]">Account Name</span>
+            <p className="font-medium">{pd.account_name || 'N/A'}</p>
+          </div>
+          <div className="col-span-2">
+            <span className="text-muted-foreground text-[10px]">Account Number</span>
+            <p className="font-mono text-sm">{pd.masked_account_number || '••••' + String(pd.account_number || '').slice(-4)}</p>
+          </div>
+          {pd.bank_name && (
+            <div>
+              <span className="text-muted-foreground text-[10px]">Bank Name</span>
+              <p className="font-medium">{pd.bank_name}</p>
             </div>
-          </div>
-        )}
-        {dispute.admin_notes && (
-          <div>
-            <span className="text-xs text-muted-foreground block">Admin Notes</span>
-            <p className="mt-1 p-2 bg-white rounded border text-sm italic">{dispute.admin_notes}</p>
-          </div>
-        )}
-        <div className="grid grid-cols-2 gap-3 text-xs border-t pt-2">
-          <div>
-            <span className="text-muted-foreground">Filed By:</span>
-            <p className="font-medium">{dispute.requested_by?.username || 'N/A'}</p>
-            {dispute.requested_by?.email && <p className="text-[10px] text-muted-foreground">{dispute.requested_by.email}</p>}
-          </div>
-          <div>
-            <span className="text-muted-foreground">Filed At:</span>
-            <p className="font-medium">{formatDateTime(dispute.created_at)}</p>
-          </div>
-          {dispute.processed_by && (
-            <>
-              <div>
-                <span className="text-muted-foreground">Resolved By:</span>
-                <p className="font-medium">{dispute.processed_by.username || 'N/A'}</p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Resolved At:</span>
-                <p className="font-medium">{formatDateTime(dispute.resolved_at)}</p>
-              </div>
-            </>
           )}
         </div>
-        {dispute.evidences && dispute.evidences.length > 0 && (
-          <div className="border-t pt-2">
-            <MediaGallery files={dispute.evidences} title="Dispute Evidence" />
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ===== STATUS BANNER =====
-function StatusBanner({ status, refund }: { status: keyof typeof statusConfig, refund: RefundFlat & { [key: string]: any } }) {
-  const config = statusConfig[status] || statusConfig.pending;
-  const Icon = config.icon;
-  const activeDispute = getActiveDispute(refund);
-  const disputeStatus = activeDispute?.status || '';
-
-  return (
-    <div className={`${config.color} border rounded-md p-3`}>
-      <div className="flex items-center gap-2">
-        <Icon className="h-4 w-4" />
-        <span className="text-sm font-medium">{config.label}</span>
-        <span className="text-xs text-muted-foreground mx-1">•</span>
-        <span className="text-xs">{config.description}</span>
       </div>
+    );
+  };
 
-      {status === 'pending' && refund.requested_at && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-yellow-200 pt-2">
-          Requested: {new Date(refund.requested_at).toLocaleDateString()}
-        </div>
-      )}
-      
-      {(status === 'dispute' || status === 'under_review') && (
-        <>
-          {refund.dispute_reason && (
-            <div className="mt-2 text-xs text-muted-foreground border-t border-orange-200 pt-2">
-              <strong>Dispute Reason:</strong> {refund.dispute_reason}
+  const approvedAmount = refund.approved_refund_amount || refund.amount_to_refund || 0;
+  const processedAt = refund.processed_at || refund.refund_details?.processed_at;
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+      <Button variant="ghost" className="mb-4" onClick={() => window.location.href = '/admin/refunds'}>
+        <ArrowLeft className="w-4 h-4 mr-2" /> Back to Refunds
+      </Button>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-emerald-600" />
+                Refund #{refund?.refund_id ? String(refund.refund_id).slice(0, 8) : 'N/A'}
+                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Completed</Badge>
+              </CardTitle>
+              <CardDescription className="text-xs">This refund has been successfully completed</CardDescription>
             </div>
-          )}
-          {activeDispute?.created_at && (
-            <div className="mt-1 text-xs text-muted-foreground">
-              Filed: {new Date(activeDispute.created_at).toLocaleDateString()}
+            <div className="text-right text-xs text-muted-foreground">
+              Requested: {formatDateTime(refund.requested_at)}
+              {processedAt && <div>Completed: {formatDateTime(processedAt)}</div>}
             </div>
-          )}
-          {disputeStatus === 'under_review' && (
-            <div className="mt-2 text-xs bg-purple-50 border border-purple-200 rounded p-2 text-purple-700">
-              <strong>Status:</strong> Under Review - Admin is currently reviewing this dispute.
+          </div>
+        </CardHeader>
+        
+        <CardContent>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left Column */}
+            <div className="lg:col-span-2 space-y-4">
+              {/* Completion Status Banner */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+                    <CheckCircle className="h-5 w-5 text-emerald-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-700">Refund Completed Successfully</p>
+                    <p className="text-xs text-emerald-600 mt-0.5">
+                      The refund amount of {formatMoney(approvedAmount)} has been processed 
+                      {processedAt && ` on ${formatDateTime(processedAt)}`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Buyer Information */}
+              <div className="border rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <User className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Buyer Information</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-xs text-muted-foreground block">Username</span>
+                    <p className="font-medium">{refund.buyer?.username || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground block">Contact Number</span>
+                    <p className="font-medium flex items-center gap-1">
+                      <Phone className="h-3 w-3" />
+                      {refund.buyer?.contact_number || 'N/A'}
+                    </p>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-xs text-muted-foreground block">Email</span>
+                    <p className="font-medium flex items-center gap-1">
+                      <Mail className="h-3 w-3" />
+                      {refund.buyer?.email || 'N/A'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Amount Refunded */}
+              <div className="border rounded-lg bg-emerald-50/30 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <DollarSign className="h-4 w-4 text-emerald-600" />
+                    <span className="text-sm font-medium text-emerald-700">Amount Refunded</span>
+                  </div>
+                  <span className="text-xl font-bold text-emerald-600">{formatMoney(approvedAmount)}</span>
+                </div>
+              </div>
+
+              {/* Products */}
+              {refund.products && refund.products.length > 0 && (
+                <div className="border rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <ShoppingBag className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Products ({refund.products.length})</span>
+                  </div>
+                  <div className="space-y-3">
+                    {refund.products.map((product: any, idx: number) => (
+                      <div key={idx} className="flex gap-3 border-b pb-3 last:border-0 last:pb-0">
+                        <div className="w-16 h-16 rounded overflow-hidden border bg-gray-50 flex-shrink-0">
+                          {product.product_image ? (
+                            <img src={product.product_image} alt={product.product_name} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                              <Package className="h-6 w-6 text-gray-400" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{product.product_name}</p>
+                          <div className="flex justify-between items-center mt-1">
+                            <span className="text-xs text-muted-foreground">Quantity: {product.quantity}</span>
+                            <span className="text-sm font-semibold text-emerald-600">{formatMoney(product.price)}</span>
+                          </div>
+                          <div className="flex justify-between items-center mt-1">
+                            <span className="text-xs text-muted-foreground">Subtotal:</span>
+                            <span className="text-xs font-medium">{formatMoney(product.total_amount)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Reason */}
+              <div className="border rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Refund Reason</span>
+                </div>
+                <p className="text-sm">{refund.reason || 'No reason provided'}</p>
+              </div>
             </div>
-          )}
-          {disputeStatus === 'filed' && (
-            <div className="mt-2 text-xs bg-yellow-50 border border-yellow-200 rounded p-2 text-yellow-700">
-              <strong>Status:</strong> Dispute Filed - Waiting for admin review.
-            </div>
-          )}
-        </>
-      )}
-      
-      {status === 'waiting' && refund.return_request?.tracking_number && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-indigo-200 pt-2">
-          Tracking: {refund.return_request.tracking_number}
-        </div>
-      )}
-      {status === 'completed' && refund.processed_at && (
-        <div className="mt-2 text-xs text-muted-foreground border-t border-emerald-200 pt-2">
-          Completed: {new Date(refund.processed_at).toLocaleDateString()}
-        </div>
-      )}
+
+            {/* Right Column - Payment Summary */}
+            <aside className="space-y-4">
+              <Card className="border shadow-none">
+                <CardHeader className="py-3 px-4">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Receipt className="h-4 w-4" />
+                    Payment Summary
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-4 pt-0 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">Refund Amount</span>
+                    <span className="text-sm font-semibold text-emerald-600">{formatMoney(approvedAmount)}</span>
+                  </div>
+                  {refund.refund_fee && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-muted-foreground">Processing Fee</span>
+                      <span className="text-sm text-red-500">-{formatMoney(refund.refund_fee)}</span>
+                    </div>
+                  )}
+                  <div className="border-t pt-2 mt-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-medium">Net Refund</span>
+                      <span className="text-base font-bold text-emerald-600">
+                        {formatMoney(Math.max(0, Number(approvedAmount) - (refund.refund_fee || 0)))}
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Payment Method Card */}
+              {getPaymentDetail() && (
+                <Card className="border shadow-none">
+                  <CardHeader className="py-3 px-4">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <CreditCard className="h-4 w-4" />
+                      Refund Payment Method
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-0">
+                    {renderPaymentDetails()}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Processed By Card */}
+              {refund.processed_by && (
+                <Card className="border shadow-none">
+                  <CardHeader className="py-3 px-4">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <UserCheck className="h-4 w-4" />
+                      Processed By
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 pt-0">
+                    <p className="text-sm font-medium">{refund.processed_by?.username || 'Admin'}</p>
+                    {refund.processed_at && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {formatDateTime(refund.processed_at)}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+            </aside>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-// ===== PROCESSING UI =====
-// ===== PROCESSING UI =====
-function ProcessingUI({
+// ===== PROCESSING UI FOR APPROVED REFUND (When refund.refund_payment_status = 'processing') =====
+// ===== PROCESSING UI FOR APPROVED REFUND (When refund.refund_payment_status = 'processing') =====
+function ApprovedProcessingUI({
   refund,
   onComplete,
   onCancel,
   user,
-  setRefund
 }: {
-  refund: RefundFlat & { [key: string]: any },
-  onComplete: () => void,
-  onCancel: () => void,
-  user: { id: string | number; isAdmin: boolean },
-  setRefund: (value: any | ((prev: any) => any)) => void
+  refund: any;
+  onComplete: () => void;
+  onCancel: () => void;
+  user: { id: string | number; isAdmin: boolean };
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
   const [selectedProofFiles, setSelectedProofFiles] = useState<File[]>([]);
   const [proofPreviews, setProofPreviews] = useState<string[]>([]);
   const [proofNotes, setProofNotes] = useState('');
-  const [uploadingProofs, setUploadingProofs] = useState(false);
   const [adminNotes, setAdminNotes] = useState('');
   const [showAccountNumber, setShowAccountNumber] = useState(false);
 
-  // Get payment detail from refund directly
-  const getPaymentDetail = () => refund.payment_details || refund.payment_detail || refund.paymentDetails || null;
+  // Get payment detail from refund - check all possible locations
+  const getPaymentDetail = () => {
+    // Check in various possible locations
+    if (refund.payment_details) return refund.payment_details;
+    if (refund.payment_detail) return refund.payment_detail;
+    if (refund.paymentDetails) return refund.paymentDetails;
+    return null;
+  };
 
-  const renderSelectedPaymentDetails = () => {
+  const renderCustomerWalletDetails = () => {
     const pd = getPaymentDetail();
-    if (!pd) return null;
+    
+    if (!pd) {
+      return (
+        <div className="bg-gray-50 rounded-md p-3 border border-gray-200">
+          <p className="text-xs text-muted-foreground">No wallet/payment method found</p>
+        </div>
+      );
+    }
+
+    // Determine wallet provider display name
+    let providerDisplay = '';
+    const paymentMethod = pd.payment_method ? String(pd.payment_method).toLowerCase() : '';
+    
+    switch (paymentMethod) {
+      case 'gcash':
+        providerDisplay = 'GCash';
+        break;
+      case 'paymaya':
+        providerDisplay = 'PayMaya';
+        break;
+      case 'bank':
+        providerDisplay = 'Bank Transfer';
+        break;
+      case 'remittance':
+        providerDisplay = 'Remittance';
+        break;
+      default:
+        providerDisplay = paymentMethod || 'Wallet';
+    }
+
+    // Get account number display
+    const accountNumber = pd.account_number || 'N/A';
+    const maskedAccountNumber = pd.masked_account_number || (accountNumber !== 'N/A' ? String(accountNumber).replace(/\d(?=\d{4})/g, '*') : 'N/A');
 
     return (
       <div className="bg-blue-50/50 rounded-md p-3 border border-blue-100 space-y-2">
         <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
           <div>
             <span className="text-muted-foreground text-[10px]">Payment Method</span>
-            <p className="font-medium capitalize">{pd.payment_method || 'N/A'}</p>
+            <p className="font-medium capitalize">{providerDisplay}</p>
           </div>
           <div>
             <span className="text-muted-foreground text-[10px]">Account Name</span>
             <p className="font-medium">{pd.account_name || 'N/A'}</p>
           </div>
-          <div>
+          <div className="col-span-2">
             <span className="text-muted-foreground text-[10px]">Account Number</span>
             <div className="flex items-center gap-2">
-              <p className="font-medium">
-                {showAccountNumber
-                  ? (pd.account_number || 'N/A')
-                  : (pd.masked_account_number || (pd.account_number ? String(pd.account_number).replace(/\d(?=\d{4})/g, '*') : 'N/A'))}
+              <p className="font-mono text-sm">
+                {showAccountNumber ? accountNumber : maskedAccountNumber}
               </p>
               <button
                 type="button"
-                aria-label={showAccountNumber ? 'Hide account number' : 'Show account number'}
                 onClick={() => setShowAccountNumber(s => !s)}
-                className="p-1 rounded hover:bg-gray-100" 
+                className="p-1 rounded hover:bg-gray-100"
               >
-                {showAccountNumber ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showAccountNumber ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
               </button>
             </div>
           </div>
@@ -631,24 +455,30 @@ function ProcessingUI({
               <p className="font-medium">{pd.bank_name}</p>
             </div>
           )}
-          {pd.is_default !== undefined && (
+          {/* {pd.is_default !== undefined && (
             <div>
               <span className="text-muted-foreground text-[10px]">Default</span>
               <p className="font-medium">{pd.is_default ? 'Yes' : 'No'}</p>
             </div>
-          )}
+          )} */}
         </div>
       </div>
     );
   };
 
-  const hasProofs = () => (refund?.refund_media || []).filter((m: any) => m.is_proof).length > 0 || selectedProofFiles.length > 0;
+  const hasProofs = () => selectedProofFiles.length > 0;
 
   const handleProofFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
     const validFiles = files.filter(f => {
-      if (!f.type.startsWith('image/')) { toast({ title: 'Invalid file', description: `${f.name} is not an image`, variant: 'destructive' }); return false; }
-      if (f.size > 5 * 1024 * 1024) { toast({ title: 'File too large', description: `${f.name} exceeds 5MB`, variant: 'destructive' }); return false; }
+      if (!f.type.startsWith('image/')) {
+        toast({ title: 'Invalid file', description: `${f.name} is not an image`, variant: 'destructive' });
+        return false;
+      }
+      if (f.size > 5 * 1024 * 1024) {
+        toast({ title: 'File too large', description: `${f.name} exceeds 5MB`, variant: 'destructive' });
+        return false;
+      }
       return true;
     });
     if (!validFiles.length) return;
@@ -663,8 +493,14 @@ function ProcessingUI({
 
   const handleCompleteRefund = async () => {
     const id = refund?.refund_id;
-    if (!id) { toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' }); return; }
-    if (!hasProofs()) { toast({ title: 'Proof Required', description: 'Please upload proof of refund before completing', variant: 'destructive' }); return; }
+    if (!id) {
+      toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' });
+      return;
+    }
+    if (!hasProofs()) {
+      toast({ title: 'Proof Required', description: 'Please upload proof of refund before completing', variant: 'destructive' });
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -674,538 +510,197 @@ function ProcessingUI({
       formData.append('set_status', 'completed');
       if (adminNotes) formData.append('customer_note', adminNotes);
 
-      const response = await AxiosInstance.post(`/admin-refunds/${encodeURIComponent(String(id))}/admin_process_refund/`, formData, {
-        headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'multipart/form-data' }
-      });
+      await AxiosInstance.post(
+        `/admin-refunds/${encodeURIComponent(String(id))}/admin_process_refund/`,
+        formData,
+        { headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'multipart/form-data' } }
+      );
 
-      if (response.data) {
-        toast({ title: 'Success', description: 'Refund marked as completed' });
-        setSelectedProofFiles([]); setProofPreviews([]); setProofNotes(''); setAdminNotes('');
-        onComplete();
-      }
+      toast({ title: 'Success', description: 'Refund marked as completed' });
+      onComplete();
     } catch (err: any) {
       toast({ title: 'Error', description: err.response?.data?.error || err.message || 'Failed to complete refund', variant: 'destructive' });
-    } finally { setIsSubmitting(false); }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleMarkAsFailed = async () => {
     const id = refund?.refund_id;
-    if (!id) { toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' }); return; }
+    if (!id) {
+      toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' });
+      return;
+    }
     setIsSubmitting(true);
     try {
       const formData = new FormData();
       formData.append('set_status', 'failed');
       if (adminNotes) formData.append('customer_note', adminNotes);
 
-      const response = await AxiosInstance.post(`/admin-refunds/${encodeURIComponent(String(id))}/admin_process_refund/`, formData, {
-        headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'multipart/form-data' }
-      });
+      await AxiosInstance.post(
+        `/admin-refunds/${encodeURIComponent(String(id))}/admin_process_refund/`,
+        formData,
+        { headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'multipart/form-data' } }
+      );
 
-      if (response.data) {
-        toast({ title: 'Success', description: 'Refund marked as failed' });
-        setRefund((prev: any) => ({ ...prev, refund_payment_status: 'failed' }));
-        onCancel();
-      }
+      toast({ title: 'Success', description: 'Refund marked as failed' });
+      onCancel();
     } catch (err: any) {
       toast({ title: 'Error', description: err.response?.data?.error || err.message || 'Failed to mark as failed', variant: 'destructive' });
-    } finally { setIsSubmitting(false); }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // Get refund method - use direct properties from refund
-  const refundMethod = refund.final_refund_method || refund.buyer_preferred_refund_method || 'Not specified';
-  const approvedAmount = refund.approved_refund_amount || refund.total_refund_amount || 0;
+  const approvedAmount = refund.approved_refund_amount || refund.amount_to_refund || 0;
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2 text-blue-700">
-            <Wallet className="h-4 w-4" /> Refund Processing
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-xs text-muted-foreground block">Approved Amount</span>
-              <p className="text-lg font-semibold text-green-600">{formatMoney(approvedAmount)}</p>
-            </div>
-            <div>
-              <span className="text-xs text-muted-foreground block">Refund Method</span>
-              <div className="flex items-center gap-2">
-                <span className="font-medium capitalize">{refundMethod}</span>
-              </div>
-            </div>
-          </div>
-          {refund.refund_fee !== undefined && refund.refund_fee !== null && (
-            <div className="grid grid-cols-2 gap-3 text-sm pt-2 border-t">
-              <div>
-                <span className="text-xs text-muted-foreground block">Refund Fee</span>
-                <p className="text-md font-medium text-red-500">{formatMoney(refund.refund_fee)}</p>
-              </div>
-              <div>
-                <span className="text-xs text-muted-foreground block">Net Amount</span>
-                <p className="text-md font-medium text-green-600">{formatMoney(Math.max(0, Number(approvedAmount) - (refund.refund_fee || 0)))}</p>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2 text-blue-700">
-            <CreditCard className="h-4 w-4" /> Selected Payment Method
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {refund.payment_details ? (
-            renderSelectedPaymentDetails()
-          ) : (
-            <p className="text-xs text-muted-foreground italic">No saved payment method selected for this refund.</p>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className={!hasProofs() ? "border-red-300" : ""}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Camera className={`h-4 w-4 ${!hasProofs() ? 'text-red-500' : 'text-gray-600'}`} />
-            Proof of Refund {!hasProofs() && <Badge className="bg-red-500 text-white text-[10px]">Required</Badge>}
-          </CardTitle>
-          <CardDescription className="text-xs">Upload screenshot, receipt, or bank transfer confirmation</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      {/* Refund Processing Card - Amount only */}
+      <div className="border rounded-lg p-3">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Input type="file" accept="image/*" multiple onChange={handleProofFileSelect} className="text-xs h-8" disabled={uploadingProofs || isSubmitting} />
+            <Wallet className="h-4 w-4 text-blue-600" />
+            <span className="text-xs font-medium">Approved Amount</span>
           </div>
-          {proofPreviews.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {proofPreviews.map((preview, index) => (
-                <div key={index} className="relative w-16 h-16">
-                  <img src={preview} alt={`Preview ${index + 1}`} className="w-full h-full object-cover rounded border" />
-                  <button type="button" onClick={() => removeProofFile(index)} className="absolute -top-1 -right-1 bg-white rounded-full p-0.5 border shadow-sm">
-                    <XCircle className="h-3 w-3 text-red-500" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          {(refund.refund_media || []).filter((m: any) => m.is_proof).length > 0 && (
-            <div>
-              <p className="text-xs font-medium mb-2">Uploaded Proofs ({(refund.refund_media || []).filter((m: any) => m.is_proof).length})</p>
-              <div className="flex flex-wrap gap-2">
-                {(refund.refund_media || []).filter((m: any) => m.is_proof).map((proof: any, index: number) => (
-                  <div key={proof.id || index} className="relative w-16 h-16">
-                    {proof.file_url?.match(/\.(jpeg|jpg|png|gif)$/i) ? (
-                      <img src={proof.file_url} alt={`Proof ${index + 1}`} className="w-full h-full object-cover rounded border" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center border rounded bg-gray-100">
-                        <FileText className="h-6 w-6 text-gray-400" />
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {!hasProofs() && (
-            <div className="flex items-center gap-1 text-xs text-red-600 bg-red-50 p-2 rounded">
-              <AlertTriangle className="h-3 w-3 flex-shrink-0" />
-              <span>Proof required before completing refund</span>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          <span className="text-base font-semibold text-green-600">{formatMoney(approvedAmount)}</span>
+        </div>
+      </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <FileText className="h-4 w-4 text-gray-600" /> Admin Notes
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <textarea 
-            value={adminNotes} 
-            onChange={e => setAdminNotes(e.target.value)} 
-            placeholder="Add notes about the refund processing..." 
-            className="w-full border rounded-md p-2 text-xs min-h-[60px]" 
-            disabled={isSubmitting} 
+      {/* Customer Wallet Details Card */}
+      <div className="border rounded-lg p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Wallet className="h-4 w-4 text-blue-600" />
+          <span className="text-xs font-medium">Customer Payment Method</span>
+        </div>
+        {renderCustomerWalletDetails()}
+      </div>
+
+      {/* Proof of Refund Card - Smaller Box Style Upload */}
+      <div className={`border rounded-lg p-3 ${!hasProofs() ? 'border-red-300' : ''}`}>
+        <div className="flex items-center gap-2 mb-2">
+          <Camera className={`h-4 w-4 ${!hasProofs() ? 'text-red-500' : 'text-gray-600'}`} />
+          <span className="text-xs font-medium">Proof of Refund {!hasProofs() && <Badge className="bg-red-500 text-white text-[9px] ml-2">Required</Badge>}</span>
+        </div>
+        
+        {/* Smaller Box Style Upload Area */}
+        <div className="border-2 border-dashed border-gray-300 rounded-md p-3 text-center hover:border-gray-400 transition-colors cursor-pointer" onClick={() => document.getElementById('proof-upload')?.click()}>
+          <Input 
+            id="proof-upload"
+            type="file" 
+            accept="image/*" 
+            multiple 
+            onChange={handleProofFileSelect} 
+            className="hidden" 
           />
-        </CardContent>
-      </Card>
+          <Upload className="h-5 w-5 text-gray-400 mx-auto mb-1" />
+          <p className="text-xs text-gray-600">Click to upload proof</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">PNG, JPG, GIF up to 5MB</p>
+        </div>
+        
+        {proofPreviews.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {proofPreviews.map((preview, index) => (
+              <div key={index} className="relative w-12 h-12">
+                <img src={preview} alt={`Preview ${index + 1}`} className="w-full h-full object-cover rounded border" />
+                <button onClick={() => removeProofFile(index)} className="absolute -top-1 -right-1 bg-red-500 rounded-full w-4 h-4 flex items-center justify-center">
+                  <XCircle className="w-3 h-3 text-white" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        
+        {!hasProofs() && (
+          <div className="flex items-center gap-1 text-[10px] text-red-600 bg-red-50 p-1.5 rounded mt-2">
+            <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+            <span>Proof required before completing refund</span>
+          </div>
+        )}
+      </div>
 
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={onCancel} disabled={isSubmitting}>Cancel</Button>
-        <Button variant="outline" size="sm" onClick={handleMarkAsFailed} disabled={isSubmitting} className="text-red-600 hover:text-red-700 hover:bg-red-50">
+      {/* Admin Notes Card */}
+      <div className="border rounded-lg p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <FileText className="h-4 w-4 text-gray-600" />
+          <span className="text-xs font-medium">Admin Notes</span>
+        </div>
+        <textarea
+          value={adminNotes}
+          onChange={e => setAdminNotes(e.target.value)}
+          placeholder="Add notes about the refund processing..."
+          className="w-full border rounded-md p-2 text-xs min-h-[50px]"
+        />
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" className="flex-1 text-xs h-8" onClick={onCancel} disabled={isSubmitting}>
+          Cancel
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex-1 text-red-600 hover:text-red-700 hover:bg-red-50 text-xs h-8"
+          onClick={handleMarkAsFailed}
+          disabled={isSubmitting}
+        >
           {isSubmitting ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <XCircle className="h-3 w-3 mr-1" />}
           Mark Failed
         </Button>
-        <Button size="sm" onClick={handleCompleteRefund} disabled={isSubmitting || !hasProofs()} className={hasProofs() ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}>
+        <Button
+          size="sm"
+          className={`flex-1 text-xs h-8 ${hasProofs() ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}`}
+          onClick={handleCompleteRefund}
+          disabled={isSubmitting || !hasProofs()}
+        >
           {isSubmitting ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <CheckSquare className="h-3 w-3 mr-1" />}
-          {hasProofs() ? 'Complete Refund' : 'Proof Required'}
+          {hasProofs() ? 'Complete' : 'Proof Required'}
         </Button>
       </div>
     </div>
   );
 }
 
-// ===== LOADER =====
-export async function loader({ request, context, params }: any) {
-  try {
-    const { requireRole } = await import('~/middleware/role-require.server');
-    await requireRole(request, undefined, ['isAdmin'] as any);
-  } catch (err) {
-    console.error('loader middleware error', err);
-  }
-
-  const { getSession } = await import('~/sessions.server');
-  const session = await getSession(request.headers.get('Cookie'));
-  const userId = session.get('userId');
-  if (!userId) throw new Response('Unauthorized', { status: 401 });
-
-  const url = new URL(request.url);
-  const refundId = params?.refundId || url.searchParams.get('refund_id') || url.searchParams.get('refund');
-  if (!refundId) throw new Response('refund id required', { status: 400 });
-
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
-
-  try {
-    const detailRes = await fetch(`${API_BASE_URL}/admin-refunds/${encodeURIComponent(String(refundId))}/full-details/`, {
-      method: 'GET',
-      headers: { Accept: 'application/json', 'X-User-Id': String(userId) },
-      credentials: 'include'
-    });
-
-    if (detailRes.ok) {
-      const fullDetails = await detailRes.json();
-      
-      const transformedRefund = {
-        refund_id: fullDetails.refund_id,
-        refund: fullDetails.refund_id,
-        ...fullDetails.refund_details,
-        order_id: fullDetails.order_details?.order,
-        order_total_amount: fullDetails.order_details?.total_amount,
-        order: fullDetails.order_details,
-        products: fullDetails.product_details,
-        delivery_details: fullDetails.delivery_details,
-        proof_media: fullDetails.proof_media,
-        refund_media: fullDetails.refund_media,
-        payment_details: fullDetails.payment_details,
-        dispute_details: fullDetails.dispute_details,
-        dispute_request: fullDetails.dispute_details,
-        customer: fullDetails.order_details?.user,
-        requested_by_username: fullDetails.order_details?.user?.username,
-        requested_by_email: fullDetails.order_details?.user?.email,
-        default_shipping_address: fullDetails.order_details?.shipping_address,
-        status: fullDetails.refund_details?.status,
-        refund_payment_status: fullDetails.refund_details?.refund_payment_status,
-        requested_at: fullDetails.refund_details?.requested_at,
-        processed_at: fullDetails.refund_details?.processed_at,
-        total_refund_amount: fullDetails.refund_details?.total_refund_amount,
-        approved_refund_amount: fullDetails.refund_details?.approved_refund_amount,
-        preferred_refund_method: fullDetails.refund_details?.buyer_preferred_refund_method,
-        final_refund_method: fullDetails.refund_details?.final_refund_method,
-        reason: fullDetails.refund_details?.reason,
-        detailed_reason: fullDetails.refund_details?.detailed_reason,
-        customer_note: fullDetails.refund_details?.customer_note,
-        refund_type: fullDetails.refund_details?.refund_type,
-        reject_reason_code: fullDetails.refund_details?.reject_reason_code,
-        reject_reason_details: fullDetails.refund_details?.reject_reason_details,
-        refund_fee: fullDetails.refund_details?.refund_fee,
-        processed_by: fullDetails.refund_details?.processed_by,
-      };
-      
-      return { user: { id: userId, isAdmin: true }, refund: transformedRefund };
-    }
-  } catch (err) {
-    console.error('Failed to fetch full details', err);
-  }
-
-  try {
-    const detailRes = await fetch(`${API_BASE_URL}/admin-refunds/${encodeURIComponent(String(refundId))}/get_admin_refund_details/`, {
-      method: 'GET',
-      headers: { Accept: 'application/json', 'X-User-Id': String(userId) },
-      credentials: 'include'
-    });
-
-    if (detailRes.ok) {
-      const details = await detailRes.json();
-      // Normalize payment detail key names to `payment_details` for the UI
-      const normalized = {
-        ...details,
-        payment_details: details.payment_details || details.payment_detail || details.paymentDetails || null,
-      };
-      // also keep singular key for compatibility
-      if (!normalized.payment_detail && normalized.payment_details) normalized.payment_detail = normalized.payment_details;
-      return { user: { id: userId, isAdmin: true }, refund: normalized };
-    }
-  } catch (err) {
-    console.error('Failed to fetch admin details', err);
-  }
-
-  const res = await fetch(`${API_BASE_URL}/admin-refunds/refund_list/`, {
-    method: 'GET',
-    headers: { Accept: 'application/json', 'X-User-Id': String(userId) },
-    credentials: 'include'
-  });
-  if (!res.ok) { const text = await res.text(); throw new Response(text || 'Failed to fetch refunds list', { status: res.status }); }
-
-  const list = await res.json();
-  const refunds = Array.isArray(list) ? list : Array.isArray(list.refunds) ? list.refunds : [];
-  const found = refunds.find((r: RefundFlat) => String(r.refund_id) === String(refundId) || String(r.refund) === String(refundId) || String(r.id) === String(refundId));
-  if (!found) throw new Response('Refund not found', { status: 404 });
-
-  const normalizedRefund = { ...found, refund: found.refund_id || found.refund || found.id };
-  return { user: { id: userId, isAdmin: true }, refund: normalizedRefund };
-}
-
-// ===== MAIN COMPONENT =====
-export default function AdminViewRefundDetails() {
-  const { refund: initialRefund, user } = useLoaderData<typeof loader>();
-  const [refund, setRefund] = useState<RefundFlat & { [key: string]: any }>(initialRefund);
+// ===== SIMPLE APPROVED REFUND VIEW (When refund.refund_payment_status = 'pending') =====
+function SimpleApprovedRefundView({ refund, user, onProcessRefund }: { 
+  refund: any; 
+  user: any; 
+  onProcessRefund: () => void;
+}) {
   const [processing, setProcessing] = useState(false);
   const { toast } = useToast();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-
-  const [refundType, setRefundType] = useState<'full' | 'partial' | ''>('');
-  const [refundAmount, setRefundAmount] = useState<number>(Number(initialRefund.total_refund_amount ?? 0));
-  const [selectedLiabilities, setSelectedLiabilities] = useState<string[]>([]);
-  const [splitType, setSplitType] = useState<'equal' | '50_50' | '70_30' | '30_70' | 'custom'>('equal');
-  const [customSplits, setCustomSplits] = useState<Record<string, number>>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authAction, setAuthAction] = useState<'reject' | 'confirm' | null>(null);
-  const [modalAuthChecked, setModalAuthChecked] = useState(false);
-  const [outcome, setOutcome] = useState<string>('');
-  const [caseCategory, setCaseCategory] = useState<string>('');
-
-  const liabilityOptions = [
-    { id: 'merchant_fulfillment_issue', label: 'Merchant Fulfillment Issue (Seller)' },
-    { id: 'logistics_delivery_issue', label: 'Logistics / Delivery Issue (Delivery Partner)' },
-    { id: 'customer_related_issue', label: 'Customer-Related Issue (Customer)' },
-    { id: 'shared_responsibility', label: 'Shared Responsibility' },
-    { id: 'platform_system_issue', label: 'Platform / System Issue' }
-  ];
-
-  useEffect(() => {
-    if (selectedLiabilities.length > 1) {
-      const eq = 100 / selectedLiabilities.length;
-      const initial: Record<string, number> = {};
-      selectedLiabilities.forEach(id => { initial[id] = Math.round(eq * 100) / 100; });
-      setCustomSplits(initial);
-    }
-  }, [selectedLiabilities.length]);
-
-  const handleLiabilityChange = (id: string) => {
-    setSelectedLiabilities(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-
-  const handleCustomSplitChange = (id: string, value: string) => {
-    setCustomSplits(prev => ({ ...prev, [id]: value === '' ? 0 : Number(value) }));
-  };
-
-  const getCustomSplitTotal = () => Object.values(customSplits).reduce((s, v) => s + (Number(v) || 0), 0);
 
   const handleProcessRefund = async () => {
     const id = refund?.refund_id;
     if (!id) {
       toast({ title: 'Error', description: 'Missing refund identifier', variant: 'destructive' });
-      setProcessing(false);
       return;
     }
-  
+    
     setProcessing(true);
     try {
       const response = await AxiosInstance.post(
         `/admin-refunds/${encodeURIComponent(String(id))}/admin_process_refund/`,
         { set_status: 'processing' },
-        { headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' } }
+        { headers: { 'X-User-Id': String(user?.id || '') } }
       );
-      
-      console.log('=== FULL RESPONSE ===');
-      console.log('Response status:', response.status);
-      console.log('Response data:', JSON.stringify(response.data, null, 2));
-      console.log('payment_details type:', typeof response.data.payment_details);
-      console.log('payment_details value:', response.data.payment_details);
       
       if (response.data.success) {
-        toast({ title: 'Success', description: 'Refund payment status set to processing.' });
-        
-        // Log before update
-        console.log('Before setRefund - current refund.payment_details:', refund.payment_details);
-        
-        setRefund((prev: any) => ({ 
-          ...prev, 
-          refund_payment_status: response.data.refund_payment_status,
-          refund_status: response.data.refund_status,
-          approved_refund_amount: response.data.approved_refund_amount,
-          total_refund_amount: response.data.total_refund_amount,
-          final_refund_method: response.data.final_refund_method,
-          buyer_preferred_refund_method: response.data.buyer_preferred_refund_method,
-          refund_fee: response.data.refund_fee,
-          // Normalize payment detail into both keys so UI components can read either
-          ...(response.data.payment_details ? { payment_details: response.data.payment_details, payment_detail: response.data.payment_details } : {}),
-        }));
+        toast({ title: 'Success', description: 'Refund processing started.' });
+        // Refresh the page to show processing UI
+        window.location.reload();
       }
     } catch (err: any) {
-      console.error('Error response:', err.response?.data);
-      toast({ title: 'Error', description: err.response?.data?.error || err.message || 'Failed to set refund to processing', variant: 'destructive' });
-    } finally { setProcessing(false); }
-  };
-  const handleCompleteRefund = () => {
-    setRefund(prev => ({ ...prev, status: 'completed', refund_payment_status: 'completed', processed_at: new Date().toISOString() }));
-    toast({ title: 'Completed', description: 'Refund has been marked as completed.' });
-  };
-
-  const handleCancelProcessing = () => {
-    setRefund(prev => ({ ...prev, refund_payment_status: 'pending' }));
-    toast({ title: 'Cancelled', description: 'Refund processing has been cancelled.' });
-  };
-
-  const handleConfirmProcessRefund = async () => {
-    if (!selectedLiabilities.length) {
-      toast({ title: 'Error', description: 'Please select liability distribution.', variant: 'destructive' });
-      return;
-    }
-    if (!refundType) {
-      toast({ title: 'Error', description: 'Please select full or partial refund.', variant: 'destructive' });
-      return;
-    }
-    if (refundType === 'partial' && (!refundAmount || refundAmount <= 0)) {
-      toast({ title: 'Error', description: 'Please enter a valid partial refund amount.', variant: 'destructive' });
-      return;
-    }
-    if (selectedLiabilities.length > 1 && splitType === 'custom' && getCustomSplitTotal() !== 100) {
-      toast({ title: 'Error', description: 'Custom split must total 100%.', variant: 'destructive' });
-      return;
-    }
-  
-    setIsSubmitting(true);
-    try {
-      const refundId = refund?.refund_id;
-      if (!refundId) {
-        toast({ title: 'Error', description: 'Cannot find refund ID', variant: 'destructive' });
-        setIsSubmitting(false);
-        return;
-      }
-      
-      const disputesRes = await AxiosInstance.get('/disputes/', {
-        params: { refund_id: String(refundId) },
-        headers: { 'X-User-Id': String(user?.id || '') }
-      });
-      
-      const disputes = Array.isArray(disputesRes?.data) ? disputesRes.data :
-                       Array.isArray(disputesRes?.data?.data) ? disputesRes.data.data : [];
-      const activeDispute = disputes.find((d: any) =>
-        String(d.refund) === String(refundId) ||
-        String(d.refund_id) === String(refundId)
-      );
-  
-      if (!activeDispute?.id) {
-        toast({ title: 'Error', description: 'No active dispute found for this refund.', variant: 'destructive' });
-        setIsSubmitting(false);
-        return;
-      }
-  
-      // Build liability distribution object
-      let distribution: Record<string, number> = {};
-      if (selectedLiabilities.length === 1) {
-        distribution[selectedLiabilities[0]] = 100;
-      } else if (splitType === 'equal') {
-        const equalShare = 100 / selectedLiabilities.length;
-        selectedLiabilities.forEach(id => { distribution[id] = equalShare; });
-      } else if (splitType === '70_30' && selectedLiabilities.length === 2) {
-        distribution[selectedLiabilities[0]] = 70;
-        distribution[selectedLiabilities[1]] = 30;
-      } else if (splitType === '30_70' && selectedLiabilities.length === 2) {
-        distribution[selectedLiabilities[0]] = 30;
-        distribution[selectedLiabilities[1]] = 70;
-      } else if (splitType === 'custom') {
-        distribution = customSplits;
-      }
-  
-      const approveData = {
-        refund_id: refundId,
-        dispute_id: activeDispute.id,
-        decision: 'approve',
-        refund_type: refundType,
-        adjusted_amount: refundAmount,  // Store in adjusted_amount field
-        liability_distribution: distribution,
-        outcome: outcome,  // Add outcome
-        case_category: caseCategory,  
-        admin_notes: `Approved ${refundType} refund of ₱${refundAmount.toFixed(2)}. Liability: ${JSON.stringify(distribution)}. Outcome: ${outcome || 'Not specified'}`
-      };
-  
-      const response = await AxiosInstance.post('/disputes/approve_refund/', approveData, {
-        headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' }
-      });
-  
-      if (response.data) {
-        toast({ title: 'Success', description: `Refund ${refundType === 'full' ? 'fully' : 'partially'} approved.` });
-        setRefund(prev => ({
-          ...prev,
-          status: 'approved',
-          refund_details: {
-            ...prev.refund_details,
-            status: 'approved',
-            approved_refund_amount: refundAmount
-          }
-        }));
-      }
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.response?.data?.error || 'Failed to approve refund', variant: 'destructive' });
+      toast({ title: 'Error', description: err.response?.data?.error || err.message || 'Failed to process refund', variant: 'destructive' });
     } finally {
-      setIsSubmitting(false);
+      setProcessing(false);
     }
-  };
-
-  const getDisplayStatus = () => {
-    const s = String(refund.status || refund.refund_details?.status || '').toLowerCase();
-    const disputeStatus = String(refund.dispute_details?.status || refund.dispute_request?.status || '').toLowerCase();
-    if (['under_review', 'investigating', 'in_review'].includes(disputeStatus) && s === 'dispute') return 'under_review';
-    return s;
-  };
-
-  const st = getDisplayStatus();
-  const getPaymentStatusLower = () => String(refund.refund_payment_status || refund.refund_details?.refund_payment_status || '').toLowerCase();
-  const isProcessing = getPaymentStatusLower() === 'processing' && String(refund.status || '').toLowerCase() === 'approved';
-  const activeDispute = getActiveDispute(refund);
-  const effectiveSt = (getPaymentStatusLower() === 'completed' && st === 'approved') ? 'completed' : st;
-  
-  const shippingAddress = refund.default_shipping_address || refund.order_details?.shipping_address;
-  const orderDeliveries = refund.delivery_details || [];
-  const proofMedia = refund.proof_media || [];
-  const refundMedia = refund.refund_media || [];
-  const productItems = refund.product_details || refund.products || [];
-  const orderInfo = refund.order_details || refund.order;
-
-  const refundDetails = {
-    reason: refund.reason,
-    detailed_reason: refund.detailed_reason,
-    customer_note: refund.customer_note,
-    total_refund_amount: refund.total_refund_amount,
-    preferred_refund_method: refund.preferred_refund_method,
-    status: refund.status,
-    reject_reason_code: refund.reject_reason_code,
-    reject_reason_details: refund.reject_reason_details,
   };
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-      {String(searchParams.get('debug')) === '1' && (
-        <Card className="mb-4 border-blue-200 bg-blue-50/30">
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2 text-blue-700"><Info className="h-4 w-4" />Debug: Raw Refund Data</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <pre className="text-xs whitespace-pre-wrap overflow-auto max-h-96 bg-gray-100 p-2 rounded">{JSON.stringify(refund, null, 2)}</pre>
-          </CardContent>
-        </Card>
-      )}
-
-      <Button variant="ghost" className="mb-4" onClick={() => navigate(-1)}>
+      <Button variant="ghost" className="mb-4" onClick={() => window.history.back()}>
         <ArrowLeft className="w-4 h-4 mr-2" /> Back
       </Button>
 
@@ -1215,972 +710,288 @@ export default function AdminViewRefundDetails() {
             <div>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Eye className="w-4 h-4" />
-                Refund {refund?.refund_id ? String(refund.refund_id).slice(0, 8) : 'N/A'}
-                <StatusBadge status={effectiveSt} />
-                {activeDispute?.status === 'under_review' && (
-                  <Badge variant="outline" className="bg-purple-100 text-purple-700 border-purple-300 ml-2">
-                    <Scale className="h-3 w-3 mr-1" /> Under Review
-                  </Badge>
-                )}
+                Refund #{refund?.refund_id ? String(refund.refund_id).slice(0, 8) : 'N/A'}
+                <Badge className="bg-green-100 text-green-700">Approved</Badge>
               </CardTitle>
-              <CardDescription className="text-xs">Admin investigation view — complete refund details for case review</CardDescription>
+              <CardDescription className="text-xs">Review refund details and process payment</CardDescription>
             </div>
             <div className="text-right text-xs text-muted-foreground">
-              <div>Requested: {formatDateTime(refund.requested_at)}</div>
-              {refund.processed_at && <div>Processed: {formatDateTime(refund.processed_at)}</div>}
+              Requested: {formatDateTime(refund.requested_at)}
             </div>
           </div>
         </CardHeader>
-
+        
         <CardContent>
-          {isProcessing ? (
-            <ProcessingUI refund={refund} onComplete={handleCompleteRefund} onCancel={handleCancelProcessing} user={user} setRefund={setRefund} />
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* ===== LEFT: Main Investigation Details ===== */}
-              <div className="lg:col-span-2 space-y-4">
-
-                <StatusBanner status={effectiveSt as keyof typeof statusConfig} refund={refund} />
-
-                {/* ===== BUYER REQUEST (TOP - MOST IMPORTANT) ===== */}
-                <BuyerRequestCard refundMedia={refundMedia} refundDetails={refundDetails} />
-
-                {/* ===== SELLER RESPONSE (TOP - MOST IMPORTANT) ===== */}
-                <SellerResponseCard refundMedia={refundMedia} refundDetails={refundDetails} />
-
-                {/* Investigation Timeline */}
-                <InvestigationTimeline refund={refund} />
-
-                {activeDispute && <DisputeDetailsCard dispute={activeDispute} />}
-
-                {/* ===== 1. REFUND DETAILS ===== */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <Receipt className="h-4 w-4" /> Refund Details
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3 text-sm">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Refund ID</span>
-                        <p className="font-medium font-mono text-xs">{refund.refund_id || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Order ID</span>
-                        <p className="font-medium">{orderInfo?.order || refund.order_id || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Reason</span>
-                        <p className="font-medium">{refund.reason || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Refund Type</span>
-                        <p className="font-medium capitalize">{refund.refund_type || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Order Total</span>
-                        <p className="font-medium">{formatMoney(orderInfo?.total_amount || refund.order_total_amount)}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Requested Refund</span>
-                        <p className="font-medium text-blue-600">{formatMoney(refund.total_refund_amount)}</p>
-                      </div>
-                      {refund.approved_refund_amount && (
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Approved Amount</span>
-                          <p className="font-medium text-green-600">{formatMoney(refund.approved_refund_amount)}</p>
-                        </div>
-                      )}
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Preferred Method</span>
-                        <p className="font-medium capitalize">{refund.preferred_refund_method || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Final Method</span>
-                        <p className="font-medium capitalize">{refund.final_refund_method || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Payment Status</span>
-                        <p className="font-medium capitalize">{refund.refund_payment_status || 'N/A'}</p>
-                      </div>
-                      {refund.refund_fee && (
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Refund Fee</span>
-                          <p className="font-medium">{formatMoney(refund.refund_fee)}</p>
-                        </div>
-                      )}
-                    </div>
-                    {refund.detailed_reason && (
-                      <div className="border-t pt-2">
-                        <span className="text-xs text-muted-foreground block">Detailed Reason</span>
-                        <p className="text-sm mt-1">{refund.detailed_reason}</p>
-                      </div>
-                    )}
-                    {refund.customer_note && (
-                      <div className="border-t pt-2">
-                        <span className="text-xs text-muted-foreground block">Customer Note</span>
-                        <p className="text-sm mt-1 italic">{refund.customer_note}</p>
-                      </div>
-                    )}
-                    {refund.reject_reason_code && (
-                      <div className="border-t pt-2">
-                        <span className="text-xs text-muted-foreground block">Rejection Code</span>
-                        <p className="text-sm mt-1">{refund.reject_reason_code}: {refund.reject_reason_details}</p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* ===== 2. CUSTOMER INFO ===== */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <User className="h-4 w-4" /> Customer Information
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <span className="text-xs text-muted-foreground block">Username</span>
-                      <p className="font-medium">{orderInfo?.user?.username || refund.requested_by_username || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <span className="text-xs text-muted-foreground block">Email</span>
-                      <p className="font-medium flex items-center gap-1">
-                        <Mail className="h-3 w-3" />
-                        {orderInfo?.user?.email || refund.requested_by_email || 'N/A'}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-xs text-muted-foreground block">Contact Number</span>
-                      <p className="font-medium flex items-center gap-1">
-                        <Phone className="h-3 w-3" />
-                        {orderInfo?.user?.contact_number || 'N/A'}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-xs text-muted-foreground block">User ID</span>
-                      <p className="font-mono text-xs">{orderInfo?.user?.id || 'N/A'}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <span className="text-xs text-muted-foreground block">Registered Address</span>
-                      <p className="font-medium text-xs">
-                        {orderInfo?.user?.street && orderInfo?.user?.city 
-                          ? `${orderInfo.user.street}, ${orderInfo.user.barangay || ''}, ${orderInfo.user.city}, ${orderInfo.user.province || ''}, ${orderInfo.user.zip_code || ''}`
-                          : 'N/A'}
-                      </p>
-                    </div>
-                    {orderInfo?.user?.created_at && (
-                      <div className="col-span-2 border-t pt-2 mt-1">
-                        <span className="text-xs text-muted-foreground block">Customer Since</span>
-                        <p className="text-xs">{formatDateTime(orderInfo.user.created_at)}</p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* ===== 3. SHIPPING ADDRESS ===== */}
-                {shippingAddress && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <MapPin className="h-4 w-4" /> Shipping Address
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2 text-sm">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Recipient</span>
-                          <p className="font-medium">{shippingAddress.recipient_name || 'N/A'}</p>
-                        </div>
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Phone</span>
-                          <p className="font-medium flex items-center gap-1">
-                            <Phone className="h-3 w-3" />
-                            {shippingAddress.recipient_phone || 'N/A'}
-                          </p>
-                        </div>
-                        <div className="col-span-2">
-                          <span className="text-xs text-muted-foreground block">Full Address</span>
-                          <p className="text-sm">{shippingAddress.full_address || 
-                            `${shippingAddress.street || ''} ${shippingAddress.barangay || ''} ${shippingAddress.city || ''} ${shippingAddress.province || ''} ${shippingAddress.zip_code || ''}`.trim() || 'N/A'}
-                          </p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* ===== 4. PRODUCT DETAILS ===== */}
-                {productItems.length > 0 && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <ShoppingBag className="h-4 w-4" /> Product Details ({productItems.length})
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      {productItems.map((item: any, idx: number) => (
-                        <div key={idx} className="flex gap-3 border-b pb-3 last:border-0">
-                          {item.image && (
-                            <div className="w-16 h-16 rounded overflow-hidden border bg-gray-50 flex-shrink-0">
-                              <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                            </div>
-                          )}
-                          <div className="flex-1 space-y-1">
-                            <p className="text-sm font-medium">{item.name}</p>
-                            {item.variant_name && <p className="text-xs text-muted-foreground">Variant: {item.variant_name}</p>}
-                            {item.variant_sku && <p className="text-xs font-mono text-muted-foreground">SKU: {item.variant_sku}</p>}
-                            
-                            <div className="grid grid-cols-3 gap-2 text-xs">
-                              <div><span className="text-muted-foreground">Qty:</span> {item.quantity}</div>
-                              <div><span className="text-muted-foreground">Unit Price:</span> {formatMoney(item.price)}</div>
-                              <div><span className="text-muted-foreground">Total:</span> {formatMoney(item.item_total_amount || item.total_amount)}</div>
-                            </div>
-                            
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              {item.condition && (
-                                <div><span className="text-muted-foreground">Condition:</span> {item.condition}/5</div>
-                              )}
-                              {item.is_refundable !== undefined && (
-                                <div><span className="text-muted-foreground">Refundable:</span> {item.is_refundable ? 'Yes' : 'No'}</div>
-                              )}
-                              {item.refund_days > 0 && (
-                                <div><span className="text-muted-foreground">Refund Period:</span> {item.refund_days} days</div>
-                              )}
-                              {item.compare_price && (
-                                <div><span className="text-muted-foreground">Compare Price:</span> {formatMoney(item.compare_price)}</div>
-                              )}
-                              {item.original_price && (
-                                <div><span className="text-muted-foreground">Original Price:</span> {formatMoney(item.original_price)}</div>
-                              )}
-                              {item.purchase_date && (
-                                <div><span className="text-muted-foreground">Purchase Date:</span> {formatDateTime(item.purchase_date)}</div>
-                              )}
-                              {item.usage_period && (
-                                <div><span className="text-muted-foreground">Usage Period:</span> {item.usage_period} {item.usage_unit}</div>
-                              )}
-                            </div>
-                            
-                            {item.description && (
-                              <div className="text-xs mt-1">
-                                <span className="text-muted-foreground">Description:</span> {item.description}
-                              </div>
-                            )}
-                            
-                            {item.shop && (
-                              <div className="flex items-center gap-2 text-xs pt-1 border-t mt-1">
-                                <Store className="h-3 w-3" />
-                                <span>{item.shop.name}</span>
-                                {item.shop.verified && <Badge variant="outline" className="text-[8px]">Verified</Badge>}
-                              </div>
-                            )}
-                            
-                            {item.proof_image && (
-                              <div className="mt-1">
-                                <span className="text-xs text-muted-foreground">Proof Image:</span>
-                                <a href={item.proof_image} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline text-xs ml-2">
-                                  <ExternalLink className="h-3 w-3 inline" /> View
-                                </a>
-                              </div>
-                            )}
-                            
-                            {item.product_images && item.product_images.length > 0 && (
-                              <div className="mt-1">
-                                <MediaGallery files={item.product_images.map((url: string, i: number) => ({ id: i, file_url: url }))} title="Product Images" />
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* ===== 5. DELIVERY INFORMATION (WITH MEDIA) ===== */}
-                {orderDeliveries.length > 0 && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Truck className="h-4 w-4" /> Delivery Information
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3 text-sm">
-                      {orderDeliveries.map((delivery: any, idx: number) => (
-                        <div key={idx} className={idx > 0 ? "border-t pt-3" : ""}>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <span className="text-xs text-muted-foreground block">Delivery ID</span>
-                              <p className="font-mono text-xs">{delivery.id || 'N/A'}</p>
-                            </div>
-                            <div>
-                              <span className="text-xs text-muted-foreground block">Status</span>
-                              <p className="font-medium capitalize">{delivery.status || 'N/A'}</p>
-                            </div>
-                            <div>
-                              <span className="text-xs text-muted-foreground block">Delivery Rating</span>
-                              <p className="font-medium">{delivery.delivery_rating ? `${delivery.delivery_rating}/5` : 'N/A'}</p>
-                            </div>
-                            <div>
-                              <span className="text-xs text-muted-foreground block">Distance</span>
-                              <p className="font-medium">{delivery.distance_km ? `${delivery.distance_km} km` : 'N/A'}</p>
-                            </div>
-                            {delivery.delivery_fee && (
-                              <div>
-                                <span className="text-xs text-muted-foreground block">Delivery Fee</span>
-                                <p className="font-medium">{formatMoney(delivery.delivery_fee)}</p>
-                              </div>
-                            )}
-                          </div>
-                          
-                          {delivery.rider && (
-                            <div className="mt-2 pt-2 border-t">
-                              <span className="text-xs font-medium flex items-center gap-1 mb-2"><Bike className="h-3 w-3" /> Rider Details</span>
-                              <div className="grid grid-cols-2 gap-2 text-xs">
-                                <div>
-                                  <span className="text-muted-foreground">Name</span>
-                                  <p className="font-medium">{delivery.rider.username || 'N/A'}</p>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Contact</span>
-                                  <p className="font-medium flex items-center gap-1">
-                                    <Phone className="h-3 w-3" />
-                                    {delivery.rider.contact_number || 'N/A'}
-                                  </p>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Rider ID</span>
-                                  <p className="font-mono text-xs">{delivery.rider.id || 'N/A'}</p>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                          
-                          <div className="mt-2 pt-2 border-t">
-                            <span className="text-xs font-medium mb-2 block">Timeline</span>
-                            <div className="space-y-1 text-xs">
-                              {delivery.picked_at && (
-                                <div className="flex justify-between">
-                                  <span>Picked Up:</span>
-                                  <span className="font-medium">{formatDateTime(delivery.picked_at)}</span>
-                                </div>
-                              )}
-                              {delivery.delivered_at && (
-                                <div className="flex justify-between">
-                                  <span>Delivered:</span>
-                                  <span className="font-medium">{formatDateTime(delivery.delivered_at)}</span>
-                                </div>
-                              )}
-                              {delivery.scheduled_pickup_time && (
-                                <div className="flex justify-between">
-                                  <span>Scheduled Pickup:</span>
-                                  <span className="font-medium">{formatDateTime(delivery.scheduled_pickup_time)}</span>
-                                </div>
-                              )}
-                              {delivery.scheduled_delivery_time && (
-                                <div className="flex justify-between">
-                                  <span>Scheduled Delivery:</span>
-                                  <span className="font-medium">{formatDateTime(delivery.scheduled_delivery_time)}</span>
-                                </div>
-                              )}
-                              {delivery.created_at && (
-                                <div className="flex justify-between">
-                                  <span>Delivery Created:</span>
-                                  <span className="font-medium">{formatDateTime(delivery.created_at)}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          
-                          {delivery.notes && (
-                            <div className="mt-2 pt-2 border-t">
-                              <span className="text-xs text-muted-foreground block">Delivery Notes</span>
-                              <p className="text-xs mt-1 italic">{delivery.notes}</p>
-                            </div>
-                          )}
-                          
-                          {/* Delivery Media/Proofs */}
-                          {delivery.proofs && delivery.proofs.length > 0 && (
-                            <DeliveryMediaCard proofs={delivery.proofs} />
-                          )}
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* ===== 6. PROOF OF DELIVERY MEDIA (Legacy - kept for backward compatibility) ===== */}
-                {proofMedia.length > 0 && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Camera className="h-4 w-4" /> All Delivery Proofs
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <MediaGallery files={proofMedia} title="Delivery Proofs" />
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* ===== 7. OTHER REFUND MEDIA (Admin/System) ===== */}
-                {refundMedia.filter((m: any) => !m.is_proof && m.uploaded_by_entity !== 'buyer' && m.uploaded_by_entity !== 'seller').length > 0 && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <ImageIcon className="h-4 w-4" /> Other Refund Media
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <MediaGallery files={refundMedia.filter((m: any) => !m.is_proof && m.uploaded_by_entity !== 'buyer' && m.uploaded_by_entity !== 'seller')} title="Other Media" />
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* ===== 8. PAYMENT DETAILS ===== */}
-                {refund.payment_details && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <CreditCard className="h-4 w-4" /> Payment Details
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="bg-blue-50/50 rounded-md p-3 border border-blue-100 space-y-2">
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                          <div>
-                            <span className="text-muted-foreground text-[10px]">Payment ID</span>
-                            <p className="font-mono text-xs">{refund.payment_details.id || 'N/A'}</p>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground text-[10px]">Payment Method</span>
-                            <p className="font-medium capitalize">{refund.payment_details.payment_method || 'N/A'}</p>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground text-[10px]">Account Name</span>
-                            <p className="font-medium">{refund.payment_details.account_name || 'N/A'}</p>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground text-[10px]">Account Number</span>
-                            <p className="font-mono">{refund.payment_details.masked_account_number || refund.payment_details.account_number || 'N/A'}</p>
-                          </div>
-                          {refund.payment_details.bank_name && (
-                            <div>
-                              <span className="text-muted-foreground text-[10px]">Bank Name</span>
-                              <p className="font-medium">{refund.payment_details.bank_name}</p>
-                            </div>
-                          )}
-                          <div>
-                            <span className="text-muted-foreground text-[10px]">Default</span>
-                            <p className="font-medium">{refund.payment_details.is_default ? 'Yes' : 'No'}</p>
-                          </div>
-                          {refund.payment_details.verified_by && (
-                            <div className="col-span-2">
-                              <span className="text-muted-foreground text-[10px]">Verified By</span>
-                              <p className="font-medium">{refund.payment_details.verified_by.username}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* ===== 9. ORDER SUMMARY ===== */}
-                {orderInfo && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <ClipboardList className="h-4 w-4" /> Order Summary
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid grid-cols-2 gap-3 text-sm">
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Order ID</span>
-                        <p className="font-mono text-xs">{orderInfo.order || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Order Status</span>
-                        <p className="font-medium capitalize">{orderInfo.status || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Payment Method</span>
-                        <p className="font-medium">{orderInfo.payment_method || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Delivery Method</span>
-                        <p className="font-medium">{orderInfo.delivery_method || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground block">Created At</span>
-                        <p className="text-xs">{formatDateTime(orderInfo.created_at)}</p>
-                      </div>
-                      {orderInfo.completed_at && (
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Completed At</span>
-                          <p className="text-xs">{formatDateTime(orderInfo.completed_at)}</p>
-                        </div>
-                      )}
-                      {orderInfo.approval_status && (
-                        <div>
-                          <span className="text-xs text-muted-foreground block">Approval Status</span>
-                          <p className="font-medium capitalize">{orderInfo.approval_status}</p>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-
-              {/* ===== RIGHT: Admin Actions Sidebar ===== */}
-              <aside className="space-y-3">
-                <Card id="admin-actions" className="border shadow-none">
-                  <CardHeader className="py-2 px-3">
-                    <CardTitle className="text-sm">Admin Actions</CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-3 pt-0 space-y-2">
-
-                  {effectiveSt !== 'completed' && effectiveSt !== 'under_review' && effectiveSt !== 'rejected' && effectiveSt !== 'cancelled' && (
-  <Button
-    size="sm"
-    className="w-full text-xs h-8"
-    disabled={processing || (refund.refund_type === 'replace')}
-    onClick={async () => {
-      if (effectiveSt === 'negotiation') { setShowConfirmModal(true); return; }
-
-      if (effectiveSt === 'dispute') {
-        try {
-          setProcessing(true);
-          const refundId = refund?.refund_id;
-          
-          if (!refundId) {
-            toast({ title: 'Error', description: 'Cannot find refund ID', variant: 'destructive' });
-            setProcessing(false);
-            return;
-          }
-          
-          const listRes = await AxiosInstance.get('/disputes/', { 
-            params: { refund_id: String(refundId) }, 
-            headers: { 'X-User-Id': String(user?.id || '') } 
-          });
-          
-          const disputes = Array.isArray(listRes?.data) ? listRes.data : 
-                           Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
-          const first = disputes[0];
-          
-          if (!first?.id) { 
-            toast({ title: 'No dispute found', description: 'Cannot start review without an existing dispute.', variant: 'destructive' });
-            return;
-          }
-          
-          const response = await AxiosInstance.post(`/disputes/${first.id}/start_review/`, null, { 
-            headers: { 'X-User-Id': String(user?.id || ''), 'Content-Type': 'application/json' } 
-          });
-          
-          if (response.data) {
-            toast({ title: 'Review started', description: 'Dispute marked under review.' });
-            setRefund(prev => ({ ...prev, status: 'under_review', dispute_details: { ...prev.dispute_details, status: 'under_review' } }));
-          }
-        } catch (err: any) {
-          toast({ title: 'Failed to start review', description: err.response?.data?.error || err.message || 'Unknown error occurred', variant: 'destructive' });
-        } finally { setProcessing(false); }
-        return;
-      }
-
-      if (effectiveSt === 'approved') {
-        await handleProcessRefund();
-        return;
-      }
-    }}
-  >
-    {effectiveSt === 'dispute' ? (
-      <><ShieldAlert className="w-3 h-3 mr-1" /> Start Review</>
-    ) : effectiveSt === 'approved' ? (
-      <>
-        <RefreshCw className="w-3 h-3 mr-1" /> 
-        {refund.refund_type === 'replace' ? 'Replacement - No Refund Needed' : 'Process Refund'}
-      </>
-    ) : (
-      <><CheckCircle className="w-3 h-3 mr-1" /> Proceed</>
-    )}
-  </Button>
-)}
-
-                    {effectiveSt === 'under_review' && (
-                      <>
-                        {/* ===== CASE CATEGORY (Single Selection) ===== */}
-                        {/* ===== CASE CATEGORY (Single Selection) ===== */}
-                          <div className="space-y-2 mb-3">
-                            <p className="text-xs font-medium">Case Category</p>
-                            <div className="space-y-1">
-                              {[
-                                { id: 'merchant_fulfillment_issue', label: 'Merchant Fulfillment Issue (Seller)' },
-                                { id: 'logistics_delivery_issue', label: 'Logistics / Delivery Issue (Delivery Partner)' },
-                                { id: 'customer_related_issue', label: 'Customer-Related Issue (Customer)' },
-                                { id: 'shared_responsibility', label: 'Shared Responsibility' },
-                                { id: 'platform_system_issue', label: 'Platform / System Issue' }
-                              ].map(option => (
-                                <div key={option.id} className="flex items-center space-x-2">
-                                  <input
-                                    type="radio"
-                                    id={`case_${option.id}`}
-                                    name="case_category"
-                                    value={option.id}
-                                    checked={caseCategory === option.id}
-                                    onChange={() => setCaseCategory(option.id)}
-                                    className="h-3 w-3"
-                                  />
-                                  <Label htmlFor={`case_${option.id}`} className="text-xs cursor-pointer">
-                                    {option.label}
-                                  </Label>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                        {/* ===== REFUND DECISION ===== */}
-                        <div className="space-y-2 mb-3">
-                          <p className="text-xs font-medium">Refund Decision</p>
-                          <div className="space-y-1">
-                            {(['full', 'partial'] as const).map(type => (
-                              <div key={type} className="flex items-center space-x-2">
-                                <input
-                                  type="radio"
-                                  id={`${type}_refund`}
-                                  name="refund_type"
-                                  value={type}
-                                  checked={refundType === type}
-                                  onChange={e => {
-                                    setRefundType(e.target.value as 'full' | 'partial');
-                                    if (e.target.value === 'full') {
-                                      setRefundAmount(Number(refund.total_refund_amount) || 0);
-                                    }
-                                  }}
-                                  className="h-3 w-3"
-                                />
-                                <Label htmlFor={`${type}_refund`} className="text-xs cursor-pointer capitalize">
-                                  {type} Refund
-                                </Label>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* ===== REFUND AMOUNT ===== */}
-                        {refundType && (
-                          <div className="space-y-1 mb-3">
-                            <Label htmlFor="refund_amount" className="text-xs">
-                              Amount {refundType === 'full' && '(Full)'}
-                            </Label>
-                            <div className="relative">
-                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">₱</span>
-                              <Input
-                                id="refund_amount"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                max={refund.total_refund_amount || 0}
-                                value={refundAmount}
-                                onChange={e => setRefundAmount(parseFloat(e.target.value) || 0)}
-                                disabled={refundType === 'full'}
-                                className="pl-6 text-xs h-7"
-                              />
-                            </div>
-                            <p className="text-[9px] text-muted-foreground">
-                              This amount will be stored in <strong>adjusted_amount</strong> field
-                            </p>
-                          </div>
-                        )}
-
-{/* ===== LIABILITY SECTION (Split between parties) ===== */}
-<div className="border-t pt-2 mt-1 mb-3">
-  <p className="text-xs font-medium mb-2 flex items-center gap-1">
-    <Scale className="h-3 w-3" /> Liability Distribution
-  </p>
-  <p className="text-[9px] text-muted-foreground mb-2">
-    Assign liability percentage to each responsible party (maximum 2 parties)
-  </p>
-  
-  <div className="space-y-2">
-    {/* Liability Options - Remove Shared option */}
-    <div className="space-y-1">
-      {[
-        { id: 'buyer', label: 'Buyer' },
-        { id: 'seller', label: 'Seller' },
-        { id: 'rider', label: 'Rider' }
-      ].map(option => (
-        <div key={option.id} className="flex items-center space-x-2">
-          <Checkbox
-            id={`liability_${option.id}`}
-            checked={selectedLiabilities.includes(option.id)}
-            onCheckedChange={(checked) => {
-              if (checked) {
-                // Trying to ADD this liability
-                if (selectedLiabilities.length >= 2) {
-                  toast({ 
-                    title: 'Limit reached', 
-                    description: 'You can only select up to 2 parties for liability distribution.', 
-                    variant: 'default' 
-                  });
-                  return;
-                }
-                setSelectedLiabilities(prev => [...prev, option.id]);
-              } else {
-                // Trying to REMOVE this liability
-                setSelectedLiabilities(prev => prev.filter(x => x !== option.id));
-                // Reset split type and custom splits when unselecting
-                setSplitType('50_50');
-                setCustomSplits({});
-              }
-            }}
-            className="h-3 w-3"
-          />
-          <Label htmlFor={`liability_${option.id}`} className="text-xs cursor-pointer">
-            {option.label}
-          </Label>
-        </div>
-      ))}
-    </div>
-
-    {/* Split Options - Only show when exactly 2 liabilities selected */}
-    {selectedLiabilities.length === 2 && (
-      <div className="mt-2 pt-2 border-t">
-        <p className="text-xs font-medium mb-2">Split Type</p>
-        <div className="flex flex-wrap gap-2 mb-2">
-          {['50_50', '70_30', '30_70', 'custom'].map(type => {
-            let displayLabel = type;
-            if (type === '50_50') displayLabel = '50/50';
-            else if (type === '70_30') displayLabel = '70/30';
-            else if (type === '30_70') displayLabel = '30/70';
-            else if (type === 'custom') displayLabel = 'Custom';
-            
-            return (
-              <label key={type} className="flex items-center gap-1 text-xs">
-                <input
-                  type="radio"
-                  name="splitType"
-                  checked={splitType === type}
-                  onChange={() => setSplitType(type as any)}
-                  className="h-3 w-3"
-                />
-                {displayLabel}
-              </label>
-            );
-          })}
-        </div>
-
-        {splitType === 'custom' && (
-          <div className="space-y-1 mt-1">
-            {selectedLiabilities.map(id => {
-              const partyLabel = id === 'buyer' ? 'Buyer' : id === 'seller' ? 'Seller' : 'Rider';
-              return (
-                <div key={id} className="flex items-center gap-2 text-xs">
-                  <span className="w-16">{partyLabel}:</span>
-                  <div className="relative w-16">
-                    <Input
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="1"
-                      value={customSplits[id] || 0}
-                      onChange={e => handleCustomSplitChange(id, e.target.value)}
-                      className="text-xs h-6 pr-5"
-                    />
-                    <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] text-muted-foreground">%</span>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left Column - Refund Details */}
+            <div className="lg:col-span-2 space-y-4">
+              {/* Buyer Information */}
+              <div className="border rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <User className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Buyer Information</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-xs text-muted-foreground block">Username</span>
+                    <p className="font-medium">{refund.buyer?.username || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground block">Contact Number</span>
+                    <p className="font-medium flex items-center gap-1">
+                      <Phone className="h-3 w-3" />
+                      {refund.buyer?.contact_number || 'N/A'}
+                    </p>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-xs text-muted-foreground block">Email</span>
+                    <p className="font-medium flex items-center gap-1">
+                      <Mail className="h-3 w-3" />
+                      {refund.buyer?.email || 'N/A'}
+                    </p>
                   </div>
                 </div>
-              );
-            })}
-            {getCustomSplitTotal() !== 100 && (
-              <p className="text-[9px] text-red-500">Total: {getCustomSplitTotal()}% (must be 100%)</p>
-            )}
-          </div>
-        )}
+              </div>
 
-        {splitType !== 'custom' && (
-          <div className="bg-purple-50 rounded p-1.5 text-[10px] mt-1">
-            <p className="font-medium text-purple-700 mb-0.5">Preview:</p>
-            {selectedLiabilities.map((id, idx) => {
-              let pct = 0;
-              if (splitType === '50_50') {
-                pct = 50;
-              } else if (splitType === '70_30') {
-                pct = idx === 0 ? 70 : 30;
-              } else if (splitType === '30_70') {
-                pct = idx === 0 ? 30 : 70;
-              }
-              
-              const partyLabel = id === 'buyer' ? 'Buyer' : id === 'seller' ? 'Seller' : 'Rider';
-              
-              return (
-                <div key={id} className="flex justify-between">
-                  <span>{partyLabel}:</span>
-                  <span>{pct}% (₱{((refundAmount * pct) / 100).toFixed(2)})</span>
+              {/* Amount to Refund */}
+              <div className="border rounded-lg bg-green-50/30 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <DollarSign className="h-4 w-4 text-green-600" />
+                    <span className="text-sm font-medium text-green-700">Amount to Refund</span>
+                  </div>
+                  <span className="text-xl font-bold text-green-600">{formatMoney(refund.amount_to_refund)}</span>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    )}
+              </div>
 
-    {/* Single Liability Selected - Show 100% */}
-    {selectedLiabilities.length === 1 && (
-      <div className="bg-green-50 border border-green-200 rounded p-1.5 mt-2">
-        <div className="flex items-center gap-1">
-          <CheckCircle className="h-3 w-3 text-green-600" />
-          <span className="text-[10px] font-medium text-green-700">
-            100% Liability on {selectedLiabilities[0] === 'buyer' ? 'Buyer' : selectedLiabilities[0] === 'seller' ? 'Seller' : 'Rider'}
-          </span>
-        </div>
-      </div>
-    )}
-  </div>
-</div>
-
-                        {/* ===== OUTCOME SELECTION ===== */}
-                        {/* <div className="border-t pt-2 mt-1 mb-3">
-                          <p className="text-xs font-medium mb-2">Outcome</p>
-                          <div className="space-y-1">
-                            {[
-                              { id: 'favor_buyer', label: 'Favor Buyer' },
-                              { id: 'favor_seller', label: 'Favor Seller' },
-                              { id: 'favor_rider', label: 'Favor Rider' },
-                              { id: 'partial_resolution', label: 'Partial Resolution' }
-                            ].map(option => (
-                              <div key={option.id} className="flex items-center space-x-2">
-                                <input
-                                  type="radio"
-                                  id={`outcome_${option.id}`}
-                                  name="outcome"
-                                  value={option.id}
-                                  checked={outcome === option.id}
-                                  onChange={e => setOutcome(e.target.value as any)}
-                                  className="h-3 w-3"
-                                />
-                                <Label htmlFor={`outcome_${option.id}`} className="text-xs cursor-pointer">
-                                  {option.label}
-                                </Label>
-                              </div>
-                            ))}
-                          </div>
-                        </div> */}
-
-                        {/* Action Buttons */}
-                        <div className="space-y-2 pt-1">
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            className="w-full text-xs h-7"
-                            disabled={!selectedLiabilities.length || !refundType}
-                            onClick={() => { setAuthAction('reject'); setModalAuthChecked(false); setShowAuthModal(true); }}
-                          >
-                            <XCircle className="w-3 h-3 mr-1" /> Reject Dispute
-                          </Button>
-                          <Button
-                            size="sm"
-                            className="w-full text-xs h-7 bg-purple-600 hover:bg-purple-700"
-                            disabled={!selectedLiabilities.length || !refundType || isSubmitting}
-                            onClick={() => {
-                              if (!selectedLiabilities.length) {
-                                toast({ title: 'Error', description: 'Select liability distribution', variant: 'destructive' });
-                                return;
-                              }
-                              if (!refundType) {
-                                toast({ title: 'Error', description: 'Select refund type', variant: 'destructive' });
-                                return;
-                              }
-                              if (refundType === 'partial' && (!refundAmount || refundAmount <= 0)) {
-                                toast({ title: 'Error', description: 'Enter valid amount', variant: 'destructive' });
-                                return;
-                              }
-                              if (selectedLiabilities.length > 1 && splitType === 'custom' && getCustomSplitTotal() !== 100) {
-                                toast({ title: 'Error', description: 'Custom split must total 100%.', variant: 'destructive' });
-                                return;
-                              }
-                              setAuthAction('confirm');
-                              setModalAuthChecked(false);
-                              setShowAuthModal(true);
-                            }}
-                          >
-                            {isSubmitting ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Approve & Process Refund'}
-                          </Button>
+              {/* Products */}
+              {refund.products && refund.products.length > 0 && (
+                <div className="border rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <ShoppingBag className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">Products ({refund.products.length})</span>
+                  </div>
+                  <div className="space-y-3">
+                    {refund.products.map((product: any, idx: number) => (
+                      <div key={idx} className="flex gap-3 border-b pb-3 last:border-0 last:pb-0">
+                        <div className="w-16 h-16 rounded overflow-hidden border bg-gray-50 flex-shrink-0">
+                          {product.product_image ? (
+                            <img src={product.product_image} alt={product.product_name} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                              <Package className="h-6 w-6 text-gray-400" />
+                            </div>
+                          )}
                         </div>
-                      </>
-                    )}
-
-                    {refund.processed_by?.username && (
-                      <div className="text-[10px] text-muted-foreground mt-2 pt-2 border-t">
-                        Processed by: {refund.processed_by.username}
-                        {refund.processed_at && ` • ${formatDateTime(refund.processed_at)}`}
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{product.product_name}</p>
+                          <div className="flex justify-between items-center mt-1">
+                            <span className="text-xs text-muted-foreground">Quantity: {product.quantity}</span>
+                            <span className="text-sm font-semibold text-green-600">{formatMoney(product.price)}</span>
+                          </div>
+                          <div className="flex justify-between items-center mt-1">
+                            <span className="text-xs text-muted-foreground">Subtotal:</span>
+                            <span className="text-xs font-medium">{formatMoney(product.total_amount)}</span>
+                          </div>
+                        </div>
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-                {/* Authorization Modal */}
-                <Dialog open={showAuthModal} onOpenChange={setShowAuthModal}>
-                  <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                      <DialogTitle>{authAction === 'reject' ? 'Confirm Rejection' : 'Authorize Approval'}</DialogTitle>
-                      <DialogDescription>
-                        {authAction === 'reject'
-                          ? 'Are you sure you want to reject this dispute? This action cannot be undone.'
-                          : `Please confirm you authorize approving a ${refundType?.toUpperCase()} refund of ₱${refundAmount.toFixed(2)}.`}
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="mt-3">
-                      <div className="flex items-start space-x-2">
-                        <Checkbox id="modal-auth" checked={modalAuthChecked} onCheckedChange={v => setModalAuthChecked(v === true)} className="h-3 w-3 mt-0.5" />
-                        <Label htmlFor="modal-auth" className="text-[12px] text-muted-foreground leading-tight">
-                          I hereby declare that I have reviewed the refund case thoroughly and determined the responsible party. I authorize the {refundType} refund of ₱{refundAmount.toFixed(2)}.
-                        </Label>
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button variant="outline" onClick={() => setShowAuthModal(false)}>Cancel</Button>
-                      <Button disabled={!modalAuthChecked} onClick={async () => {
-                        setShowAuthModal(false);
-                        try {
-                          if (authAction === 'reject') {
-                            setProcessing(true);
-                            const listRes = await AxiosInstance.get('/disputes/', { params: { refund_id: String(refund.refund_id) }, headers: { 'X-User-Id': String(user?.id || '') } });
-                            const disputes = Array.isArray(listRes?.data) ? listRes.data : Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
-                            const active = disputes.find((d: any) => String(d.refund) === String(refund.refund_id) || String(d.refund_id) === String(refund.refund_id));
-                            if (!active?.id) { toast({ title: 'No dispute found', variant: 'destructive' }); return; }
-                            await AxiosInstance.post(`/disputes/${active.id}/reject/`, { admin_notes: 'Rejected by admin' }, { headers: { 'X-User-Id': String(user?.id || '') } });
-                            toast({ title: 'Rejected', description: 'Dispute has been rejected.' });
-                            setRefund(prev => ({ ...prev, status: 'rejected' }));
-                          } else if (authAction === 'confirm') {
-                            await handleConfirmProcessRefund();
-                          }
-                        } catch (err: any) {
-                          toast({ title: 'Error', description: err.response?.data?.error || 'Action failed', variant: 'destructive' });
-                        } finally {
-                          setProcessing(false); setIsSubmitting(false); setAuthAction(null); setModalAuthChecked(false);
-                        }
-                      }}>Confirm</Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              </aside>
+              {/* Reason */}
+              <div className="border rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Refund Reason</span>
+                </div>
+                <p className="text-sm">{refund.reason || 'No reason provided'}</p>
+              </div>
             </div>
-          )}
+
+            {/* Right Column - Admin Actions */}
+            <aside className="space-y-3">
+              <div className="border rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Admin Actions</span>
+                </div>
+                <Button
+                  size="sm"
+                  className="w-full bg-green-600 hover:bg-green-700"
+                  onClick={handleProcessRefund}
+                  disabled={processing}
+                >
+                  {processing ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                  )}
+                  Process Refund
+                </Button>
+              </div>
+            </aside>
+          </div>
         </CardContent>
       </Card>
-
-      <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Proceed with refund?</DialogTitle>
-            <DialogDescription>This refund is currently under negotiation. Processing it now will bypass or close the negotiation. Are you sure?</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowConfirmModal(false)}>Cancel</Button>
-            <Button onClick={() => { setShowConfirmModal(false); handleProcessRefund(); }}>Proceed</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
+  );
+}
+
+// ===== LOADER =====
+export async function loader({ request, context, params }: Route.LoaderArgs) {
+  const { requireRole } = await import("~/middleware/role-require.server");
+  const { fetchUserRole } = await import("~/middleware/role.server");
+  
+  let user = (context as any).user;
+  if (!user) {
+    user = await fetchUserRole({ request, context });
+  }
+  
+  await requireRole(request, context, ["isAdmin"]);
+  
+  const { getSession } = await import('~/sessions.server');
+  const session = await getSession(request.headers.get("Cookie"));
+  const userId = session.get('userId');
+
+  const url = new URL(request.url);
+  const refundId = params?.refundId || url.searchParams.get('refund_id') || url.searchParams.get('refund');
+  if (!refundId) throw new Response('refund id required', { status: 400 });
+
+  // First, get the refund status to determine which endpoint to use
+  try {
+    const listResponse = await AxiosInstance.get('/admin-refunds/refund_list/', {
+      headers: { "X-User-Id": userId }
+    });
+    
+    const refunds = Array.isArray(listResponse.data) ? listResponse.data : [];
+    const found = refunds.find((r: any) => String(r.refund_id) === String(refundId));
+    
+    // If refund is approved, get approved details
+    if (found && found.status === 'approved') {
+      const detailResponse = await AxiosInstance.get(`/admin-refunds/${encodeURIComponent(String(refundId))}/approved-details/`, {
+        headers: { "X-User-Id": userId }
+      });
+      
+      // Check if refund_payment_status is 'processing'
+      const isProcessing = found.refund_payment_status === 'processing';
+      
+      return { 
+        user, 
+        refund: detailResponse.data,
+        refundPaymentStatus: found.refund_payment_status || 'pending',
+        isProcessingView: isProcessing
+      };
+    }
+  } catch (err) {
+    console.error('Failed to check refund status', err);
+  }
+
+  // Fallback to full details for non-approved refunds
+  try {
+    const detailResponse = await AxiosInstance.get(`/admin-refunds/${encodeURIComponent(String(refundId))}/full-details/`, {
+      headers: { "X-User-Id": userId }
+    });
+    
+    const fullDetails = detailResponse.data;
+    const transformedRefund = {
+      refund_id: fullDetails.refund_id,
+      refund: fullDetails.refund_id,
+      ...fullDetails.refund_details,
+      order_id: fullDetails.order_details?.order,
+      order_total_amount: fullDetails.order_details?.total_amount,
+      order: fullDetails.order_details,
+      products: fullDetails.product_details,
+      delivery_details: fullDetails.delivery_details,
+      proof_media: fullDetails.proof_media,
+      refund_media: fullDetails.refund_media,
+      payment_details: fullDetails.payment_details,
+      dispute_details: fullDetails.dispute_details,
+      dispute_request: fullDetails.dispute_details,
+      customer: fullDetails.order_details?.user,
+      requested_by_username: fullDetails.order_details?.user?.username,
+      requested_by_email: fullDetails.order_details?.user?.email,
+      default_shipping_address: fullDetails.order_details?.shipping_address,
+      status: fullDetails.refund_details?.status,
+      refund_payment_status: fullDetails.refund_details?.refund_payment_status,
+      requested_at: fullDetails.refund_details?.requested_at,
+      processed_at: fullDetails.refund_details?.processed_at,
+      total_refund_amount: fullDetails.refund_details?.total_refund_amount,
+      approved_refund_amount: fullDetails.refund_details?.approved_refund_amount,
+      preferred_refund_method: fullDetails.refund_details?.buyer_preferred_refund_method,
+      final_refund_method: fullDetails.refund_details?.final_refund_method,
+      reason: fullDetails.refund_details?.reason,
+      detailed_reason: fullDetails.refund_details?.detailed_reason,
+      customer_note: fullDetails.refund_details?.customer_note,
+      refund_type: fullDetails.refund_details?.refund_type,
+      reject_reason_code: fullDetails.refund_details?.reject_reason_code,
+      reject_reason_details: fullDetails.refund_details?.reject_reason_details,
+      refund_fee: fullDetails.refund_details?.refund_fee,
+      processed_by: fullDetails.refund_details?.processed_by,
+    };
+    
+    return { user, refund: transformedRefund, isApprovedView: false };
+  } catch (err) {
+    console.error('Failed to fetch full details', err);
+  }
+
+  throw new Response('Refund not found', { status: 404 });
+}
+
+// ===== MAIN COMPONENT =====
+// ===== MAIN COMPONENT =====
+export default function AdminViewRefundDetails({ loaderData }: { loaderData: any }) {
+  const { user, refund: initialRefund, isProcessingView, refundPaymentStatus } = loaderData;
+  
+  // If refund payment status is completed, show completed UI
+  if (refundPaymentStatus === 'completed') {
+    return <CompletedRefundView refund={initialRefund} user={user} />;
+  }
+  
+  // If this is a processing view, show the processing UI
+  if (isProcessingView) {
+    return (
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+        <Button variant="ghost" className="mb-4" onClick={() => window.history.back()}>
+          <ArrowLeft className="w-4 h-4 mr-2" /> Back
+        </Button>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 text-blue-600" />
+                  Refund #{initialRefund?.refund_id ? String(initialRefund.refund_id).slice(0, 8) : 'N/A'}
+                  <Badge className="bg-blue-100 text-blue-700">Processing</Badge>
+                </CardTitle>
+                <CardDescription className="text-xs">Complete the refund payment process</CardDescription>
+              </div>
+              <div className="text-right text-xs text-muted-foreground">
+                Requested: {formatDateTime(initialRefund.requested_at)}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <ApprovedProcessingUI
+              refund={initialRefund}
+              user={user}
+              onComplete={() => window.location.href = '/admin/refunds'}
+              onCancel={() => window.location.reload()}
+            />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+  
+  // Otherwise, render the simple approved view
+  return (
+    <SimpleApprovedRefundView 
+      refund={initialRefund} 
+      user={user} 
+      onProcessRefund={() => {}}
+    />
   );
 }

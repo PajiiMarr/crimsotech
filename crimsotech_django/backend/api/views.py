@@ -9676,6 +9676,111 @@ class AdminVouchers(viewsets.ViewSet):
              
 class AdminRefunds(viewsets.ViewSet):
 
+    @action(detail=True, methods=['get'], url_path='approved-details')
+    def get_approved_refund_details(self, request, pk=None):
+        """
+        Get simplified refund details for approved refunds (admin view).
+        Returns only: buyer info, amount, product details (with primary image), reason, contact number, and payment details
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not (user.is_admin or user.is_moderator):
+            return Response({"error": "Admin or moderator access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            refund = Refund.objects.select_related(
+                'order_id',
+                'order_id__user',
+                'requested_by',
+                'payment_detail',  # ADD THIS - include payment_detail
+            ).prefetch_related(
+                Prefetch(
+                    'items',
+                    queryset=RefundItem.objects.select_related(
+                        'checkout__cart_item__product',
+                        'checkout__cart_item__variant',
+                    ).prefetch_related(
+                        'checkout__cart_item__product__productmedia_set'
+                    )
+                ),
+            ).get(refund_id=pk)
+            
+            # Check if refund is approved
+            if refund.status != 'approved':
+                return Response({"error": "Only approved refunds can be viewed with this endpoint"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+            
+            # Calculate total refund amount from refund items
+            total_refund_amount = Decimal('0.00')
+            product_items = []
+            
+            for refund_item in refund.items.all():
+                if refund_item.amount:
+                    total_refund_amount += refund_item.amount
+                
+                # Get product details
+                checkout = refund_item.checkout
+                if checkout and checkout.cart_item and checkout.cart_item.product:
+                    product = checkout.cart_item.product
+                    variant = checkout.cart_item.variant
+                    
+                    # Get primary image (first image from product media)
+                    primary_image = None
+                    first_media = product.productmedia_set.first()
+                    if first_media and first_media.file_data:
+                        primary_image = get_media_url(first_media.file_data)
+                    
+                    product_items.append({
+                        "product_name": product.name,
+                        "product_image": primary_image,
+                        "price": float(variant.price) if variant and variant.price else float(refund_item.amount) / refund_item.quantity if refund_item.quantity else 0,
+                        "quantity": refund_item.quantity,
+                        "total_amount": float(refund_item.amount) if refund_item.amount else 0,
+                    })
+            
+            # Build payment details from payment_detail foreign key
+            payment_details_data = None
+            if refund.payment_detail:
+                payment_details_data = {
+                    "id": str(refund.payment_detail.payment_id),
+                    "payment_method": refund.payment_detail.payment_method,
+                    "account_name": refund.payment_detail.account_name,
+                    "account_number": refund.payment_detail.account_number,
+                    "masked_account_number": self._mask_account_number(refund.payment_detail.account_number),
+                    "bank_name": refund.payment_detail.bank_name,
+                    "is_default": refund.payment_detail.is_default,
+                }
+            
+            response_data = {
+                "refund_id": str(refund.refund_id),
+                "status": refund.status,
+                "buyer": {
+                    "username": refund.requested_by.username if refund.requested_by else 'Unknown',
+                    "email": refund.requested_by.email if refund.requested_by else 'N/A',
+                    "contact_number": refund.requested_by.contact_number if refund.requested_by else 'N/A',
+                },
+                "amount_to_refund": float(total_refund_amount),
+                "reason": refund.reason,
+                "products": product_items,
+                "requested_at": refund.requested_at.isoformat() if refund.requested_at else None,
+                "payment_details": payment_details_data,  # ADD THIS
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Refund.DoesNotExist:
+            return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error in get_approved_refund_details: {e}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """Get refund metrics for the admin dashboard."""
@@ -9881,6 +9986,11 @@ class AdminRefunds(viewsets.ViewSet):
                     'items__checkout__cart_item__product__productmedia_set',
                     'items__checkout__cart_item__product__shop',
                     Prefetch(
+                        'items',  # ADD THIS - prefetch refund items
+                        queryset=RefundItem.objects.select_related('checkout'),
+                        to_attr='prefetched_items'
+                    ),
+                    Prefetch(
                         'return_request__medias',
                         queryset=ReturnRequestMedia.objects.all(),
                         to_attr='prefetched_medias',
@@ -9920,10 +10030,27 @@ class AdminRefunds(viewsets.ViewSet):
                     contact = ''
                     address = ''
 
+                # Calculate refund amount from refund items
+                refund_amount_from_items = 0
+                try:
+                    # Try to get from prefetched items
+                    items = getattr(refund, 'prefetched_items', [])
+                    if not items:
+                        items = refund.items.all()
+                    
+                    for item in items:
+                        if item.amount:
+                            refund_amount_from_items += float(item.amount)
+                    print(f"Refund {refund.refund_id}: Items amount sum = {refund_amount_from_items}")
+                except Exception as e:
+                    print(f"Error calculating refund items amount: {e}")
+                    refund_amount_from_items = None
+
                 data.append({
                     "refund_id": str(refund.refund_id),
                     "order_id": str(refund.order_id.order) if refund.order_id else 'N/A',
                     "order_total_amount": float(refund.order_id.total_amount) if refund.order_id else 0,
+                    "refund_amount": refund_amount_from_items,  # ADD THIS - amount from refund items
                     "requested_by_username": username,
                     "requested_by_email": email,
                     "requested_by_contact": contact,
@@ -9947,7 +10074,7 @@ class AdminRefunds(viewsets.ViewSet):
                 {'error': f'Failed to fetch refund list: {e}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
+        
     @action(detail=True, methods=['get'])
     def get_admin_refund_details(self, request, pk=None):
         """
@@ -31537,7 +31664,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             updated_at__range=[today_start, today_end]
         ).count()
 
-        
+
     
     def _check_delivery_assignment(self, order, rider):
         """
@@ -31598,8 +31725,60 @@ class RiderOrdersActive(viewsets.ViewSet):
             order=order_uuid
         )
 
-        # Get related data
-        delivery = Delivery.objects.filter(order=order).select_related('rider__rider').first()
+        # FIRST: Check if there's a return delivery for this order
+        return_delivery = Delivery.objects.filter(
+            order=order,
+            delivery_type='return'
+        ).exclude(
+            status__in=['delivered', 'completed', 'cancelled']
+        ).select_related('rider__rider').first()
+
+        # If there's an active return delivery, use it instead of the regular delivery
+        if return_delivery:
+            delivery = return_delivery
+            print(f"✅ Using RETURN delivery for order {order_id}: id={delivery.id} status={delivery.status}")
+        else:
+            # Otherwise, get the regular order delivery
+            delivery = Delivery.objects.filter(order=order).select_related('rider__rider').first()
+            print(f"📦 Using ORDER delivery: {delivery.id if delivery else None}")
+
+        return_request_info = None
+        refund_id = None 
+        if return_delivery:
+            try:
+                from api.models import Refund, ReturnRequestItem
+                refund = Refund.objects.filter(order_id=order).first()
+                if refund:
+                    refund_id = str(refund.refund_id)
+                    return_request_item = ReturnRequestItem.objects.filter(refund_id=refund).first()
+                    if return_request_item:
+                        return_request_info = {
+                            "status": return_request_item.status,
+                            "return_id": str(return_request_item.return_id),
+                            "refund_id": str(refund.refund_id),
+                            "return_method": return_request_item.return_method,
+                            "tracking_number": return_request_item.tracking_number,
+                            "logistic_service": return_request_item.logistic_service,
+                        }
+                        print(f"✅ Return request status: {return_request_item.status}")
+            except Exception as e:
+                print(f"Error fetching return request: {e}")
+
+        refund_items_data = []
+        if refund_id:
+            try:
+                from api.models import RefundItem
+                refund_items = RefundItem.objects.filter(refund=refund)
+                for refund_item in refund_items:
+                    refund_items_data.append({
+                        "checkout_id": str(refund_item.checkout.id),
+                        "quantity": refund_item.quantity,
+                        "amount": str(refund_item.amount)
+                    })
+                    print(f"✅ Refund item: checkout_id={refund_item.checkout.id}, amount={refund_item.amount}")
+            except Exception as e:
+                print(f"Error fetching refund items: {e}")
+
         payment = Payment.objects.filter(order=order).first()
         
         # Get checkout items with variant and product media
@@ -31618,6 +31797,8 @@ class RiderOrdersActive(viewsets.ViewSet):
             "delivery_method": order.delivery_method,
             "created_at": order.created_at,
             "updated_at": order.updated_at,
+            "refund_id": refund_id,
+            "refund_items": refund_items_data,
             "customer": {
                 "id": str(order.user.id),
                 "name": f"{order.user.first_name} {order.user.last_name}",
@@ -31639,6 +31820,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "id": str(delivery.id) if delivery else None,
                 "status": delivery.status if delivery else None,
                 "delivery_fee": delivery.delivery_fee if delivery else None,
+                "delivery_type": delivery.delivery_type if delivery else None,
                 "rider_id": str(delivery.rider.rider.id) if delivery and delivery.rider and delivery.rider.rider else None,
                 "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery and delivery.rider and delivery.rider.rider else None,
                 "rider_contact": delivery.rider.rider.contact_number if delivery and delivery.rider and delivery.rider.rider else None,
@@ -31647,7 +31829,9 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "created_at": delivery.created_at if delivery else None,
                 "updated_at": delivery.updated_at if delivery else None,
                 "failed_reason": delivery.failed_reason if hasattr(delivery, 'failed_reason') and delivery.failed_reason else None
+                
             } if delivery else None,
+            "return_request": return_request_info,
             "payment": {
                 "id": str(payment.id) if payment else None,
                 "status": payment.status if payment else None,
@@ -32312,10 +32496,56 @@ class RiderOrdersActive(viewsets.ViewSet):
         delivery.save()
         
         # Update order status
+                # Update order status
         order = delivery.order
         order.status = 'shipped'
         order.updated_at = timezone.now()
         order.save()
+        
+        # ========== ADD THIS BLOCK - For return deliveries, update ReturnRequestItem status to 'shipped' ==========
+        if delivery.delivery_type == 'return':
+            try:
+                from api.models import Refund, ReturnRequestItem
+                refund = Refund.objects.filter(order_id=order).first()
+                if refund:
+                    return_request_item = ReturnRequestItem.objects.filter(refund_id=refund).first()
+                    if return_request_item:
+                        # Update status to 'shipped'
+                        return_request_item.status = 'shipped'
+                        return_request_item.updated_at = timezone.now()
+                        if hasattr(return_request_item, 'updated_by') and hasattr(rider, 'rider'):
+                            return_request_item.updated_by = rider.rider
+                        return_request_item.save()
+                        
+                        # Create notification for buyer
+                        Notification.objects.create(
+                            user=refund.requested_by,
+                            title='Return Item Picked Up',
+                            type='return_pickup',
+                            message=f'Rider {rider.rider.first_name} {rider.rider.last_name} has picked up your return item. The item is now on its way to the seller.',
+                            is_read=False
+                        )
+                        
+                        # Create notification for seller
+                        try:
+                            checkout = Checkout.objects.filter(order=order).first()
+                            if checkout and checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                                shop = checkout.cart_item.product.shop
+                                if shop and shop.customer and shop.customer.customer:
+                                    Notification.objects.create(
+                                        user=shop.customer.customer,
+                                        title='Return Item Picked Up',
+                                        type='return_pickup',
+                                        message=f'Rider {rider.rider.first_name} {rider.rider.last_name} has picked up the return item for order #{str(order.order)[:8]}. The item is on its way back.',
+                                        is_read=False
+                                    )
+                        except Exception as e:
+                            print(f"Error creating seller notification: {e}")
+                            
+                        print(f"✅ Updated ReturnRequestItem status to 'shipped' for refund {refund.refund_id}")
+            except Exception as e:
+                print(f"Error updating ReturnRequestItem status: {e}")
+        # ========== END OF ADDED BLOCK ==========
         
         return Response({
             "success": True,
@@ -32505,6 +32735,265 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "other_riders_pending": other_pending,
                 "declined_at": delivery.updated_at.isoformat(),
                 "declines_remaining": 3 - (today_declines + 1)
+            }
+        })
+
+    @action(detail=False, methods=['post'])
+    def respond_to_return_pickup(self, request):
+        """
+        Rider responds to a return pickup request (accept or reject)
+        Expects: refund_id, response (accept|reject), reason (optional)
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check daily decline limit if rejecting
+        response_type = request.data.get('response')
+        refund_id = request.data.get('refund_id')
+        reason = request.data.get('reason', '')
+        
+        if not refund_id:
+            return Response(
+                {"success": False, "error": "refund_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if response_type not in ['accept', 'reject']:
+            return Response(
+                {"success": False, "error": "response must be 'accept' or 'reject'"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check daily decline limit for rejections
+        if response_type == 'reject':
+            today_declines = self._get_today_declines_count(rider)
+            if today_declines >= 3:
+                return Response(
+                    {"success": False, "error": "You have reached the maximum of 3 declines per day. You cannot decline more orders today."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        try:
+            refund_uuid = uuid.UUID(str(refund_id))
+        except (ValueError, AttributeError):
+            return Response(
+                {"success": False, "error": "Invalid refund_id format"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Find the delivery for this return pickup
+        from api.models import Refund, ReturnRequestItem, Delivery
+        
+        try:
+            refund = Refund.objects.get(refund_id=refund_uuid)
+        except Refund.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Refund not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get ReturnRequestItem
+        try:
+            return_request_item = ReturnRequestItem.objects.get(refund_id=refund)
+        except ReturnRequestItem.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Return request not found for this refund"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Find pending delivery for this return request (delivery_type='return')
+        delivery = Delivery.objects.filter(
+            order=refund.order_id,
+            rider=rider,
+            delivery_type='return',
+            status__in=['pending_offer', 'pending']
+        ).first()
+        
+        if not delivery:
+            return Response(
+                {"success": False, "error": "No pending return pickup found for this rider"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if response_type == 'accept':
+            # Accept the return pickup
+            delivery.status = 'accepted'
+            delivery.updated_at = timezone.now()
+            delivery.save()
+            
+            # Update rider availability
+            rider.availability_status = 'busy'
+            rider.is_accepting_deliveries = False
+            rider.save()
+            
+            # Update ReturnRequestItem status to pickup_accepted
+            return_request_item.status = 'pickup_accepted'
+            return_request_item.updated_at = timezone.now()
+            # Set updated_by to the rider's user if the field exists
+            if hasattr(return_request_item, 'updated_by') and hasattr(rider, 'rider'):
+                return_request_item.updated_by = rider.rider
+            return_request_item.save()
+            
+            # Create notification for buyer
+            Notification.objects.create(
+                user=refund.requested_by,
+                title='Return Pickup Accepted',
+                type='return_pickup',
+                message=f'Rider {rider.rider.first_name} {rider.rider.last_name} has accepted your return pickup request.',
+                is_read=False
+            )
+            
+            # Create notification for seller
+            try:
+                checkout = Checkout.objects.filter(order=refund.order_id).first()
+                if checkout and checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                    shop = checkout.cart_item.product.shop
+                    if shop and shop.customer and shop.customer.customer:
+                        Notification.objects.create(
+                            user=shop.customer.customer,
+                            title='Return Pickup Accepted',
+                            type='return_pickup',
+                            message=f'Rider {rider.rider.first_name} {rider.rider.last_name} has accepted the return pickup for order #{str(refund.order_id.order)[:8]}.',
+                            is_read=False
+                        )
+            except Exception as e:
+                print(f"Error creating seller notification: {e}")
+            
+            message = "Return pickup accepted successfully"
+            
+        else:  # reject
+            delivery.status = 'declined'
+            delivery.updated_at = timezone.now()
+            delivery.save()
+            
+            # Increment decline count
+            today_declines = self._get_today_declines_count(rider)
+            
+            # Update ReturnRequestItem status
+            return_request_item.status = 'pickup_rejected'
+            return_request_item.save()
+            
+            # Notify the seller that rider declined
+            try:
+                checkout = Checkout.objects.filter(order=refund.order_id).first()
+                if checkout and checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                    shop = checkout.cart_item.product.shop
+                    if shop and shop.customer and shop.customer.customer:
+                        Notification.objects.create(
+                            user=shop.customer.customer,
+                            title='Return Pickup Declined',
+                            type='return_pickup',
+                            message=f'Rider {rider.rider.first_name} {rider.rider.last_name} has declined the return pickup for order #{str(refund.order_id.order)[:8]}' + (f'. Reason: {reason}' if reason else ''),
+                            is_read=False
+                        )
+            except Exception as e:
+                print(f"Error creating seller notification: {e}")
+            
+            # Notify the buyer
+            Notification.objects.create(
+                user=refund.requested_by,
+                title='Return Pickup Declined',
+                type='return_pickup',
+                message=f'The rider has declined your return pickup request. You can request another rider or choose walk-in return.',
+                is_read=False
+            )
+            
+            message = "Return pickup declined"
+        
+        return Response({
+            "success": True,
+            "message": message,
+            "data": {
+                "delivery_id": str(delivery.id),
+                "delivery_status": delivery.status,
+                "refund_id": str(refund.refund_id),
+                "return_status": return_request_item.status,
+                "declines_remaining": 3 - (today_declines + 1) if response_type == 'reject' else None
+            }
+        })
+
+    @action(detail=False, methods=['get'])
+    def get_return_pickups(self, request):
+        """
+        Get return pickup requests assigned to this rider
+        """
+        rider = self._get_rider(request)
+        if not rider:
+            return Response(
+                {"success": False, "error": "Rider not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get return pickups assigned to this rider
+        deliveries = Delivery.objects.filter(
+            rider=rider,
+            delivery_type='return',
+            status__in=['pending_offer', 'pending', 'accepted']
+        ).select_related('order', 'order__user', 'order__shipping_address')
+        
+        # Also check for return pickups that need assignment
+        pending_return_deliveries = Delivery.objects.filter(
+            delivery_type='return',
+            status='pending_offer',
+            rider__isnull=True
+        ).select_related('order', 'order__user', 'order__shipping_address')
+        
+        pickup_data = []
+        
+        for delivery in deliveries:
+            order = delivery.order
+            shipping_address = order.shipping_address
+            
+            # Get product image for display
+            product_image_url = None
+            try:
+                checkout_items = Checkout.objects.filter(order=order)
+                for item in checkout_items:
+                    if item.cart_item and item.cart_item.variant:
+                        product = item.cart_item.variant.product
+                        if product:
+                            first_media = product.productmedia_set.first()
+                            if first_media and first_media.file_data:
+                                product_image_url = get_media_url(first_media.file_data)
+                                break
+            except Exception as e:
+                print(f"Error getting product image: {e}")
+            
+            pickup_data.append({
+                "delivery_id": str(delivery.id),
+                "refund_id": delivery.metadata.get('refund_id') if delivery.metadata else None,
+                "status": delivery.status,
+                "order": {
+                    "order_id": str(order.order),
+                    "customer": {
+                        "name": f"{order.user.first_name} {order.user.last_name}".strip() or order.user.username,
+                        "contact_number": order.user.contact_number,
+                    },
+                    "shipping_address": {
+                        "full_address": shipping_address.get_full_address() if shipping_address else None,
+                        "latitude": float(shipping_address.latitude) if shipping_address and shipping_address.latitude else None,
+                        "longitude": float(shipping_address.longitude) if shipping_address and shipping_address.longitude else None,
+                    } if shipping_address else None,
+                    "pickup_location": delivery.metadata.get('pickup_location') if delivery.metadata else None,
+                    "destination_location": delivery.metadata.get('destination_location') if delivery.metadata else None,
+                },
+                "product_image": product_image_url,
+                "delivery_fee": delivery.delivery_fee,
+                "distance_km": float(delivery.distance_km) if delivery.distance_km else None,
+                "estimated_minutes": delivery.estimated_minutes,
+                "created_at": delivery.created_at.isoformat(),
+            })
+        
+        return Response({
+            "success": True,
+            "data": {
+                "assigned_pickups": pickup_data,
+                "pending_assignments_count": pending_return_deliveries.count(),
+                "total_return_pickups": deliveries.count()
             }
         })
 
@@ -34560,6 +35049,7 @@ class RefundViewSet(viewsets.ViewSet):
     def cancel_refund(self, request, pk=None):
         """
         BUYER VIEW: Cancel a refund request
+        For return/replace refunds, go back to waiting_for_return status
         """
         user_id = request.headers.get('X-User-Id')
         if not user_id:
@@ -34586,7 +35076,34 @@ class RefundViewSet(viewsets.ViewSet):
                 return Response({"error": "Only pending refunds can be cancelled"}, 
                                 status=status.HTTP_400_BAD_REQUEST)
             
-            # Update refund status
+            # For return/replace refunds, revert to waiting_for_return status
+            if refund.refund_type in ['return', 'replace']:
+                try:
+                    return_request = refund.return_request
+                    if return_request:
+                        # Reset return_request status to 'pending' or 'waiting'
+                        return_request.status = 'pending'
+                        return_request.updated_at = timezone.now()
+                        return_request.updated_by = user
+                        return_request.tracking_number = None
+                        return_request.logistic_service = None
+                        return_request.notes = "Refund cancelled by buyer"
+                        return_request.save()
+                        
+                        # Update refund status back to 'approved' (so buyer can request rider again)
+                        refund.status = 'approved'
+                        refund.processed_by = None
+                        refund.processed_at = None
+                        refund.save()
+                        
+                        return Response({
+                            "message": "Refund cancelled. You can request a new rider.",
+                            "status": "approved"
+                        })
+                except ReturnRequestItem.DoesNotExist:
+                    pass
+            
+            # For keep refunds or if no return_request
             refund.status = 'cancelled'
             refund.save()
             
@@ -34595,6 +35112,457 @@ class RefundViewSet(viewsets.ViewSet):
         except User.DoesNotExist:
             return Response({"error": "User not found"}, 
                             status=status.HTTP_404_NOT_FOUND)
+
+    
+    @action(detail=True, methods=['post'])
+    def cancel_rider_assignment(self, request, pk=None):
+        """
+        BUYER VIEW: Cancel the current rider assignment for return pickup
+        This reverts the return_request status back to 'pending' so buyer can request a new rider.
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Authorization check - only the buyer can cancel
+            if str(refund.requested_by.id) != str(user.id):
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Check if this is a return/replace refund
+            if refund.refund_type not in ['return', 'replace']:
+                return Response({"error": "This refund type does not have rider assignment"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get return request
+            return_request = getattr(refund, 'return_request', None)
+            if not return_request:
+                return Response({"error": "No return request found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if rider is assigned (pickup_requested status)
+            if return_request.status != 'pickup_requested':
+                return Response({"error": "No active rider assignment to cancel"}, 
+                            status=status.HTTP_400_BAD_REQUEST)
+            
+            # Find and cancel the delivery
+            from .models import Delivery
+            delivery = Delivery.objects.filter(
+                order=refund.order_id,
+                delivery_type='return',
+                status__in=['pending', 'pending_offer', 'accepted']
+            ).first()
+            
+            if delivery:
+                # Cancel the delivery
+                delivery.status = 'cancelled'
+                delivery.save()
+            
+            # Reset return_request status back to 'pending'
+            return_request.status = 'pending'
+            return_request.updated_at = timezone.now()
+            return_request.updated_by = user
+            return_request.tracking_number = None
+            return_request.logistic_service = None
+            return_request.notes = "Rider assignment cancelled by buyer"
+            return_request.save()
+            
+            # Refund status stays 'approved'
+            # No need to change refund.status
+            
+            data = self._get_refund_details_data(refund, request, user)
+            
+            return Response({
+                "success": True,
+                "message": "Rider assignment cancelled. You can request a new rider.",
+                "refund": data,
+                "return_status": return_request.status
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+                            
+    @action(detail=True, methods=['post'])
+    def request_return_pickup(self, request, pk=None):
+        """
+        BUYER VIEW: Request a rider to pick up the return item
+        Uses the existing Delivery model with delivery_type='return'
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            refund = Refund.objects.get(refund_id=pk)
+        except Refund.DoesNotExist:
+            return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Authorization check - only the buyer can request pickup
+        if str(refund.requested_by.id) != str(user.id):
+            return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Only for approved return or replace refunds
+        if refund.status != 'approved':
+            return Response({"error": "Refund not approved for return"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if refund.refund_type not in ['return', 'replace']:
+            return Response({"error": "This refund type does not require return pickup"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create or update return_request
+        return_request = getattr(refund, 'return_request', None)
+        if not return_request:
+            return_request = ReturnRequestItem.objects.create(
+                refund_id=refund,
+                return_method='courier',
+                return_deadline=timezone.now() + timedelta(days=7),
+                status='pending_pickup'
+            )
+        
+        # Get seller shop address for destination
+        shop = None
+        try:
+            first_checkout = Checkout.objects.filter(
+                order=refund.order_id
+            ).select_related('cart_item__product__shop__customer__customer').first()
+            
+            if first_checkout and first_checkout.cart_item and first_checkout.cart_item.product:
+                shop = first_checkout.cart_item.product.shop
+        except Exception:
+            pass
+        
+        if not shop:
+            return Response({"error": "Cannot find shop address for pickup"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not shop.latitude or not shop.longitude:
+            return Response({"error": "Shop has no coordinates. Please contact support."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get customer pickup location (customer's address)
+        pickup_lat = None
+        pickup_lng = None
+        pickup_address = None
+        
+        # Use customer's shipping address from order
+        order = refund.order_id
+        if order.shipping_address:
+            if order.shipping_address.latitude and order.shipping_address.longitude:
+                pickup_lat = float(order.shipping_address.latitude)
+                pickup_lng = float(order.shipping_address.longitude)
+                pickup_address = order.shipping_address.get_full_address()
+        
+        if not pickup_lat or not pickup_lng:
+            if user.latitude and user.longitude:
+                pickup_lat = float(user.latitude)
+                pickup_lng = float(user.longitude)
+                pickup_address = f"{user.street}, {user.barangay}, {user.city}, {user.province}"
+        
+        if not pickup_lat or not pickup_lng:
+            return Response({"error": "Customer has no location coordinates. Please update address in profile."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Shop is the destination for return pickup
+        dest_lat = float(shop.latitude)
+        dest_lng = float(shop.longitude)
+        dest_address = shop.name
+        
+        # Check for existing active delivery for this return
+        existing_delivery = Delivery.objects.filter(
+            order=order,
+            delivery_type='return',
+            status__in=['pending', 'pending_offer', 'accepted', 'picked_up', 'in_progress']
+        ).first()
+        
+        if existing_delivery:
+            return Response({
+                "error": "A return pickup is already in progress",
+                "delivery_id": str(existing_delivery.id),
+                "status": existing_delivery.status
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get available riders (same logic as seller order list)
+        available_riders = Rider.objects.filter(
+            verified=True,
+            availability_status='available',
+            is_accepting_deliveries=True
+        ).select_related('rider')
+        
+        if not available_riders.exists():
+            return Response({"error": "No available riders found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Import distance calculation functions from SellerOrderList
+        from api.views import SellerOrderList
+        seller_order_view = SellerOrderList()
+        
+        # Calculate distances for each rider
+        rider_distances = []
+        rider_comparison = []
+        
+        for rider in available_riders:
+            if not (rider.rider.latitude and rider.rider.longitude):
+                continue
+            
+            rider_lat = float(rider.rider.latitude)
+            rider_lng = float(rider.rider.longitude)
+            
+            # Check if this rider has rejected this return before
+            rejected_before = Delivery.objects.filter(
+                order=order,
+                rider=rider,
+                delivery_type='return',
+                status__in=['rejected', 'declined']
+            ).exists()
+            
+            if rejected_before:
+                continue
+            
+            # Calculate distances
+            distance_to_pickup = seller_order_view._calculate_driving_distance(rider_lat, rider_lng, pickup_lat, pickup_lng)
+            distance_pickup_to_dest = seller_order_view._calculate_driving_distance(pickup_lat, pickup_lng, dest_lat, dest_lng)
+            total_distance = distance_to_pickup + distance_pickup_to_dest
+            
+            rider_distances.append({
+                'rider': rider,
+                'total_distance': total_distance,
+                'distance_to_pickup': distance_to_pickup,
+                'distance_pickup_to_dest': distance_pickup_to_dest
+            })
+            
+            rider_name = f"{rider.rider.first_name} {rider.rider.last_name}".strip() or rider.rider.username
+            rider_comparison.append({
+                'rider_name': rider_name,
+                'rider_username': rider.rider.username,
+                'vehicle_type': rider.vehicle_type or 'N/A',
+                'plate_number': rider.plate_number or 'N/A',
+                'distance_to_pickup_km': round(distance_to_pickup, 2),
+                'distance_pickup_to_dest_km': round(distance_pickup_to_dest, 2),
+                'total_distance_km': round(total_distance, 2)
+            })
+        
+        if not rider_distances:
+            return Response({"error": "No eligible riders found for return pickup"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Sort by total distance (nearest first) and select nearest rider
+        rider_distances.sort(key=lambda x: x['total_distance'])
+        nearest = rider_distances[0]
+        selected_rider = nearest['rider']
+        total_distance = nearest['total_distance']
+        distance_to_pickup = nearest['distance_to_pickup']
+        distance_pickup_to_dest = nearest['distance_pickup_to_dest']
+        
+        # Calculate delivery fee (free for returns - ₱0)
+        delivery_fee = 0  # Free return pickup
+        estimated_minutes = seller_order_view._calculate_estimated_time(total_distance)
+        
+        # Create delivery record for return pickup
+        delivery = Delivery.objects.create(
+            order=order,
+            rider=selected_rider,
+            delivery_type='return',
+            status='pending',
+            distance_km=Decimal(str(total_distance)),
+            estimated_minutes=estimated_minutes,
+            delivery_fee=delivery_fee,
+            metadata={
+                'refund_id': str(refund.refund_id),
+                'return_type': refund.refund_type,
+                'distance_to_pickup': distance_to_pickup,
+                'distance_pickup_to_dest': distance_pickup_to_dest,
+                'pickup_location': {
+                    'lat': pickup_lat,
+                    'lng': pickup_lng,
+                    'address': pickup_address
+                },
+                'destination_location': {
+                    'lat': dest_lat,
+                    'lng': dest_lng,
+                    'address': dest_address
+                },
+                'all_riders_compared': rider_comparison,
+                'nearest_rider': {
+                    'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
+                    'username': selected_rider.rider.username,
+                    'total_distance_km': round(total_distance, 2),
+                    'delivery_fee': delivery_fee,
+                    'estimated_minutes': estimated_minutes
+                }
+            }
+        )
+        
+        # Update return_request with delivery reference
+        return_request.delivery = delivery
+        return_request.status = 'pickup_requested'
+        return_request.save()
+        
+        # Notify the rider
+        Notification.objects.create(
+            user=selected_rider.rider,
+            title='New Return Pickup Assignment',
+            type='return_pickup',
+            message=f'You have been assigned to pick up return item from {pickup_address[:50]}... '
+                    f'Distance: {total_distance:.1f}km, Fee: ₱{delivery_fee:.2f}',
+            is_read=False
+        )
+        
+        # Notify the seller
+        if shop and shop.customer and shop.customer.customer:
+            Notification.objects.create(
+                user=shop.customer.customer,
+                title='Return Pickup Requested',
+                type='return_pickup',
+                message=f'A rider has been assigned to pick up return item from customer for order #{str(order.order)[:8]}',
+                is_read=False
+            )
+        
+        nearest_rider_name = f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username
+        
+        return Response({
+            "success": True,
+            "message": "Rider assigned for return pickup",
+            "delivery_id": str(delivery.id),
+            "refund_id": str(refund.refund_id),
+            "rider": {
+                "name": nearest_rider_name,
+                "username": selected_rider.rider.username,
+                "vehicle": selected_rider.vehicle_type,
+                "plate_number": selected_rider.plate_number,
+                "total_distance_km": round(total_distance, 2),
+                "delivery_fee": delivery_fee,
+                "estimated_minutes": estimated_minutes
+            },
+            "all_riders_compared": rider_comparison
+        }, status=status.HTTP_200_OK)
+    def _calculate_driving_distance(self, origin_lat, origin_lng, dest_lat, dest_lng):
+        """Calculate driving distance using Google Maps API"""
+        GOOGLE_MAPS_API_KEY = getattr(settings, 'GOOGLE_MAPS_API_KEY', None)
+        
+        if not GOOGLE_MAPS_API_KEY:
+            return self._haversine_distance(origin_lat, origin_lng, dest_lat, dest_lng)
+        
+        try:
+            url = "https://maps.googleapis.com/maps/api/distancematrix/json"
+            params = {
+                'origins': f"{origin_lat},{origin_lng}",
+                'destinations': f"{dest_lat},{dest_lng}",
+                'key': GOOGLE_MAPS_API_KEY,
+                'units': 'metric'
+            }
+            response = requests.get(url, params=params, timeout=5)
+            data = response.json()
+            
+            if data.get('status') == 'OK':
+                rows = data.get('rows', [])
+                if rows:
+                    elements = rows[0].get('elements', [])
+                    if elements and elements[0].get('status') == 'OK':
+                        distance_meters = elements[0].get('distance', {}).get('value', 0)
+                        if distance_meters > 0:
+                            return distance_meters / 1000
+            return self._haversine_distance(origin_lat, origin_lng, dest_lat, dest_lng)
+        except Exception:
+            return self._haversine_distance(origin_lat, origin_lng, dest_lat, dest_lng)
+
+    def _haversine_distance(self, lat1, lng1, lat2, lng2):
+        """Calculate straight-line distance"""
+        R = 6371
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        delta_lat = math.radians(lat2 - lat1)
+        delta_lng = math.radians(lng2 - lng1)
+        
+        a = math.sin(delta_lat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lng / 2) ** 2
+        c = 2 * math.asin(math.sqrt(a))
+        return R * c
+
+    @action(detail=True, methods=['post'])
+    def mark_ready_for_pickup(self, request, pk=None):
+        """
+        BUYER VIEW: Mark the return item as ready for pickup (when rider has accepted)
+        This updates the return_request status to 'ready_for_pickup'
+        """
+        user_id = request.headers.get('X-User-Id')
+        if not user_id:
+            return Response({"error": "User ID required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Get refund
+            try:
+                refund = Refund.objects.get(refund_id=pk)
+            except Refund.DoesNotExist:
+                return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Authorization check - only the buyer
+            if str(refund.requested_by.id) != str(user.id):
+                return Response({"error": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Get return request
+            return_request = getattr(refund, 'return_request', None)
+            if not return_request:
+                return Response({"error": "No return request found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if rider has accepted
+            if return_request.status != 'pickup_accepted':
+                return Response({"error": "Rider has not accepted the pickup yet"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Update status to ready_for_pickup
+            return_request.status = 'ready_for_pickup'
+            return_request.updated_at = timezone.now()
+            return_request.updated_by = user
+            return_request.save()
+            
+            # Notify the rider (via their delivery record)
+            try:
+                from .models import Delivery
+                delivery = Delivery.objects.filter(order=refund.order_id, delivery_type='return', status='accepted').first()
+                if delivery and delivery.rider:
+                    Notification.objects.create(
+                        user=delivery.rider.rider,
+                        title='Return Item Ready for Pickup',
+                        type='return_pickup',
+                        message=f'The buyer has marked the return item as ready for pickup. Please proceed to collect the item.',
+                        is_read=False
+                    )
+            except Exception as e:
+                print(f"Error notifying rider: {e}")
+            
+            data = self._get_refund_details_data(refund, request, user)
+            return Response({
+                "success": True,
+                "message": "Item marked as ready for pickup",
+                "refund": data,
+                "return_status": return_request.status
+            })
+            
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    def _calculate_delivery_fee(self, distance_km):
+        """Calculate delivery fee (maybe free for returns)"""
+        # Option 1: Free return pickup
+        return 0.00
+        # Option 2: Subsidized fee
+        # if distance_km <= 0:
+        #     return 0.00
+        # fee = distance_km * 20.00
+        # return min(fee, 150.00)
+
+    def _calculate_estimated_time(self, distance_km):
+        """Calculate estimated time"""
+        if distance_km <= 0:
+            return 15
+        time_minutes = distance_km / 0.5
+        return max(15, int(time_minutes))
 
     # ========== SELLER VIEWS ==========
 
@@ -36675,65 +37643,77 @@ class RefundViewSet(viewsets.ViewSet):
         # Seller delivery proofs (if any)
         try:
             from .models import Delivery, Proof
-            delivery = Delivery.objects.filter(order=refund.order_id).first()
-            if delivery:
-                seller_proofs = Proof.objects.filter(delivery=delivery, proof_type='seller').order_by('-uploaded_at')
-                data['seller_delivery_proofs'] = [
-                    {
-                        "id": str(p.id),
-                        "file_url": request.build_absolute_uri(p.file_data.url) if p.file_data else None,
-                        "file_type": p.file_type,
-                        "uploaded_at": p.uploaded_at.isoformat() if p.uploaded_at else None,
-                    }
-                    for p in seller_proofs
-                ]
+            # For return/replace refunds, look for return-type deliveries
+            if refund.refund_type in ['return', 'replace']:
+                delivery = Delivery.objects.filter(order=refund.order_id, delivery_type='return').first()
             else:
+                delivery = Delivery.objects.filter(order=refund.order_id).first()
+            
+            if delivery:
+                # Add delivery_type to the response
+                data['delivery_info'] = {
+                    "id": str(delivery.id),
+                    "status": delivery.status,
+                    "delivery_type": delivery.delivery_type,
+                    "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}".strip() if delivery.rider else None,
+                    "rider_phone": delivery.rider.rider.contact_number if delivery.rider else None,
+                    "distance_km": float(delivery.distance_km) if delivery.distance_km else None,
+                    "estimated_minutes": delivery.estimated_minutes,
+                    "delivery_fee": delivery.delivery_fee,
+                    "created_at": delivery.created_at.isoformat(),
+                    "updated_at": delivery.updated_at.isoformat(),
+                }
+                
+                seller_proofs = Proof.objects.filter(delivery=delivery, proof_type='seller').order_by('-uploaded_at')
                 data['seller_delivery_proofs'] = []
+            else:
+                data['delivery_info'] = None
         except Exception:
-            data['seller_delivery_proofs'] = []
+            data['delivery_info'] = None
 
         # Return request information
-        # Return request information
-        # if refund.refund_type in ['return', 'replace']:
-        #     try:
-        #         return_request = refund.return_request
-        #         data['return_request'] = {
-        #             "return_id": str(return_request.return_id),
-        #             "return_method": return_request.return_method,
-        #             "logistic_service": return_request.logistic_service,
-        #             "tracking_number": return_request.tracking_number,
-        #             "status": return_request.status,
-        #             "shipped_at": return_request.shipped_at.isoformat() if return_request.shipped_at else None,
-        #             "received_at": return_request.received_at.isoformat() if return_request.received_at else None,
-        #             "return_deadline": return_request.return_deadline.isoformat() if return_request.return_deadline else None,
-        #             "notes": return_request.notes
-        #         }
+        if refund.refund_type in ['return', 'replace']:
+            try:
+                return_request = refund.return_request
+                data['return_request'] = {
+                    "return_id": str(return_request.return_id),
+                    "return_method": return_request.return_method,
+                    "logistic_service": return_request.logistic_service,
+                    "tracking_number": return_request.tracking_number,
+                    "status": return_request.status,
+                    "shipped_at": return_request.shipped_at.isoformat() if return_request.shipped_at else None,
+                    "received_at": return_request.received_at.isoformat() if return_request.received_at else None,
+                    "return_deadline": return_request.return_deadline.isoformat() if return_request.return_deadline else None,
+                    "notes": return_request.notes
+                }
                 
-        #         # Get return request media
-        #         return_media = ReturnRequestMedia.objects.filter(return_id=return_request).order_by('-uploaded_at')
+                # Get return request media
+                return_media = ReturnRequestMedia.objects.filter(return_id=return_request).order_by('-uploaded_at')
                 
-        #         # Create media array with proper URLs
-        #         media_array = []
-        #         for rm in return_media:
-        #             if rm.file_data:
-        #                 # Build absolute URL
-        #                 file_url = request.build_absolute_uri(rm.file_data.url)
-        #                 media_array.append({
-        #                     "id": str(rm.id),
-        #                     "file_url": file_url,
-        #                     "file_type": rm.file_type,
-        #                     "notes": rm.notes,
-        #                     "uploaded_at": rm.uploaded_at.isoformat(),
-        #                     "uploaded_by": str(rm.uploaded_by.id) if rm.uploaded_by else None
-        #                 })
+                # Create media array with proper URLs
+                media_array = []
+                for rm in return_media:
+                    if rm.file_data:
+                        # Build absolute URL
+                        file_url = request.build_absolute_uri(rm.file_data.url)
+                        media_array.append({
+                            "id": str(rm.id),
+                            "file_url": file_url,
+                            "file_type": rm.file_type,
+                            "notes": rm.notes,
+                            "uploaded_at": rm.uploaded_at.isoformat(),
+                            "uploaded_by": str(rm.uploaded_by.id) if rm.uploaded_by else None
+                        })
                 
-        #         # Add media to return_request in multiple formats for frontend compatibility
-        #         data['return_request']['media'] = media_array
-        #         data['return_request']['medias'] = media_array  # For backward compatibility
-        #         data['return_request']['media_files'] = media_array  # For backward compatibility
+                # Add media to return_request in multiple formats for frontend compatibility
+                data['return_request']['media'] = media_array
+                data['return_request']['medias'] = media_array  # For backward compatibility
+                data['return_request']['media_files'] = media_array  # For backward compatibility
                 
-        #     except ReturnRequestItem.DoesNotExist:
-        #         data['return_request'] = None
+            except ReturnRequestItem.DoesNotExist:
+                data['return_request'] = None
+        else:
+            data['return_request'] = None
 
         # Return address
         try:

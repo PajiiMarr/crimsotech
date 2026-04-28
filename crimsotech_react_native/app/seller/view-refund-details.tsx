@@ -1,5 +1,6 @@
 // app/seller/view-refund-details.tsx
 import React, { useState, useEffect, useRef } from 'react';
+import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   SafeAreaView,
   View,
@@ -39,6 +40,42 @@ const STATUS_COLORS: Record<string, string> = {
   completed: '#059669',
   rejected: '#DC2626',
   cancelled: '#9CA3AF',
+};
+
+// ========== RIDER DETAILS COMPONENT ==========
+const RiderDetailsCard = ({ deliveryInfo }: { deliveryInfo: any }) => {
+  if (!deliveryInfo) return null;
+  
+  return (
+    <View style={styles.riderCard}>
+      <View style={styles.riderCardHeader}>
+        <Ionicons name="bicycle-outline" size={18} color="#3B82F6" />
+        <Text style={styles.riderCardTitle}>Rider Details</Text>
+      </View>
+      <View style={styles.riderCardContent}>
+        <View style={styles.riderInfoRow}>
+          <Ionicons name="person-outline" size={14} color="#6B7280" />
+          <Text style={styles.riderInfoText}>Name: {deliveryInfo.rider_name || 'N/A'}</Text>
+        </View>
+        <View style={styles.riderInfoRow}>
+          <Ionicons name="call-outline" size={14} color="#6B7280" />
+          <Text style={styles.riderInfoText}>Contact: {deliveryInfo.rider_phone || 'N/A'}</Text>
+        </View>
+        {/* <View style={styles.riderInfoRow}>
+          <MaterialCommunityIcons name="car" size={14} color="#6B7280" />
+          <Text style={styles.riderInfoText}>Vehicle: {deliveryInfo.vehicle_type || 'N/A'} {deliveryInfo.plate_number ? `(${deliveryInfo.plate_number})` : ''}</Text>
+        </View> */}
+        <View style={styles.riderInfoRow}>
+          <MaterialCommunityIcons name="map-marker-distance" size={14} color="#6B7280" />
+          <Text style={styles.riderInfoText}>Distance: {deliveryInfo.distance_km ? `${deliveryInfo.distance_km} km` : 'N/A'}</Text>
+        </View>
+        <View style={styles.riderInfoRow}>
+          <MaterialIcons name="access-time" size={14} color="#6B7280" />
+          <Text style={styles.riderInfoText}>Est. Time: {deliveryInfo.estimated_minutes ? `~${deliveryInfo.estimated_minutes} mins` : 'N/A'}</Text>
+        </View>
+      </View>
+    </View>
+  );
 };
 
 // ========== HELPER TO GET DISPLAY STATUS ==========
@@ -932,16 +969,24 @@ const getStatusDescription = () => {
       }
       
       // Show "Mark as Received" button when return status is 'shipped'
+      // Show "Mark as Received" button when return status is 'shipped'
       if (returnStatus === 'shipped') {
+        // Check if delivery is delivered - only enable if delivered
+        const isDelivered = refund.delivery_info?.status === 'delivered';
+        
         buttons.push(
           <TouchableOpacity 
             key="markReceived" 
-            style={[styles.actionBtn, { backgroundColor: '#10B981' }]} 
+            style={[styles.actionBtn, { backgroundColor: isDelivered ? '#10B981' : '#9CA3AF' }]} 
             onPress={() => {
-              setReturnAction('mark_received');
-              setShowMarkReceivedConfirm(true);
+              if (isDelivered) {
+                setReturnAction('mark_received');
+                setShowMarkReceivedConfirm(true);
+              } else {
+                Alert.alert('Cannot Mark as Received', 'The rider has not delivered the item yet. Please wait until the item is marked as delivered by the rider.');
+              }
             }} 
-            disabled={actionLoading}
+            disabled={actionLoading || !isDelivered}
           >
             <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
             <Text style={styles.actionBtnText}>Mark as Received</Text>
@@ -994,6 +1039,8 @@ const getStatusDescription = () => {
         </TouchableOpacity>
       );
     }
+
+    
   
     // REMOVED: Only show Upload Proofs for other statuses - now all use Add More Proof
     // Only show Add More Proof for any status that needs evidence upload
@@ -1663,8 +1710,6 @@ const getStatusDescription = () => {
         style={styles.scrollView}
       >
         {/* Status Card */}
-        {/* Status Card */}
-{/* Status Card */}
 {/* Status Card */}
 <View style={styles.statusCard}>
   <View style={styles.statusRow}>
@@ -1676,6 +1721,11 @@ const getStatusDescription = () => {
     </View>
   </View>
   <Text style={styles.statusDescription}>{getStatusDescription()}</Text>
+  
+  {/* ADD RIDER DETAILS - Show for Approved - Shipped status */}
+  {getDisplayStatus(refund) === 'Approved - Shipped' && refund.delivery_info && (
+    <RiderDetailsCard deliveryInfo={refund.delivery_info} />
+  )}
   
   {/* ADD RETURN DEADLINE - Show for Approved - Waiting for return status */}
   {getDisplayStatus(refund) === 'Approved - Waiting for return' && refund.return_request?.return_deadline && (
@@ -1830,9 +1880,8 @@ const getStatusDescription = () => {
         </View>
 
         {/* Return Request */}
-{/* Return Request */}
-{/* Return Request */}
-{refund.return_request && (
+{/* Return Request - REMOVED for Approved - Shipped status */}
+{refund.return_request && getDisplayStatus(refund) !== 'Approved - Shipped' && (
   <View style={styles.card}>
     <Text style={styles.cardTitle}>Return Request</Text>
     <InfoRow label="Method" value={refund.return_request.return_method || 'N/A'} />
@@ -1847,42 +1896,6 @@ const getStatusDescription = () => {
     <InfoRow label="Received At" value={formatDate(refund.return_request.received_at)} />
     <InfoRow label="Return Deadline" value={formatDate(refund.return_request.return_deadline)} />
     {refund.return_request.notes && <InfoRow label="Notes" value={refund.return_request.notes} />}
-    
-    {/* Display shipping proofs from return_request.medias (plural) */}
-    {/* {refund.return_request.medias && refund.return_request.medias.length > 0 && (
-      <>
-        <Text style={[styles.cardTitle, { marginTop: 8 }]}>Shipping Proofs</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mediaScroll}>
-          {refund.return_request.medias.map((media: any, idx: number) => {
-            const fileUrl = media.file_url;
-            const isVideo = media.file_type === 'video' || 
-                           media.file_type === 'video/mp4' ||
-                           (fileUrl && (fileUrl.includes('.mp4') || fileUrl.includes('.mov') || fileUrl.includes('.webm')));
-            
-            if (!fileUrl) return null;
-            
-            return (
-              <TouchableOpacity
-                key={idx}
-                style={styles.mediaThumbWrapper}
-                onPress={() => openMediaViewer(fileUrl, media.file_type)}
-              >
-                {isVideo ? (
-                  <View style={styles.videoThumb}>
-                    <Image source={{ uri: fileUrl }} style={styles.mediaThumb} resizeMode="cover" />
-                    <View style={styles.playOverlay}>
-                      <Ionicons name="play-circle" size={30} color="#fff" />
-                    </View>
-                  </View>
-                ) : (
-                  <Image source={{ uri: fileUrl }} style={styles.mediaThumb} resizeMode="cover" />
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </>
-    )} */}
   </View>
 )}
 
@@ -2234,6 +2247,43 @@ returnDeadlineNoticeText: {
   fontSize: 12,
   color: '#92400E',
   fontWeight: '500',
+  flex: 1,
+},
+riderCard: {
+  marginTop: 12,
+  backgroundColor: '#F0F9FF',
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: '#DBEAFE',
+  overflow: 'hidden',
+},
+riderCardHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  padding: 12,
+  backgroundColor: '#EFF6FF',
+  borderBottomWidth: 1,
+  borderBottomColor: '#DBEAFE',
+  gap: 8,
+},
+riderCardTitle: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#1E40AF',
+  flex: 1,
+},
+riderCardContent: {
+  padding: 12,
+  gap: 8,
+},
+riderInfoRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 8,
+},
+riderInfoText: {
+  fontSize: 13,
+  color: '#1F2937',
   flex: 1,
 },
 });
