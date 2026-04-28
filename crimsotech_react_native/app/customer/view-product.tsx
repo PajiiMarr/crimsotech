@@ -2542,24 +2542,26 @@ export default function CustomerViewProductScreen() {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-  onPress={() => router.push('/customer/cart')}
-  style={{
-    flex: 1,
-    backgroundColor: "#EA580C",
-    borderRadius: 8,
-    paddingVertical: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-  }}
->
-  <Ionicons name="cart-outline" size={18} color="#FFFFFF" />
-  <Text style={{ fontSize: 13, fontWeight: "600", color: "#FFFFFF" }}>
-    View Cart
-  </Text>
-</TouchableOpacity>
+          {/* <TouchableOpacity
+            onPress={buyNow}
+            disabled={addingToCart}
+            style={{
+              flex: 1,
+              backgroundColor: "#EA580C",
+              borderRadius: 8,
+              paddingVertical: 12,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              opacity: addingToCart ? 0.6 : 1,
+            }}
+          >
+            <Ionicons name="flash-outline" size={18} color="#FFFFFF" />
+            <Text style={{ fontSize: 13, fontWeight: "600", color: "#FFFFFF" }}>
+              Buy Now
+            </Text>
+          </TouchableOpacity> */}
         </View>
       ) : (
         <View
