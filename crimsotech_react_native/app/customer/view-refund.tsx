@@ -2542,12 +2542,12 @@ const handleSubmitTrackingForm = async () => {
 {(customerNote || rejectReason || sellerNote || adminNote) && (
   <View style={styles.section}>
     <Text style={styles.sectionTitle}>Additional Information</Text>
-    {customerNote ? (
+    {/* {customerNote ? (
       <View style={styles.noteItem}>
         <Text style={styles.noteLabel}>Customer Note:</Text>
         <Text style={styles.noteText}>{customerNote}</Text>
       </View>
-    ) : null}
+    ) : null} */}
     {rejectReason ? (
       <View style={styles.noteItem}>
         <Text style={styles.noteLabel}>Rejection Reason:</Text>

@@ -10343,57 +10343,57 @@ class AdminRefunds(viewsets.ViewSet):
         try:
             # Fetch refund with all related data in one go
             refund = Refund.objects.select_related(
-                'order_id',
-                'order_id__user',
-                'order_id__shipping_address',
-                'requested_by',
-                'processed_by',
-                'payment_detail',
-            ).prefetch_related(
-                # Order checkouts for product details
-                Prefetch(
-                    'order_id__checkout_set',
-                    queryset=Checkout.objects.select_related(
-                        'cart_item__product',
-                        'cart_item__variant',
-                    ).prefetch_related(
-                        'cart_item__product__productmedia_set',
-                        'cart_item__product__shop',
-                    ),
-                    to_attr='prefetched_checkouts'
+            'order_id',
+            'order_id__user',
+            'order_id__shipping_address',
+            'requested_by', 
+            'processed_by',
+            'payment_detail',
+        ).prefetch_related(
+            # Order checkouts for product details
+            Prefetch(
+                'order_id__checkout_set',
+                queryset=Checkout.objects.select_related(
+                    'cart_item__product',
+                    'cart_item__variant',
+                ).prefetch_related(
+                    'cart_item__product__productmedia_set',
+                    'cart_item__product__shop',
                 ),
-                # Refund media
-                Prefetch(
-                    'medias',
-                    queryset=RefundMedia.objects.select_related('uploaded_by'),
-                    to_attr='prefetched_medias'
+                to_attr='prefetched_checkouts'
+            ),
+            # Refund media
+            Prefetch(
+                'medias',
+                queryset=RefundMedia.objects.select_related('uploaded_by'),
+                to_attr='prefetched_medias'
+            ),
+            # Refund proofs
+            Prefetch(
+                'proofs',
+                queryset=RefundProof.objects.select_related('uploaded_by'),
+                to_attr='prefetched_proofs'
+            ),
+            # Dispute with evidence - REMOVE select_related for requested_by since it's a GenericForeignKey
+            Prefetch(
+                'dispute',
+                queryset=DisputeRequest.objects.select_related(
+                    'processed_by'  # ✅ Only select_related for regular ForeignKey
+                    # Don't use select_related for 'requested_by' - it's a GenericForeignKey
+                ).prefetch_related(
+                    Prefetch('evidences', queryset=DisputeEvidence.objects.all())
                 ),
-                # Refund proofs
-                Prefetch(
-                    'proofs',
-                    queryset=RefundProof.objects.select_related('uploaded_by'),
-                    to_attr='prefetched_proofs'
+                to_attr='prefetched_dispute'
+            ),
+            # Deliveries with proofs
+            Prefetch(
+                'order_id__delivery_set',
+                queryset=Delivery.objects.select_related('rider__rider').prefetch_related(
+                    Prefetch('proof_set', queryset=Proof.objects.all())
                 ),
-                # Dispute with evidence
-                Prefetch(
-                    'dispute',
-                    queryset=DisputeRequest.objects.select_related(
-                        'requested_by',
-                        'processed_by'
-                    ).prefetch_related(
-                        Prefetch('evidences', queryset=DisputeEvidence.objects.all())
-                    ),
-                    to_attr='prefetched_dispute'
-                ),
-                # Deliveries with proofs
-                Prefetch(
-                    'order_id__delivery_set',
-                    queryset=Delivery.objects.select_related('rider__rider').prefetch_related(
-                        Prefetch('proof_set', queryset=Proof.objects.all())
-                    ),
-                    to_attr='prefetched_deliveries'
-                ),
-            ).get(refund_id=pk)
+                to_attr='prefetched_deliveries'
+            ),
+        ).get(refund_id=pk)
             
         except Refund.DoesNotExist:
             return Response({"error": "Refund not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -10654,10 +10654,11 @@ class AdminRefunds(viewsets.ViewSet):
         
         # ========== 8. DISPUTE REQUEST & EVIDENCE ==========
         dispute_details = None
+        disputes = []
         dispute = getattr(refund, 'prefetched_dispute', None)
         if not dispute and hasattr(refund, 'dispute'):
             dispute = refund.dispute
-        
+
         if dispute:
             # Get evidence media
             evidence_media = []
@@ -10673,13 +10674,37 @@ class AdminRefunds(viewsets.ViewSet):
                     "created_at": evidence.created_at.isoformat() if evidence.created_at else None,
                 })
             
+            # Handle requested_by based on requested_by_entity
+            requested_by_data = None
+            if dispute.requested_by_entity == 'buyer' and dispute.buyer:
+                requested_by_data = {
+                    "id": str(dispute.buyer.id),
+                    "username": dispute.buyer.username,
+                    "type": "buyer"
+                }
+            elif dispute.requested_by_entity == 'seller' and dispute.seller:
+                requested_by_data = {
+                    "id": str(dispute.seller.id),
+                    "username": dispute.seller.username,
+                    "type": "seller"
+                }
+            elif dispute.requested_by_entity == 'rider' and dispute.rider:
+                # Note: rider is a User, but might have Rider profile
+                rider_username = dispute.rider.username
+                # Check if there's a Rider profile for this user
+                if hasattr(dispute.rider, 'rider_profile'):
+                    rider_username = dispute.rider.rider_profile.username if hasattr(dispute.rider.rider_profile, 'username') else dispute.rider.username
+                requested_by_data = {
+                    "id": str(dispute.rider.id),
+                    "username": rider_username,
+                    "type": "rider"
+                }
+            
             dispute_details = {
                 "id": str(dispute.id),
                 "refund_id": str(dispute.refund_id.refund_id) if dispute.refund_id else None,
-                "requested_by": {
-                    "id": str(dispute.requested_by.id) if dispute.requested_by else None,
-                    "username": dispute.requested_by.username if dispute.requested_by else None,
-                } if dispute.requested_by else None,
+                "requested_by": requested_by_data,
+                "requested_by_entity": dispute.requested_by_entity,
                 "reason": dispute.reason,
                 "status": dispute.status,
                 "processed_by": {
@@ -10688,11 +10713,17 @@ class AdminRefunds(viewsets.ViewSet):
                 } if dispute.processed_by else None,
                 "admin_notes": dispute.admin_notes,
                 "case_category": dispute.case_category,
+                "outcome": dispute.outcome,
+                "adjusted_amount": float(dispute.adjusted_amount) if dispute.adjusted_amount else None,
+                "liability": dispute.liability,
+                "seller_deduction_amount": float(dispute.seller_deduction_amount) if dispute.seller_deduction_amount else 0,
+                "rider_deduction_amount": float(dispute.rider_deduction_amount) if dispute.rider_deduction_amount else 0,
                 "resolved_at": dispute.resolved_at.isoformat() if dispute.resolved_at else None,
                 "created_at": dispute.created_at.isoformat() if dispute.created_at else None,
                 "updated_at": dispute.updated_at.isoformat() if dispute.updated_at else None,
                 "evidences": evidence_media,
             }
+            disputes = [dispute_details]
         
         # ========== FINAL RESPONSE ==========
         response_data = {
@@ -10705,6 +10736,7 @@ class AdminRefunds(viewsets.ViewSet):
             "refund_media": refund_media_list,
             "payment_details": payment_details,
             "dispute_details": dispute_details,
+            "disputes": disputes,
         }
         
         return Response(response_data, status=status.HTTP_200_OK)

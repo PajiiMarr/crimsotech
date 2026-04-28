@@ -70,7 +70,7 @@ interface Refund {
   requested_refund_amount?: number;
   refund_fee?: number;
   total_refund_amount?: number;
-  status: 'pending' | 'approved' | 'rejected' | 'waiting' | 'to_process' | 'completed';
+  status: 'pending' | 'approved' | 'rejected' | 'waiting' | 'to_process' | 'completed' | 'dispute'; 
   requested_at: string;
   logistic_service?: string;
   tracking_number?: string;
