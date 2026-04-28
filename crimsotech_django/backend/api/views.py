@@ -24594,7 +24594,6 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
             'success': True,
             'message': message
         })
-
 class SellerOrderList(viewsets.ViewSet):
     
     def _calculate_driving_distance(self, origin_lat, origin_lng, dest_lat, dest_lng):
@@ -25055,7 +25054,7 @@ class SellerOrderList(viewsets.ViewSet):
         ).prefetch_related('cart_item__product__productmedia_set')
         
         order_items = []
-        total_amount = Decimal('0')  # Initialize to 0 instead of order.total_amount
+        total_amount = 0  # FIX: Start from 0 instead of order.total_amount
         
         for checkout in shop_checkouts:
             if checkout.direct_product_id and not checkout.cart_item:
@@ -25091,7 +25090,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "shipping_method": None,
                     "estimated_delivery": None
                 })
-                total_amount += checkout.total_amount
+                total_amount += float(checkout.total_amount)  # Add checkout amount
                 continue
             
             cart_item = checkout.cart_item
@@ -25149,7 +25148,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "shipping_method": shipping_method,
                 "estimated_delivery": estimated_delivery
             })
-            total_amount += checkout.total_amount
+            total_amount += float(checkout.total_amount)  # Add checkout amount
         
         delivery_address = None
         if order.shipping_address:
@@ -25178,7 +25177,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "phone": order.user.contact_number or None
             },
             "status": shipping_status,
-            "total_amount": float(total_amount),  # Now this is the sum of checkouts only
+            "total_amount": total_amount,  # FIX: This now only includes the shop's portion
             "payment_method": order.payment_method,
             "delivery_method": order.delivery_method,
             "shipping_method": "Standard Shipping" if not is_pickup else "Store Pickup",
@@ -25203,6 +25202,8 @@ class SellerOrderList(viewsets.ViewSet):
         
         return order_data
 
+
+    
     
     @action(detail=False, methods=['get'])
     def order_list(self, request):
@@ -26182,6 +26183,15 @@ class SellerOrderList(viewsets.ViewSet):
                 latest_delivery.status if latest_delivery else None
             )
             
+            # Calculate total VAT from all checkout items
+            total_vat = Decimal('0.00')
+            for checkout in checkouts:
+                if checkout.cart_item and checkout.cart_item.variant:
+                    variant = checkout.cart_item.variant
+                    if variant.value_added_tax and variant.price:
+                        vat_amount = variant.price * (Decimal(str(variant.value_added_tax)) / Decimal('100'))
+                        total_vat += vat_amount * checkout.quantity
+            
             # Extract rider comparison data from the latest delivery's metadata
             rider_comparison_data = None
             nearest_rider_data = None
@@ -26206,6 +26216,9 @@ class SellerOrderList(viewsets.ViewSet):
                     },
                     'status': shipping_status,
                     'total_amount': total_amount,
+                    'shipping_fee': float(order.shipping_fee) if order.shipping_fee else None,
+                    'transaction_fee': float(order.transaction_fee) if order.transaction_fee else None,
+                    'total_vat': float(total_vat),
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
