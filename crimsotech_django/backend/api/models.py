@@ -1324,6 +1324,13 @@ class ReviewMedia(models.Model):
         return f"Media for Review {self.review.id}"
 
 class Delivery(models.Model):
+    DELIVERY_TYPE_CHOICES = [
+        ('order', 'Order Delivery'),        
+        ('return', 'Return Pickup'),        
+        ('replacement', 'Replacement'),    
+    ]
+
+    delivery_type = models.CharField(max_length=20, choices=DELIVERY_TYPE_CHOICES, default='order')  
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.CASCADE)
     rider = models.ForeignKey(Rider, on_delete=models.SET_NULL, null=True)
@@ -1917,6 +1924,9 @@ class ReturnRequestItem(models.Model):
         ('rejected', 'Rejected'),
         ('completed', 'Completed'),
         ('problem', 'Problem'),
+        ('pickup_requested', 'Pickup Requested'), 
+        ('pickup_accepted', 'Pickup Accepted'),    
+        ('pickup_rejected', 'Pickup Rejected'),
     ]
 
     return_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
