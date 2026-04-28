@@ -25012,7 +25012,7 @@ class SellerOrderList(viewsets.ViewSet):
         )
         
         is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
-                                                  for keyword in ['pickup', 'store', 'collect'])
+                                                for keyword in ['pickup', 'store', 'collect'])
         
         shop_checkouts = Checkout.objects.filter(
             order=order
@@ -25023,7 +25023,7 @@ class SellerOrderList(viewsets.ViewSet):
         ).prefetch_related('cart_item__product__productmedia_set')
         
         order_items = []
-        total_amount = float(order.total_amount) 
+        total_amount = Decimal('0')  # Initialize to 0 instead of order.total_amount
         
         for checkout in shop_checkouts:
             if checkout.direct_product_id and not checkout.cart_item:
@@ -25059,6 +25059,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "shipping_method": None,
                     "estimated_delivery": None
                 })
+                total_amount += checkout.total_amount
                 continue
             
             cart_item = checkout.cart_item
@@ -25116,7 +25117,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "shipping_method": shipping_method,
                 "estimated_delivery": estimated_delivery
             })
-            total_amount += float(checkout.total_amount)
+            total_amount += checkout.total_amount
         
         delivery_address = None
         if order.shipping_address:
@@ -25145,7 +25146,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "phone": order.user.contact_number or None
             },
             "status": shipping_status,
-            "total_amount": total_amount,
+            "total_amount": float(total_amount),  # Now this is the sum of checkouts only
             "payment_method": order.payment_method,
             "delivery_method": order.delivery_method,
             "shipping_method": "Standard Shipping" if not is_pickup else "Store Pickup",
@@ -25169,6 +25170,7 @@ class SellerOrderList(viewsets.ViewSet):
                 order_data["metadata"]["nearest_rider"] = nearest_rider_data
         
         return order_data
+
     
     @action(detail=False, methods=['get'])
     def order_list(self, request):

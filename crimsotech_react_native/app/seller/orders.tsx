@@ -94,7 +94,6 @@ interface Order {
 }
 
 // Status configuration based on order flow
-// Status configuration based on order flow
 const STATUS_CONFIG: Record<
   string,
   {
@@ -225,7 +224,7 @@ const STATUS_CONFIG: Record<
     order: 0,
   },
 };
-// Tabs configuration - Only show relevant statuses
+
 // Tabs configuration - Only show relevant statuses
 const STATUS_TABS = [
   { id: "all", label: "All", icon: "list-outline" },
@@ -298,10 +297,10 @@ export default function Orders() {
         },
       );
       if (response.data.success) {
-  const data = response.data.data || [];
-  setOrders(data);
-  setFilteredOrders(data); // ensures "All" tab renders immediately
-}
+        const data = response.data.data || [];
+        setOrders(data);
+        setFilteredOrders(data);
+      }
     } catch (error) {
       console.error("Error fetching orders:", error);
       Alert.alert("Error", "Failed to load orders");
@@ -332,34 +331,34 @@ export default function Orders() {
     }
   };
 
-const filterOrders = () => {
-  let filtered = [...orders];
+  const filterOrders = () => {
+    let filtered = [...orders];
 
-  if (searchTerm) {
-    const searchLower = searchTerm.toLowerCase();
-    filtered = filtered.filter((order) => {
-      const customerName =
-        `${order.user.first_name} ${order.user.last_name}`.toLowerCase();
-      return (
-        customerName.includes(searchLower) ||
-        order.order_id.toLowerCase().includes(searchLower) ||
-        order.user.email.toLowerCase().includes(searchLower) ||
-        order.items.some((item) =>
-          item.cart_item?.product?.name?.toLowerCase().includes(searchLower)
-        )
+    if (searchTerm) {
+      const searchLower = searchTerm.toLowerCase();
+      filtered = filtered.filter((order) => {
+        const customerName =
+          `${order.user.first_name} ${order.user.last_name}`.toLowerCase();
+        return (
+          customerName.includes(searchLower) ||
+          order.order_id.toLowerCase().includes(searchLower) ||
+          order.user.email.toLowerCase().includes(searchLower) ||
+          order.items.some((item) =>
+            item.cart_item?.product?.name?.toLowerCase().includes(searchLower)
+          )
+        );
+      });
+    }
+
+    if (activeTab !== "all") {
+      filtered = filtered.filter(
+        (order) =>
+          (order.status?.toLowerCase() || "") === activeTab.toLowerCase()
       );
-    });
-  }
+    }
 
-  if (activeTab !== "all") {
-    filtered = filtered.filter(
-      (order) =>
-        (order.status?.toLowerCase() || "") === activeTab.toLowerCase()
-    );
-  }
-
-  setFilteredOrders(filtered);
-};
+    setFilteredOrders(filtered);
+  };
 
   const formatCustomerName = (user: Order["user"]) => {
     return `${user.first_name} ${user.last_name}`.trim() || user.username;
@@ -380,7 +379,11 @@ const filterOrders = () => {
   };
 
   const formatCurrency = (amount: number) => {
-    return `₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`;
+    if (isNaN(amount) || amount === null || amount === undefined) return "₱0.00";
+    return `₱${amount.toLocaleString("en-PH", { 
+      minimumFractionDigits: 2, 
+      maximumFractionDigits: 2 
+    })}`;
   };
 
   const isPickupOrder = (order: Order) => order.is_pickup === true;
@@ -447,6 +450,7 @@ const filterOrders = () => {
     const config = STATUS_CONFIG[statusKey] || STATUS_CONFIG.default;
     return config.color;
   };
+
   const totalOrderAmount = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
 
   const counts = {
@@ -818,7 +822,7 @@ const filterOrders = () => {
                         {order.payment_method || "N/A"}
                       </Text>
                       <Text style={styles.totalAmount}>
-                        ₱{Number(order.total_amount).toFixed(2)}
+                        {formatCurrency(order.total_amount)}
                       </Text>
                     </View>
 
