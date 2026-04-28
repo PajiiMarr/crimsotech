@@ -1351,7 +1351,7 @@ const getDefaultStatusMessage = (status: string) => {
                     Refund: {formatCurrency(refundAmount)}
                   </Text>
                 ) : (
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#EE4D2D' }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#0e0a09' }}>
                     {formatCurrency(item.total)}
                   </Text>
                 )}

@@ -24594,6 +24594,7 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
             'success': True,
             'message': message
         })
+    
 class SellerOrderList(viewsets.ViewSet):
     
     def _calculate_driving_distance(self, origin_lat, origin_lng, dest_lat, dest_lng):
@@ -25054,7 +25055,7 @@ class SellerOrderList(viewsets.ViewSet):
         ).prefetch_related('cart_item__product__productmedia_set')
         
         order_items = []
-        total_amount = 0  # FIX: Start from 0 instead of order.total_amount
+        
         
         for checkout in shop_checkouts:
             if checkout.direct_product_id and not checkout.cart_item:
@@ -25090,7 +25091,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "shipping_method": None,
                     "estimated_delivery": None
                 })
-                total_amount += float(checkout.total_amount)  # Add checkout amount
+              
                 continue
             
             cart_item = checkout.cart_item
@@ -25148,7 +25149,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "shipping_method": shipping_method,
                 "estimated_delivery": estimated_delivery
             })
-            total_amount += float(checkout.total_amount)  # Add checkout amount
+        
         
         delivery_address = None
         if order.shipping_address:
@@ -25177,7 +25178,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "phone": order.user.contact_number or None
             },
             "status": shipping_status,
-            "total_amount": total_amount,  # FIX: This now only includes the shop's portion
+            "total_amount": float(order.total_amount),  # FIX: This now only includes the shop's portion
             "payment_method": order.payment_method,
             "delivery_method": order.delivery_method,
             "shipping_method": "Standard Shipping" if not is_pickup else "Store Pickup",
@@ -25262,6 +25263,9 @@ class SellerOrderList(viewsets.ViewSet):
             'ready_for_pickup': 'ready_for_pickup',
             'picked_up': 'picked_up',
         }
+
+        if order_status == 'waiting_for_rider' and delivery_status == 'accepted':
+            return 'waiting_for_pickup'
         
         # Changed from 'pending_offer' to 'pending'
         if delivery_status in ('pending',):

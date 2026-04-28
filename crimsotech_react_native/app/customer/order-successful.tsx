@@ -29,6 +29,14 @@ interface OrderDetails {
   status: string;
   shipping_method: string;
   delivery_address_text?: string;
+  shipping_address?: {
+    street_address?: string;
+    city?: string;
+    province?: string;
+    postal_code?: string;
+    country?: string;
+    full_address?: string;
+  };
   created_at: string;
   updated_at: string;
   items?: OrderItem[];
@@ -95,6 +103,33 @@ export default function OrderSuccessfulPage() {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const getFormattedAddress = () => {
+    if (order.delivery_address_text) {
+      return order.delivery_address_text;
+    }
+    
+    if (order.shipping_address) {
+      const addr = order.shipping_address;
+      if (addr.full_address) {
+        return addr.full_address;
+      }
+      
+      const parts = [
+        addr.street_address,
+        addr.city,
+        addr.province,
+        addr.postal_code,
+        addr.country
+      ].filter(Boolean);
+      
+      if (parts.length > 0) {
+        return parts.join(', ');
+      }
+    }
+    
+    return 'Pickup from store';
   };
 
   const handleContinueShopping = () => {
@@ -173,8 +208,8 @@ export default function OrderSuccessfulPage() {
           <View style={styles.infoRow}>
             <Ionicons name="location-outline" size={18} color="#6B7280" />
             <Text style={styles.infoLabel}>Address</Text>
-            <Text style={[styles.infoValue, styles.addressText]} numberOfLines={2}>
-              {order.delivery_address_text || 'Pickup from store'}
+            <Text style={[styles.infoValue, styles.addressText]} numberOfLines={3}>
+              {getFormattedAddress()}
             </Text>
           </View>
         </View>
