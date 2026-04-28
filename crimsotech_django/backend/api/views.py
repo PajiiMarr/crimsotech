@@ -17801,36 +17801,26 @@ class SellerDashboard(viewsets.ViewSet):
                 try:
                     start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
                 except:
-                    start_date = timezone.now().date() - timedelta(days=30)
+                    start_date = None
             else:
-                start_date = timezone.now().date() - timedelta(days=30)
+                start_date = None
             
             if end_date:
                 try:
                     end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
                 except:
-                    end_date = timezone.now().date()
+                    end_date = None
             else:
-                end_date = timezone.now().date()
-            
-            # Calculate date range for period comparison
-            previous_start_date, previous_end_date = self._get_previous_period_dates(
-                start_date, end_date, range_type
-            )
+                end_date = None
             
             # Build response data
             data = {
                 'success': True,
-                'date_range': {
-                    'start_date': start_date.isoformat(),
-                    'end_date': end_date.isoformat(),
-                    'range_type': range_type,
-                },
-                'summary': self._get_summary_data(shop, start_date, end_date, previous_start_date, previous_end_date),
-                'latest_orders': self._get_latest_orders(shop, start_date, end_date),
+                'summary': self._get_summary_data(shop, start_date, end_date),
+                'latest_orders': self._get_latest_orders(shop),
                 'low_stock': self._get_low_stock_data(shop),
-                'refunds': self._get_refund_data(shop, start_date, end_date),
-                'shop_performance': self._get_shop_performance_data(shop, start_date, end_date),
+                'refunds': self._get_refund_data(shop),
+                'shop_performance': self._get_shop_performance_data(shop),
                 'reports': self._get_report_data(shop),
                 'store_management_counts': self._get_store_management_counts(shop),
             }
@@ -17904,104 +17894,34 @@ class SellerDashboard(viewsets.ViewSet):
                 'product_voucher': 0,
             }
     
-    def _get_previous_period_dates(self, start_date, end_date, range_type):
-        """Calculate previous period dates for comparison"""
-        period_days = (end_date - start_date).days + 1
-        
-        if range_type == 'daily':
-            previous_start_date = start_date - timedelta(days=1)
-            previous_end_date = end_date - timedelta(days=1)
-        elif range_type == 'weekly':
-            previous_start_date = start_date - timedelta(days=7)
-            previous_end_date = end_date - timedelta(days=7)
-        elif range_type == 'monthly':
-            previous_start_date = start_date - timedelta(days=30)
-            previous_end_date = end_date - timedelta(days=30)
-        elif range_type == 'yearly':
-            previous_start_date = start_date - timedelta(days=365)
-            previous_end_date = end_date - timedelta(days=365)
-        else:
-            previous_start_date = start_date - timedelta(days=period_days)
-            previous_end_date = end_date - timedelta(days=period_days)
-        
-        return previous_start_date, previous_end_date
-    
-    def _get_summary_data(self, shop, start_date, end_date, previous_start_date, previous_end_date):
+    def _get_summary_data(self, shop, start_date=None, end_date=None):
         """
-        Get summary statistics for the dashboard cards - FILTERED BY SPECIFIC SHOP
+        Get summary statistics for the dashboard cards - OVERALL sales breakdown
         Sales and earnings EXCLUDE VAT (use price_without_vat from checkout items)
         """
         
-        # Convert dates to datetime with time for filtering
-        start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
-        end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
-        prev_start_datetime = timezone.make_aware(datetime.combine(previous_start_date, time.min))
-        prev_end_datetime = timezone.make_aware(datetime.combine(previous_end_date, time.max))
-        
-        # Get all checkout items for this shop in current period
+        # Get all checkout items for this shop with delivered orders (no date filter)
         current_checkout_items = Checkout.objects.filter(
             order__checkout__cart_item__product__shop=shop,
-            order__created_at__range=[start_datetime, end_datetime],
             order__status='delivered'
         ).exclude(
             order__status__in=['cancelled', 'refunded']
         ).select_related('order')
         
-        # Calculate sales WITHOUT VAT - use price (base price) not total_amount which includes VAT
-        current_period_sales = Decimal('0.00')
+        # Calculate total sales WITHOUT VAT
+        total_sales = Decimal('0.00')
         for checkout_item in current_checkout_items:
-            # Use the base price (without VAT) for sales calculation
             if checkout_item.direct_product_price:
-                # Direct checkout: use direct_product_price (base price without VAT)
-                current_period_sales += checkout_item.direct_product_price * checkout_item.quantity
-            elif checkout_item.cart_item and checkout_item.cart_item.variant:
-                # Cart checkout: use variant price (without VAT)
-                variant_price = checkout_item.cart_item.variant.price or Decimal('0.00')
-                current_period_sales += variant_price * checkout_item.quantity
-            elif checkout_item.cart_item and checkout_item.cart_item.product:
-                # Fallback to product price if no variant
-                product_price = Decimal(str(checkout_item.cart_item.product.price)) if hasattr(checkout_item.cart_item.product, 'price') else Decimal('0.00')
-                current_period_sales += product_price * checkout_item.quantity
-        
-        current_period_earnings = current_period_sales
-        current_period_order_count = current_checkout_items.values('order').distinct().count()
-        
-        # Get all checkout items for previous period
-        previous_checkout_items = Checkout.objects.filter(
-            order__checkout__cart_item__product__shop=shop,
-            order__created_at__range=[prev_start_datetime, prev_end_datetime],
-            order__status='delivered'
-        ).exclude(
-            order__status__in=['cancelled', 'refunded']
-        ).select_related('order')
-        
-        # Calculate sales WITHOUT VAT for previous period
-        previous_period_sales = Decimal('0.00')
-        for checkout_item in previous_checkout_items:
-            if checkout_item.direct_product_price:
-                previous_period_sales += checkout_item.direct_product_price * checkout_item.quantity
+                total_sales += checkout_item.direct_product_price * checkout_item.quantity
             elif checkout_item.cart_item and checkout_item.cart_item.variant:
                 variant_price = checkout_item.cart_item.variant.price or Decimal('0.00')
-                previous_period_sales += variant_price * checkout_item.quantity
+                total_sales += variant_price * checkout_item.quantity
             elif checkout_item.cart_item and checkout_item.cart_item.product:
                 product_price = Decimal(str(checkout_item.cart_item.product.price)) if hasattr(checkout_item.cart_item.product, 'price') else Decimal('0.00')
-                previous_period_sales += product_price * checkout_item.quantity
+                total_sales += product_price * checkout_item.quantity
         
-        previous_period_earnings = previous_period_sales
-        previous_period_order_count = previous_checkout_items.values('order').distinct().count()
-        
-        # Calculate percentage changes
-        sales_change = 0
-        if previous_period_sales > 0:
-            sales_change = ((current_period_sales - previous_period_sales) / previous_period_sales) * 100
-        
-        earnings_change = 0
-        if previous_period_earnings > 0:
-            earnings_change = ((current_period_earnings - previous_period_earnings) / previous_period_earnings) * 100
-        
-        orders_change = 0
-        if previous_period_order_count > 0:
-            orders_change = ((current_period_order_count - previous_period_order_count) / previous_period_order_count) * 100
+        total_earnings = total_sales
+        total_orders = current_checkout_items.values('order').distinct().count()
         
         # Low stock variants count - only for this specific shop
         low_stock_variants = Variants.objects.filter(
@@ -18016,24 +17936,12 @@ class SellerDashboard(viewsets.ViewSet):
         )
         
         low_stock_count = low_stock_variants.count()
-        previous_low_stock_count = low_stock_count
-        low_stock_change = low_stock_count - previous_low_stock_count
         
         # Refund requests count - only for this specific shop
         refund_requests = Refund.objects.filter(
             order_id__checkout__cart_item__product__shop=shop,
-            requested_at__range=[start_datetime, end_datetime],
             status__in=['pending', 'negotiation', 'dispute']
         ).distinct().count()
-        
-        # Previous period refunds - only for this specific shop
-        previous_refunds = Refund.objects.filter(
-            order_id__checkout__cart_item__product__shop=shop,
-            requested_at__range=[prev_start_datetime, prev_end_datetime],
-            status__in=['pending', 'negotiation', 'dispute']
-        ).distinct().count()
-        
-        refund_change = refund_requests - previous_refunds
         
         # Draft products count - only for this specific shop
         draft_count = Product.objects.filter(
@@ -18042,31 +17950,45 @@ class SellerDashboard(viewsets.ViewSet):
             is_removed=False
         ).count()
         
-        return {
-            'period_sales': float(current_period_sales),
-            'period_delivery_fees': 0,
-            'period_earnings': float(current_period_earnings),
-            'period_orders': current_period_order_count,
-            'low_stock_count': low_stock_count,
-            'refund_requests': refund_requests,
-            'sales_change': round(float(sales_change), 1),
-            'earnings_change': round(float(earnings_change), 1),
-            'orders_change': round(float(orders_change), 1),
-            'low_stock_change': low_stock_change,
-            'refund_change': refund_change,
-            'draft_count': draft_count,
-            'date_range_days': (end_date - start_date).days + 1,
-        }
-    
-    def _get_latest_orders(self, shop, start_date, end_date, limit=5):
-        """Get latest 5 orders for the shop - FILTERED BY SPECIFIC SHOP"""
-        try:
+        # Calculate period sales if dates provided (for compatibility)
+        period_sales = 0
+        if start_date and end_date:
             start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
             end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
             
+            period_checkout_items = Checkout.objects.filter(
+                order__checkout__cart_item__product__shop=shop,
+                order__created_at__range=[start_datetime, end_datetime],
+                order__status='delivered'
+            ).exclude(
+                order__status__in=['cancelled', 'refunded']
+            ).select_related('order')
+            
+            for checkout_item in period_checkout_items:
+                if checkout_item.direct_product_price:
+                    period_sales += float(checkout_item.direct_product_price) * checkout_item.quantity
+                elif checkout_item.cart_item and checkout_item.cart_item.variant:
+                    variant_price = float(checkout_item.cart_item.variant.price or 0)
+                    period_sales += variant_price * checkout_item.quantity
+                elif checkout_item.cart_item and checkout_item.cart_item.product:
+                    product_price = float(getattr(checkout_item.cart_item.product, 'price', 0))
+                    period_sales += product_price * checkout_item.quantity
+        
+        return {
+            'total_sales': float(total_sales),
+            'total_earnings': float(total_earnings),
+            'total_orders': total_orders,
+            'low_stock_count': low_stock_count,
+            'refund_requests': refund_requests,
+            'draft_count': draft_count,
+            'period_sales': period_sales if start_date and end_date else float(total_sales),
+        }
+    
+    def _get_latest_orders(self, shop, limit=5):
+        """Get latest 5 orders for the shop - FILTERED BY SPECIFIC SHOP"""
+        try:
             orders = Order.objects.filter(
-                checkout__cart_item__product__shop=shop,
-                created_at__range=[start_datetime, end_datetime]
+                checkout__cart_item__product__shop=shop
             ).select_related(
                 'shipping_address__user'
             ).distinct().order_by('-created_at')[:limit]
@@ -18111,7 +18033,6 @@ class SellerDashboard(viewsets.ViewSet):
                     'critical_stock': variant.critical_trigger,
                     'sku_code': variant.sku_code,
                     'variant_title': variant.title,
-                    # Include VAT info for display purposes
                     'price': float(variant.price) if variant.price else 0,
                     'value_added_tax': float(variant.value_added_tax) if variant.value_added_tax else 0,
                     'value_added_tax_amount': float(variant.value_added_tax_amount) if variant.value_added_tax_amount else 0,
@@ -18123,15 +18044,11 @@ class SellerDashboard(viewsets.ViewSet):
             print(f"Error in _get_low_stock_data: {str(e)}")
             return []
     
-    def _get_refund_data(self, shop, start_date, end_date, limit=3):
+    def _get_refund_data(self, shop, limit=3):
         """Get refund and dispute data - FILTERED BY SPECIFIC SHOP"""
         try:
-            start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
-            end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
-            
             refunds = Refund.objects.filter(
-                order_id__checkout__cart_item__product__shop=shop,
-                requested_at__range=[start_datetime, end_datetime]
+                order_id__checkout__cart_item__product__shop=shop
             ).select_related('order_id').distinct().order_by('-requested_at')[:limit]
             
             pending_count = Refund.objects.filter(
@@ -18176,30 +18093,15 @@ class SellerDashboard(viewsets.ViewSet):
                 'latest': [],
             }
     
-    def _get_shop_performance_data(self, shop, start_date, end_date):
+    def _get_shop_performance_data(self, shop):
         """Get shop performance metrics - FILTERED BY SPECIFIC SHOP"""
         try:
-            start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
-            end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
-            
             # Only for this specific shop
             reviews = Review.objects.filter(shop=shop)
             average_rating = reviews.aggregate(avg_rating=Avg('average_rating'))['avg_rating'] or 0
             
-            # Recent reviews (last 30 days) - only for this shop
-            recent_reviews = Review.objects.filter(
-                shop=shop,
-                created_at__range=[start_datetime, end_datetime]
-            ).count()
-            
             # Total followers - only for this shop
             total_followers = ShopFollow.objects.filter(shop=shop).count()
-            
-            # New followers - only for this shop
-            new_followers = ShopFollow.objects.filter(
-                shop=shop,
-                followed_at__range=[start_datetime, end_datetime]
-            ).count()
             
             # Product counts - only for this shop
             total_products = Product.objects.filter(shop=shop, is_removed=False).count()
@@ -18226,22 +18128,18 @@ class SellerDashboard(viewsets.ViewSet):
             return {
                 'average_rating': round(float(average_rating), 1),
                 'total_reviews': reviews.count(),
-                'recent_reviews': recent_reviews,
                 'total_followers': total_followers,
-                'new_followers': new_followers,
                 'total_products': total_products,
                 'active_products': active_products,
                 'draft_products': draft_products,
-                'total_vat_collected': float(total_vat_collected),  # For information only
+                'total_vat_collected': float(total_vat_collected),
             }
         except Exception as e:
             print(f"Error in _get_shop_performance_data: {str(e)}")
             return {
                 'average_rating': 0,
                 'total_reviews': 0,
-                'recent_reviews': 0,
                 'total_followers': 0,
-                'new_followers': 0,
                 'total_products': 0,
                 'active_products': 0,
                 'draft_products': 0,
@@ -18415,98 +18313,6 @@ class SellerDashboard(viewsets.ViewSet):
                 {'error': str(e), 'success': False},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
-    @action(detail=False, methods=['get'])
-    def get_sales_chart_data(self, request):
-        """Get sales data for charts (daily/weekly/monthly) - FILTERED BY SPECIFIC SHOP"""
-        try:
-            shop_id = request.query_params.get('shop_id')
-            period = request.query_params.get('period', 'monthly')
-            
-            if not shop_id:
-                return Response(
-                    {'error': 'shop_id is required', 'success': False},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            end_date = timezone.now().date()
-            
-            if period == 'daily':
-                start_date = end_date - timedelta(days=30)
-                date_format = '%Y-%m-%d'
-            elif period == 'weekly':
-                start_date = end_date - timedelta(weeks=12)
-                date_format = '%Y-W%W'
-            else:
-                start_date = end_date - timedelta(days=365)
-                date_format = '%Y-%m'
-            
-            start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
-            end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
-            
-            # Get checkout items for this specific shop with delivered orders
-            checkout_items = Checkout.objects.filter(
-                order__checkout__cart_item__product__shop_id=shop_id,
-                order__created_at__range=[start_datetime, end_datetime],
-                order__status='delivered'
-            ).select_related('order')
-            
-            # Calculate sales WITHOUT VAT by date
-            sales_by_date = {}
-            for checkout_item in checkout_items:
-                date_key = checkout_item.order.created_at.strftime(date_format)
-                
-                # Calculate item total WITHOUT VAT
-                if checkout_item.direct_product_price:
-                    item_total = float(checkout_item.direct_product_price) * checkout_item.quantity
-                elif checkout_item.cart_item and checkout_item.cart_item.variant:
-                    variant_price = float(checkout_item.cart_item.variant.price or 0)
-                    item_total = variant_price * checkout_item.quantity
-                elif checkout_item.cart_item and checkout_item.cart_item.product:
-                    product_price = float(getattr(checkout_item.cart_item.product, 'price', 0))
-                    item_total = product_price * checkout_item.quantity
-                else:
-                    item_total = 0
-                
-                sales_by_date[date_key] = sales_by_date.get(date_key, 0) + item_total
-            
-            # Generate date range and build response
-            data = []
-            current_date = start_date
-            while current_date <= end_date:
-                if period == 'daily':
-                    date_key = current_date.strftime(date_format)
-                    current_date += timedelta(days=1)
-                elif period == 'weekly':
-                    date_key = current_date.strftime(date_format)
-                    current_date += timedelta(weeks=1)
-                else:
-                    date_key = current_date.strftime(date_format)
-                    # Move to next month
-                    if current_date.month == 12:
-                        current_date = current_date.replace(year=current_date.year + 1, month=1)
-                    else:
-                        current_date = current_date.replace(month=current_date.month + 1)
-                
-                data.append({
-                    'date': date_key,
-                    'sales': sales_by_date.get(date_key, 0)
-                })
-            
-            return Response({
-                'success': True,
-                'period': period,
-                'data': data,
-            }, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            print(f"Error in get_sales_chart_data: {str(e)}")
-            traceback.print_exc()
-            return Response(
-                {'error': str(e), 'success': False},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
 
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
@@ -25238,7 +25044,7 @@ class SellerOrderList(viewsets.ViewSet):
         )
         
         is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
-                                                  for keyword in ['pickup', 'store', 'collect'])
+                                                for keyword in ['pickup', 'store', 'collect'])
         
         shop_checkouts = Checkout.objects.filter(
             order=order
@@ -25249,7 +25055,7 @@ class SellerOrderList(viewsets.ViewSet):
         ).prefetch_related('cart_item__product__productmedia_set')
         
         order_items = []
-        total_amount = float(order.total_amount) 
+        total_amount = Decimal('0')  # Initialize to 0 instead of order.total_amount
         
         for checkout in shop_checkouts:
             if checkout.direct_product_id and not checkout.cart_item:
@@ -25285,6 +25091,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "shipping_method": None,
                     "estimated_delivery": None
                 })
+                total_amount += checkout.total_amount
                 continue
             
             cart_item = checkout.cart_item
@@ -25342,7 +25149,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "shipping_method": shipping_method,
                 "estimated_delivery": estimated_delivery
             })
-            total_amount += float(checkout.total_amount)
+            total_amount += checkout.total_amount
         
         delivery_address = None
         if order.shipping_address:
@@ -25371,7 +25178,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "phone": order.user.contact_number or None
             },
             "status": shipping_status,
-            "total_amount": total_amount,
+            "total_amount": float(total_amount),  # Now this is the sum of checkouts only
             "payment_method": order.payment_method,
             "delivery_method": order.delivery_method,
             "shipping_method": "Standard Shipping" if not is_pickup else "Store Pickup",
@@ -25395,6 +25202,7 @@ class SellerOrderList(viewsets.ViewSet):
                 order_data["metadata"]["nearest_rider"] = nearest_rider_data
         
         return order_data
+
     
     @action(detail=False, methods=['get'])
     def order_list(self, request):
