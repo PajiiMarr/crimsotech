@@ -27660,6 +27660,27 @@ class CheckoutOrder(viewsets.ViewSet):
         voucher_id = request.data.get("voucher_id")
         remarks = request.data.get("remarks")
         pickup_date = request.data.get("pickup_date")
+        # NEW: Get delivery fees breakdown from frontend
+        delivery_fees_breakdown = request.data.get("delivery_fees_breakdown", {})
+
+        # ─── LOGGING: Print the entire request body ───────────────────────────────
+        print("=" * 80)
+        print("[CREATE_ORDER] ===== RECEIVED REQUEST =====")
+        print(f"[CREATE_ORDER] User ID: {user_id}")
+        print(f"[CREATE_ORDER] Selected IDs: {selected_ids}")
+        print(f"[CREATE_ORDER] Cart ID: {cart_id}")
+        print(f"[CREATE_ORDER] Product ID: {product_id}")
+        print(f"[CREATE_ORDER] Variant ID: {variant_id}")
+        print(f"[CREATE_ORDER] Quantity: {quantity}")
+        print(f"[CREATE_ORDER] Payment Method: {payment_method}")
+        print(f"[CREATE_ORDER] Shipping Method: {shipping_method}")
+        print(f"[CREATE_ORDER] Shipping Address ID: {shipping_address_id}")
+        print(f"[CREATE_ORDER] Voucher ID: {voucher_id}")
+        print(f"[CREATE_ORDER] Remarks: {remarks}")
+        print(f"[CREATE_ORDER] Pickup Date: {pickup_date}")
+        print(f"[CREATE_ORDER] Delivery Fees Breakdown from Frontend: {delivery_fees_breakdown}")
+        print(f"[CREATE_ORDER] Type of delivery_fees_breakdown: {type(delivery_fees_breakdown)}")
+        print("=" * 80)
 
         if not user_id:
             return Response(
@@ -27668,7 +27689,7 @@ class CheckoutOrder(viewsets.ViewSet):
             )
 
         try:
-            from decimal import Decimal
+            from decimal import Decimal, ROUND_HALF_UP
             user = get_object_or_404(User, id=user_id)
 
             shipping_address = None
@@ -27847,55 +27868,97 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            # Calculate per-shop delivery fees
+            # Calculate per-shop delivery fees - USE FRONTEND-PROVIDED FEES
             shipping_fees_breakdown = {}
             shops_distances = {}
             total_delivery_fee = Decimal('0')
             
+            print(f"[CREATE_ORDER] Processing delivery fees for shipping_method: {shipping_method.lower()}")
+            
             if shipping_method.lower() == "standard delivery" and shipping_address:
-                customer_lat, customer_lng, _ = self._get_customer_coordinates(user_id, shipping_address_id)
+                print(f"[CREATE_ORDER] Delivery fees breakdown from frontend: {delivery_fees_breakdown}")
+                print(f"[CREATE_ORDER] Type: {type(delivery_fees_breakdown)}")
+                print(f"[CREATE_ORDER] Keys: {delivery_fees_breakdown.keys() if isinstance(delivery_fees_breakdown, dict) else 'Not a dict'}")
                 
-                if customer_lat and customer_lng:
-                    # Group items by shop and calculate distance per shop
-                    if is_direct_checkout and direct_product and direct_product.shop:
-                        shop = direct_product.shop
-                        shop_id = str(shop.id)
+                if delivery_fees_breakdown and isinstance(delivery_fees_breakdown, dict):
+                    # Use pre-calculated fees from frontend
+                    print(f"[CREATE_ORDER] ✅ Using frontend-provided delivery fees")
+                    for shop_id, fee in delivery_fees_breakdown.items():
+                        print(f"[CREATE_ORDER] Processing shop {shop_id} with fee {fee}")
+                        fee_decimal = Decimal(str(fee)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        shipping_fees_breakdown[shop_id] = float(fee_decimal)
+                        total_delivery_fee += fee_decimal
                         
-                        if shop.latitude and shop.longitude:
-                            distance = self._calculate_distance(
-                                customer_lat, customer_lng,
-                                float(shop.latitude), float(shop.longitude)
-                            )
-                            fee = Decimal(str(self._calculate_delivery_fee(distance)))
-                            shops_distances[shop_id] = {
-                                'distance_km': distance,
-                                'fee': fee,
-                                'shop_name': shop.name,
-                                'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
-                            }
-                            shipping_fees_breakdown[shop_id] = float(fee)
-                            total_delivery_fee += fee
-                            
-                    else:
-                        for cart_item in cart_items:
-                            if cart_item.product and cart_item.product.shop:
-                                shop = cart_item.product.shop
-                                shop_id = str(shop.id)
-                                
-                                if shop_id not in shops_distances and shop.latitude and shop.longitude:
-                                    distance = self._calculate_distance(
-                                        customer_lat, customer_lng,
-                                        float(shop.latitude), float(shop.longitude)
-                                    )
-                                    fee = Decimal(str(self._calculate_delivery_fee(distance)))
-                                    shops_distances[shop_id] = {
-                                        'distance_km': distance,
-                                        'fee': fee,
-                                        'shop_name': shop.name,
-                                        'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
-                                    }
-                                    shipping_fees_breakdown[shop_id] = float(fee)
-                                    total_delivery_fee += fee
+                        # Try to get shop info for response (optional)
+                        try:
+                            from api.models import Shop
+                            shop = Shop.objects.filter(id=shop_id).first()
+                            if shop:
+                                shops_distances[shop_id] = {
+                                    'distance_km': Decimal('0'),
+                                    'fee': fee_decimal,
+                                    'shop_name': shop.name,
+                                    'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                                }
+                                print(f"[CREATE_ORDER] Found shop: {shop.name}")
+                        except Exception as e:
+                            print(f"[CREATE_ORDER] Error finding shop {shop_id}: {e}")
+                            pass
+                    
+                    print(f"[CREATE_ORDER] Using frontend delivery fees: {shipping_fees_breakdown}")
+                    print(f"[CREATE_ORDER] Total delivery fee: {total_delivery_fee}")
+                else:
+                    # Fallback: recalculate
+                    print(f"[CREATE_ORDER] ⚠️ No frontend fees provided or invalid format, recalculating...")
+                    print(f"[CREATE_ORDER] delivery_fees_breakdown value: {delivery_fees_breakdown}")
+                    customer_lat, customer_lng, _ = self._get_customer_coordinates(user_id, shipping_address_id)
+                    
+                    if customer_lat and customer_lng:
+                        if is_direct_checkout and direct_product and direct_product.shop:
+                            shop = direct_product.shop
+                            shop_id = str(shop.id)
+                            if shop.latitude and shop.longitude:
+                                distance = self._calculate_distance(
+                                    customer_lat, customer_lng,
+                                    float(shop.latitude), float(shop.longitude)
+                                )
+                                raw_fee = Decimal(str(self._calculate_delivery_fee(distance)))
+                                fee = raw_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                                shops_distances[shop_id] = {
+                                    'distance_km': Decimal(str(distance)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                                    'fee': fee,
+                                    'shop_name': shop.name,
+                                    'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                                }
+                                shipping_fees_breakdown[shop_id] = float(fee)
+                                total_delivery_fee += fee
+                                print(f"[CREATE_ORDER] Recalculated fee for {shop.name}: {fee}")
+                        else:
+                            for cart_item in cart_items:
+                                if cart_item.product and cart_item.product.shop:
+                                    shop = cart_item.product.shop
+                                    shop_id = str(shop.id)
+                                    if shop_id not in shops_distances and shop.latitude and shop.longitude:
+                                        distance = self._calculate_distance(
+                                            customer_lat, customer_lng,
+                                            float(shop.latitude), float(shop.longitude)
+                                        )
+                                        raw_fee = Decimal(str(self._calculate_delivery_fee(distance)))
+                                        fee = raw_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                                        shops_distances[shop_id] = {
+                                            'distance_km': Decimal(str(distance)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                                            'fee': fee,
+                                            'shop_name': shop.name,
+                                            'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                                        }
+                                        shipping_fees_breakdown[shop_id] = float(fee)
+                                        total_delivery_fee += fee
+                                        print(f"[CREATE_ORDER] Recalculated fee for {shop.name}: {fee}")
+            else:
+                print(f"[CREATE_ORDER] Not standard delivery or no shipping address. Shipping method: {shipping_method}")
+            
+            print(f"[CREATE_ORDER] Final shipping_fees_breakdown: {shipping_fees_breakdown}")
+            print(f"[CREATE_ORDER] Final total_delivery_fee: {total_delivery_fee}")
             
             # Calculate base total (subtotal + total_delivery_fee - discount_amount)
             base_total = subtotal + total_delivery_fee - discount_amount
@@ -27918,7 +27981,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 delivery_method=shipping_method,
                 delivery_address_text=delivery_address_text,
                 transaction_fee=float(transaction_fee),
-                shipping_fees_breakdown=shipping_fees_breakdown,  # Store per-shop fees
+                shipping_fees_breakdown=shipping_fees_breakdown,
                 metadata={}
             )
             
@@ -27947,10 +28010,11 @@ class CheckoutOrder(viewsets.ViewSet):
                 unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
                 checkout_total = unit_price * direct_quantity
                 
-                # Get shipping fee for this shop
+                # Get shipping fee for this shop from the breakdown
                 shop_id = str(direct_product.shop.id) if direct_product.shop else None
                 item_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
-                item_distance = Decimal(str(shops_distances.get(shop_id, {}).get('distance_km', 0))) if shop_id else None
+                item_shipping_fee = item_shipping_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                item_distance = shops_distances.get(shop_id, {}).get('distance_km', None) if shop_id else None
                 
                 product_image_url = None
                 if direct_product.productmedia_set.exists():
@@ -27979,8 +28043,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     direct_product_image=variant_image_url or product_image_url,
                     direct_shop_id=direct_product.shop.id if direct_product.shop else None,
                     direct_shop_name=direct_product.shop.name if direct_product.shop else None,
-                    shipping_fee=item_shipping_fee,
-                    distance_km=item_distance
+                    shipping_fee=float(item_shipping_fee),
+                    distance_km=float(item_distance) if item_distance else None
                 )
 
                 cart_item_ids.append(f"direct_{direct_product.id}_{direct_variant.id}")
@@ -28012,10 +28076,11 @@ class CheckoutOrder(viewsets.ViewSet):
 
                     checkout_total = unit_price * cart_item.quantity
                     
-                    # Get shipping fee for this item's shop
+                    # Get shipping fee for this item's shop from the breakdown
                     shop_id = str(cart_item.product.shop.id) if cart_item.product and cart_item.product.shop else None
                     item_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
-                    item_distance = Decimal(str(shops_distances.get(shop_id, {}).get('distance_km', 0))) if shop_id else None
+                    item_shipping_fee = item_shipping_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                    item_distance = shops_distances.get(shop_id, {}).get('distance_km', None) if shop_id else None
 
                     checkout_item = Checkout.objects.create(
                         order=order,
@@ -28025,8 +28090,8 @@ class CheckoutOrder(viewsets.ViewSet):
                         total_amount=checkout_total,
                         status='pending',
                         remarks=remarks[:500] if remarks else None,
-                        shipping_fee=item_shipping_fee,
-                        distance_km=item_distance
+                        shipping_fee=float(item_shipping_fee),
+                        distance_km=float(item_distance) if item_distance else None
                     )
 
                     cart_item_ids.append(str(cart_item.id))
@@ -28094,8 +28159,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 for shop_id, fee in shipping_fees_breakdown.items():
                     shop_info = shops_distances.get(shop_id, {})
                     shop_name = shop_info.get('shop_name', 'Unknown Shop')
-                    distance = shop_info.get('distance_km', 0)
-                    breakdown_parts.append(f"{shop_name}: ₱{fee:.2f} ({distance:.1f} km)")
+                    breakdown_parts.append(f"{shop_name}: ₱{fee:.2f}")
                 breakdown_message = " | ".join(breakdown_parts)
 
             response_data = {
@@ -28107,12 +28171,12 @@ class CheckoutOrder(viewsets.ViewSet):
                 "total_amount": float(total_amount),
                 "subtotal": float(subtotal),
                 "total_delivery_fee": float(total_delivery_fee),
-                "delivery_fees_breakdown": shipping_fees_breakdown,
+                "delivery_fees_breakdown": {k: float(v) for k, v in shipping_fees_breakdown.items()},
                 "delivery_fees_by_shop": [
                     {
                         "shop_id": shop_id,
                         "shop_name": info.get('shop_name'),
-                        "distance_km": info.get('distance_km'),
+                        "distance_km": float(info.get('distance_km', 0)) if info.get('distance_km') else None,
                         "delivery_fee": float(info.get('fee', 0))
                     }
                     for shop_id, info in shops_distances.items()
@@ -28128,6 +28192,12 @@ class CheckoutOrder(viewsets.ViewSet):
                 "delivery_fee_note": f"Total delivery fee of ₱{float(total_delivery_fee):.2f} (₱40/km capped at ₱300 per shop). Breakdown: {breakdown_message}" if total_delivery_fee > 0 else None
             }
             
+            # Log the actual stored fees for debugging
+            print(f"[CREATE_ORDER] ===== FINAL STORED VALUES =====")
+            print(f"[CREATE_ORDER] shipping_fees_breakdown: {shipping_fees_breakdown}")
+            print(f"[CREATE_ORDER] total_delivery_fee: {float(total_delivery_fee)}")
+            print(f"[CREATE_ORDER] ==================================")
+            
             return Response(response_data)
 
         except Exception as e:
@@ -28138,8 +28208,9 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
     
+            
+            
     @action(detail=False, methods=['GET'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
         try:

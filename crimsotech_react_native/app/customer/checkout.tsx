@@ -308,6 +308,17 @@ export default function CheckoutPage() {
   };
 
   const buildOrderRequestBody = (checkoutItems: CartItem[]) => {
+    // Debug logs
+    console.log("🔍 [BUILD ORDER] perShopDeliveryFees:", JSON.stringify(perShopDeliveryFees));
+    console.log("🔍 [BUILD ORDER] perShopDeliveryFees length:", perShopDeliveryFees.length);
+    
+    const deliveryFeesObject = perShopDeliveryFees.reduce((acc, shop) => {
+      acc[shop.shop_id] = shop.delivery_fee;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    console.log("🔍 [BUILD ORDER] deliveryFeesObject:", JSON.stringify(deliveryFeesObject));
+    
     const base: Record<string, any> = {
       user_id: userId,
       shipping_address_id: formData.selectedAddressId,
@@ -315,6 +326,7 @@ export default function CheckoutPage() {
       shipping_method: formData.shippingMethod,
       voucher_id: appliedVoucher?.id || null,
       remarks: formData.remarks.substring(0, 500) || null,
+      delivery_fees_breakdown: deliveryFeesObject
     };
     if (cartId) {
       base.cart_id = cartId;
@@ -346,6 +358,8 @@ export default function CheckoutPage() {
         { params: buildCheckoutApiParams() }
       );
 
+      console.log("🔍 [FETCH] Full API Response:", JSON.stringify(response.data, null, 2));
+
       if (response.data.success) {
         const hasOrderedItems = response.data.checkout_items?.some(
           (item: any) => item.is_ordered === true
@@ -375,6 +389,8 @@ export default function CheckoutPage() {
         let perShopFees: PerShopDeliveryFee[] =
           response.data.summary?.per_shop_delivery_fees || [];
 
+        console.log("🔍 [FETCH] perShopFees from summary:", JSON.stringify(perShopFees));
+
         if (perShopFees.length === 0 && response.data.seller_addresses) {
           perShopFees = (response.data.seller_addresses as ShopAddress[])
             .filter((shop) => shop.delivery_fee && shop.delivery_fee > 0)
@@ -387,10 +403,10 @@ export default function CheckoutPage() {
                 `${Number(shop.distance_km || 0).toFixed(1)} km`,
               delivery_fee: shop.delivery_fee || 0,
             }));
+          console.log("🔍 [FETCH] perShopFees from seller_addresses:", JSON.stringify(perShopFees));
         }
 
-        console.log("[CHECKOUT] per_shop_delivery_fees:", JSON.stringify(perShopFees));
-
+        console.log("🔍 [FETCH] Setting perShopDeliveryFees to:", JSON.stringify(perShopFees));
         setPerShopDeliveryFees(perShopFees);
 
         const totalDeliveryFee = perShopFees.reduce(
@@ -652,6 +668,9 @@ export default function CheckoutPage() {
   };
 
   const handlePlaceOrder = async () => {
+    console.log("🔍 [PLACE ORDER] Current perShopDeliveryFees:", JSON.stringify(perShopDeliveryFees));
+    console.log("🔍 [PLACE ORDER] perShopDeliveryFees length:", perShopDeliveryFees.length);
+    
     if (!userId || !checkoutData) {
       Alert.alert("Error", "Please complete all required information");
       return;
@@ -684,6 +703,8 @@ export default function CheckoutPage() {
     setError(null);
     try {
       const requestBody = buildOrderRequestBody(checkoutData.checkout_items);
+      console.log("🔍 [PLACE ORDER] Full request body:", JSON.stringify(requestBody, null, 2));
+      
       const response = await AxiosInstance.post(
         "/checkout-order/create_order/",
         requestBody
@@ -779,8 +800,6 @@ export default function CheckoutPage() {
   };
 
   // ─── Per Shop Delivery Fees Component ───────────────────────────────────
-  // FIX: Removed the shippingMethod guard so this always renders when data exists.
-  // The fees are calculated at checkout time regardless of shipping method selected.
   const PerShopDeliveryFeesComponent = () => {
     if (perShopDeliveryFees.length === 0) return null;
 
@@ -1274,8 +1293,7 @@ export default function CheckoutPage() {
           )}
         </View>
 
-        {/* ─── Per Shop Delivery Fees Breakdown ─────────────────────────────
-            FIX: Moved outside sectionCard, always renders when data available */}
+        {/* ─── Per Shop Delivery Fees Breakdown ───────────────────────────── */}
         <PerShopDeliveryFeesComponent />
 
         {/* Payment Method */}
