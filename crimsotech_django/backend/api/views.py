@@ -30551,6 +30551,15 @@ class PurchasesBuyer(viewsets.ViewSet):
                     # Use checkout.status for per-item status
                     item_status = checkout.status if hasattr(checkout, 'status') else 'pending'
                     
+                    # Get shop_status from OrderShopStatus
+                    shop_status = 'pending'
+                    if product.shop:
+                        try:
+                            order_shop_status = OrderShopStatus.objects.get(order=order, shop=product.shop)
+                            shop_status = order_shop_status.status
+                        except OrderShopStatus.DoesNotExist:
+                            shop_status = 'pending'
+                    
                     item_data = {
                         'checkout_id': str(checkout.id),
                         'product_id': str(product.id),
@@ -30565,6 +30574,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'subtotal': str(checkout.total_amount or '0.00'),
                         'status': item_status,
                         'item_status': item_status,
+                        'shop_status': shop_status,
                         'purchased_at': checkout.created_at.isoformat(),
                         'product_images': product_images,
                         'primary_image': primary_image,
@@ -30656,6 +30666,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'pickup_expire_date': order.pickup_expire_date.isoformat() if order.pickup_expire_date else None,
                     'pickup_date': order.pickup_date.isoformat() if order.pickup_date else None,
                     'metadata': order.metadata if order.metadata else None,
+                    'shop_statuses': {str(oss.shop.id): oss.status for oss in OrderShopStatus.objects.filter(order=order)},
                 },
                 'shipping_info': shipping_info,
                 'delivery_address': delivery_address_info,
@@ -30837,6 +30848,12 @@ class PurchasesBuyer(viewsets.ViewSet):
             order.completed_at = timezone.now()
             order.refund_expire_date = order.completed_at + timedelta(days=1)
             order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
+
+            # Update all OrderShopStatus for this order to 'completed'
+            OrderShopStatus.objects.filter(order=order).update(
+                status='completed'
+            )
+            print(f"✅ [COMPLETE] Order {order.order} marked as completed - all shop statuses set to 'completed'")
 
             delivery = Delivery.objects.filter(order=order).first()
             if delivery:
