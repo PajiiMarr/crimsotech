@@ -27660,6 +27660,27 @@ class CheckoutOrder(viewsets.ViewSet):
         voucher_id = request.data.get("voucher_id")
         remarks = request.data.get("remarks")
         pickup_date = request.data.get("pickup_date")
+        # NEW: Get delivery fees breakdown from frontend
+        delivery_fees_breakdown = request.data.get("delivery_fees_breakdown", {})
+
+        # ─── LOGGING: Print the entire request body ───────────────────────────────
+        print("=" * 80)
+        print("[CREATE_ORDER] ===== RECEIVED REQUEST =====")
+        print(f"[CREATE_ORDER] User ID: {user_id}")
+        print(f"[CREATE_ORDER] Selected IDs: {selected_ids}")
+        print(f"[CREATE_ORDER] Cart ID: {cart_id}")
+        print(f"[CREATE_ORDER] Product ID: {product_id}")
+        print(f"[CREATE_ORDER] Variant ID: {variant_id}")
+        print(f"[CREATE_ORDER] Quantity: {quantity}")
+        print(f"[CREATE_ORDER] Payment Method: {payment_method}")
+        print(f"[CREATE_ORDER] Shipping Method: {shipping_method}")
+        print(f"[CREATE_ORDER] Shipping Address ID: {shipping_address_id}")
+        print(f"[CREATE_ORDER] Voucher ID: {voucher_id}")
+        print(f"[CREATE_ORDER] Remarks: {remarks}")
+        print(f"[CREATE_ORDER] Pickup Date: {pickup_date}")
+        print(f"[CREATE_ORDER] Delivery Fees Breakdown from Frontend: {delivery_fees_breakdown}")
+        print(f"[CREATE_ORDER] Type of delivery_fees_breakdown: {type(delivery_fees_breakdown)}")
+        print("=" * 80)
 
         if not user_id:
             return Response(
@@ -27668,7 +27689,7 @@ class CheckoutOrder(viewsets.ViewSet):
             )
 
         try:
-            from decimal import Decimal
+            from decimal import Decimal, ROUND_HALF_UP
             user = get_object_or_404(User, id=user_id)
 
             shipping_address = None
@@ -27847,55 +27868,97 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            # Calculate per-shop delivery fees
+            # Calculate per-shop delivery fees - USE FRONTEND-PROVIDED FEES
             shipping_fees_breakdown = {}
             shops_distances = {}
             total_delivery_fee = Decimal('0')
             
+            print(f"[CREATE_ORDER] Processing delivery fees for shipping_method: {shipping_method.lower()}")
+            
             if shipping_method.lower() == "standard delivery" and shipping_address:
-                customer_lat, customer_lng, _ = self._get_customer_coordinates(user_id, shipping_address_id)
+                print(f"[CREATE_ORDER] Delivery fees breakdown from frontend: {delivery_fees_breakdown}")
+                print(f"[CREATE_ORDER] Type: {type(delivery_fees_breakdown)}")
+                print(f"[CREATE_ORDER] Keys: {delivery_fees_breakdown.keys() if isinstance(delivery_fees_breakdown, dict) else 'Not a dict'}")
                 
-                if customer_lat and customer_lng:
-                    # Group items by shop and calculate distance per shop
-                    if is_direct_checkout and direct_product and direct_product.shop:
-                        shop = direct_product.shop
-                        shop_id = str(shop.id)
+                if delivery_fees_breakdown and isinstance(delivery_fees_breakdown, dict):
+                    # Use pre-calculated fees from frontend
+                    print(f"[CREATE_ORDER] ✅ Using frontend-provided delivery fees")
+                    for shop_id, fee in delivery_fees_breakdown.items():
+                        print(f"[CREATE_ORDER] Processing shop {shop_id} with fee {fee}")
+                        fee_decimal = Decimal(str(fee)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        shipping_fees_breakdown[shop_id] = float(fee_decimal)
+                        total_delivery_fee += fee_decimal
                         
-                        if shop.latitude and shop.longitude:
-                            distance = self._calculate_distance(
-                                customer_lat, customer_lng,
-                                float(shop.latitude), float(shop.longitude)
-                            )
-                            fee = Decimal(str(self._calculate_delivery_fee(distance)))
-                            shops_distances[shop_id] = {
-                                'distance_km': distance,
-                                'fee': fee,
-                                'shop_name': shop.name,
-                                'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
-                            }
-                            shipping_fees_breakdown[shop_id] = float(fee)
-                            total_delivery_fee += fee
-                            
-                    else:
-                        for cart_item in cart_items:
-                            if cart_item.product and cart_item.product.shop:
-                                shop = cart_item.product.shop
-                                shop_id = str(shop.id)
-                                
-                                if shop_id not in shops_distances and shop.latitude and shop.longitude:
-                                    distance = self._calculate_distance(
-                                        customer_lat, customer_lng,
-                                        float(shop.latitude), float(shop.longitude)
-                                    )
-                                    fee = Decimal(str(self._calculate_delivery_fee(distance)))
-                                    shops_distances[shop_id] = {
-                                        'distance_km': distance,
-                                        'fee': fee,
-                                        'shop_name': shop.name,
-                                        'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
-                                    }
-                                    shipping_fees_breakdown[shop_id] = float(fee)
-                                    total_delivery_fee += fee
+                        # Try to get shop info for response (optional)
+                        try:
+                            from api.models import Shop
+                            shop = Shop.objects.filter(id=shop_id).first()
+                            if shop:
+                                shops_distances[shop_id] = {
+                                    'distance_km': Decimal('0'),
+                                    'fee': fee_decimal,
+                                    'shop_name': shop.name,
+                                    'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                                }
+                                print(f"[CREATE_ORDER] Found shop: {shop.name}")
+                        except Exception as e:
+                            print(f"[CREATE_ORDER] Error finding shop {shop_id}: {e}")
+                            pass
+                    
+                    print(f"[CREATE_ORDER] Using frontend delivery fees: {shipping_fees_breakdown}")
+                    print(f"[CREATE_ORDER] Total delivery fee: {total_delivery_fee}")
+                else:
+                    # Fallback: recalculate
+                    print(f"[CREATE_ORDER] ⚠️ No frontend fees provided or invalid format, recalculating...")
+                    print(f"[CREATE_ORDER] delivery_fees_breakdown value: {delivery_fees_breakdown}")
+                    customer_lat, customer_lng, _ = self._get_customer_coordinates(user_id, shipping_address_id)
+                    
+                    if customer_lat and customer_lng:
+                        if is_direct_checkout and direct_product and direct_product.shop:
+                            shop = direct_product.shop
+                            shop_id = str(shop.id)
+                            if shop.latitude and shop.longitude:
+                                distance = self._calculate_distance(
+                                    customer_lat, customer_lng,
+                                    float(shop.latitude), float(shop.longitude)
+                                )
+                                raw_fee = Decimal(str(self._calculate_delivery_fee(distance)))
+                                fee = raw_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                                shops_distances[shop_id] = {
+                                    'distance_km': Decimal(str(distance)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                                    'fee': fee,
+                                    'shop_name': shop.name,
+                                    'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                                }
+                                shipping_fees_breakdown[shop_id] = float(fee)
+                                total_delivery_fee += fee
+                                print(f"[CREATE_ORDER] Recalculated fee for {shop.name}: {fee}")
+                        else:
+                            for cart_item in cart_items:
+                                if cart_item.product and cart_item.product.shop:
+                                    shop = cart_item.product.shop
+                                    shop_id = str(shop.id)
+                                    if shop_id not in shops_distances and shop.latitude and shop.longitude:
+                                        distance = self._calculate_distance(
+                                            customer_lat, customer_lng,
+                                            float(shop.latitude), float(shop.longitude)
+                                        )
+                                        raw_fee = Decimal(str(self._calculate_delivery_fee(distance)))
+                                        fee = raw_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                                        shops_distances[shop_id] = {
+                                            'distance_km': Decimal(str(distance)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                                            'fee': fee,
+                                            'shop_name': shop.name,
+                                            'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                                        }
+                                        shipping_fees_breakdown[shop_id] = float(fee)
+                                        total_delivery_fee += fee
+                                        print(f"[CREATE_ORDER] Recalculated fee for {shop.name}: {fee}")
+            else:
+                print(f"[CREATE_ORDER] Not standard delivery or no shipping address. Shipping method: {shipping_method}")
+            
+            print(f"[CREATE_ORDER] Final shipping_fees_breakdown: {shipping_fees_breakdown}")
+            print(f"[CREATE_ORDER] Final total_delivery_fee: {total_delivery_fee}")
             
             # Calculate base total (subtotal + total_delivery_fee - discount_amount)
             base_total = subtotal + total_delivery_fee - discount_amount
@@ -27918,7 +27981,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 delivery_method=shipping_method,
                 delivery_address_text=delivery_address_text,
                 transaction_fee=float(transaction_fee),
-                shipping_fees_breakdown=shipping_fees_breakdown,  # Store per-shop fees
+                shipping_fees_breakdown=shipping_fees_breakdown,
                 metadata={}
             )
             
@@ -27947,10 +28010,11 @@ class CheckoutOrder(viewsets.ViewSet):
                 unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
                 checkout_total = unit_price * direct_quantity
                 
-                # Get shipping fee for this shop
+                # Get shipping fee for this shop from the breakdown
                 shop_id = str(direct_product.shop.id) if direct_product.shop else None
                 item_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
-                item_distance = Decimal(str(shops_distances.get(shop_id, {}).get('distance_km', 0))) if shop_id else None
+                item_shipping_fee = item_shipping_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                item_distance = shops_distances.get(shop_id, {}).get('distance_km', None) if shop_id else None
                 
                 product_image_url = None
                 if direct_product.productmedia_set.exists():
@@ -27979,8 +28043,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     direct_product_image=variant_image_url or product_image_url,
                     direct_shop_id=direct_product.shop.id if direct_product.shop else None,
                     direct_shop_name=direct_product.shop.name if direct_product.shop else None,
-                    shipping_fee=item_shipping_fee,
-                    distance_km=item_distance
+                    shipping_fee=float(item_shipping_fee),
+                    distance_km=float(item_distance) if item_distance else None
                 )
 
                 cart_item_ids.append(f"direct_{direct_product.id}_{direct_variant.id}")
@@ -28012,10 +28076,11 @@ class CheckoutOrder(viewsets.ViewSet):
 
                     checkout_total = unit_price * cart_item.quantity
                     
-                    # Get shipping fee for this item's shop
+                    # Get shipping fee for this item's shop from the breakdown
                     shop_id = str(cart_item.product.shop.id) if cart_item.product and cart_item.product.shop else None
                     item_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
-                    item_distance = Decimal(str(shops_distances.get(shop_id, {}).get('distance_km', 0))) if shop_id else None
+                    item_shipping_fee = item_shipping_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                    item_distance = shops_distances.get(shop_id, {}).get('distance_km', None) if shop_id else None
 
                     checkout_item = Checkout.objects.create(
                         order=order,
@@ -28025,8 +28090,8 @@ class CheckoutOrder(viewsets.ViewSet):
                         total_amount=checkout_total,
                         status='pending',
                         remarks=remarks[:500] if remarks else None,
-                        shipping_fee=item_shipping_fee,
-                        distance_km=item_distance
+                        shipping_fee=float(item_shipping_fee),
+                        distance_km=float(item_distance) if item_distance else None
                     )
 
                     cart_item_ids.append(str(cart_item.id))
@@ -28094,8 +28159,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 for shop_id, fee in shipping_fees_breakdown.items():
                     shop_info = shops_distances.get(shop_id, {})
                     shop_name = shop_info.get('shop_name', 'Unknown Shop')
-                    distance = shop_info.get('distance_km', 0)
-                    breakdown_parts.append(f"{shop_name}: ₱{fee:.2f} ({distance:.1f} km)")
+                    breakdown_parts.append(f"{shop_name}: ₱{fee:.2f}")
                 breakdown_message = " | ".join(breakdown_parts)
 
             response_data = {
@@ -28107,12 +28171,12 @@ class CheckoutOrder(viewsets.ViewSet):
                 "total_amount": float(total_amount),
                 "subtotal": float(subtotal),
                 "total_delivery_fee": float(total_delivery_fee),
-                "delivery_fees_breakdown": shipping_fees_breakdown,
+                "delivery_fees_breakdown": {k: float(v) for k, v in shipping_fees_breakdown.items()},
                 "delivery_fees_by_shop": [
                     {
                         "shop_id": shop_id,
                         "shop_name": info.get('shop_name'),
-                        "distance_km": info.get('distance_km'),
+                        "distance_km": float(info.get('distance_km', 0)) if info.get('distance_km') else None,
                         "delivery_fee": float(info.get('fee', 0))
                     }
                     for shop_id, info in shops_distances.items()
@@ -28128,6 +28192,12 @@ class CheckoutOrder(viewsets.ViewSet):
                 "delivery_fee_note": f"Total delivery fee of ₱{float(total_delivery_fee):.2f} (₱40/km capped at ₱300 per shop). Breakdown: {breakdown_message}" if total_delivery_fee > 0 else None
             }
             
+            # Log the actual stored fees for debugging
+            print(f"[CREATE_ORDER] ===== FINAL STORED VALUES =====")
+            print(f"[CREATE_ORDER] shipping_fees_breakdown: {shipping_fees_breakdown}")
+            print(f"[CREATE_ORDER] total_delivery_fee: {float(total_delivery_fee)}")
+            print(f"[CREATE_ORDER] ==================================")
+            
             return Response(response_data)
 
         except Exception as e:
@@ -28138,8 +28208,9 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
     
+            
+            
     @action(detail=False, methods=['GET'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
         try:
@@ -29561,7 +29632,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
                             'can_review': not has_reviewed and order.status == 'delivered',
-                            'is_refundable': is_refundable
+                            'is_refundable': is_refundable,
+                            'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
+                            'distance_km': getattr(checkout, 'distance_km', None),
                         }
                         order_data['items'].append(item_data)
                         
@@ -30162,10 +30235,19 @@ class PurchasesBuyer(viewsets.ViewSet):
                     }
                     items_data.append(item_data)
             
-            # Calculate order summary
+            total_shipping_fee = 0
+            shipping_fees_by_shop = {}
+
+            if hasattr(order, 'shipping_fees_breakdown') and order.shipping_fees_breakdown:
+                shipping_fees_by_shop = order.shipping_fees_breakdown
+                total_shipping_fee = sum(shipping_fees_by_shop.values())
+            elif hasattr(order, 'shipping_fee') and order.shipping_fee:
+                total_shipping_fee = float(order.shipping_fee)
+
             order_summary = {
                 'subtotal': str(subtotal),
-                'shipping_fee': str(float(order.shipping_fee) if order.shipping_fee else 0.00),
+                'shipping_fee': str(total_shipping_fee),
+                'shipping_fees_breakdown': shipping_fees_by_shop,  # Add per-shop breakdown
                 'tax': str(float(subtotal) * 0.12),
                 'discount': '0.00',
                 'total': str(order.total_amount),
@@ -30287,24 +30369,35 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'completed': True,
             })
         
-        # Order processed
+        # Get all shops involved in this order
+        shops_involved = set()
+        for checkout in order.checkout_set.all():
+            if checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                shops_involved.add(checkout.cart_item.product.shop.name)
+            elif hasattr(checkout, 'direct_shop_name') and checkout.direct_shop_name:
+                shops_involved.add(checkout.direct_shop_name)
+        
+        shop_count = len(shops_involved)
+        shop_names = ', '.join(list(shops_involved)) if shops_involved else 'Seller'
+        
+        # Order processed (per shop)
         if order.status in ['processing', 'shipped', 'delivered', 'completed']:
             timeline.append({
                 'event': 'Order Processed',
                 'date': order.updated_at.isoformat() if order.updated_at else order.created_at.isoformat(),
-                'description': 'Seller is preparing your order',
+                'description': f'{shop_count} seller(s) are preparing your order: {shop_names}',
                 'icon': 'package',
                 'color': '#10B981',
                 'completed': True,
             })
         
-        # Shipped
+        # Shipped (may have multiple shipments)
         if order.status in ['shipped', 'delivered', 'completed']:
             shipped_date = delivery.created_at if delivery else order.updated_at
             timeline.append({
                 'event': 'Shipped',
                 'date': shipped_date.isoformat() if shipped_date else None,
-                'description': 'Order has been shipped',
+                'description': f'Your order has been shipped from {shop_names}',
                 'icon': 'truck',
                 'color': '#10B981',
                 'completed': True,
@@ -30314,14 +30407,14 @@ class PurchasesBuyer(viewsets.ViewSet):
         if order.status in ['delivered', 'completed']:
             delivered_date = (
                 (getattr(delivery, 'delivery_date', None)
-                 or getattr(delivery, 'delivered_at', None)
-                 or getattr(delivery, 'updated_at', None))
+                or getattr(delivery, 'delivered_at', None)
+                or getattr(delivery, 'updated_at', None))
                 if delivery else order.updated_at
             )
             timeline.append({
                 'event': 'Delivered',
                 'date': delivered_date.isoformat() if delivered_date else None,
-                'description': 'Order has been delivered',
+                'description': f'Your order from {shop_names} has been delivered',
                 'icon': 'checkmark-done',
                 'color': '#10B981',
                 'completed': True,
@@ -30343,7 +30436,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             timeline.append({
                 'event': 'Processing',
                 'date': None,
-                'description': 'Waiting for seller to process',
+                'description': f'Waiting for {shop_count} seller(s) to process',
                 'icon': 'time',
                 'color': '#F59E0B',
                 'completed': False,
@@ -30738,7 +30831,7 @@ class PurchasesBuyer(viewsets.ViewSet):
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
-    def get_return_products(self, request):
+    def get_return_products(order_summaryself, request):
         user_id = request.headers.get('X-User-Id')
 
 
@@ -31108,6 +31201,8 @@ class OrderSuccessful(viewsets.ViewSet):
                             "code": checkout.voucher.code,
                         } if checkout.voucher else None,
                         "remarks": checkout.remarks,
+                        'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
+                        'distance_km': getattr(checkout, 'distance_km', None),
                     }
                     
                     # Add variant info if available
@@ -50495,14 +50590,14 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         except UserWallet.DoesNotExist:
             wallet = UserWallet.objects.create(user=user)
 
-        # Auto-release expired pending transactions (older than 3 days)
+        # Auto-release expired pending transactions (older than 1 day)
         self._release_expired_pending_transactions(wallet)
 
         transactions_qs = WalletTransaction.objects.filter(wallet=wallet)
 
         total_credits = transactions_qs.filter(
             transaction_type='credit',
-            status='completed'
+            status__in=['completed', 'pending']
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
         total_debits = transactions_qs.filter(
@@ -50534,7 +50629,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
     def process_completed_order(self, request):
         """
         Process a completed order and add the amount to seller's pending balance.
-        Funds will be available for withdrawal only after 3 days with no refund.
+        Funds will be available for withdrawal only after 1 day with no refund.
         
         Body:
             - order_id: UUID of the completed order
@@ -50615,7 +50710,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                     # Get or create wallet for seller
                     wallet, _ = UserWallet.objects.get_or_create(user=seller_user)
                     
-                    # Add to pending_balance with 3-day hold
+                    # Add to pending_balance with 1-day hold
                     wallet.pending_balance += amount
                     wallet.save()
                     
@@ -50626,7 +50721,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                         amount=amount,
                         transaction_type='credit',
                         source_type='shop_sale',
-                        status='pending',  # Pending - will be released after 3 days
+                        status='pending',  # Pending - will be released after 1 day
                         shop=shop,
                         order=order,
                         created_at=timezone.now()
@@ -50640,7 +50735,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                         'seller_id': str(seller_user.id),
                         'seller_name': f"{seller_user.first_name} {seller_user.last_name}".strip() or seller_user.username,
                         'transaction_id': str(wallet_transaction.transaction_id),
-                        'release_date': (timezone.now() + timedelta(days=3)).isoformat()
+                        'release_date': (timezone.now() + timedelta(days=1)).isoformat()
                     })
                     
                     logger.info(f"Added ₱{amount} to pending balance for seller {seller_user.username} from completed order {order_id}")
@@ -50654,8 +50749,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             'order_status': order.status,
             'total_credited': float(total_credited),
             'processed_items': processed_items,
-            'note': 'Funds will be available for withdrawal after 3 days with no refund.',
-            'release_date': (timezone.now() + timedelta(days=3)).isoformat()
+            'note': 'Funds will be available for withdrawal after 1 day with no refund.',
+            'release_date': (timezone.now() + timedelta(days=1)).isoformat()
         }, status=status.HTTP_200_OK)
 
     # ================================================================
@@ -50687,8 +50782,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                 if today > pending_tx.order.refund_expire_date:
                     should_release = True
             elif pending_tx.order and pending_tx.order.completed_at:
-                # Fallback: release if completed_at is older than 3 days
-                if (today - pending_tx.order.completed_at).days >= 3:
+                # Fallback: release if completed_at is older than 1 day
+                if (today - pending_tx.order.completed_at).days >= 1:
                     should_release = True
             else:
                 # No order reference, don't release automatically

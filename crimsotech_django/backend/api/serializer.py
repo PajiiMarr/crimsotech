@@ -1631,10 +1631,10 @@ class RiderWalletSerializer(serializers.ModelSerializer):
     
     # Transaction fields
     transaction_id = serializers.UUIDField(read_only=True)
-    amount = serializers.DecimalField(max_digits=15, decimal_places=2, write_only=True)
-    transaction_type = serializers.ChoiceField(choices=WalletTransaction.TRANSACTION_TYPES, write_only=True)
-    source_type = serializers.CharField(max_length=20, write_only=True)
-    status = serializers.CharField(max_length=30, default='completed', write_only=True)
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2)
+    transaction_type = serializers.ChoiceField(choices=WalletTransaction.TRANSACTION_TYPES)
+    source_type = serializers.CharField(max_length=20)
+    status = serializers.CharField(max_length=30, default='completed')
     created_at = serializers.DateTimeField(read_only=True)
     
     # Related fields
