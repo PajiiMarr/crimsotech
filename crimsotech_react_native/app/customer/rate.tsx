@@ -38,7 +38,6 @@ interface OrderItem {
   product_id: string;
   product_name: string;
   product_description?: string;
-  variant_id?: string | null; 
   variant_title?: string;
   quantity: number;
   price: string;
@@ -447,7 +446,6 @@ export default function RatePage() {
   const productId = params.productId as string;
   const productName = params.productName as string;
   const variantTitleParam = params.variantTitle as string | undefined;
-  const [variantId, setVariantId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -510,7 +508,6 @@ export default function RatePage() {
             ...product,
             variant_title: product.variant_title || variantTitleParam || undefined,
           });
-          setVariantId(product.variant_id || null);  
         }
         
         // Check if this is a pickup order
@@ -542,7 +539,7 @@ export default function RatePage() {
           console.log("No rider info available for this delivery order");
         }
       }
-      
+
       // Check existing reviews
       await checkExistingReviews();
       
@@ -581,10 +578,17 @@ export default function RatePage() {
           media: review.media || []
         });
         setExistingReviewMedia(review.media || []);
+      } else {
+        setHasReviewed(false);
+        setExistingReview(null);
+        setExistingReviewMedia([]);
       }
       
     } catch (err) {
       console.error("Error checking reviews:", err);
+      setHasReviewed(false);
+      setExistingReview(null);
+      setExistingReviewMedia([]);
     }
   };
 
@@ -623,10 +627,6 @@ export default function RatePage() {
         formData.append('delivery_rating', deliveryRating.toString());
       }
 
-      if (variantId) {
-        formData.append('variant_id', variantId);
-      }
-
       // Append media files
       for (let i = 0; i < selectedMedia.length; i++) {
         const media = selectedMedia[i];
@@ -657,7 +657,6 @@ export default function RatePage() {
       console.log("selectedMedia count:", selectedMedia.length);
       console.log("deletedMediaIds:", deletedMediaIds);
       console.log("FormData entries:");
-      console.log("variant_id:", variantId);  
       for (let pair of (formData as any)._parts) {
         console.log(pair[0], pair[1]);
       }

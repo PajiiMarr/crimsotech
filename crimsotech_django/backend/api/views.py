@@ -14384,7 +14384,7 @@ class ModeratorProduct(viewsets.ViewSet):
             product_data["reviews"] = [
                 {
                     "id": str(review.id),
-                    "rating": review.average_rating,
+                    "rating": review.rating,
                     "comment": review.comment,
                     "customer": review.customer.customer.username if review.customer and review.customer.customer else None,
                     "created_at": review.created_at.isoformat(),
@@ -29400,7 +29400,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'name': checkout.voucher.name,
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
-                            'can_review': not has_reviewed and order.status in ['delivered', 'completed'],
+                            'can_review': not has_reviewed and order.status == 'delivered',
                             'is_refundable': is_refundable
                         }
                         order_data['items'].append(item_data)
@@ -29492,7 +29492,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                     'name': checkout.voucher.name,
                                     'code': checkout.voucher.code
                                 } if checkout.voucher else None,
-                                'can_review': not has_reviewed and order.status in ['delivered', 'completed'],
+                                'can_review': not has_reviewed and order.status == 'delivered',
                                 'is_refundable': is_refundable
                             }
                             order_data['items'].append(item_data)
@@ -29764,7 +29764,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'name': checkout.voucher.name,
                         'code': checkout.voucher.code
                     } if checkout.voucher else None,
-                    'can_review': not has_reviewed and order.status in ['delivered', 'completed']
+                    'can_review': not has_reviewed and order.status == 'delivered'
                 }
                 items_data.append(item_data)
             else:
@@ -29995,7 +29995,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'product_images': product_images,
                         'primary_image': primary_image,
                         'shop_info': shop_info,
-                        'can_review': not has_reviewed and order.status in ['delivered', 'completed'],
+                        'can_review': not has_reviewed and order.status == 'delivered',
                         'can_return': order.status == 'delivered' and not has_reviewed,
                         'is_refundable': variant_is_refundable,
                         'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
@@ -30054,7 +30054,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'actions': {
                     'can_cancel': order.status in ['pending', 'processing'],
                     'can_track': order.status in ['shipped', 'delivered', 'completed'],
-                    'can_review': order.status in ['delivered', 'completed'] and any(item['can_review'] for item in items_data),
+                    'can_review': order.status == 'delivered' and any(item['can_review'] for item in items_data),
                     'can_return': order.status == 'delivered' and any(item['can_return'] for item in items_data),
                     'can_contact_seller': True,
                     'can_buy_again': True,
