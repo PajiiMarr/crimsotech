@@ -53,7 +53,7 @@ interface DeliveryStats {
   customer_name: string;
   pickup_location: string;
   delivery_location: string;
-  status: 'pending' | 'picked_up' | 'delivered' | 'cancelled';  // Matches Django choices
+  status: 'pending' | 'accepted' | 'picked_up' | 'in_progress' | 'delivered' | 'completed' | 'cancelled' | 'declined';  // Matches Django choices
   amount: number;  // From Order.total_amount
   distance_km?: number;  // Optional: not in original Django model
   estimated_minutes?: number;  // Optional: not in original Django model
@@ -420,6 +420,8 @@ const columns: ColumnDef<DeliveryStats>[] = [
         switch (status) {
           case 'delivered':
             return { variant: 'default' as const, text: 'Delivered', icon: CheckCircle };
+          case 'completed':
+            return { variant: 'default' as const, text: 'Completed', icon: CheckCircle };
           case 'picked_up':
             return { variant: 'secondary' as const, text: 'In Progress', icon: Bike };
           case 'pending':
@@ -537,7 +539,7 @@ export default function RiderStats({ loaderData}: { loaderData: LoaderData }){
     // Filter config for the data table
     const deliveryFilterConfig = {
       status: {
-        options: ['all', 'pending', 'picked_up', 'delivered', 'cancelled'],
+        options: ['all', 'pending', 'picked_up', 'delivered', 'completed', 'cancelled'],
         placeholder: 'Status'
       }
     };

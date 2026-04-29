@@ -573,7 +573,7 @@ const formatCurrency = (amount: number | undefined | null) => {
                                   <p className="text-lg font-bold mt-1">{metrics.total_deliveries}</p>
                                   <div className="flex gap-1 text-[10px] text-muted-foreground mt-1">
                                     <span className="flex items-center gap-0.5">
-                                      <CheckCircle className="w-2 h-2 text-green-500" /> {metrics.delivered_count + metrics.completed_count}
+                                      <CheckCircle className="w-2 h-2 text-green-500" /> {metrics.completed_count}
                                     </span>
                                     <span className="flex items-center gap-0.5">
                                       <AlertCircle className="w-2 h-2 text-red-500" /> {metrics.cancelled_count + metrics.declined_count}

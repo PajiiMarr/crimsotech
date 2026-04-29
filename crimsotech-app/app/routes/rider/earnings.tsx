@@ -46,6 +46,16 @@ interface EarningsMetrics {
   today_deliveries: number;
   week_earnings: number;
   week_to_remit: number;
+  cod_orders?: {
+    count: number;
+    total_order_amount: number;
+    total_with_fees: number;
+  };
+  online_orders?: {
+    count: number;
+    total_order_amount: number;
+    total_with_fees: number;
+  };
   has_data: boolean;
   sandbox_mode: boolean;
   date_range?: {
@@ -110,6 +120,7 @@ const formatCurrency = (amount: number) =>
 const getStatusBadge = (status: string) => {
   const map: Record<string, { label: string; className: string }> = {
     delivered:   { label: 'Delivered',   className: 'bg-green-100 text-green-700 border-green-200' },
+    completed:   { label: 'Completed',   className: 'bg-green-100 text-green-700 border-green-200' },
     pending:     { label: 'Pending',     className: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
     picked_up:   { label: 'Picked Up',   className: 'bg-blue-100 text-blue-700 border-blue-200' },
     in_progress: { label: 'In Progress', className: 'bg-purple-100 text-purple-700 border-purple-200' },
@@ -139,7 +150,7 @@ const DeliveryRow = ({
   delivery: Delivery;
   showBalance: boolean;
 }) => {
-  const isDelivered = delivery.status === 'delivered';
+  const isDelivered = delivery.status === 'delivered' || delivery.status === 'completed';
   const isCancelled = delivery.status === 'cancelled';
 
   return (
@@ -243,20 +254,14 @@ export default function Earnings({ loaderData }: { loaderData: LoaderData }) {
   const [isSandbox, setIsSandbox] = useState(false);
 
   // ---- Derived values ----
-  const deliveredToday = todayDeliveries.filter(d => d.status === 'delivered');
-
-  // Earnings = sum of delivery fees for all delivered today
-  const todayDeliveryFees = deliveredToday.reduce((sum, d) => sum + d.delivery_fee, 0);
-
-  // Total collected = sum of order amounts for delivered today
-  const todayTotalCollected = deliveredToday.reduce((sum, d) => sum + d.order_amount, 0);
+  const deliveredToday = todayDeliveries.filter(d => d.status === 'delivered' || d.status === 'completed');
 
   // Still pending remittance (from unremittedSummary, which excludes already-remitted)
   const pendingRemitAmount = unremittedSummary?.total_unremitted_amount ?? 0;
 
   // Remitted today = deliveries that ARE remitted
   const remittedCount = deliveredToday.filter(d => d.is_remitted).length;
-  const pendingRemitCount = deliveredToday.filter(d => !d.is_remitted && d.status === 'delivered').length;
+  const pendingRemitCount = deliveredToday.filter(d => !d.is_remitted && (d.status === 'delivered' || d.status === 'completed')).length;
 
   // ---- Data fetching ----
   const fetchTodayData = async () => {
@@ -368,107 +373,79 @@ export default function Earnings({ loaderData }: { loaderData: LoaderData }) {
             </div>
           </div>
 
-          {/* ---- Main metric cards ---- */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {isLoading ? (
-              <><SkeletonCard /><SkeletonCard /><SkeletonCard /></>
-            ) : (
-              <>
-                {/* Total Collected */}
-                <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
-                  <CardContent className="p-5">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="p-2 bg-blue-500 rounded-lg">
-                          <Wallet className="w-4 h-4 text-white" />
-                        </div>
-                        <span className="text-sm font-medium text-blue-700">Total Collected</span>
-                      </div>
-                      <Button
-                        variant="ghost" size="sm"
-                        className="h-7 w-7 p-0 hover:bg-blue-200"
-                        onClick={() => setShowBalance(!showBalance)}
-                      >
-                        {showBalance ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </Button>
-                    </div>
-                    <p className="text-3xl font-bold text-blue-800">
-                      {showBalance ? formatCurrency(todayTotalCollected) : '₱••••••'}
-                    </p>
-                    <p className="text-xs text-blue-600 mt-1">
-                      From {deliveredToday.length} completed {deliveredToday.length === 1 ? 'delivery' : 'deliveries'}
-                    </p>
-                  </CardContent>
-                </Card>
-
-                {/* Your Earnings */}
-                <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
-                  <CardContent className="p-5">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="p-2 bg-green-500 rounded-lg">
-                        <TrendingUp className="w-4 h-4 text-white" />
-                      </div>
-                      <span className="text-sm font-medium text-green-700">Your Earnings</span>
-                    </div>
-                    <p className="text-3xl font-bold text-green-800">
-                      {showBalance ? formatCurrency(todayDeliveryFees) : '₱••••••'}
-                    </p>
-                    <p className="text-xs text-green-600 mt-1">Delivery fees earned today</p>
-                  </CardContent>
-                </Card>
-
-                {/* Pending Remittance */}
-                <Card className={`bg-gradient-to-br border ${
-                  pendingRemitAmount > 0
-                    ? 'from-orange-50 to-orange-100 border-orange-200'
-                    : 'from-emerald-50 to-emerald-100 border-emerald-200'
-                }`}>
-                  <CardContent className="p-5">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className={`p-2 rounded-lg ${pendingRemitAmount > 0 ? 'bg-orange-500' : 'bg-emerald-500'}`}>
-                        {pendingRemitAmount > 0
-                          ? <ArrowUpRight className="w-4 h-4 text-white" />
-                          : <ShieldCheck   className="w-4 h-4 text-white" />
-                        }
-                      </div>
-                      <span className={`text-sm font-medium ${pendingRemitAmount > 0 ? 'text-orange-700' : 'text-emerald-700'}`}>
-                        {pendingRemitAmount > 0 ? 'Pending Remittance' : 'All Remitted'}
-                      </span>
-                    </div>
-                    <p className={`text-3xl font-bold ${pendingRemitAmount > 0 ? 'text-orange-800' : 'text-emerald-800'}`}>
-                      {showBalance ? formatCurrency(pendingRemitAmount) : '₱••••••'}
-                    </p>
-                    <p className={`text-xs mt-1 ${pendingRemitAmount > 0 ? 'text-orange-600' : 'text-emerald-600'}`}>
-                      {pendingRemitAmount > 0
-                        ? `${pendingRemitCount} delivery${pendingRemitCount !== 1 ? 's' : ''} pending · ${remittedCount} remitted`
-                        : 'All deliveries have been remitted'
-                      }
-                    </p>
-                  </CardContent>
-                </Card>
-              </>
-            )}
-          </div>
-
-          {/* ---- Quick stats ---- */}
+          {/* ---- Quick Stats (4 White Containers) ---- */}
           {metrics && !isLoading && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="bg-gray-50 p-3 rounded-lg">
-                <p className="text-xs text-gray-500">Total Deliveries</p>
-                <p className="text-lg font-semibold">{metrics.delivered_count ?? 0}</p>
-              </div>
-              <div className="bg-gray-50 p-3 rounded-lg">
-                <p className="text-xs text-gray-500">Remitted</p>
-                <p className="text-lg font-semibold text-emerald-600">{remittedCount}</p>
-              </div>
-              <div className="bg-gray-50 p-3 rounded-lg">
-                <p className="text-xs text-gray-500">Avg Rating</p>
-                <p className="text-lg font-semibold">{metrics.avg_rating?.toFixed(1) ?? '0.0'} ⭐</p>
-              </div>
-              <div className="bg-gray-50 p-3 rounded-lg">
-                <p className="text-xs text-gray-500">On Time</p>
-                <p className="text-lg font-semibold">{metrics.on_time_percentage ?? 0}%</p>
-              </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <Card className="bg-white shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                <CardContent className="p-4 sm:p-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-blue-50 rounded-md">
+                      <Wallet className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Collected (COD)</p>
+                  </div>
+                  <div className="flex justify-between items-end">
+                    <p className="text-xl sm:text-2xl font-bold text-gray-900">
+                      {showBalance ? formatCurrency(metrics.cod_orders?.total_order_amount ?? 0) : '₱••••'}
+                    </p>
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-gray-100 -mr-1" onClick={() => setShowBalance(!showBalance)}>
+                      {showBalance ? <EyeOff className="w-3.5 h-3.5 text-gray-400" /> : <Eye className="w-3.5 h-3.5 text-gray-400" />}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">{metrics.cod_orders?.count ?? 0} COD orders</p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-white shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                <CardContent className="p-4 sm:p-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-green-50 rounded-md">
+                      <TrendingUp className="w-4 h-4 text-green-600" />
+                    </div>
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Total Earnings</p>
+                  </div>
+                  <div className="flex justify-between items-end">
+                    <p className="text-xl sm:text-2xl font-bold text-gray-900">
+                      {showBalance ? formatCurrency(metrics.total_earnings ?? 0) : '₱••••'}
+                    </p>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Total delivery fees</p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-white shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                <CardContent className="p-4 sm:p-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-orange-50 rounded-md">
+                      <ArrowUpRight className="w-4 h-4 text-orange-600" />
+                    </div>
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">To Remit</p>
+                  </div>
+                  <div className="flex justify-between items-end">
+                    <p className={`text-xl sm:text-2xl font-bold ${pendingRemitAmount > 0 ? 'text-orange-600' : 'text-emerald-600'}`}>
+                      {showBalance ? formatCurrency(pendingRemitAmount) : '₱••••'}
+                    </p>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Pending remittance</p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-white shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                <CardContent className="p-4 sm:p-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-gray-100 rounded-md">
+                      <Truck className="w-4 h-4 text-gray-600" />
+                    </div>
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Deliveries</p>
+                  </div>
+                  <div className="flex justify-between items-end">
+                    <p className="text-xl sm:text-2xl font-bold text-gray-900">
+                      {metrics.delivered_count ?? 0}
+                    </p>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Successfully completed</p>
+                </CardContent>
+              </Card>
             </div>
           )}
 
@@ -498,9 +475,9 @@ export default function Earnings({ loaderData }: { loaderData: LoaderData }) {
                 <div className="space-y-3">
                   {/* Pending remittance first, then remitted */}
                   {[
-                    ...todayDeliveries.filter(d => d.status === 'delivered' && !d.is_remitted),
-                    ...todayDeliveries.filter(d => d.status === 'delivered' && d.is_remitted),
-                    ...todayDeliveries.filter(d => d.status !== 'delivered'),
+                    ...todayDeliveries.filter(d => (d.status === 'delivered' || d.status === 'completed') && !d.is_remitted),
+                    ...todayDeliveries.filter(d => (d.status === 'delivered' || d.status === 'completed') && d.is_remitted),
+                    ...todayDeliveries.filter(d => d.status !== 'delivered' && d.status !== 'completed'),
                   ].map(delivery => (
                     <DeliveryRow key={delivery.id} delivery={delivery} showBalance={showBalance} />
                   ))}
@@ -515,15 +492,15 @@ export default function Earnings({ loaderData }: { loaderData: LoaderData }) {
               <CardContent className="p-4">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                   <div className="flex justify-between sm:block">
-                    <span className="text-gray-500">Total Collected</span>
+                    <span className="text-gray-500">Collected (COD)</span>
                     <span className="sm:float-right font-medium text-blue-600">
-                      {showBalance ? formatCurrency(todayTotalCollected) : '₱••••'}
+                      {showBalance ? formatCurrency(metrics?.cod_orders?.total_order_amount ?? 0) : '₱••••'}
                     </span>
                   </div>
                   <div className="flex justify-between sm:block">
-                    <span className="text-gray-500">Your Earnings</span>
+                    <span className="text-gray-500">Total Earnings</span>
                     <span className="sm:float-right font-medium text-green-600">
-                      {showBalance ? formatCurrency(todayDeliveryFees) : '₱••••'}
+                      {showBalance ? formatCurrency(metrics?.total_earnings ?? 0) : '₱••••'}
                     </span>
                   </div>
                   <div className="flex justify-between sm:block">

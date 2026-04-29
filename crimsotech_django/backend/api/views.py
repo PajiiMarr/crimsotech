@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from api.models import (
     Order, Delivery, Rider, Notification, Shop, Checkout, 
     ProductMedia, Variants, Payment, UserWallet, WalletTransaction,
-    Proof
+    Proof, Review, RiderRemittance, RiderRemittanceItem
 )
 from django.conf import settings
 import requests
@@ -54,7 +54,10 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.conf import settings
-from .serializer import DisputeRequestCreateSerializer, DisputeRequestSerializer, DisputeEvidenceSerializer
+from .serializer import (
+    DisputeRequestCreateSerializer, DisputeRequestSerializer, DisputeEvidenceSerializer,
+    AdminRemittanceSerializer
+)
 import random
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
@@ -40906,7 +40909,7 @@ class RiderDashboardViewSet(viewsets.ViewSet):
             
             # Filter to only show active deliveries (exclude delivered and cancelled)
             active_deliveries = deliveries.exclude(
-                status__in=['delivered', 'cancelled']
+                status__in=['delivered', 'completed', 'cancelled']
             )[:50]  # Increased limit for date ranges
             
             delivery_serializer = DeliveryStatsSerializer(active_deliveries, many=True)
@@ -40933,9 +40936,9 @@ class RiderDashboardViewSet(viewsets.ViewSet):
     def _calculate_metrics(self, deliveries, rider):
         """Calculate all metrics in optimized queries based on filtered deliveries"""
         
-        # Update any delivered deliveries with missing/zero delivery_fee before calculating metrics
+        # Update any delivered/completed deliveries with missing/zero delivery_fee before calculating metrics
         delivered_without_fee = deliveries.filter(
-            status='delivered'
+            status__in=['delivered', 'completed']
         ).filter(
             Q(delivery_fee__isnull=True) | Q(delivery_fee=0)
         )
@@ -40945,21 +40948,21 @@ class RiderDashboardViewSet(viewsets.ViewSet):
         # 1. Basic counts (single query)
         status_counts = deliveries.aggregate(
             total=Count('id'),
-            delivered=Count('id', filter=Q(status='delivered')),
+            delivered=Count('id', filter=Q(status__in=['delivered', 'completed'])),
             pending=Count('id', filter=Q(status__in=['pending', 'picked_up'])),
             cancelled=Count('id', filter=Q(status='cancelled'))
         )
         
         # 2. Total earnings from delivered orders (using delivery_fee)
         total_earnings = deliveries.filter(
-            status='delivered'
+            status__in=['delivered', 'completed']
         ).aggregate(
             total=Sum('delivery_fee')
         )['total'] or Decimal('0.00')
         
         # 3. Average delivery time in minutes
         delivered_deliveries = deliveries.filter(
-            status='delivered',
+            status__in=['delivered', 'completed'],
             picked_at__isnull=False,
             delivered_at__isnull=False
         )
@@ -40979,8 +40982,9 @@ class RiderDashboardViewSet(viewsets.ViewSet):
             if count > 0:
                 avg_delivery_minutes = total_seconds / (60 * count)
         
-        # 4. Average rating
-        avg_rating = deliveries.filter(
+        # 4. Average rating — ratings are stored in the Review model (not on Delivery)
+        avg_rating = Review.objects.filter(
+            rider=rider,
             delivery_rating__isnull=False
         ).aggregate(
             avg=Avg('delivery_rating')
@@ -40988,7 +40992,7 @@ class RiderDashboardViewSet(viewsets.ViewSet):
         
         # 5. On-time percentage (delivered within estimated time)
         on_time_deliveries = deliveries.filter(
-            status='delivered',
+            status__in=['delivered', 'completed'],
             estimated_minutes__isnull=False,
             actual_minutes__isnull=False,
             actual_minutes__lte=F('estimated_minutes')  # Actual <= Estimated
@@ -41001,22 +41005,22 @@ class RiderDashboardViewSet(viewsets.ViewSet):
         week_start = timezone.now() - timedelta(days=timezone.now().weekday())
         current_week_deliveries = deliveries.filter(
             created_at__gte=week_start,
-            status='delivered'
+            status__in=['delivered', 'completed']
         ).count()
         
         # 7. Current month earnings (based on filtered data, but use actual current month)
+        # Uses delivery_fee (rider's actual earnings) not order total_amount
         month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         current_month_earnings = deliveries.filter(
-            status='delivered',
-            delivered_at__gte=month_start,
-            order__payment__status='success'
+            status__in=['delivered', 'completed'],
+            delivered_at__gte=month_start
         ).aggregate(
-            total=Sum('order__total_amount')
+            total=Sum('delivery_fee')
         )['total'] or Decimal('0.00')
         
         # 8. Growth metrics - calculate based on the filtered date range
         # If date range is provided, use it for growth calculation
-        growth_metrics = self._calculate_growth_metrics(deliveries)
+        growth_metrics = self._calculate_growth_metrics(deliveries, rider)
         
         return {
             'total_deliveries': status_counts['total'],
@@ -41033,7 +41037,7 @@ class RiderDashboardViewSet(viewsets.ViewSet):
             'growth_metrics': growth_metrics
         }
     
-    def _calculate_growth_metrics(self, deliveries):
+    def _calculate_growth_metrics(self, deliveries, rider):
         """
         Calculate growth compared to previous period of same duration
         Based on the filtered date range or default to last 7 days
@@ -41057,12 +41061,11 @@ class RiderDashboardViewSet(viewsets.ViewSet):
             period_days = 7
         
         # Current period (the filtered date range)
-        current_deliveries = deliveries.filter(status='delivered').count()
+        current_deliveries = deliveries.filter(status__in=['delivered', 'completed']).count()
         current_earnings = deliveries.filter(
-            status='delivered',
-            order__payment__status='success'
+            status__in=['delivered', 'completed']
         ).aggregate(
-            total=Sum('order__total_amount')
+            total=Sum('delivery_fee')
         )['total'] or Decimal('0.00')
         
         # For growth comparison, we need to get previous period data
@@ -41082,17 +41085,19 @@ class RiderDashboardViewSet(viewsets.ViewSet):
                     created_at__date__lte=previous_end.date()
                 )
                 
-                previous_deliveries = previous_period.filter(status='delivered').count()
+                previous_deliveries = previous_period.filter(status__in=['delivered', 'completed']).count()
                 previous_earnings = previous_period.filter(
-                    status='delivered',
-                    order__payment__status='success'
+                    status__in=['delivered', 'completed']
                 ).aggregate(
-                    total=Sum('order__total_amount')
+                    total=Sum('delivery_fee')
                 )['total'] or Decimal('0.00')
                 
-                # Rating for previous period
-                previous_rating = previous_period.filter(
-                    delivery_rating__isnull=False
+                # Rating for previous period — query from Review model
+                previous_rating = Review.objects.filter(
+                    rider=rider,
+                    delivery_rating__isnull=False,
+                    created_at__date__gte=previous_start.date(),
+                    created_at__date__lte=previous_end.date()
                 ).aggregate(
                     avg=Avg('delivery_rating')
                 )['avg'] or 0
@@ -41124,8 +41129,9 @@ class RiderDashboardViewSet(viewsets.ViewSet):
         elif current_earnings > 0:
             earnings_growth = 100  # 100% growth from 0
         
-        # Rating growth
-        current_rating = deliveries.filter(
+        # Rating growth — query from Review model
+        current_rating = Review.objects.filter(
+            rider=rider,
             delivery_rating__isnull=False
         ).aggregate(
             avg=Avg('delivery_rating')
@@ -41217,7 +41223,7 @@ class RiderEarningsViewSet(viewsets.ViewSet):
                 # 3. Delivered recently (last 30 days) if no timestamp
                 deliveries = Delivery.objects.filter(
                     rider=rider,
-                    status='delivered'
+                    status__in=['delivered', 'completed']
                 ).filter(
                     Q(delivered_at__date__gte=start_date.date(), delivered_at__date__lte=end_date.date()) |
                     Q(delivered_at__isnull=True, updated_at__date__gte=start_date.date(), updated_at__date__lte=end_date.date())
@@ -41233,7 +41239,7 @@ class RiderEarningsViewSet(viewsets.ViewSet):
                 # Refresh the queryset to get updated values
                 deliveries = Delivery.objects.filter(
                     rider=rider,
-                    status='delivered'
+                    status__in=['delivered', 'completed']
                 ).filter(
                     Q(delivered_at__date__gte=start_date.date(), delivered_at__date__lte=end_date.date()) |
                     Q(delivered_at__isnull=True, updated_at__date__gte=start_date.date(), updated_at__date__lte=end_date.date())
@@ -41623,6 +41629,47 @@ class RiderDeliveryActionsViewSet(viewsets.ViewSet):
             order.completed_at = delivery.delivered_at
             order.save()
             
+            # Credit delivery fee to rider's wallet
+            if delivery.delivery_fee and delivery.delivery_fee > 0:
+                try:
+                    rider_user = user.rider.user
+                    wallet, _ = UserWallet.objects.get_or_create(user=rider_user)
+                    
+                    wallet.available_balance += delivery.delivery_fee
+                    wallet.save()
+                    
+                    # Create wallet transaction record for Delivery Fee
+                    WalletTransaction.objects.create(
+                        wallet=wallet,
+                        user=rider_user,
+                        amount=delivery.delivery_fee,
+                        transaction_type='credit',
+                        source_type='delivery_fee',
+                        status='completed',
+                        order=order
+                    )
+                    
+                except Exception as e:
+                    print(f"Error crediting delivery fee to wallet: {e}")
+            
+            # Also create a wallet transaction record for Total Collected Money (COD)
+            # This is purely for display in the transaction history and does NOT increase available_balance
+            if order.payment_method == 'Cash on Delivery' and order.total_amount and order.total_amount > 0:
+                try:
+                    rider_user = user.rider.user
+                    wallet, _ = UserWallet.objects.get_or_create(user=rider_user)
+                    WalletTransaction.objects.create(
+                        wallet=wallet,
+                        user=rider_user,
+                        amount=order.total_amount,
+                        transaction_type='credit',
+                        source_type='cod_collection',
+                        status='completed',
+                        order=order
+                    )
+                except Exception as e:
+                    print(f"Error logging cod collection to wallet: {e}")
+            
             return Response({
                 'success': True,
                 'message': 'Delivery marked as delivered',
@@ -41714,7 +41761,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
         and initiate_remittance to stay in sync.
         """
         return self.get_queryset(user).filter(
-            status='delivered',
+            status__in=['delivered', 'completed'],
             delivered_at__isnull=False
         ).exclude(
             remittance_items__remittance__status='completed'
@@ -41728,7 +41775,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
     def order_history(self, request):
         """
         Get comprehensive order history for rider with metrics.
-        Query params: status (optional)
+        Query params: status (optional), start_date (YYYY-MM-DD), end_date (YYYY-MM-DD)
         """
         try:
             user = self._get_user_from_header(request)
@@ -41740,18 +41787,24 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 }, status=status.HTTP_403_FORBIDDEN)
 
             status_filter = request.query_params.get('status', 'all')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
             deliveries = self.get_queryset(user)
+
+            # Apply date filtering if provided (matches dashboard behavior)
+            if start_date and end_date:
+                deliveries = self._apply_date_filter(deliveries, start_date, end_date)
 
             if status_filter != 'all':
                 status_map = {
-                    'completed': {'status': 'delivered'},
+                    'completed': {'status__in': ['delivered', 'completed']},
                     'active':    {'status__in': ['pending', 'picked_up', 'in_progress', 'accepted']},
                     'cancelled': {'status': 'cancelled'},
                     'pending':   {'status': 'pending'},
                     'accepted':  {'status': 'accepted'},
                     'picked_up': {'status': 'picked_up'},
                     'in_progress': {'status': 'in_progress'},
-                    'delivered': {'status': 'delivered'},
+                    'delivered': {'status__in': ['delivered', 'completed']},
                 }
                 if status_filter in status_map:
                     deliveries = deliveries.filter(**status_map[status_filter])
@@ -41766,7 +41819,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 'metrics': metrics,
                 'deliveries': deliveries_data,
                 'count': len(deliveries_data),
-                'filters': {'status': status_filter}
+                'filters': {'status': status_filter, 'start_date': start_date, 'end_date': end_date}
             })
 
         except ValueError as e:
@@ -41783,7 +41836,17 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
         if not deliveries.exists():
             return self._get_empty_metrics()
 
-        delivered_deliveries = deliveries.filter(status='delivered')
+        # Backfill any delivered/completed deliveries with missing/zero delivery_fee
+        # This ensures older deliveries without a fee are counted properly
+        delivered_without_fee = deliveries.filter(
+            status__in=['delivered', 'completed']
+        ).filter(
+            Q(delivery_fee__isnull=True) | Q(delivery_fee=0)
+        )
+        if delivered_without_fee.exists():
+            delivered_without_fee.update(delivery_fee=Decimal('40.00'))
+
+        delivered_deliveries = deliveries.filter(status__in=['delivered', 'completed'])
 
         total_earnings = 0.0
         total_to_remit = 0.0
@@ -41805,30 +41868,51 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 total_online_amount += float(order.total_amount)
                 online_count += 1
 
+        # Calculate week earnings and today deliveries
+        now = timezone.now()
+        week_start = now - timedelta(days=now.weekday())
+        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        week_earnings = deliveries.filter(
+            status__in=['delivered', 'completed'],
+            delivered_at__gte=week_start
+        ).aggregate(
+            total=Sum('delivery_fee')
+        )['total'] or 0
+        week_earnings = float(week_earnings)
+
+        today_deliveries = deliveries.filter(
+            status__in=['delivered', 'completed'],
+            delivered_at__gte=today_start
+        ).count()
+
         aggregated = deliveries.aggregate(
             total_deliveries=Count('id'),
-            delivered_count=Count('id', filter=Q(status='delivered')),
+            delivered_count=Count('id', filter=Q(status__in=['delivered', 'completed'])),
+            completed_count=Count('id', filter=Q(status__in=['delivered', 'completed'])),
             cancelled_count=Count('id', filter=Q(status='cancelled')),
+            declined_count=Count('id', filter=Q(status='declined')),
             pending_count=Count('id', filter=Q(status='pending')),
             accepted_count=Count('id', filter=Q(status='accepted')),
             picked_up_count=Count('id', filter=Q(status='picked_up')),
             in_progress_count=Count('id', filter=Q(status='in_progress')),
             avg_delivery_time=Avg(
                 F('actual_minutes'),
-                filter=Q(status='delivered', actual_minutes__isnull=False)
+                filter=Q(status__in=['delivered', 'completed'], actual_minutes__isnull=False)
             ),
-            avg_rating=Avg('delivery_rating', filter=Q(delivery_rating__isnull=False)),
+            # avg_rating removed from aggregate — queried from Review model below
             on_time_count=Count(
                 'id',
                 filter=Q(
-                    status='delivered',
+                    status__in=['delivered', 'completed'],
                     estimated_minutes__isnull=False,
                     actual_minutes__isnull=False,
                     actual_minutes__lte=F('estimated_minutes')
                 )
             ),
             total_distance=Coalesce(
-                Sum('distance_km', filter=Q(status='delivered')),
+                Sum('distance_km', filter=Q(status__in=['delivered', 'completed'])),
                 Decimal('0.00'),
                 output_field=DecimalField()
             )
@@ -41839,7 +41923,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
         if delivered_count > 0:
             on_time_percentage = round((aggregated['on_time_count'] / delivered_count) * 100, 1)
 
-        date_range = deliveries.filter(status='delivered').aggregate(
+        date_range = deliveries.filter(status__in=['delivered', 'completed']).aggregate(
             first_delivery=Min('delivered_at'),
             last_delivery=Max('delivered_at')
         )
@@ -41849,12 +41933,16 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
         return {
             'total_deliveries': aggregated['total_deliveries'],
             'delivered_count': aggregated['delivered_count'],
+            'completed_count': aggregated.get('completed_count', 0),
             'cancelled_count': aggregated['cancelled_count'],
+            'declined_count': aggregated.get('declined_count', 0),
             'pending_count': aggregated['pending_count'],
             'accepted_count': aggregated['accepted_count'],
             'picked_up_count': aggregated['picked_up_count'],
             'in_progress_count': aggregated['in_progress_count'],
             'total_earnings': total_earnings,
+            'week_earnings': week_earnings,
+            'today_deliveries': today_deliveries,
             'total_to_remit': total_to_remit,
             'cod_orders': {
                 'count': cod_count,
@@ -41868,7 +41956,12 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
             },
             'unremitted_count': unremitted_data['unremitted_count'],
             'avg_delivery_time': round(aggregated['avg_delivery_time'] or 0, 1),
-            'avg_rating': round(aggregated['avg_rating'] or 0, 1),
+            'avg_rating': round(
+                Review.objects.filter(
+                    rider=rider,
+                    delivery_rating__isnull=False
+                ).aggregate(avg=Avg('delivery_rating'))['avg'] or 0, 1
+            ),
             'on_time_percentage': on_time_percentage,
             'total_distance_km': float(aggregated['total_distance']),
             'first_delivery': date_range['first_delivery'].isoformat() if date_range['first_delivery'] else None,
@@ -41885,7 +41978,16 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
         if not deliveries.exists():
             return self._get_empty_metrics()
 
-        delivered_deliveries = deliveries.filter(status='delivered')
+        # Backfill any delivered/completed deliveries with missing/zero delivery_fee
+        delivered_without_fee = deliveries.filter(
+            status__in=['delivered', 'completed']
+        ).filter(
+            Q(delivery_fee__isnull=True) | Q(delivery_fee=0)
+        )
+        if delivered_without_fee.exists():
+            delivered_without_fee.update(delivery_fee=Decimal('40.00'))
+
+        delivered_deliveries = deliveries.filter(status__in=['delivered', 'completed'])
 
         total_earnings = 0.0
         total_to_remit = 0.0
@@ -41900,17 +42002,19 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
 
         aggregated = deliveries.aggregate(
             total_deliveries=Count('id'),
-            delivered_count=Count('id', filter=Q(status='delivered')),
+            delivered_count=Count('id', filter=Q(status__in=['delivered', 'completed'])),
+            completed_count=Count('id', filter=Q(status__in=['delivered', 'completed'])),
             cancelled_count=Count('id', filter=Q(status='cancelled')),
+            declined_count=Count('id', filter=Q(status='declined')),
             avg_delivery_time=Avg(
                 F('actual_minutes'),
-                filter=Q(status='delivered', actual_minutes__isnull=False)
+                filter=Q(status__in=['delivered', 'completed'], actual_minutes__isnull=False)
             ),
-            avg_rating=Avg('delivery_rating', filter=Q(delivery_rating__isnull=False)),
+            # avg_rating removed from aggregate — queried from Review model below
             on_time_count=Count(
                 'id',
                 filter=Q(
-                    status='delivered',
+                    status__in=['delivered', 'completed'],
                     estimated_minutes__isnull=False,
                     actual_minutes__isnull=False,
                     actual_minutes__lte=F('estimated_minutes')
@@ -41924,10 +42028,10 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
             on_time_percentage = round((aggregated['on_time_count'] / delivered_count) * 100, 1)
 
         today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        today_deliveries = deliveries.filter(status='delivered', delivered_at__gte=today_start).count()
+        today_deliveries = deliveries.filter(status__in=['delivered', 'completed'], delivered_at__gte=today_start).count()
 
         week_start = timezone.now() - timedelta(days=timezone.now().weekday())
-        week_deliveries = deliveries.filter(status='delivered', delivered_at__gte=week_start)
+        week_deliveries = deliveries.filter(status__in=['delivered', 'completed'], delivered_at__gte=week_start)
 
         week_earnings = 0.0
         week_to_remit = 0.0
@@ -41942,11 +42046,18 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
         return {
             'total_deliveries': aggregated['total_deliveries'],
             'delivered_count': aggregated['delivered_count'],
+            'completed_count': aggregated.get('completed_count', 0),
             'cancelled_count': aggregated['cancelled_count'],
+            'declined_count': aggregated.get('declined_count', 0),
             'total_earnings': total_earnings,
             'total_to_remit': total_to_remit,
             'avg_delivery_time': round(aggregated['avg_delivery_time'] or 0, 1),
-            'avg_rating': round(aggregated['avg_rating'] or 0, 1),
+            'avg_rating': round(
+                Review.objects.filter(
+                    rider=rider,
+                    delivery_rating__isnull=False
+                ).aggregate(avg=Avg('delivery_rating'))['avg'] or 0, 1
+            ),
             'on_time_percentage': on_time_percentage,
             'today_deliveries': today_deliveries,
             'week_earnings': week_earnings,
@@ -41974,6 +42085,10 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
             'avg_rating': 0,
             'on_time_percentage': 0,
             'total_distance_km': 0.0,
+            'completed_count': 0,
+            'declined_count': 0,
+            'week_earnings': 0.0,
+            'today_deliveries': 0,
             'first_delivery': None,
             'last_delivery': None,
             'has_data': False,
@@ -42021,11 +42136,11 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 is_cod = self._is_cod_order(order)
 
                 if is_cod:
-                    amount_to_remit = order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
+                    amount_to_remit = order.total_amount
                     total_cod_amount += order.total_amount
                     cod_count += 1
                 else:
-                    amount_to_remit = delivery.delivery_fee or Decimal('0.00')
+                    amount_to_remit = Decimal('0.00')
                     online_count += 1
 
                 total_unremitted += amount_to_remit
@@ -42057,7 +42172,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                     'total_orders': cod_count + online_count,
                     'total_deliveries': len(unremitted_deliveries),
                     'currency': 'PHP',
-                    'note': 'For COD orders, total includes order amount + delivery fee. For online payments, only delivery fee needs to be remitted.'
+                    'note': 'For COD orders, only the order amount needs to be remitted (riders keep the delivery fee in cash). Online orders do not require remittance.'
                 },
                 'unremitted_deliveries': unremitted_deliveries,
                 'date_range': {'start_date': start_date, 'end_date': end_date},
@@ -42137,11 +42252,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
             for delivery in deliveries:
                 order = delivery.order
                 is_cod = self._is_cod_order(order)
-                amount = (
-                    order.total_amount + (delivery.delivery_fee or Decimal('0.00'))
-                    if is_cod else
-                    (delivery.delivery_fee or Decimal('0.00'))
-                )
+                amount = order.total_amount if is_cod else Decimal('0.00')
                 total_amount += amount
                 items_preview.append({
                     'delivery_id': str(delivery.id),
@@ -42253,6 +42364,167 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 'error': 'Failed to initiate remittance',
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['POST'], url_path='submit_manual_remittance')
+    def submit_manual_remittance(self, request):
+        """
+        Submit a manual remittance request (Hub Drop-off, GCash Transfer, Bank Transfer).
+        Creates a PENDING RiderRemittance record for admin review.
+        Body: { "delivery_ids": ["uuid1", "uuid2"], "method": "hub_dropoff", "note": "ref no" }
+        """
+        try:
+            from datetime import datetime as dt
+            user = self._get_user_from_header(request)
+            
+            if not hasattr(user, 'rider'):
+                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
+
+            delivery_ids = request.data.getlist('delivery_ids[]') if hasattr(request.data, 'getlist') else request.data.get('delivery_ids', [])
+            if not delivery_ids:
+                # Fallback if sent as JSON string
+                import json
+                try:
+                    delivery_ids = json.loads(request.data.get('delivery_ids', '[]'))
+                except:
+                    delivery_ids = []
+                    
+            method_input = request.data.get('method', 'hub_dropoff')
+            rider_amount = request.data.get('amount')
+            proof_image = request.FILES.get('proof_image')
+            
+            # Map frontend method IDs to model choices
+            method_mapping = {
+                'hub_dropoff': 'Cash',
+                'cash_transfer': 'GCash',
+                'bank_deposit': 'Bank Transfer'
+            }
+            payment_method_val = method_mapping.get(method_input)
+            
+            if not payment_method_val:
+                # Check if it's a UUID for UserPaymentDetail
+                try:
+                    payment_detail = UserPaymentDetail.objects.get(payment_id=method_input, user=user)
+                    # Map 'bank' -> 'Bank Transfer', 'gcash' -> 'GCash', etc.
+                    if payment_detail.payment_method.lower() == 'gcash':
+                        payment_method_val = 'GCash'
+                    elif payment_detail.payment_method.lower() == 'bank':
+                        payment_method_val = 'Bank Transfer'
+                    else:
+                        payment_method_val = 'Maya'  # Fallback
+                except Exception:
+                    payment_method_val = 'Cash'
+
+            if not delivery_ids:
+                return Response({'success': False, 'error': 'No deliveries specified for remittance'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not rider_amount:
+                return Response({'success': False, 'error': 'Amount is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Only delivered + not yet in a completed or pending remittance
+            deliveries = Delivery.objects.filter(
+                id__in=delivery_ids,
+                rider=user.rider,
+                status__in=['delivered', 'completed']
+            ).exclude(
+                remittance_items__remittance__status__in=['completed', 'pending']
+            ).select_related('order')
+
+            if not deliveries.exists():
+                return Response({
+                    'success': False,
+                    'error': 'No valid unremitted deliveries found. They may already be remitted or pending review.'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Calculate true total from deliveries (for internal tracking/items, if needed, though we use the rider's stated amount for the overall record)
+            total_deliveries_amount = Decimal('0.00')
+            for delivery in deliveries:
+                order = delivery.order
+                is_cod = self._is_cod_order(order)
+                amount = order.total_amount if is_cod else Decimal('0.00')
+                total_deliveries_amount += amount
+
+            reference = f"REM-{str(user.id)[:8].upper()}-{dt.now().strftime('%H%M%S')}"
+
+            # Upload proof image if exists
+            proof_url = ""
+            if proof_image:
+                from django.core.files.storage import default_storage
+                from api.utils.storage_utils import convert_s3_to_public_url
+                file_ext = proof_image.name.split('.')[-1]
+                path = default_storage.save(f'remittance_proofs/{reference}.{file_ext}', proof_image)
+                raw_url = default_storage.url(path)
+                proof_url = convert_s3_to_public_url(raw_url)
+
+            # Create Remittance record using the amount the rider actually specified
+            # We use maya_payment_id to store the proof_url since we can't run migrations right now.
+            remittance = RiderRemittance.objects.create(
+                rider=user.rider,
+                reference_number=reference,
+                total_amount=Decimal(str(rider_amount)),
+                payment_method=payment_method_val,
+                maya_payment_id=proof_url,
+                status='pending'
+            )
+            
+            # Create Items
+            for delivery in deliveries:
+                order = delivery.order
+                is_cod = self._is_cod_order(order)
+                amount = order.total_amount if is_cod else Decimal('0.00')
+                RiderRemittanceItem.objects.create(
+                    remittance=remittance,
+                    delivery=delivery,
+                    order_amount=order.total_amount,
+                    delivery_fee=delivery.delivery_fee or Decimal('0.00'),
+                    amount_remitted=amount,
+                    is_cod=is_cod,
+                    payment_method=order.payment_method,
+                )
+
+            logger.info(f"Created manual pending remittance {reference} for user {user.id}")
+
+            return Response({
+                'success': True,
+                'message': 'Remittance submitted successfully.',
+                'reference_number': reference,
+                'total_amount': float(rider_amount)
+            })
+
+        except Exception as e:
+            logger.error(f"Error submitting manual remittance: {str(e)}")
+            return Response({
+                'success': False,
+                'error': 'Failed to submit remittance',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['GET'], url_path='remittances')
+    def get_remittances(self, request):
+        """
+        Get all remittances for a rider, formatted like WalletTransactions.
+        """
+        try:
+            user = self._get_user_from_header(request)
+            if not hasattr(user, 'rider'):
+                return Response({'success': False, 'error': 'User is not a rider'}, status=status.HTTP_403_FORBIDDEN)
+                
+            remittances = RiderRemittance.objects.filter(rider=user.rider).order_by('-created_at')
+            data = []
+            for r in remittances:
+                data.append({
+                    'transaction_id': str(r.id),
+                    'amount': float(r.total_amount),
+                    'transaction_type': 'debit',
+                    'source_type': 'cod_remittance',
+                    'status': r.status,
+                    'created_at': r.created_at.isoformat(),
+                    'proof_url': r.maya_payment_id, # maya_payment_id stores the proof image URL
+                    'reference_number': r.reference_number,
+                    'payment_method': r.payment_method
+                })
+            return Response({'success': True, 'remittances': data})
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
     @action(detail=False, methods=['get'], url_path='remittance-success')
@@ -42821,7 +43093,7 @@ class RiderScheduleViewSet(viewsets.ViewSet):
             completed_deliveries=Count('id', filter=Q(status='delivered')),
             avg_delivery_time=Avg('estimated_minutes'),
             total_distance_km=Sum('distance_km'),
-            avg_rating=Avg('delivery_rating', filter=Q(delivery_rating__isnull=False))
+            # avg_rating removed — queried from Review model below
         )
         
         # Calculate today's deliveries
@@ -42854,7 +43126,12 @@ class RiderScheduleViewSet(viewsets.ViewSet):
             'completed_deliveries': aggregated['completed_deliveries'] or 0,
             'avg_delivery_time': round(aggregated['avg_delivery_time'] or 0, 1),
             'total_distance_km': float(aggregated['total_distance_km'] or 0),
-            'average_rating': round(aggregated['avg_rating'] or 0, 1),
+            'average_rating': round(
+                Review.objects.filter(
+                    rider=rider,
+                    delivery_rating__isnull=False
+                ).aggregate(avg=Avg('delivery_rating'))['avg'] or 0, 1
+            ),
             'today_deliveries': today_deliveries,
             'peak_day': peak_day,
             'availability_percentage': availability_percentage,
@@ -51292,7 +51569,7 @@ class WithdrawalRequestViewSet(viewsets.ModelViewSet):
         try:
             user = User.objects.get(id=user_id)
             # Admin can see all, users see only their own
-            if user.is_staff or user.is_superuser:
+            if user.is_admin:
                 return WithdrawalRequest.objects.all()
             return WithdrawalRequest.objects.filter(user=user)
         except User.DoesNotExist:
@@ -51395,18 +51672,22 @@ class WithdrawalRequestViewSet(viewsets.ModelViewSet):
                     status='pending'
                 )
                 
+                # Deduct from available, move to pending
+                wallet.available_balance -= amount
+                wallet.pending_balance += amount
+                wallet.save()
+                
                 logger.info(f"Withdrawal request created: {withdrawal.withdrawal_id} for user {user.id}")
                 
-                # Optional: Create a transaction record for this withdrawal
-                # from wallet.models import WalletTransaction
-                # WalletTransaction.objects.create(
-                #     wallet=wallet,
-                #     user=user,
-                #     amount=amount,
-                #     transaction_type='debit',
-                #     source_type='withdrawal',
-                #     status='pending'
-                # )
+                # Create a transaction record for this withdrawal
+                WalletTransaction.objects.create(
+                    wallet=wallet,
+                    user=user,
+                    amount=amount,
+                    transaction_type='debit',
+                    source_type='withdrawal',
+                    status='pending'
+                )
             
             serializer = self.get_serializer(withdrawal)
             return Response({
@@ -51940,6 +52221,240 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
                 "error": str(e)
             }, status=500)
 
+class AdminRemittanceViewSet(viewsets.ViewSet):
+    
+    def list(self, request):
+        try:
+            remittances = RiderRemittance.objects.select_related(
+                "rider__rider",
+                "processed_by"
+            ).all().order_by("-created_at")
+
+            # filters
+            status_filter = request.GET.get("status")
+            search = request.GET.get("search")
+
+            if status_filter:
+                remittances = remittances.filter(status=status_filter)
+
+            if search:
+                remittances = remittances.filter(
+                    Q(rider__rider__username__icontains=search) |
+                    Q(rider__rider__email__icontains=search) |
+                    Q(reference_number__icontains=search)
+                )
+
+            # Calculate statistics
+            total_count = remittances.count()
+            
+            # Calculate metrics for the frontend
+            metrics = {
+                'total_pending': remittances.filter(status='pending').count(),
+                'total_completed': remittances.filter(status='completed').count(),
+                'total_failed': remittances.filter(status='failed').count(),
+                'total_amount_pending': float(remittances.filter(status='pending').aggregate(total=Sum('total_amount'))['total'] or 0),
+                'total_amount_completed': float(remittances.filter(status='completed').aggregate(total=Sum('total_amount'))['total'] or 0),
+                'total_amount_failed': float(remittances.filter(status='failed').aggregate(total=Sum('total_amount'))['total'] or 0),
+            }
+
+            serializer = AdminRemittanceSerializer(remittances, many=True)
+
+            return Response({
+                "success": True,
+                "data": serializer.data,
+                "stats": metrics,
+                "total_count": total_count
+            })
+            
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=500)
+
+    def retrieve(self, request, pk=None):
+        """
+        Get a single remittance by ID
+        """
+        try:
+            remittance = RiderRemittance.objects.select_related(
+                "rider__rider",
+                "processed_by"
+            ).get(id=pk)
+
+            user = remittance.rider.rider
+            wallet = UserWallet.objects.filter(user=user).first()
+            wallet_balance = wallet.available_balance if wallet else 0
+            pending_balance = wallet.pending_balance if wallet else 0
+
+            # Get user address
+            user_address = None
+            if user.street or user.barangay or user.city:
+                address_parts = []
+                if user.street:
+                    address_parts.append(user.street)
+                if user.barangay:
+                    address_parts.append(user.barangay)
+                if user.city:
+                    address_parts.append(user.city)
+                if user.province:
+                    address_parts.append(user.province)
+                user_address = ", ".join(address_parts)
+
+            proof_url = remittance.maya_payment_id
+
+            remittance_data = {
+                "id": str(remittance.id),
+                "reference_number": remittance.reference_number,
+                "amount": float(remittance.total_amount),
+                "status": remittance.status,
+                "payment_method": remittance.payment_method,
+                "requested_at": remittance.created_at.isoformat(),
+                "completed_at": remittance.processed_at.isoformat() if remittance.processed_at else None,
+                "proof_url": proof_url,
+                
+                # User info
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "phone": user.contact_number,
+                    "address": user_address
+                },
+                
+                # Wallet info
+                "wallet": {
+                    "id": str(wallet.wallet_id) if wallet else None,
+                    "wallet_id": wallet.wallet_id if wallet else None,
+                    "balance": float(wallet_balance),
+                    "available_balance": float(wallet_balance),
+                    "pending_balance": float(pending_balance)
+                },
+                
+                # Approved by info
+                "processed_by": {
+                    "id": remittance.processed_by.id,
+                    "username": remittance.processed_by.username,
+                    "email": remittance.processed_by.email
+                } if remittance.processed_by else None
+            }
+
+            return Response({
+                "success": True,
+                "remittance": remittance_data,
+                "data": remittance_data
+            })
+
+        except RiderRemittance.DoesNotExist:
+            return Response({
+                "success": False,
+                "error": "Remittance not found"
+            }, status=404)
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": str(e)
+            }, status=500)
+
+    def _get_admin_user(self, request):
+        user_id = request.headers.get("X-User-Id")
+        if not user_id:
+            return None
+        try:
+            user = User.objects.get(id=user_id)
+            if user.is_admin:
+                return user
+            return None
+        except User.DoesNotExist:
+            return None
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        try:
+            remittance = RiderRemittance.objects.get(id=pk)
+            admin_user = self._get_admin_user(request)
+            
+            if not admin_user:
+                return Response({"success": False, "error": "Unauthorized"}, status=401)
+                
+            if remittance.status != 'pending':
+                return Response({
+                    "success": False,
+                    "error": f"Cannot approve remittance with status '{remittance.status}'"
+                }, status=400)
+            
+            remittance.status = 'completed'
+            remittance.processed_at = timezone.now()
+            remittance.processed_by = admin_user
+            remittance.save()
+            
+            return Response({
+                "success": True,
+                "message": "Remittance approved successfully",
+                "remittance": {
+                    "id": str(remittance.id),
+                    "status": remittance.status,
+                    "processed_at": remittance.processed_at.isoformat()
+                }
+            })
+            
+        except RiderRemittance.DoesNotExist:
+            return Response({"success": False, "error": "Remittance not found"}, status=404)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=500)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        try:
+            remittance = RiderRemittance.objects.get(id=pk)
+            admin_user = self._get_admin_user(request)
+            
+            if not admin_user:
+                return Response({"success": False, "error": "Unauthorized"}, status=401)
+                
+            if remittance.status != 'pending':
+                return Response({
+                    "success": False,
+                    "error": f"Cannot reject remittance with status '{remittance.status}'"
+                }, status=400)
+            
+            remittance.status = 'failed'
+            remittance.processed_at = timezone.now()
+            remittance.processed_by = admin_user
+            remittance.save()
+            
+            return Response({
+                "success": True,
+                "message": "Remittance rejected successfully",
+                "remittance": {
+                    "id": str(remittance.id),
+                    "status": remittance.status
+                }
+            })
+            
+        except RiderRemittance.DoesNotExist:
+            return Response({"success": False, "error": "Remittance not found"}, status=404)
+        except Exception as e:
+            return Response({"success": False, "error": str(e)}, status=500)
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def debug_wallet(request):
+    res = []
+    users_with_wallets = UserWallet.objects.all()
+    res.append(f'Total Wallets: {users_with_wallets.count()}')
+    for w in users_with_wallets:
+        rider = getattr(w.user, 'rider', None)
+        if rider:
+            past_deliveries = Delivery.objects.filter(rider=rider, status='delivered')
+            txs = WalletTransaction.objects.filter(wallet=w, source_type='delivery_fee')
+            res.append(f'Rider: {w.user.username}, Balance: {w.available_balance}, Deliveries: {past_deliveries.count()}, Fee Txs: {txs.count()}')
+            for d in past_deliveries:
+                res.append(f'  Delivery {d.id} fee: {d.delivery_fee} order: {d.order.order}')
+    return Response({"debug": res})
+
 class RiderWalletView(APIView):
     """
     Unified view for rider wallet operations:
@@ -51979,6 +52494,58 @@ class RiderWalletView(APIView):
         try:
             # Get or create wallet for user
             wallet, created = UserWallet.objects.get_or_create(user=user)
+
+            # --- BACKFILL LOGIC for existing riders ---
+            # Sync past deliveries that haven't been credited to the wallet yet
+            try:
+                if hasattr(user, 'rider') and user.rider:
+                    rider = user.rider
+                    past_deliveries = Delivery.objects.filter(rider=rider, status__in=['delivered', 'completed'])
+                    
+                    # Count existing delivery fee transactions
+                    existing_txs_count = WalletTransaction.objects.filter(wallet=wallet, source_type='delivery_fee').count()
+                    
+                    if existing_txs_count < past_deliveries.count():
+                        total_backfilled = Decimal('0.00')
+                        for d in past_deliveries:
+                            # Check if this specific delivery has been credited
+                            if not WalletTransaction.objects.filter(wallet=wallet, source_type='delivery_fee', order=d.order).exists():
+                                fee = Decimal(str(d.delivery_fee or 40.00))
+                                if fee > 0:
+                                    total_backfilled += fee
+                                    WalletTransaction.objects.create(
+                                        wallet=wallet,
+                                        user=user,
+                                        amount=fee,
+                                        transaction_type='credit',
+                                        source_type='delivery_fee',
+                                        status='completed',
+                                        order=d.order,
+                                        created_at=d.delivered_at or timezone.now()
+                                    )
+                                    
+                            # Check if COD collection transaction has been created
+                            if d.order and d.order.payment_method == 'Cash on Delivery' and d.order.total_amount and d.order.total_amount > 0:
+                                if not WalletTransaction.objects.filter(wallet=wallet, source_type='cod_collection', order=d.order).exists():
+                                    WalletTransaction.objects.create(
+                                        wallet=wallet,
+                                        user=user,
+                                        amount=d.order.total_amount,
+                                        transaction_type='credit',
+                                        source_type='cod_collection',
+                                        status='completed',
+                                        order=d.order,
+                                        created_at=d.delivered_at or timezone.now()
+                                    )
+                                    
+                        if total_backfilled > 0:
+                            wallet.available_balance += total_backfilled
+                            wallet.save()
+            except Exception as e:
+                import traceback
+                print(f"Error backfilling rider wallet: {e}")
+                print(traceback.format_exc())
+            # --- END BACKFILL LOGIC ---
 
             # Get query parameters for filtering
             transaction_type = request.GET.get('type')  # 'credit' or 'debit'

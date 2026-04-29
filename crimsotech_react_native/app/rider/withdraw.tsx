@@ -10,6 +10,7 @@ import {
   Alert,
   Modal,
   TextInput,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -30,6 +31,9 @@ interface WalletTransaction {
   source_type?: string;
   status?: string;
   created_at?: string;
+  proof_url?: string;
+  reference_number?: string;
+  payment_method?: string;
 }
 
 interface PaymentMethod {
@@ -203,6 +207,7 @@ export default function WalletWithdraw() {
   const [showBalance, setShowBalance] = useState(true);
   const [filter, setFilter] = useState<'all' | 'credit' | 'debit'>('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'delivery_fee' | 'withdrawal'>('all');
+  const [selectedTxn, setSelectedTxn] = useState<WalletTransaction | null>(null);
 
   const fetchData = async () => {
     try {
@@ -214,18 +219,34 @@ export default function WalletWithdraw() {
       if (filter !== 'all') params.append('type', filter);
       if (sourceFilter !== 'all') params.append('source', sourceFilter);
 
-      const [walletRes, profileRes] = await Promise.all([
+      const [walletRes, profileRes, remittancesRes] = await Promise.all([
         AxiosInstance.get(`/rider-wallet/?${params.toString()}`, {
           headers: { 'X-User-Id': userId },
         }),
         AxiosInstance.get('/profile/', {
           headers: { 'X-User-Id': userId },
         }),
+        AxiosInstance.get('/rider-history/remittances/', {
+          headers: { 'X-User-Id': userId },
+        }).catch(() => ({ data: { success: false, remittances: [] } })),
       ]);
 
       if (walletRes.data?.success) {
         setWallet(walletRes.data.wallet || null);
-        setTransactions(walletRes.data.transactions || []);
+        
+        let allTxns = [...(walletRes.data.transactions || [])];
+        if (remittancesRes.data?.success) {
+          allTxns = [...allTxns, ...(remittancesRes.data.remittances || [])];
+        }
+        
+        // Sort by created_at descending
+        allTxns.sort((a, b) => {
+          const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return dateB - dateA;
+        });
+        
+        setTransactions(allTxns);
       } else {
         setWallet(null);
         setTransactions([]);
@@ -263,53 +284,51 @@ export default function WalletWithdraw() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
-      <View style={{ backgroundColor: '#1F2937', paddingHorizontal: 16, paddingVertical: 14 }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <View>
-            <Text style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>Wallet</Text>
-            <Text style={{ color: '#D1D5DB', fontSize: 12, marginTop: 2 }}>Manage balance, withdrawals, and remittance</Text>
-          </View>
-          <TouchableOpacity onPress={() => router.push('/rider/payment-methods')} style={{ marginLeft: 10 }}>
-            <Ionicons name="settings-outline" size={22} color="white" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={{ backgroundColor: 'white', borderRadius: 14, padding: 16, marginTop: 12, borderWidth: 1, borderColor: '#E5E7EB' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={{ fontSize: 13, color: '#6B7280' }}>Available Balance</Text>
-            <TouchableOpacity onPress={() => setShowBalance((prev) => !prev)}>
-              <Ionicons name={showBalance ? 'eye-off-outline' : 'eye-outline'} size={18} color="#6B7280" />
-            </TouchableOpacity>
-          </View>
-          <Text style={{ fontSize: 30, fontWeight: '800', color: '#111827', marginTop: 4 }}>
-            {showBalance ? formatAmount(wallet?.available_balance || 0) : '******'}
-          </Text>
-          <Text style={{ fontSize: 12, color: '#9CA3AF', marginTop: 4 }}>
-            Pending: {formatAmount(wallet?.pending_balance || 0)}
-          </Text>
-
-          <View style={{ flexDirection: 'row', marginTop: 14 }}>
-            <TouchableOpacity
-              onPress={() => setShowWithdrawModal(true)}
-              style={{ flex: 1, backgroundColor: '#1F2937', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginRight: 6 }}
-            >
-              <Text style={{ color: 'white', fontWeight: '700' }}>Withdraw</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => router.push('/rider/remit-amount')}
-              style={{ flex: 1, backgroundColor: '#EA580C', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginLeft: 6 }}
-            >
-              <Text style={{ color: 'white', fontWeight: '700' }}>Remit Amount</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 16, paddingBottom: 30 }}
+        contentContainerStyle={{ paddingBottom: 30 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
+        <View style={{ backgroundColor: '#1F2937', paddingHorizontal: 16, paddingVertical: 14 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View>
+              <Text style={{ color: 'white', fontSize: 20, fontWeight: '700' }}>Wallet</Text>
+              <Text style={{ color: '#D1D5DB', fontSize: 12, marginTop: 2 }}>Manage balance, withdrawals, and remittance</Text>
+            </View>
+            <TouchableOpacity onPress={() => router.push('/rider/payment-methods')} style={{ marginLeft: 10 }}>
+              <Ionicons name="settings-outline" size={22} color="white" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={{ backgroundColor: 'white', borderRadius: 14, padding: 16, marginTop: 12, borderWidth: 1, borderColor: '#E5E7EB' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 13, color: '#6B7280' }}>Available Balance</Text>
+              <TouchableOpacity onPress={() => setShowBalance((prev) => !prev)}>
+                <Ionicons name={showBalance ? 'eye-off-outline' : 'eye-outline'} size={18} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={{ fontSize: 30, fontWeight: '800', color: '#111827', marginTop: 4 }}>
+              {showBalance ? `₱${Number(wallet?.available_balance || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '******'}
+            </Text>
+
+            <View style={{ flexDirection: 'row', marginTop: 14 }}>
+              <TouchableOpacity
+                onPress={() => setShowWithdrawModal(true)}
+                style={{ flex: 1, backgroundColor: '#1F2937', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginRight: 6 }}
+              >
+                <Text style={{ color: 'white', fontWeight: '700' }}>Withdraw</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => router.push('/rider/remit-amount')}
+                style={{ flex: 1, backgroundColor: '#EA580C', paddingVertical: 12, borderRadius: 12, alignItems: 'center', marginLeft: 6 }}
+              >
+                <Text style={{ color: 'white', fontWeight: '700' }}>Remit Amount</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
+        <View style={{ padding: 16 }}>
         <View style={{ flexDirection: 'row', marginBottom: 12 }}>
           {(['all', 'credit', 'debit'] as const).map((tab) => (
             <TouchableOpacity
@@ -330,29 +349,7 @@ export default function WalletWithdraw() {
           ))}
         </View>
 
-        <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-          {([
-            { id: 'all', label: 'All Sources' },
-            { id: 'delivery_fee', label: 'Delivery' },
-            { id: 'withdrawal', label: 'Withdrawal' },
-          ] as const).map((tab) => (
-            <TouchableOpacity
-              key={tab.id}
-              onPress={() => setSourceFilter(tab.id)}
-              style={{
-                marginRight: 8,
-                paddingHorizontal: 12,
-                paddingVertical: 7,
-                borderRadius: 16,
-                backgroundColor: sourceFilter === tab.id ? '#111827' : '#F3F4F6',
-              }}
-            >
-              <Text style={{ color: sourceFilter === tab.id ? 'white' : '#4B5563', fontSize: 12, fontWeight: '600' }}>
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+
 
         <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 10 }}>Transactions</Text>
 
@@ -365,8 +362,9 @@ export default function WalletWithdraw() {
           </View>
         ) : (
           filteredTransactions.map((txn) => (
-            <View
+            <TouchableOpacity
               key={txn.transaction_id}
+              onPress={() => setSelectedTxn(txn)}
               style={{ backgroundColor: 'white', borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: '#E5E7EB' }}
             >
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -391,9 +389,10 @@ export default function WalletWithdraw() {
                   <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 3 }}>{txn.status || 'pending'}</Text>
                 </View>
               </View>
-            </View>
+            </TouchableOpacity>
           ))
         )}
+        </View>
       </ScrollView>
 
       <WithdrawModal
@@ -404,6 +403,79 @@ export default function WalletWithdraw() {
         userId={userId}
         onSuccess={fetchData}
       />
+
+      <Modal visible={!!selectedTxn} transparent animationType="fade" onRequestClose={() => setSelectedTxn(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+          <View style={{ backgroundColor: 'white', borderRadius: 16, width: '100%', padding: 20, maxHeight: '90%' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: '#111827' }}>Transaction Details</Text>
+              <TouchableOpacity onPress={() => setSelectedTxn(null)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            {selectedTxn && (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                  <Text style={{ fontSize: 14, color: '#6B7280', marginBottom: 4 }}>Amount</Text>
+                  <Text style={{ fontSize: 28, fontWeight: '800', color: selectedTxn.transaction_type === 'credit' ? '#059669' : '#DC2626' }}>
+                    {selectedTxn.transaction_type === 'credit' ? '+' : '-'} {formatAmount(selectedTxn.amount)}
+                  </Text>
+                  <View style={{ backgroundColor: '#F3F4F6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, marginTop: 8 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#374151', textTransform: 'capitalize' }}>
+                      {selectedTxn.status || 'pending'}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={{ gap: 12 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: '#6B7280', fontSize: 13 }}>Type</Text>
+                    <Text style={{ color: '#111827', fontSize: 13, fontWeight: '500', textTransform: 'capitalize' }}>
+                      {(selectedTxn.source_type || 'Wallet transaction').replace('_', ' ')}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: '#6B7280', fontSize: 13 }}>Date</Text>
+                    <Text style={{ color: '#111827', fontSize: 13, fontWeight: '500' }}>
+                      {selectedTxn.created_at ? new Date(selectedTxn.created_at).toLocaleString() : 'Unknown'}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: '#6B7280', fontSize: 13 }}>Transaction ID</Text>
+                    <Text style={{ color: '#111827', fontSize: 13, fontWeight: '500', maxWidth: '60%' }} numberOfLines={1}>
+                      {selectedTxn.transaction_id}
+                    </Text>
+                  </View>
+                  {selectedTxn.reference_number && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ color: '#6B7280', fontSize: 13 }}>Reference No.</Text>
+                      <Text style={{ color: '#111827', fontSize: 13, fontWeight: '500' }}>{selectedTxn.reference_number}</Text>
+                    </View>
+                  )}
+                  {selectedTxn.payment_method && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ color: '#6B7280', fontSize: 13 }}>Method</Text>
+                      <Text style={{ color: '#111827', fontSize: 13, fontWeight: '500' }}>{selectedTxn.payment_method}</Text>
+                    </View>
+                  )}
+                </View>
+
+                {selectedTxn.proof_url && (
+                  <View style={{ marginTop: 24 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#111827', marginBottom: 10 }}>Proof of Receipt</Text>
+                    <Image 
+                      source={{ uri: selectedTxn.proof_url }} 
+                      style={{ width: '100%', height: 250, borderRadius: 12, backgroundColor: '#F3F4F6' }} 
+                      resizeMode="contain" 
+                    />
+                  </View>
+                )}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

@@ -1579,7 +1579,42 @@ class WithdrawalRequestUpdateSerializer(serializers.ModelSerializer):
             'completed_at': {'read_only': True}
         }
 
+class AdminRemittanceSerializer(serializers.ModelSerializer):
+    user = serializers.SerializerMethodField()
+    processed_by = serializers.SerializerMethodField()
+    proof_url = serializers.CharField(source='maya_payment_id', read_only=True)
 
+    class Meta:
+        model = RiderRemittance
+        fields = [
+            "id",
+            "reference_number",
+            "user",
+            "total_amount",
+            "status",
+            "payment_method",
+            "proof_url",
+            "created_at",
+            "processed_by",
+            "processed_at",
+        ]
+
+    def get_user(self, obj):
+        if obj.rider and obj.rider.rider:
+            return {
+                "id": obj.rider.rider.id,
+                "username": getattr(obj.rider.rider, "username", None),
+                "email": getattr(obj.rider.rider, "email", None),
+            }
+        return None
+
+    def get_processed_by(self, obj):
+        if obj.processed_by:
+            return {
+                "id": obj.processed_by.id,
+                "username": getattr(obj.processed_by, "username", None),
+            }
+        return None
 
 from django.db.models import Sum
 

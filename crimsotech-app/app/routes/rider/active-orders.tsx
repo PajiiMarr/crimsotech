@@ -1569,7 +1569,7 @@ export default function ActiveOrders({ loaderData}: { loaderData: LoaderData }){
                                     <CheckCircle className="w-2.5 h-2.5 mr-1" />
                                     Deliver
                                   </Button>
-                                ) : delivery.status === 'delivered' && (
+                                ) : (delivery.status === 'delivered' || delivery.status === 'completed') && (
                                   <Button
                                     size="sm"
                                     variant="secondary"

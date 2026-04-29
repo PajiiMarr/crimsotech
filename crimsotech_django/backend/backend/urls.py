@@ -26,6 +26,7 @@ router.register(r'admin-team', AdminTeam, basename='admin-team')
 router.register(r'admin-reports', AdminReports, basename='admin-reports')
 router.register(r'admin-logs', AdminLogs, basename='admin-logs')
 router.register(r'admin-withdrawals', AdminWithdrawalViewSet, basename='admin-withdrawals')
+router.register(r'admin-remittances', AdminRemittanceViewSet, basename='admin-remittances')
 
 router.register(r'moderator-dashboard', ModeratorDashboard, basename='moderator-dashboard')
 router.register(r'moderator-analytics', ModeratorAnalytics, basename='moderator-analytics')
@@ -157,6 +158,7 @@ urlpatterns = [
     path('api/shops/<uuid:shop_id>/followers/', ShopFollowersView.as_view(), name='shop-followers'),
     path('api/profile/', ProfileView.as_view(), name='profile'),
     path('api/rider-wallet/', RiderWalletView.as_view(), name='rider-wallet'),
+    path('api/debug-wallet/', debug_wallet, name='debug-wallet'),
 
     # ── Cart endpoints ──────────────────────────────────────────────────────
     path('api/view-cart/', CartListView.as_view(), name='view-cart'),

@@ -20,6 +20,11 @@ import RiderPageHeader from './includes/riderPageHeader';
 interface EarningsMetrics {
   total_deliveries?: number;
   total_earnings?: number;
+  cod_orders?: {
+    count: number;
+    total_order_amount: number;
+    total_with_fees: number;
+  };
 }
 
 interface DeliveryData {
@@ -64,20 +69,12 @@ export default function Earnings() {
 
       if (res.data?.success) {
         setMetrics(res.data.metrics || null);
-        const deliveries: DeliveryData[] = res.data.deliveries || [];
-        const collected = deliveries.reduce(
-          (sum, d) => sum + Number(d.order_amount || 0),
-          0,
-        );
-        setTotalCollected(collected);
       } else {
         setMetrics(null);
-        setTotalCollected(0);
       }
     } catch (error) {
       console.error('Failed to load earnings metrics', error);
       setMetrics(null);
-      setTotalCollected(0);
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -266,31 +263,6 @@ export default function Earnings() {
             </TouchableOpacity>
           </View>
 
-          <View
-            style={{
-              backgroundColor: '#1F2937',
-              borderRadius: 16,
-              padding: 20,
-              marginBottom: 20,
-              shadowColor: '#1F2937',
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.2,
-              shadowRadius: 8,
-              elevation: 5,
-            }}
-          >
-            <Text style={{ fontSize: 14, color: '#D1D5DB', marginBottom: 8 }}>
-              Total Balance
-            </Text>
-            {isLoading ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={{ fontSize: 32, fontWeight: 'bold', color: 'white' }}>
-                {formatCurrency(Number(metrics?.total_earnings || 0))}
-              </Text>
-            )}
-          </View>
-
           {isLoading ? (
             <ActivityIndicator size="large" color="#2563EB" style={{ marginTop: 32 }} />
           ) : (
@@ -303,12 +275,12 @@ export default function Earnings() {
                 iconColor="#2563EB"
               />
               <MetricCard
-                title="Total Money Collected"
-                value={formatCurrency(totalCollected)}
+                title="Total Money Collected (COD)"
+                value={formatCurrency(Number(metrics?.cod_orders?.total_order_amount || 0))}
                 icon="cash-outline"
                 iconBgColor="#D1FAE5"
                 iconColor="#059669"
-                formula="Sum of customer payment amounts"
+                formula="Sum of customer COD payment amounts"
               />
               <MetricCard
                 title="Total Earnings (Delivery Fees)"

@@ -7,7 +7,7 @@ import {
   BarChart, Bike, MapPin, Calendar, ClipboardList,
   PhilippinePeso, RotateCcw, Heart, User, Receipt,
   Truck, ShieldCheck, Activity, Flag, Megaphone, FolderKanban,
-  Clock, Repeat, ArrowLeftRight, Sparkles, Tag, BadgePercent
+  Clock, Repeat, ArrowLeftRight, Sparkles, Tag, BadgePercent, Wallet
 } from "lucide-react"
 import { Link, useLocation } from 'react-router'
 import { useUser } from '~/components/providers/user-role-provider';
@@ -67,6 +67,7 @@ const menuItems = [
       { title: "Vouchers", url: "/admin/vouchers", icon: BadgePercent, roles: ["admin"] },
       { title: "Refunds", url: "/admin/refunds", icon: RotateCcw, roles: ["admin"] },
       { title: "Withdrawals", url: "/admin/withdrawals", icon: ArrowUpRight, roles: ["admin"] },
+      { title: "Remittances", url: "/admin/remittances", icon: Wallet, roles: ["admin"] },
     ]
   },
   {
