@@ -1117,6 +1117,7 @@ class Order(models.Model):
     order = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     shipping_address = models.ForeignKey(ShippingAddress, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
+    shipping_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True, blank=True)
     transaction_fee = models.FloatField(null=True, blank=True)
     approval = models.CharField(max_length=20, choices=[('pending','Pending'),('accepted','Accepted'),('rejected','Rejected')], default='pending')
     status = models.CharField(max_length=20, choices=[('pending','Pending'),('processing','Processing'),('shipped','Shipped'),('delivered','Delivered'),('cancelled','Cancelled'),('refunded','Refunded')], default='pending')
@@ -1227,7 +1228,7 @@ class Checkout(models.Model):
             return self.cart_item.product.shop.id
         return None
     
-    
+
 class Review(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     customer = models.ForeignKey(
