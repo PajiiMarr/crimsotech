@@ -38,7 +38,6 @@ interface OrderItem {
   product_id: string;
   product_name: string;
   product_description?: string;
-  variant_id?: string | null; 
   variant_title?: string;
   quantity: number;
   price: string;
@@ -446,7 +445,7 @@ export default function RatePage() {
   const orderId = params.orderId as string;
   const productId = params.productId as string;
   const productName = params.productName as string;
-  const [variantId, setVariantId] = useState<string | null>(null);
+  const variantTitleParam = params.variantTitle as string | undefined;
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -457,6 +456,8 @@ export default function RatePage() {
   const [currentItem, setCurrentItem] = useState<OrderItem | null>(null);
   const [riderInfo, setRiderInfo] = useState<RiderInfo | null>(null);
   const [existingReview, setExistingReview] = useState<ReviewData | null>(null);
+  const [existingReviewMedia, setExistingReviewMedia] = useState<ReviewMedia[]>([]);
+  const [isEditingReview, setIsEditingReview] = useState(false);
   const [isPickupOrder, setIsPickupOrder] = useState(false);
 
   // Product ratings
@@ -472,6 +473,7 @@ export default function RatePage() {
 
   // Media
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia[]>([]);
+  const [deletedMediaIds, setDeletedMediaIds] = useState<string[]>([]);
 
   // Review status
   const [hasReviewed, setHasReviewed] = useState(false);
@@ -502,8 +504,10 @@ export default function RatePage() {
           (item: OrderItem) => item.product_id === productId
         );
         if (product) {
-          setCurrentItem(product);
-          setVariantId(product.variant_id || null);  
+          setCurrentItem({
+            ...product,
+            variant_title: product.variant_title || variantTitleParam || undefined,
+          });
         }
         
         // Check if this is a pickup order
@@ -535,7 +539,7 @@ export default function RatePage() {
           console.log("No rider info available for this delivery order");
         }
       }
-      
+
       // Check existing reviews
       await checkExistingReviews();
       
@@ -573,10 +577,18 @@ export default function RatePage() {
           created_at: review.created_at,
           media: review.media || []
         });
+        setExistingReviewMedia(review.media || []);
+      } else {
+        setHasReviewed(false);
+        setExistingReview(null);
+        setExistingReviewMedia([]);
       }
       
     } catch (err) {
       console.error("Error checking reviews:", err);
+      setHasReviewed(false);
+      setExistingReview(null);
+      setExistingReviewMedia([]);
     }
   };
 
@@ -615,10 +627,6 @@ export default function RatePage() {
         formData.append('delivery_rating', deliveryRating.toString());
       }
 
-      if (variantId) {
-        formData.append('variant_id', variantId);
-      }
-
       // Append media files
       for (let i = 0; i < selectedMedia.length; i++) {
         const media = selectedMedia[i];
@@ -631,6 +639,12 @@ export default function RatePage() {
           type: media.type === 'image' ? `image/${fileExtension}` : `video/${fileExtension}`,
         } as any);
       }
+
+      // Append deleted media IDs for edit operations
+      if (isEditingReview && deletedMediaIds.length > 0) {
+        formData.append('deleted_media_ids', JSON.stringify(deletedMediaIds));
+      }
+
       console.log("=== SUBMITTING REVIEW ===");
       console.log("customer_id:", userId);
       console.log("product_id:", productId);
@@ -641,20 +655,30 @@ export default function RatePage() {
       console.log("delivery_rating:", deliveryRating);
       console.log("rider_id:", riderInfo?.rider_id);
       console.log("selectedMedia count:", selectedMedia.length);
+      console.log("deletedMediaIds:", deletedMediaIds);
       console.log("FormData entries:");
-      console.log("variant_id:", variantId);  
       for (let pair of (formData as any)._parts) {
         console.log(pair[0], pair[1]);
       }
 
       console.log("Submitting review with media:", selectedMedia.length);
 
-      const response = await AxiosInstance.post('/reviews/', formData, {
-        headers: {
-          'X-User-Id': userId,
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      let response;
+      if (isEditingReview && existingReview?.id) {
+        response = await AxiosInstance.put(`/reviews/${existingReview.id}/`, formData, {
+          headers: {
+            'X-User-Id': userId,
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      } else {
+        response = await AxiosInstance.post('/reviews/', formData, {
+          headers: {
+            'X-User-Id': userId,
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      }
 
       if (response.data?.status === 'success') {
         setSubmitted(true);
@@ -759,8 +783,33 @@ export default function RatePage() {
         )}
 
         {/* Show existing review if already reviewed */}
-        {hasReviewed && existingReview ? (
-          <ViewReviewCard review={existingReview} />
+        {hasReviewed && existingReview && !isEditingReview ? (
+          <>
+            <ViewReviewCard review={existingReview} />
+            <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#F97316',
+                  paddingVertical: 12,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                }}
+                onPress={() => {
+                  // Prefill form with existing review values and enter edit mode
+                  setConditionRating(existingReview.condition_rating || 0);
+                  setAccuracyRating(existingReview.accuracy_rating || 0);
+                  setValueRating(existingReview.value_rating || 0);
+                  setDeliveryRating(existingReview.delivery_rating || 0);
+                  setComment(existingReview.comment || '');
+                  setSelectedMedia([]);
+                  setDeletedMediaIds([]);
+                  setIsEditingReview(true);
+                }}
+              >
+                <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>Edit Review</Text>
+              </TouchableOpacity>
+            </View>
+          </>
         ) : (
           <>
             {/* Product Review Card */}
@@ -849,7 +898,69 @@ export default function RatePage() {
                 </View>
               )}
 
-              {/* Media Picker */}
+              {/* Media Section - Unified display for all media in edit mode */}
+              {isEditingReview && (
+                <View style={styles.mediaSection}>
+                  <Text style={styles.sectionTitle}>Review Media</Text>
+                  
+                  {/* Display existing media with delete buttons */}
+                  {existingReviewMedia.length > 0 && (
+                    <View>
+                      <Text style={styles.subSectionTitle}>Existing Media</Text>
+                      <FlatList
+                        data={existingReviewMedia}
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        renderItem={({ item }) => (
+                          <View style={styles.mediaItemContainer}>
+                            <MediaItem media={item} readonly={true} />
+                            <TouchableOpacity
+                              style={styles.deleteMediaButton}
+                              onPress={() => {
+                                setDeletedMediaIds([...deletedMediaIds, item.id]);
+                                setExistingReviewMedia(existingReviewMedia.filter(m => m.id !== item.id));
+                              }}
+                            >
+                              <Ionicons name="close" size={18} color="#FFFFFF" />
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                        keyExtractor={(item) => item.id}
+                        contentContainerStyle={styles.mediaList}
+                      />
+                    </View>
+                  )}
+
+                  {/* Display newly added media with delete buttons */}
+                  {selectedMedia.length > 0 && (
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={styles.subSectionTitle}>New Media</Text>
+                      <FlatList
+                        data={selectedMedia}
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        renderItem={({ item, index }) => (
+                          <View style={styles.mediaItemContainer}>
+                            <MediaItem media={item} readonly={true} />
+                            <TouchableOpacity
+                              style={styles.deleteMediaButton}
+                              onPress={() => {
+                                setSelectedMedia(selectedMedia.filter((_, i) => i !== index));
+                              }}
+                            >
+                              <Ionicons name="close" size={18} color="#FFFFFF" />
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                        keyExtractor={(_, index) => index.toString()}
+                        contentContainerStyle={styles.mediaList}
+                      />
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Media Picker - shown in both edit and normal modes */}
               <MediaPicker 
                 onMediaSelected={setSelectedMedia} 
                 existingMedia={[]}
@@ -1350,5 +1461,28 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#EF4444',
+  },
+  mediaItemContainer: {
+    position: 'relative',
+    marginRight: 12,
+  },
+  deleteMediaButton: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#EF4444',
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  subSectionTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
+    marginBottom: 8,
+    marginTop: 8,
+    textTransform: 'uppercase',
   },
 });

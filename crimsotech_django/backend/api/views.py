@@ -17245,12 +17245,10 @@ class CustomerShops(APIView):
 
     def geocode_address(self, street, barangay, city, province):
         """Convert address to coordinates using Google Maps Geocoding API."""
-        # Check if all required address parts are present
         if not all([street, barangay, city, province]):
             print(f"[GEOCODE] Missing address parts - street:{bool(street)}, barangay:{bool(barangay)}, city:{bool(city)}, province:{bool(province)}")
             return None, None
         
-        # Build full address
         full_address = f"{street}, {barangay}, {city}, {province}, Philippines"
         
         GOOGLE_MAPS_API_KEY = getattr(settings, 'GOOGLE_MAPS_API_KEY', None)
@@ -17263,7 +17261,7 @@ class CustomerShops(APIView):
             params = {
                 'address': full_address,
                 'key': GOOGLE_MAPS_API_KEY,
-                'components': 'country:PH'  # Restrict to Philippines
+                'components': 'country:PH'
             }
             
             print(f"[GEOCODE] Geocoding address: {full_address}")
@@ -17298,7 +17296,6 @@ class CustomerShops(APIView):
         if shop.latitude and shop.longitude:
             return float(shop.latitude), float(shop.longitude)
         
-        # Try to geocode if coordinates are missing but address exists
         if shop.street and shop.barangay and shop.city and shop.province:
             lat, lng = self.geocode_address(shop.street, shop.barangay, shop.city, shop.province)
             if lat and lng:
@@ -17308,6 +17305,53 @@ class CustomerShops(APIView):
                 return float(lat), float(lng)
         
         return None, None
+
+    # ── Helper: Get follower count for a shop ───────────────────────────────────
+
+    def get_follower_count(self, shop):
+        """Get the number of followers for a shop"""
+        try:
+            return ShopFollow.objects.filter(shop=shop).count()
+        except Exception as e:
+            print(f"Error getting follower count for shop {shop.id}: {e}")
+            return 0
+
+    # ── Helper: Get total sales for a shop (EXCLUDING VAT) ─────────────────────
+
+    def get_shop_total_sales(self, shop):
+        """
+        Calculate total sales for a shop from delivered orders.
+        Sales exclude VAT (uses variant price without VAT or direct_product_price).
+        """
+        try:
+            # Get all checkout items for this shop from delivered orders
+            checkout_items = Checkout.objects.filter(
+                order__checkout__cart_item__product__shop=shop,
+                order__status='delivered'
+            ).exclude(
+                order__status__in=['cancelled', 'refunded']
+            ).select_related('order')
+            
+            total_sales = Decimal('0.00')
+            
+            for checkout_item in checkout_items:
+                if checkout_item.direct_product_price:
+                    # Direct checkout (product page purchase)
+                    total_sales += checkout_item.direct_product_price * checkout_item.quantity
+                elif checkout_item.cart_item and checkout_item.cart_item.variant:
+                    # Cart checkout with variant
+                    variant_price = checkout_item.cart_item.variant.price or Decimal('0.00')
+                    total_sales += variant_price * checkout_item.quantity
+                elif checkout_item.cart_item and checkout_item.cart_item.product:
+                    # Cart checkout without variant (legacy)
+                    product_price = Decimal(str(getattr(checkout_item.cart_item.product, 'price', 0)))
+                    total_sales += product_price * checkout_item.quantity
+            
+            return float(total_sales)
+            
+        except Exception as e:
+            print(f"Error calculating total sales for shop {shop.id}: {e}")
+            return 0.00
 
     # ── Image URL helper ───────────────────────────────────────────────────────
 
@@ -17356,11 +17400,17 @@ class CustomerShops(APIView):
             customer = Customer.objects.get(customer_id=customer_id)
             shops_queryset = Shop.objects.filter(customer=customer).order_by('name')
             
-            # Prepare shop data with coordinates
+            # Prepare shop data with coordinates, followers, and total sales
             shops_data = []
             for shop in shops_queryset:
                 # Get coordinates (geocode if missing)
                 lat, lng = self.get_coordinates_from_shop(shop)
+                
+                # Get follower count
+                follower_count = self.get_follower_count(shop)
+                
+                # Get total sales (from delivered orders, excluding VAT)
+                total_sales = self.get_shop_total_sales(shop)
                 
                 shop_dict = {
                     'id': str(shop.id),
@@ -17373,12 +17423,14 @@ class CustomerShops(APIView):
                     'contact_number': shop.contact_number,
                     'verified': shop.verified,
                     'status': shop.status,
-                    'total_sales': str(shop.total_sales),
+                    'total_sales': total_sales,
+                    'follower_count': follower_count,
                     'created_at': shop.created_at.isoformat(),
                     'updated_at': shop.updated_at.isoformat(),
                     'shop_picture': self.get_media_url(shop.shop_picture),
                     'latitude': lat,
                     'longitude': lng,
+                    'is_suspended': shop.is_suspended,
                     **self.build_shop_legal_docs(shop),
                 }
                 shops_data.append(shop_dict)
@@ -17566,7 +17618,6 @@ class CustomerShops(APIView):
 
                 shop.save()
 
-                # Log geocoding result
                 if latitude and longitude:
                     logger.info(f"📍 Shop '{shop.name}' created with coordinates: ({latitude}, {longitude})")
                 else:
@@ -17581,7 +17632,6 @@ class CustomerShops(APIView):
                         message=f'A new shop "{shop.name}" has been submitted with legal documents and is awaiting your approval.'
                     )
 
-                # Build response — all images via get_media_url
                 shop_data = {
                     'id':             str(shop.id),
                     'name':           shop.name,
@@ -17594,7 +17644,8 @@ class CustomerShops(APIView):
                     'customer':       str(shop.customer.customer_id) if shop.customer else None,
                     'verified':       shop.verified,
                     'status':         shop.status,
-                    'total_sales':    str(shop.total_sales),
+                    'total_sales':    0.00,
+                    'follower_count': 0,
                     'created_at':     shop.created_at.isoformat(),
                     'updated_at':     shop.updated_at.isoformat(),
                     'shop_picture':   self.get_media_url(shop.shop_picture),
@@ -17645,7 +17696,6 @@ class CustomerShops(APIView):
             customer = Customer.objects.get(customer_id=customer_id)
             shop     = Shop.objects.get(id=shop_id, customer=customer)
 
-            # Get coordinates (geocode if missing)
             lat, lng = self.get_coordinates_from_shop(shop)
 
             return Response({
@@ -17678,14 +17728,12 @@ class CustomerShops(APIView):
             customer = Customer.objects.get(customer_id=customer_id)
             shop     = Shop.objects.get(id=shop_id, customer=customer)
 
-            # Update address fields
             shop.province       = request.data.get('province',       shop.province)
             shop.city           = request.data.get('city',           shop.city)
             shop.barangay       = request.data.get('barangay',       shop.barangay)
             shop.street         = request.data.get('street',         shop.street)
             shop.contact_number = request.data.get('contact_number', shop.contact_number)
             
-            # Re-geocode if address fields were updated
             address_changed = any([
                 'province' in request.data,
                 'city' in request.data,
@@ -17710,13 +17758,11 @@ class CustomerShops(APIView):
                     logger.info(f"📍 Shop '{shop.name}' coordinates updated to: ({latitude}, {longitude})")
                 else:
                     logger.warning(f"⚠️ Could not geocode updated address for shop '{shop.name}'")
-                    # Keep existing coordinates if available
                     if not (shop.latitude and shop.longitude):
                         logger.warning(f"⚠️ Shop '{shop.name}' has no coordinates after update")
             
             shop.save()
 
-            # Get final coordinates for response
             final_lat = float(shop.latitude) if shop.latitude else (float(latitude) if latitude else None)
             final_lng = float(shop.longitude) if shop.longitude else (float(longitude) if longitude else None)
 
@@ -17743,7 +17789,6 @@ class CustomerShops(APIView):
             return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
 
 
 class CustomerShopsAddSeller(viewsets.ViewSet):
@@ -19928,7 +19973,7 @@ class SellerProducts(viewsets.ModelViewSet):
             for review in product.reviews.all():
                 reviews_data.append({
                     "id": str(review.id),
-                    "rating": review.rating,
+                    "rating": review.average_rating,
                     "comment": review.comment,
                     "customer": {
                         "id": str(review.customer.customer.id) if review.customer else None,
@@ -19939,7 +19984,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     "created_at": review.created_at.isoformat() if review.created_at else None,
                     "updated_at": review.updated_at.isoformat() if review.updated_at else None,
                 })
-                total_rating += review.rating
+                total_rating += review.average_rating
 
             avg_rating = total_rating / len(reviews_data) if reviews_data else 0
 
@@ -27033,6 +27078,23 @@ class CheckoutOrder(viewsets.ViewSet):
                         base_price = price_with_vat / Decimal('1.12')
                         vat_amount = price_with_vat - base_price
 
+                # Get product image using storage utility
+                product_image_url = None
+                if variant and variant.image and hasattr(variant.image, 'url'):
+                    try:
+                        from api.utils.storage_utils import convert_s3_to_public_url
+                        product_image_url = convert_s3_to_public_url(variant.image.url)
+                    except Exception:
+                        product_image_url = variant.image.url
+                elif product and product.productmedia_set.exists():
+                    first_media = product.productmedia_set.first()
+                    if first_media and first_media.file_data:
+                        try:
+                            from api.utils.storage_utils import convert_s3_to_public_url
+                            product_image_url = convert_s3_to_public_url(first_media.file_data.url)
+                        except Exception:
+                            product_image_url = first_media.file_data.url
+
                 item_data = {
                     "id": str(cart_item.id) if hasattr(cart_item, 'id') else cart_item.id,
                     "product_id": str(product.id) if product else None,
@@ -27042,6 +27104,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     "vat_amount": float(vat_amount),  # VAT amount
                     "vat_percentage": "12%",  # Fixed VAT percentage
                     "quantity": cart_item.quantity,
+                    "image": product_image_url,
                     "shop_name": shop.name if shop else (product.customer.customer.username if product and product.customer else "Personal Seller"),
                     "shop_id": str(shop.id) if shop else None,
                     "seller_id": str(product.customer.customer.id) if product and product.customer else None,
@@ -27051,22 +27114,16 @@ class CheckoutOrder(viewsets.ViewSet):
                     "is_personal_listing": shop is None and product and product.customer is not None
                 }
 
-                if variant and variant.image and hasattr(variant.image, 'url'):
-                    try:
-                        from .utils import convert_s3_to_public_url
-                        item_data['image'] = convert_s3_to_public_url(variant.image.url)
-                    except Exception:
-                        item_data['image'] = variant.image.url
-                elif product and product.productmedia_set.exists():
-                    first_media = product.productmedia_set.first()
-                    if first_media and first_media.file_data:
-                        try:
-                            from .utils import convert_s3_to_public_url
-                            item_data["image"] = convert_s3_to_public_url(first_media.file_data.url)
-                        except Exception:
-                            item_data["image"] = first_media.file_data.url
-
                 if variant:
+                    # Get variant image using storage utility
+                    variant_image_url = None
+                    if variant.image and hasattr(variant.image, 'url'):
+                        try:
+                            from api.utils.storage_utils import convert_s3_to_public_url
+                            variant_image_url = convert_s3_to_public_url(variant.image.url)
+                        except Exception:
+                            variant_image_url = variant.image.url
+                    
                     item_data['variant'] = {
                         'id': str(variant.id),
                         'title': variant.title,
@@ -27078,7 +27135,8 @@ class CheckoutOrder(viewsets.ViewSet):
                         'sku_code': variant.sku_code,
                         'option_title': variant.option_title,
                         'option_ids': variant.option_ids,
-                        'option_map': variant.option_map
+                        'option_map': variant.option_map,
+                        'image': variant_image_url
                     }
 
                 checkout_items.append(item_data)
@@ -27178,7 +27236,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Internal server error", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+        
     def _get_user_purchase_history(self, user_id):
         try:
             completed_orders = Order.objects.filter(
@@ -43475,8 +43533,9 @@ class ReviewView(APIView):
                         }
                     }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Check for existing rider review
-            if rider_id:
+            # Check for existing rider review ONLY if this is a standalone rider review (no product)
+            # If product_id is provided, allow multiple product reviews with same rider
+            if rider_id and not product_id:
                 existing_rider_review = Review.objects.filter(
                     customer=customer,
                     rider_id=rider_id
@@ -43633,7 +43692,7 @@ class ReviewView(APIView):
                 }, status=status.HTTP_404_NOT_FOUND)
             
             # Check if customer owns this review
-            if str(review.customer.id) != str(customer.id):
+            if str(review.customer.customer_id) != str(customer.customer_id):
                 return Response({
                     'status': 'error',
                     'message': 'You do not have permission to update this review'
@@ -43680,6 +43739,42 @@ class ReviewView(APIView):
             
             # Save changes (average_rating will be calculated in serializer)
             review.save()
+
+            # Handle deleted media IDs
+            deleted_media_ids = data.get('deleted_media_ids')
+            if deleted_media_ids:
+                try:
+                    import json
+                    if isinstance(deleted_media_ids, str):
+                        deleted_ids = json.loads(deleted_media_ids)
+                    else:
+                        deleted_ids = deleted_media_ids
+                    
+                    # Only delete media that belongs to this review
+                    ReviewMedia.objects.filter(
+                        id__in=deleted_ids,
+                        review=review
+                    ).delete()
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.error(f"Error parsing deleted_media_ids: {str(e)}")
+
+            # Add any newly uploaded review media on update
+            media_files = request.FILES.getlist('media')
+            if media_files:
+                for media_file in media_files:
+                    file_name = media_file.name
+                    if file_name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')):
+                        file_type = 'image'
+                    elif file_name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv')):
+                        file_type = 'video'
+                    else:
+                        file_type = 'file'
+
+                    ReviewMedia.objects.create(
+                        review=review,
+                        file_data=media_file,
+                        file_type=file_type
+                    )
             
             return Response({
                 'status': 'success',
@@ -43693,7 +43788,8 @@ class ReviewView(APIView):
                     'value_rating': review.value_rating,
                     'delivery_rating': review.delivery_rating,
                     'comment': review.comment,
-                    'updated_at': review.updated_at.isoformat()
+                    'updated_at': review.updated_at.isoformat(),
+                    'media': ReviewMediaSerializer(review.medias.all(), many=True).data
                 }
             }, status=status.HTTP_200_OK)
             
@@ -43728,7 +43824,7 @@ class ReviewView(APIView):
                 }, status=status.HTTP_404_NOT_FOUND)
             
             # Check if customer owns this review
-            if str(review.customer.id) != str(customer.id):
+            if str(review.customer.customer_id) != str(customer.customer_id):
                 return Response({
                     'status': 'error',
                     'message': 'You do not have permission to delete this review'

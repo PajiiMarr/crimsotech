@@ -24,8 +24,8 @@ interface Shop {
   id: string;
   name: string;
   description: string;
-  shop_picture_url?: string | null; // ✅ public CDN URL (use this first)
-  shop_picture?: string | null;     // ✅ S3 URL (fallback)
+  shop_picture_url?: string | null;
+  shop_picture?: string | null;
   contact_number: string;
   verified: boolean;
   status: string;
@@ -42,7 +42,6 @@ interface Shop {
 
 const { width } = Dimensions.get("window");
 const isSmallDevice = width < 375;
-const isLargeDevice = width > 414;
 
 interface ShopsResponse {
   success: boolean;
@@ -51,13 +50,51 @@ interface ShopsResponse {
   data_source: string;
 }
 
-// ── Helper ────────────────────────────────────────────────────────────────────
+// ── Helper: Convert S3 URL to public URL ────────────────────────────────────
+const convertS3ToPublicUrl = (url: string | null | undefined): string | null => {
+  if (!url) return null;
+  
+  try {
+    // Method 1: Regex extraction
+    const match = url.match(/https:\/\/([^\.]+)\.storage\.supabase\.co\/storage\/v1\/s3\/([^\/]+)\/(.+)/);
+    
+    if (match) {
+      const projectRef = match[1];
+      const bucketName = match[2];
+      const filePath = match[3];
+      return `https://${projectRef}.supabase.co/storage/v1/object/public/${bucketName}/${filePath}`;
+    }
+    
+    // Method 2: Simple string replacement
+    if (url.includes("/s3/")) {
+      let publicUrl = url.replace("/s3/", "/object/public/");
+      publicUrl = publicUrl.replace(".storage.supabase.co", ".supabase.co");
+      return publicUrl;
+    }
+    
+    // If it's already a public URL or other format, return as is
+    return url;
+  } catch (error) {
+    console.error("Error converting S3 URL:", error);
+    return url;
+  }
+};
+
+// ✅ Returns the best available image URI for a shop (using storage util)
+const getShopImageUri = (shop: Shop): string | null => {
+  // Try shop_picture_url first (if backend already provides converted URL)
+  if (shop.shop_picture_url) {
+    return shop.shop_picture_url;
+  }
+  // Otherwise convert shop_picture S3 URL
+  if (shop.shop_picture) {
+    return convertS3ToPublicUrl(shop.shop_picture);
+  }
+  return null;
+};
+
 const isPending = (shop: Shop) =>
   shop.status === "Pending" || (!shop.verified && shop.status !== "Active");
-
-// ✅ Returns the best available image URI for a shop
-const getShopImageUri = (shop: Shop): string | null =>
-  shop.shop_picture_url || shop.shop_picture || null;
 
 export default function ShopsPage() {
   const { userId, loading: authLoading, userRole } = useAuth();
@@ -139,7 +176,7 @@ export default function ShopsPage() {
   const ShopCard = ({ shop }: { shop: Shop }) => {
     const location = getLocationString(shop);
     const pending = isPending(shop);
-    const imageUri = getShopImageUri(shop); // ✅ resolve best image URL
+    const imageUri = getShopImageUri(shop);
 
     const handleManageShop = () => {
       if (pending) {
@@ -160,7 +197,6 @@ export default function ShopsPage() {
         onPress={() => setSelectedShop(shop)}
       >
         <View style={styles.shopCardHeader}>
-          {/* ✅ Fixed: use resolved imageUri */}
           {imageUri ? (
             <Image
               source={{ uri: imageUri }}
@@ -215,7 +251,6 @@ export default function ShopsPage() {
           </View>
         </View>
 
-        {/* Pending notice banner */}
         {pending && (
           <View style={styles.pendingBanner}>
             <MaterialIcons name="info-outline" size={16} color="#92400E" />
@@ -345,7 +380,6 @@ export default function ShopsPage() {
           />
         }
       >
-        {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <TouchableOpacity
@@ -370,7 +404,6 @@ export default function ShopsPage() {
           </TouchableOpacity>
         </View>
 
-        {/* Selected Shop Details */}
         {selectedLoading ? (
           <View style={{ padding: 16 }}>
             <ActivityIndicator size="small" color="#111827" />
@@ -379,7 +412,6 @@ export default function ShopsPage() {
           <View style={styles.selectedShopCard}>
             <Text style={styles.selectedShopTitle}>Selected Shop</Text>
             <View style={styles.selectedShopContent}>
-              {/* ✅ Fixed: use resolved imageUri for selected shop too */}
               {getShopImageUri(selectedShop) ? (
                 <Image
                   source={{ uri: getShopImageUri(selectedShop)! }}
@@ -418,7 +450,6 @@ export default function ShopsPage() {
           </View>
         ) : null}
 
-        {/* No shops state */}
         {shops.length === 0 ? (
           <View style={styles.emptyContainer}>
             <MaterialIcons name="storefront" size={80} color="#E5E7EB" />
@@ -588,20 +619,4 @@ const styles = StyleSheet.create({
   viewDetailsButton: { marginTop: 8, paddingVertical: 6 },
   viewDetailsText: { color: "#111827", fontWeight: "600" },
   pendingNote: { marginTop: 6, fontSize: 12, color: "#D97706", fontWeight: "500" },
-  helpSection: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-    marginHorizontal: 20,
-    marginBottom: 24,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-  },
-  helpContent: { flex: 1, marginLeft: 12, marginRight: 12 },
-  helpTitle: { fontSize: 14, fontWeight: "600", color: "#111827", marginBottom: 2 },
-  helpText: { fontSize: 12, color: "#6B7280", lineHeight: 16 },
-  helpButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: "#E5E7EB" },
-  helpButtonText: { fontSize: 12, fontWeight: "600", color: "#4B5563" },
 });
