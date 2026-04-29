@@ -45,6 +45,7 @@ interface OrderItem {
   shop_province?: string;
   shop_latitude?: number;
   shop_longitude?: number;
+  shop_status?: string;
 }
 
 interface OrderDetails {
@@ -929,6 +930,15 @@ const getDefaultStatusMessage = (status: string) => {
   const isAccepted = orderDetails.delivery?.status === 'accepted';
   const statusColor = getStatusColor(orderDetails.delivery?.status);
   const statusLabel = getStatusLabel(orderDetails.delivery?.status);
+
+  // Check shop status - disable Mark as Picked Up until all items are waiting_for_rider
+  const allItemsWaitingForRider = orderDetails.items?.every(item => item.shop_status === 'waiting_for_rider') ?? false;
+  const isShopStatusRiderAssigned = orderDetails.items?.some(item => item.shop_status === 'rider_assigned') ?? false;
+
+  // Debug log
+  console.log('🔍 [RIDER VIEW] Order items:', orderDetails.items?.map(item => ({ shop_status: item.shop_status })));
+  console.log('🔍 [RIDER VIEW] isShopStatusRiderAssigned:', isShopStatusRiderAssigned);
+  console.log('🔍 [RIDER VIEW] allItemsWaitingForRider:', allItemsWaitingForRider);
 
   // Get unique seller info from first item (assuming all items are from same seller for this delivery)
   const sellerInfo = orderDetails.items?.[0] || null;
@@ -1881,14 +1891,14 @@ const getDefaultStatusMessage = (status: string) => {
       
       <TouchableOpacity
         onPress={handleMarkPickedUp}
-        disabled={isActionLoading || isReturnWaitingForBuyer || orderDetails?.order_status === 'rider_assigned'}
+        disabled={isActionLoading || isReturnWaitingForBuyer || isShopStatusRiderAssigned}
         style={{
           flex: 1,
-          backgroundColor: (isReturnWaitingForBuyer || orderDetails?.order_status === 'rider_assigned') ? '#9CA3AF' : '#3B82F6',
+          backgroundColor: (isReturnWaitingForBuyer || isShopStatusRiderAssigned) ? '#9CA3AF' : '#3B82F6',
           paddingVertical: 14,
           borderRadius: 0,
           marginRight: 16,
-          opacity: (isReturnWaitingForBuyer || orderDetails?.order_status === 'rider_assigned') ? 0.7 : 1,
+          opacity: (isReturnWaitingForBuyer || isShopStatusRiderAssigned) ? 0.7 : 1,
         }}
       >
         <Text style={{ 
@@ -1897,11 +1907,11 @@ const getDefaultStatusMessage = (status: string) => {
           color: '#FFFFFF', 
           textAlign: 'center' 
         }}>
-          {isReturnWaitingForBuyer 
+          {isShopStatusRiderAssigned 
+            ? 'Waiting for Seller' 
+            : isReturnWaitingForBuyer 
             ? 'Waiting for Buyer' 
-            : (orderDetails?.order_status === 'rider_assigned' 
-              ? 'Waiting for Seller' 
-              : (isActionLoading ? 'Processing...' : 'Mark as Picked Up'))}
+            : (isActionLoading ? 'Processing...' : 'Mark as Picked Up')}
         </Text>
       </TouchableOpacity>
     </View>

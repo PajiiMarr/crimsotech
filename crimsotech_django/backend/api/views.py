@@ -24800,6 +24800,7 @@ class SellerOrderList(viewsets.ViewSet):
             'pending': 'pending_shipment',
             'confirmed': 'processing',
             'processing': 'processing',
+            'rider_assigned': 'rider_assigned',
             'ready': 'ready_to_ship',
             'shipped': 'shipped',
             'delivered': 'delivered',
@@ -24981,7 +24982,7 @@ class SellerOrderList(viewsets.ViewSet):
         ).values('cart_item__product__shop_id', 'direct_shop_id').distinct().count()
         
         # Get confirmed shops count
-        confirmed_shops = OrderShopStatus.objects.filter(order=order, status='confirmed').count()
+        confirmed_shops = OrderShopStatus.objects.filter(order=order, status='processing').count()
         
         order_data = {
             "order_id": str(order.order),
@@ -25142,11 +25143,29 @@ class SellerOrderList(viewsets.ViewSet):
             if is_pickup:
                 return Response({"success": False, "message": "Order is for pickup, not delivery"}, status=status.HTTP_400_BAD_REQUEST)
             
+            # Get shop from first checkout item
+            checkout_item = order.checkout_set.first()
+            if not checkout_item:
+                return Response({"success": False, "message": "Cannot find order items"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            shop = None
+            if checkout_item.direct_shop_id:
+                try:
+                    shop = Shop.objects.get(id=checkout_item.direct_shop_id)
+                except Shop.DoesNotExist:
+                    return Response({"success": False, "message": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
+            elif checkout_item.cart_item and checkout_item.cart_item.product:
+                shop = checkout_item.cart_item.product.shop
+            
+            if not shop:
+                return Response({"success": False, "message": "Cannot determine shop for this order"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check for active deliveries for THIS SHOP only
             active_delivery = Delivery.objects.filter(
-                order=order, status__in=['accepted', 'picked_up', 'in_progress']
+                order=order, shop=shop, status__in=['accepted', 'picked_up', 'in_progress']
             ).exists()
             if active_delivery:
-                return Response({"success": False, "message": "Order already has an active delivery in progress"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"success": False, "message": "This shop already has an active delivery in progress"}, status=status.HTTP_400_BAD_REQUEST)
             
             available_riders = Rider.objects.filter(
                 verified=True, 
@@ -25165,21 +25184,11 @@ class SellerOrderList(viewsets.ViewSet):
             pickup_lng = None
             pickup_name = None
             
-            if checkout_item.direct_shop_id:
-                try:
-                    shop = Shop.objects.get(id=checkout_item.direct_shop_id)
-                    if shop.latitude and shop.longitude:
-                        pickup_lat = float(shop.latitude)
-                        pickup_lng = float(shop.longitude)
-                        pickup_name = shop.name
-                except Shop.DoesNotExist:
-                    pass
-            elif checkout_item.cart_item and checkout_item.cart_item.product:
-                product = checkout_item.cart_item.product
-                if product.shop and product.shop.latitude and product.shop.longitude:
-                    pickup_lat = float(product.shop.latitude)
-                    pickup_lng = float(product.shop.longitude)
-                    pickup_name = product.shop.name
+            # Shop is already determined above
+            if shop.latitude and shop.longitude:
+                pickup_lat = float(shop.latitude)
+                pickup_lng = float(shop.longitude)
+                pickup_name = shop.name
             
             if not pickup_lat or not pickup_lng:
                 return Response({"success": False, "message": "Shop has no coordinates. Please update shop address."}, status=status.HTTP_400_BAD_REQUEST)
@@ -25267,7 +25276,7 @@ class SellerOrderList(viewsets.ViewSet):
             delivery_fee = self._calculate_delivery_fee(total_distance)
             estimated_minutes = self._calculate_estimated_time(total_distance)
             
-            existing_delivery = Delivery.objects.filter(order=order).first()
+            existing_delivery = Delivery.objects.filter(order=order, shop=shop).first()
 
             if existing_delivery:
                 existing_delivery.rider = selected_rider
@@ -25294,6 +25303,7 @@ class SellerOrderList(viewsets.ViewSet):
             else:
                 delivery = Delivery.objects.create(
                     order=order,
+                    shop=shop,
                     rider=selected_rider,
                     status='pending',
                     distance_km=Decimal(str(total_distance)),
@@ -25478,7 +25488,7 @@ class SellerOrderList(viewsets.ViewSet):
                 Q(order=order, direct_shop_id__isnull=False)
             ).values('cart_item__product__shop_id', 'direct_shop_id').distinct().count()
             
-            confirmed_shops = OrderShopStatus.objects.filter(order=order, status='confirmed').count()
+            confirmed_shops = OrderShopStatus.objects.filter(order=order, status='processing').count()
             all_shops_confirmed = confirmed_shops >= total_shops_in_order
             
             has_pending_offer = Delivery.objects.filter(order=order, status__in=['pending', 'accepted', 'declined']).exists()
@@ -25499,15 +25509,15 @@ class SellerOrderList(viewsets.ViewSet):
             # Determine available actions based on THIS SHOP's status ONLY
             if current_shop_status == 'pending':
                 if can_confirm:
-                    available_actions = ['confirm']
+                    available_actions = ['confirm', 'cancel']
                         
-            elif current_shop_status == 'confirmed':
+            elif current_shop_status == 'processing':
                 if is_pickup:
                     available_actions = ['ready_for_pickup', 'cancel', 'view_details']
                 else:
                     available_actions = ['arrange_shipment', 'cancel', 'view_details']
                         
-            elif current_shop_status == 'processing':
+            elif current_shop_status == 'rider_assigned':
                 if is_pickup:
                     available_actions = ['ready_for_pickup', 'cancel', 'view_details']
                 else:
@@ -25601,6 +25611,8 @@ class SellerOrderList(viewsets.ViewSet):
             except Shop.DoesNotExist:
                 return Response({"success": False, "message": "Shop not found"}, status=status.HTTP_404_NOT_FOUND)
             
+            print(f"🏪 [UPDATE_STATUS] action_type={action_type}, order_id={order.order}, shop_id={shop.id} ({shop.name})")
+            
             has_shop_items = Checkout.objects.filter(
                 Q(order=order, cart_item__product__shop=shop) |
                 Q(order=order, direct_shop_id=str(shop.id))
@@ -25636,7 +25648,7 @@ class SellerOrderList(viewsets.ViewSet):
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
                 # Update this shop's status
-                shop_status.status = 'confirmed'
+                shop_status.status = 'processing'
                 shop_status.confirmed_at = timezone.now()
                 shop_status.save()
                 
@@ -25677,7 +25689,7 @@ class SellerOrderList(viewsets.ViewSet):
                     Q(order=order, direct_shop_id__isnull=False)
                 ).values('cart_item__product__shop_id', 'direct_shop_id').distinct().count()
                 
-                confirmed_shops = OrderShopStatus.objects.filter(order=order, status='confirmed').count()
+                confirmed_shops = OrderShopStatus.objects.filter(order=order, status='processing').count()
                 
                 if confirmed_shops >= total_shops:
                     order.status = 'processing'
@@ -25716,19 +25728,23 @@ class SellerOrderList(viewsets.ViewSet):
                     print(f"✅ Reset shop status from cancelled to processing for shop {shop.name}")
                 
                 # Check if order is confirmed (after potential reset)
-                if shop_status.status not in ['confirmed', 'processing']:
+                if shop_status.status != 'processing':
                     return Response({"success": False, "message": "Order must be confirmed before arranging shipment"}, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Check for active deliveries (accepted, picked_up, in_progress)
+                # Check for active deliveries (accepted, picked_up, in_progress) for THIS SHOP
                 active_delivery = Delivery.objects.filter(
-                    order=order, status__in=['accepted', 'picked_up', 'in_progress']
+                    order=order, shop=shop, status__in=['accepted', 'picked_up', 'in_progress']
                 ).exists()
                 if active_delivery:
-                    return Response({"success": False, "message": "Order already has an active delivery in progress"}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({"success": False, "message": "This shop already has an active delivery in progress"}, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Handle existing declined delivery - reset it instead of creating new
-                existing_delivery = Delivery.objects.filter(order=order).first()
+                # Handle existing declined delivery for this shop - reset it instead of creating new
+                existing_delivery = Delivery.objects.filter(order=order, shop=shop).first()
+                print(f"🔍 Looking for existing delivery: order={order.order}, shop={shop.name} - Found: {existing_delivery is not None}")
+                if existing_delivery:
+                    print(f"   Existing delivery ID={existing_delivery.id}, status={existing_delivery.status}, shop_id={existing_delivery.shop_id}")
                 if existing_delivery and existing_delivery.status == 'declined':
+                    print(f"♻️  Resetting declined delivery {existing_delivery.id} for shop {shop.name}")
                     # Reset the declined delivery to pending
                     existing_delivery.status = 'pending'
                     existing_delivery.rider = None
@@ -25843,11 +25859,10 @@ class SellerOrderList(viewsets.ViewSet):
                 delivery_fee = self._calculate_delivery_fee(total_distance)
                 estimated_minutes = self._calculate_estimated_time(total_distance)
                 
-                # Check if there's an existing delivery (resetting declined one)
-                existing_delivery = Delivery.objects.filter(order=order).first()
+                # Check if there's an existing delivery for this shop (resetting declined one)
+                existing_delivery = Delivery.objects.filter(order=order, shop=shop).first()
                 
                 if existing_delivery:
-                    # Update existing delivery with new rider
                     existing_delivery.rider = selected_rider
                     existing_delivery.status = 'pending'
                     existing_delivery.distance_km = Decimal(str(total_distance))
@@ -25868,12 +25883,16 @@ class SellerOrderList(viewsets.ViewSet):
                             'estimated_minutes': estimated_minutes
                         }
                     }
+                    print(f"♻️  Updating existing delivery {existing_delivery.id} for shop {shop.name} with rider {selected_rider.rider.username}")
                     existing_delivery.save()
+                    print(f"✅ Updated delivery - shop_id={existing_delivery.shop_id}")
                     delivery = existing_delivery
                 else:
                     # Create new delivery
+                    print(f"📦 Creating new delivery: order={order.order}, shop={shop.name} (ID={shop.id}), rider={selected_rider.rider.username}")
                     delivery = Delivery.objects.create(
                         order=order,
+                        shop=shop,
                         rider=selected_rider,
                         status='pending',
                         distance_km=Decimal(str(total_distance)),
@@ -25895,6 +25914,7 @@ class SellerOrderList(viewsets.ViewSet):
                             }
                         }
                     )
+                    print(f"✅ Delivery created with ID={delivery.id}, shop_id={delivery.shop_id}")
                 
                 # Send notification to the new rider
                 Notification.objects.create(
@@ -25907,7 +25927,7 @@ class SellerOrderList(viewsets.ViewSet):
                 )
                 
                 # Update shop status and order status
-                shop_status.status = 'ready'
+                shop_status.status = 'rider_assigned'
                 shop_status.save()
                 order.status = 'rider_assigned'
                 order.save()
@@ -25940,12 +25960,12 @@ class SellerOrderList(viewsets.ViewSet):
                 if is_pickup:
                     return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
                 
-                if shop_status.status != 'ready':
+                if shop_status.status != 'rider_assigned':
                     return Response({"success": False, "message": "Order must have a rider assigned before marking as ready to ship"}, status=status.HTTP_400_BAD_REQUEST)
                 
-                shop_status.status = 'shipped'
+                shop_status.status = 'waiting_for_rider'
                 shop_status.save()
-                order.status = 'shipped'
+                order.status = 'waiting_for_rider'
                 order.save()
                 message = "Order marked as ready to ship"
             
@@ -26338,7 +26358,7 @@ class SellerOrderList(viewsets.ViewSet):
                 defaults={'status': 'pending'}
             )
             
-            if shop_status.status not in ['confirmed', 'processing']:
+            if shop_status.status != 'processing':
                 return Response({"success": False, "message": "Order is not ready to ship"}, status=status.HTTP_400_BAD_REQUEST)
             
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
@@ -26399,13 +26419,14 @@ class SellerOrderList(viewsets.ViewSet):
             if not checkouts.exists():
                 return Response({'success': False, 'message': 'No items found for this shop in the order'}, status=status.HTTP_404_NOT_FOUND)
             
-            # Get delivery info
+            # Get delivery info - filtered by shop
             delivery_info = None
             proof_images = []
             
             try:
                 active_delivery = Delivery.objects.filter(
-                    order=order
+                    order=order,
+                    shop=shop
                 ).exclude(
                     status__in=['cancelled', 'expired', 'rejected', 'declined']
                 ).order_by(
@@ -26422,7 +26443,7 @@ class SellerOrderList(viewsets.ViewSet):
                 ).select_related('rider__rider').first()
                 
                 if not active_delivery:
-                    active_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
+                    active_delivery = Delivery.objects.filter(order=order, shop=shop).order_by('-created_at').first()
                 
                 if active_delivery:
                     is_accepted = active_delivery.status in ['accepted', 'picked_up', 'in_progress', 'delivered']
@@ -26554,12 +26575,19 @@ class SellerOrderList(viewsets.ViewSet):
                     shop_transaction_fee = (float(order.transaction_fee) * float(shop_subtotal)) / global_subtotal
                     transaction_fee = round(shop_transaction_fee, 2)
             
+            # Count total shops in order and confirmed shops
+            all_order_shop_statuses = OrderShopStatus.objects.filter(order=order)
+            total_shops_in_order = all_order_shop_statuses.count()
+            confirmed_shops_count = all_order_shop_statuses.exclude(status='pending').count()
+            
             response_data = {
                 'success': True,
                 'data': {
                     'order_id': str(order.order),
                     'shop_status': shop_status.status,
                     'global_status': order.status,
+                    'total_shops_in_order': total_shops_in_order,
+                    'confirmed_shops_count': confirmed_shops_count,
                     'user': {
                         'id': str(order.user.id),
                         'username': order.user.username,
@@ -31717,6 +31745,15 @@ class ArrangeShipment(viewsets.ViewSet):
                     "success": False,
                     "message": "Rider not found or not verified"
                 }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Verify shop exists
+            try:
+                shop = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                return Response({
+                    "success": False,
+                    "message": "Shop not found"
+                }, status=status.HTTP_404_NOT_FOUND)
 
             # Check if there's already a pending offer for this order
             existing_delivery = Delivery.objects.filter(
@@ -31733,6 +31770,7 @@ class ArrangeShipment(viewsets.ViewSet):
             # Create delivery record with offer - O(1)
             delivery = Delivery.objects.create(
                 order=order,
+                shop=shop,
                 rider=rider,
                 status='pending',  # Changed from 'pending' to be more specific
                 delivery_fee=offer_amount,
@@ -32142,6 +32180,19 @@ class RiderOrdersActive(viewsets.ViewSet):
                         shop_province = product.shop.province
                         shop_latitude = float(product.shop.latitude) if product.shop.latitude else None   
                         shop_longitude = float(product.shop.longitude) if product.shop.longitude else None
+                    
+                    # Get shop_status from OrderShopStatus
+                    shop_status = None
+                    if product and product.shop:
+                        try:
+                            order_shop_status = OrderShopStatus.objects.filter(
+                                order=order,
+                                shop=product.shop
+                            ).first()
+                            if order_shop_status:
+                                shop_status = order_shop_status.status
+                        except Exception as e:
+                            print(f"Error fetching shop_status: {e}")
                         
                     item_data = {
                         "checkout_id": str(item.id),
@@ -32164,6 +32215,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                         "shop_province": shop_province,
                         "shop_latitude": shop_latitude,   
                         "shop_longitude": shop_longitude,
+                        "shop_status": shop_status,
                     }
                     order_data["items"].append(item_data)
             except Exception as e:
@@ -32828,6 +32880,24 @@ class RiderOrdersActive(viewsets.ViewSet):
             order.updated_at = timezone.now()
             order.save()
             print(f"📦 Regular delivery - updated order {order.order} status to shipped")
+            
+            # Update OrderShopStatus from waiting_for_rider to shipped
+            try:
+                if delivery_shop_id:
+                    from api.models import Shop
+                    shop = Shop.objects.filter(id=delivery_shop_id).first()
+                    if shop:
+                        order_shop_status = OrderShopStatus.objects.filter(
+                            order=order,
+                            shop=shop
+                        ).first()
+                        if order_shop_status and order_shop_status.status == 'waiting_for_rider':
+                            order_shop_status.status = 'shipped'
+                            order_shop_status.updated_at = timezone.now()
+                            order_shop_status.save()
+                            print(f"✅ Updated OrderShopStatus to shipped for order {order.order} and shop {delivery_shop_id}")
+            except Exception as e:
+                print(f"Error updating OrderShopStatus: {e}")
         
         # For return deliveries, update ReturnRequestItem status to 'shipped'
         if delivery.delivery_type == 'return':
@@ -32967,8 +33037,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             print(f"✅ Marked {updated_count} items as delivered for shop {delivery_shop_id}")
         
         # Update order status based on all checkouts
-        # Import the method from PurchasesBuyer
-        from views import PurchasesBuyer 
+    
         purchases_buyer = PurchasesBuyer()
         purchases_buyer._update_order_status_from_checkouts(order)
         
@@ -48151,7 +48220,7 @@ class CustomerOrderList(viewsets.ViewSet):
                 Q(order=order, direct_shop_id__isnull=False)
             ).values('cart_item__product__shop_id', 'direct_shop_id').distinct().count()
             
-            confirmed_shops = OrderShopStatus.objects.filter(order=order, status='confirmed').count()
+            confirmed_shops = OrderShopStatus.objects.filter(order=order, status='processing').count()
             all_shops_confirmed = confirmed_shops >= total_shops_in_order
             
             has_pending_offer = Delivery.objects.filter(order=order, status__in=['pending', 'accepted', 'declined']).exists()
