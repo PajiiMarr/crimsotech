@@ -1,10 +1,9 @@
-// app/routes/cart.tsx
 "use client";
 import { useState, useEffect } from "react";
-import { 
-  ArrowLeft, 
-  ShoppingCart, 
-  Tag, 
+import {
+  ArrowLeft,
+  ShoppingCart,
+  Tag,
   Trash2,
   Plus,
   Minus,
@@ -24,7 +23,7 @@ import { UserProvider } from "~/components/providers/user-role-provider";
 import { useNavigate } from "react-router";
 import AxiosInstance from "~/components/axios/Axios";
 
-// ------------------ TYPES based on your API response ------------------
+// ------------------ TYPES ------------------
 export type VariantDetails = {
   id: string;
   title: string;
@@ -89,7 +88,7 @@ export type CartCountResponse = {
 };
 
 // ------------------ CONSTANTS ------------------
-const DELIVERY_FEE = 50.00;
+const DELIVERY_FEE = 50.0;
 const FALLBACK_IMAGE = "/Crimsotech.png";
 
 // ------------------ HELPER FUNCTIONS ------------------
@@ -139,6 +138,7 @@ const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
         : variantDetails?.title?.trim()
         ? variantDetails.title
         : null;
+
     return {
       id: item.id,
       product_id: productDetails?.id || item.product,
@@ -149,7 +149,7 @@ const transformApiData = (apiItems: ApiCartItem[]): CartItemType[] => {
       image,
       shop_name: productDetails?.shop_name || "Store",
       shop_id: productDetails?.shop_id || "",
-      selected: true,
+      selected: false, // ✅ Always unselected by default
       added_at: item.added_at,
       subtotal,
       variant_title: variantLabel,
@@ -167,43 +167,44 @@ export function meta(): Route.MetaDescriptors {
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { fetchUserRole } = await import("~/middleware/role.server");
   const { requireRole } = await import("~/middleware/role-require.server");
-
   const user = await fetchUserRole({ request, context });
   await requireRole(request, context, ["isCustomer"]);
-
   if ((context as any).__sessionCookie) {
     return Response.json({ user }, {
       headers: { "Set-Cookie": (context as any).__sessionCookie },
     });
   }
-
   return { user };
 }
 
 // ------------------ COMPONENTS ------------------
 const ShopHeader = ({
   shopName,
+  items,
   itemCount,
   shopTotal,
-  allSelected,
   onSelectShop,
   isExpanded,
   onToggleExpand,
 }: {
   shopName: string;
+  items: CartItemType[];
   itemCount: number;
   shopTotal: number;
-  allSelected: boolean;
   onSelectShop: (checked: boolean) => void;
   isExpanded: boolean;
   onToggleExpand: () => void;
 }) => {
+  const allSelected = items.length > 0 && items.every((i) => i.selected);
+  const someSelected = items.some((i) => i.selected);
+  const checkboxChecked = allSelected ? true : someSelected ? "indeterminate" : false;
+
   return (
     <div className="bg-white border-b p-3 flex items-center justify-between hover:bg-orange-50">
       <div className="flex items-center gap-3 flex-1">
         <Checkbox
-          checked={allSelected}
-          onCheckedChange={onSelectShop}
+          checked={checkboxChecked}
+          onCheckedChange={(checked) => onSelectShop(checked === true)}
           className="h-4 w-4 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
         />
         <button
@@ -266,8 +267,8 @@ const CompactCartItem = ({
   return (
     <div className="flex items-center gap-3 p-3 border-b last:border-b-0 hover:bg-orange-50 transition-colors">
       <Checkbox
-        checked={item.selected}
-        onCheckedChange={(checked) => onSelect(item.id, Boolean(checked))}
+        checked={item.selected === true}
+        onCheckedChange={(checked) => onSelect(item.id, checked === true)}
         className="h-4 w-4 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
       />
       <div className="h-16 w-16 flex-shrink-0 relative">
@@ -353,17 +354,19 @@ const ShopSection = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const shopTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const allSelected = items.every((item) => item.selected);
   const selectedItems = items.filter((item) => item.selected);
-  const selectedTotal = selectedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const selectedTotal = selectedItems.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
 
   return (
     <div className="border rounded-lg mb-4 overflow-hidden bg-white shadow-sm">
       <ShopHeader
         shopName={shopName}
+        items={items}
         itemCount={items.length}
         shopTotal={shopTotal}
-        allSelected={allSelected}
         onSelectShop={(checked) => onSelectShop(shopName, checked)}
         isExpanded={isExpanded}
         onToggleExpand={() => setIsExpanded(!isExpanded)}
@@ -386,7 +389,9 @@ const ShopSection = ({
               <span className="text-gray-600">
                 Selected from {shopName}: {selectedItems.length} of {items.length}
               </span>
-              <span className="font-semibold text-orange-700">₱{selectedTotal.toFixed(2)}</span>
+              <span className="font-semibold text-orange-700">
+                ₱{selectedTotal.toFixed(2)}
+              </span>
             </div>
           </div>
         </>
@@ -395,7 +400,11 @@ const ShopSection = ({
   );
 };
 
-const SimpleCouponSection = ({ onApplyCoupon }: { onApplyCoupon: (code: string) => void }) => {
+const SimpleCouponSection = ({
+  onApplyCoupon,
+}: {
+  onApplyCoupon: (code: string) => void;
+}) => {
   const [couponCode, setCouponCode] = useState("");
   const [isApplying, setIsApplying] = useState(false);
 
@@ -455,6 +464,7 @@ const SimpleOrderSummary = ({
   shopCount: number;
 }) => {
   const total = subtotal - discount + delivery;
+
   return (
     <div className="border rounded-lg p-4 bg-white">
       <h3 className="font-semibold text-gray-900 mb-4">Order Summary</h3>
@@ -465,7 +475,10 @@ const SimpleOrderSummary = ({
         </div>
         <div className="flex justify-between items-center">
           <span className="text-gray-600">Shops ({shopCount})</span>
-          <Badge variant="outline" className="text-xs border-orange-200 text-orange-700 bg-orange-50">
+          <Badge
+            variant="outline"
+            className="text-xs border-orange-200 text-orange-700 bg-orange-50"
+          >
             Separate deliveries
           </Badge>
         </div>
@@ -511,6 +524,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   const [error, setError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [cartCount, setCartCount] = useState<number>(0);
+
   const navigate = useNavigate();
 
   const fetchCartCount = async () => {
@@ -531,6 +545,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
       setLoading(false);
       return;
     }
+
     const fetchCart = async () => {
       try {
         setLoading(true);
@@ -538,6 +553,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
           params: { user_id: userId },
         });
         if (response.data.success && response.data.cart_items) {
+          // transformApiData sets selected: false for every item
           const transformedItems = transformApiData(response.data.cart_items);
           setCartItems(transformedItems);
           setCartCount(transformedItems.length);
@@ -560,11 +576,15 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
         setLoading(false);
       }
     };
+
     fetchCart();
   }, [userId]);
 
   const updateQuantity = async (id: string, newQuantity: number) => {
-    if (newQuantity < 1) { removeItem(id); return; }
+    if (newQuantity < 1) {
+      removeItem(id);
+      return;
+    }
     setUpdatingId(id);
     try {
       await AxiosInstance.put(`/view-cart/update/${id}/`, {
@@ -613,22 +633,29 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
     }
   };
 
+  // ✅ Fix: guard with === true so no truthy value accidentally selects items
   const handleSelectItem = (id: string, checked: boolean) => {
     setCartItems((items) =>
-      items.map((item) => (item.id === id ? { ...item, selected: checked } : item))
-    );
-  };
-
-  const handleSelectShop = (shopName: string, checked: boolean) => {
-    setCartItems((items) =>
       items.map((item) =>
-        item.shop_name === shopName ? { ...item, selected: checked } : item
+        item.id === id ? { ...item, selected: checked === true } : item
       )
     );
   };
 
+  // ✅ Fix: guard with === true
+  const handleSelectShop = (shopName: string, checked: boolean) => {
+    setCartItems((items) =>
+      items.map((item) =>
+        item.shop_name === shopName ? { ...item, selected: checked === true } : item
+      )
+    );
+  };
+
+  // ✅ Fix: guard with === true
   const handleSelectAll = (checked: boolean) => {
-    setCartItems((items) => items.map((item) => ({ ...item, selected: checked })));
+    setCartItems((items) =>
+      items.map((item) => ({ ...item, selected: checked === true }))
+    );
   };
 
   const groupedItems = cartItems.reduce<Record<string, CartItemType[]>>(
@@ -643,21 +670,37 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
   const shopCount = Object.keys(groupedItems).length;
   const selectedItems = cartItems.filter((item) => item.selected);
   const selectedShops = new Set(selectedItems.map((item) => item.shop_name)).size;
-  const subtotal = selectedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const subtotal = selectedItems.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
   const discount = 0;
   const delivery = selectedItems.length > 0 ? DELIVERY_FEE : 0;
 
+  // Derived checkbox states for "Select All"
+  const allSelected = cartItems.length > 0 && cartItems.every((item) => item.selected);
+  const someSelected = cartItems.some((item) => item.selected);
+  const selectAllChecked = allSelected ? true : someSelected ? "indeterminate" : false;
+
   const handleCheckout = () => {
-    if (selectedItems.length === 0) { alert("Please select items to checkout"); return; }
+    if (selectedItems.length === 0) {
+      alert("Please select items to checkout");
+      return;
+    }
     const selectedIds = selectedItems.map((item) => item.id).join(",");
     try {
       localStorage.setItem("selectedCartItems", JSON.stringify(selectedItems));
-      localStorage.setItem("checkoutSummary", JSON.stringify({
-        subtotal, discount, delivery,
-        total: subtotal - discount + delivery,
-        itemCount: selectedItems.length,
-        shopCount: selectedShops,
-      }));
+      localStorage.setItem(
+        "checkoutSummary",
+        JSON.stringify({
+          subtotal,
+          discount,
+          delivery,
+          total: subtotal - discount + delivery,
+          itemCount: selectedItems.length,
+          shopCount: selectedShops,
+        })
+      );
     } catch (err) {
       console.error("Failed to store checkout data:", err);
     }
@@ -671,7 +714,16 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
 
   if (loading) {
     return (
-      <UserProvider user={user || { id: "loading", isCustomer: true, username: "loading", email: "loading@example.com" }}>
+      <UserProvider
+        user={
+          user || {
+            id: "loading",
+            isCustomer: true,
+            username: "loading",
+            email: "loading@example.com",
+          }
+        }
+      >
         <SidebarLayout>
           <div className="w-full p-4 lg:p-6">
             <Skeleton className="h-8 w-48 mb-6" />
@@ -699,7 +751,16 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
 
   if (error) {
     return (
-      <UserProvider user={user || { id: "guest", isCustomer: false, username: "guest", email: "guest@example.com" }}>
+      <UserProvider
+        user={
+          user || {
+            id: "guest",
+            isCustomer: false,
+            username: "guest",
+            email: "guest@example.com",
+          }
+        }
+      >
         <SidebarLayout>
           <div className="w-full min-h-[60vh] flex items-center justify-center p-4">
             <div className="max-w-md w-full text-center">
@@ -708,13 +769,35 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
               <div className="space-y-2">
                 {error.includes("login") ? (
                   <>
-                    <Button onClick={() => navigate("/login")} className="w-full bg-orange-500 hover:bg-orange-600">Go to Login</Button>
-                    <Button onClick={() => navigate("/")} variant="outline" className="w-full border-orange-200 text-orange-600 hover:bg-orange-50">Continue Shopping</Button>
+                    <Button
+                      onClick={() => navigate("/login")}
+                      className="w-full bg-orange-500 hover:bg-orange-600"
+                    >
+                      Go to Login
+                    </Button>
+                    <Button
+                      onClick={() => navigate("/")}
+                      variant="outline"
+                      className="w-full border-orange-200 text-orange-600 hover:bg-orange-50"
+                    >
+                      Continue Shopping
+                    </Button>
                   </>
                 ) : (
                   <>
-                    <Button onClick={() => window.location.reload()} className="w-full bg-orange-500 hover:bg-orange-600">Try Again</Button>
-                    <Button onClick={() => navigate("/")} variant="outline" className="w-full border-orange-200 text-orange-600 hover:bg-orange-50">Continue Shopping</Button>
+                    <Button
+                      onClick={() => window.location.reload()}
+                      className="w-full bg-orange-500 hover:bg-orange-600"
+                    >
+                      Try Again
+                    </Button>
+                    <Button
+                      onClick={() => navigate("/")}
+                      variant="outline"
+                      className="w-full border-orange-200 text-orange-600 hover:bg-orange-50"
+                    >
+                      Continue Shopping
+                    </Button>
                   </>
                 )}
               </div>
@@ -729,6 +812,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
     <SidebarLayout>
       <div className="w-full min-h-screen">
         <div className="w-full">
+          {/* Header */}
           <div className="mb-6 w-full">
             <div className="flex items-center justify-between w-full">
               <div>
@@ -737,7 +821,8 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                   Shopping Cart ({cartItems.length})
                 </h1>
                 <p className="text-sm text-gray-500 mt-1">
-                  {selectedItems.length} items selected • ₱{subtotal.toFixed(2)} • {shopCount} shops
+                  {selectedItems.length} items selected • ₱{subtotal.toFixed(2)} •{" "}
+                  {shopCount} shops
                 </p>
               </div>
               {cartItems.length > 0 && (
@@ -759,27 +844,49 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
               <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-orange-50 flex items-center justify-center">
                 <ShoppingCart className="h-10 w-10 text-orange-400" />
               </div>
-              <h3 className="text-lg lg:text-xl font-medium mb-2">Your cart is empty</h3>
-              <p className="text-gray-500 mb-6 max-w-md mx-auto">Add items from your favorite shops to get started</p>
+              <h3 className="text-lg lg:text-xl font-medium mb-2">
+                Your cart is empty
+              </h3>
+              <p className="text-gray-500 mb-6 max-w-md mx-auto">
+                Add items from your favorite shops to get started
+              </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                <Button onClick={() => navigate("/")} className="bg-orange-500 hover:bg-orange-600 px-6">Start Shopping</Button>
-                <Button onClick={() => navigate(-1)} variant="outline" className="border-orange-200 text-orange-600 hover:bg-orange-50">Go Back</Button>
+                <Button
+                  onClick={() => navigate("/")}
+                  className="bg-orange-500 hover:bg-orange-600 px-6"
+                >
+                  Start Shopping
+                </Button>
+                <Button
+                  onClick={() => navigate(-1)}
+                  variant="outline"
+                  className="border-orange-200 text-orange-600 hover:bg-orange-50"
+                >
+                  Go Back
+                </Button>
               </div>
             </div>
           ) : (
             <div className="flex flex-col lg:flex-row gap-6 w-full">
+              {/* Left: Cart Items */}
               <div className="lg:w-2/3">
+                {/* Select All bar */}
                 <div className="bg-white rounded-lg p-3 mb-4 flex items-center justify-between border shadow-sm">
                   <div className="flex items-center gap-2">
+                    {/* ✅ Fix: indeterminate state + strict boolean guard */}
                     <Checkbox
-                      checked={cartItems.length > 0 && cartItems.every((item) => item.selected)}
-                      onCheckedChange={handleSelectAll}
+                      checked={selectAllChecked}
+                      onCheckedChange={(checked) => handleSelectAll(checked === true)}
                       className="h-4 w-4 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
                     />
-                    <span className="text-sm font-medium">Select All Items ({cartItems.length})</span>
+                    <span className="text-sm font-medium">
+                      Select All Items ({cartItems.length})
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-500">{shopCount} {shopCount === 1 ? "shop" : "shops"}</span>
+                    <span className="text-sm text-gray-500">
+                      {shopCount} {shopCount === 1 ? "shop" : "shops"}
+                    </span>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -793,6 +900,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                   </div>
                 </div>
 
+                {/* Shop sections */}
                 {Object.entries(groupedItems).map(([shopName, items]) => (
                   <ShopSection
                     key={shopName}
@@ -817,6 +925,7 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                 )}
               </div>
 
+              {/* Right: Summary */}
               <div className="lg:w-1/3">
                 <div className="sticky top-6 space-y-4">
                   <SimpleCouponSection onApplyCoupon={handleApplyCoupon} />
@@ -834,16 +943,21 @@ export default function Cart({ loaderData }: Route.ComponentProps) {
                       <h4 className="text-sm font-medium">Multi-Shop Order</h4>
                     </div>
                     <p className="text-xs text-gray-600 mb-3">
-                      Items from different shops will be delivered separately. Each shop may have different delivery times.
+                      Items from different shops will be delivered separately. Each
+                      shop may have different delivery times.
                     </p>
                     <div className="space-y-1 text-xs">
                       <div className="flex justify-between">
                         <span className="text-gray-500">Shops in order:</span>
-                        <span className="font-medium text-orange-700">{selectedShops}</span>
+                        <span className="font-medium text-orange-700">
+                          {selectedShops}
+                        </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-gray-500">Total items:</span>
-                        <span className="font-medium text-orange-700">{selectedItems.length}</span>
+                        <span className="text-gray-500">Total£ items:</span>
+                        <span className="font-medium text-orange-700">
+                          {selectedItems.length}
+                        </span>
                       </div>
                     </div>
                   </div>

@@ -19,6 +19,15 @@ import {
   Ionicons,
 } from '@expo/vector-icons';
 
+// Helper function for number formatting
+const formatCurrency = (amount: number): string => {
+  if (isNaN(amount) || amount === null || amount === undefined) return "₱0.00";
+  return `₱${amount.toLocaleString("en-PH", { 
+    minimumFractionDigits: 2, 
+    maximumFractionDigits: 2 
+  })}`;
+};
+
 // Types
 interface OrderDetails {
   id: string;
@@ -164,6 +173,8 @@ export default function OrderSuccessfulPage() {
     );
   }
 
+  const parsedTotalAmount = parseFloat(order.total_amount?.toString() || '0');
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -217,7 +228,7 @@ export default function OrderSuccessfulPage() {
         {/* Total Amount */}
         <View style={styles.totalContainer}>
           <Text style={styles.totalLabel}>Total Amount</Text>
-          <Text style={styles.totalValue}>₱{parseFloat(order.total_amount.toString()).toFixed(2)}</Text>
+          <Text style={styles.totalValue}>{formatCurrency(parsedTotalAmount)}</Text>
         </View>
 
         {/* Action Buttons */}
@@ -230,11 +241,6 @@ export default function OrderSuccessfulPage() {
             <Text style={styles.secondaryButtonText}>Continue Shopping</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Help Text */}
-        <Text style={styles.helpText}>
-          A confirmation email has been sent to your registered email address.
-        </Text>
       </ScrollView>
     </SafeAreaView>
   );
