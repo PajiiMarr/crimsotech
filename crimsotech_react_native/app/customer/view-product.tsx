@@ -2542,7 +2542,7 @@ export default function CustomerViewProductScreen() {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
+          {/* <TouchableOpacity
             onPress={buyNow}
             disabled={addingToCart}
             style={{
@@ -2561,7 +2561,7 @@ export default function CustomerViewProductScreen() {
             <Text style={{ fontSize: 13, fontWeight: "600", color: "#FFFFFF" }}>
               Buy Now
             </Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </View>
       ) : (
         <View

@@ -24594,7 +24594,7 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
             'success': True,
             'message': message
         })
-
+    
 class SellerOrderList(viewsets.ViewSet):
     
     def _calculate_driving_distance(self, origin_lat, origin_lng, dest_lat, dest_lng):
@@ -25055,7 +25055,7 @@ class SellerOrderList(viewsets.ViewSet):
         ).prefetch_related('cart_item__product__productmedia_set')
         
         order_items = []
-        total_amount = Decimal('0')  # Initialize to 0 instead of order.total_amount
+        
         
         for checkout in shop_checkouts:
             if checkout.direct_product_id and not checkout.cart_item:
@@ -25091,7 +25091,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "shipping_method": None,
                     "estimated_delivery": None
                 })
-                total_amount += checkout.total_amount
+              
                 continue
             
             cart_item = checkout.cart_item
@@ -25149,7 +25149,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "shipping_method": shipping_method,
                 "estimated_delivery": estimated_delivery
             })
-            total_amount += checkout.total_amount
+        
         
         delivery_address = None
         if order.shipping_address:
@@ -25178,7 +25178,7 @@ class SellerOrderList(viewsets.ViewSet):
                 "phone": order.user.contact_number or None
             },
             "status": shipping_status,
-            "total_amount": float(total_amount),  # Now this is the sum of checkouts only
+            "total_amount": float(order.total_amount),  # FIX: This now only includes the shop's portion
             "payment_method": order.payment_method,
             "delivery_method": order.delivery_method,
             "shipping_method": "Standard Shipping" if not is_pickup else "Store Pickup",
@@ -25203,6 +25203,8 @@ class SellerOrderList(viewsets.ViewSet):
         
         return order_data
 
+
+    
     
     @action(detail=False, methods=['get'])
     def order_list(self, request):
@@ -25261,6 +25263,9 @@ class SellerOrderList(viewsets.ViewSet):
             'ready_for_pickup': 'ready_for_pickup',
             'picked_up': 'picked_up',
         }
+
+        if order_status == 'waiting_for_rider' and delivery_status == 'accepted':
+            return 'waiting_for_pickup'
         
         # Changed from 'pending_offer' to 'pending'
         if delivery_status in ('pending',):
@@ -26182,6 +26187,15 @@ class SellerOrderList(viewsets.ViewSet):
                 latest_delivery.status if latest_delivery else None
             )
             
+            # Calculate total VAT from all checkout items
+            total_vat = Decimal('0.00')
+            for checkout in checkouts:
+                if checkout.cart_item and checkout.cart_item.variant:
+                    variant = checkout.cart_item.variant
+                    if variant.value_added_tax and variant.price:
+                        vat_amount = variant.price * (Decimal(str(variant.value_added_tax)) / Decimal('100'))
+                        total_vat += vat_amount * checkout.quantity
+            
             # Extract rider comparison data from the latest delivery's metadata
             rider_comparison_data = None
             nearest_rider_data = None
@@ -26206,6 +26220,9 @@ class SellerOrderList(viewsets.ViewSet):
                     },
                     'status': shipping_status,
                     'total_amount': total_amount,
+                    'shipping_fee': float(order.shipping_fee) if order.shipping_fee else None,
+                    'transaction_fee': float(order.transaction_fee) if order.transaction_fee else None,
+                    'total_vat': float(total_vat),
                     'payment_method': order.payment_method,
                     'delivery_method': order.delivery_method,
                     'delivery_address': order.shipping_address.get_full_address() if order.shipping_address else order.delivery_address_text,
@@ -31731,11 +31748,16 @@ class RiderOrdersActive(viewsets.ViewSet):
                     shop_barangay = None
                     shop_city = None
                     shop_province = None
+                    shop_latitude = None   
+                    shop_longitude = None 
                     if product and product.shop:
                         shop_street = product.shop.street
                         shop_barangay = product.shop.barangay
                         shop_city = product.shop.city
                         shop_province = product.shop.province
+                        shop_latitude = float(product.shop.latitude) if product.shop.latitude else None   
+                        shop_longitude = float(product.shop.longitude) if product.shop.longitude else None
+                        
                     
                     item_data = {
                         "checkout_id": str(item.id),
@@ -31757,6 +31779,8 @@ class RiderOrdersActive(viewsets.ViewSet):
                         "shop_barangay": shop_barangay,
                         "shop_city": shop_city,
                         "shop_province": shop_province,
+                        "shop_latitude": shop_latitude,   
+                        "shop_longitude": shop_longitude,
                     }
                     order_data["items"].append(item_data)
                     print(f"Added item: {item_data['product_name']} - Shop: {item_data['shop_name']} - Address: {shop_street}, {shop_barangay}, {shop_city}, {shop_province}")
@@ -31946,6 +31970,40 @@ class RiderOrdersActive(viewsets.ViewSet):
                                 break  # Stop after finding first image
             except Exception as e:
                 print(f"Error getting product image: {e}")
+
+            # For return deliveries, get the refund amount
+            # For return deliveries, get the refund amount
+            display_total_amount = float(order.total_amount)
+
+            # Check if this is a return delivery by checking delivery_type OR if there's a refund
+            is_return_delivery = delivery.delivery_type == 'return'
+
+            # Also check if there's a refund record (as fallback)
+            if not is_return_delivery:
+                try:
+                    from api.models import Refund
+                    refund_exists = Refund.objects.filter(order_id=order).exists()
+                    if refund_exists:
+                        is_return_delivery = True
+                except:
+                    pass
+
+            if is_return_delivery:
+                try:
+                    from api.models import Refund, RefundItem
+                    refund = Refund.objects.filter(order_id=order).first()
+                    if refund:
+                        refund_items = RefundItem.objects.filter(refund=refund)
+                        total_refund_amount = sum(float(item.amount) for item in refund_items if item.amount)
+                        if total_refund_amount > 0:
+                            display_total_amount = total_refund_amount
+                            print(f"✅ Return delivery detected for order {order.order}: showing refund amount {total_refund_amount} instead of {order.total_amount}")
+                        else:
+                            print(f"⚠️ Return delivery but no refund items found for order {order.order}")
+                    else:
+                        print(f"⚠️ Return delivery but no refund record for order {order.order}")
+                except Exception as e:
+                    print(f"Error getting refund amount: {e}")
             
             # Handle null shipping_address
             shipping_address = order.shipping_address
@@ -31984,7 +32042,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                         "contact_number": order.user.contact_number or "",
                     },
                     "shipping_address": shipping_address_data,
-                    "total_amount": float(order.total_amount),
+                    "total_amount": display_total_amount,
                     "payment_method": order.payment_method or "",
                     "delivery_method": order.delivery_method or "",
                     "status": order.status,
@@ -35205,7 +35263,11 @@ class RefundViewSet(viewsets.ViewSet):
         distance_pickup_to_dest = nearest['distance_pickup_to_dest']
         
         # Calculate delivery fee (free for returns - ₱0)
-        delivery_fee = 0  # Free return pickup
+        shipping_fee = 0
+        if refund.order_id and refund.order_id.shipping_fee:
+            shipping_fee = float(refund.order_id.shipping_fee)
+
+        delivery_fee = shipping_fee 
         estimated_minutes = seller_order_view._calculate_estimated_time(total_distance)
         
         # Create delivery record for return pickup
@@ -35222,6 +35284,7 @@ class RefundViewSet(viewsets.ViewSet):
                 'return_type': refund.refund_type,
                 'distance_to_pickup': distance_to_pickup,
                 'distance_pickup_to_dest': distance_pickup_to_dest,
+                'shipping_fee': shipping_fee, 
                 'pickup_location': {
                     'lat': pickup_lat,
                     'lng': pickup_lng,

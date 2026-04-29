@@ -259,6 +259,11 @@ function BuyerRequestCard({ refundMedia, refundDetails }: { refundMedia: any[], 
 
 // ===== SELLER RESPONSE CARD =====
 function SellerResponseCard({ refundMedia, refundDetails }: { refundMedia: any[], refundDetails: any }) {
+  // Don't show this card if the refund status is approved
+  if (refundDetails?.status === 'approved') {
+    return null;
+  }
+  
   const sellerMedia = refundMedia.filter(m => m.uploaded_by_entity === 'seller' || m.uploaded_by_entity === 'Seller');
   
   const hasSellerResponse = refundDetails?.status === 'rejected' || 
@@ -1137,7 +1142,8 @@ export default function AdminViewRefundDetails({ loaderData }: { loaderData: any
                               { id: 'merchant_fulfillment_issue', label: 'Merchant Fulfillment Issue (Seller)' },
                               { id: 'logistics_delivery_issue', label: 'Logistics / Delivery Issue (Delivery Partner)' },
                               { id: 'customer_related_issue', label: 'Customer-Related Issue (Customer)' },
-                              { id: 'shared_responsibility', label: 'Shared Responsibility' }
+                              { id: 'shared_responsibility', label: 'Shared Responsibility' },
+                              { id: 'platform_system_issue', label: 'Platform / System Issue' }
                             ].map(option => (
                               <div key={option.id} className="flex items-center space-x-2">
                                 <input type="radio" id={`case_${option.id}`} name="case_category" value={option.id} checked={caseCategory === option.id} onChange={() => setCaseCategory(option.id)} className="h-3 w-3" />

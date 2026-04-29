@@ -436,39 +436,86 @@ const handleMarkPickedUp = async () => {
     const sellerInfo = orderDetails?.items?.[0];
     const customerAddress = orderDetails?.shipping_address;
     
-    // Check if buyer has pinned location coordinates
-    if (!customerAddress?.latitude || !customerAddress?.longitude) {
-      Alert.alert(
-        'Location Not Available',
-        'The buyer has not pinned their exact location on the map yet. Please contact the buyer for directions.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
+    // For return deliveries, the destination is the SELLER (to return the item back)
+    // For normal deliveries, the destination is the CUSTOMER
+    const isReturn = isReturnDelivery;
     
-    console.log('Buyer pinned coordinates:', {
-      lat: customerAddress.latitude,
-      lng: customerAddress.longitude,
-      address: customerAddress.full_address
-    });
+    console.log('🔍 DEBUG - handleViewRoute');
+    console.log('isReturn:', isReturn);
+    console.log('sellerInfo?.shop_latitude:', sellerInfo?.shop_latitude);
+    console.log('sellerInfo?.shop_longitude:', sellerInfo?.shop_longitude);
+    console.log('sellerInfo?.shop_name:', sellerInfo?.shop_name);
+    console.log('customerAddress?.latitude:', customerAddress?.latitude);
+    console.log('customerAddress?.longitude:', customerAddress?.longitude);
+    console.log('customerAddress?.full_address:', customerAddress?.full_address);
     
-    // Navigate to map with buyer's pinned coordinates
-    router.push({
-      pathname: '/rider/RiderMapScreen',
-      params: {
-        // Buyer's pinned location (destination)
-        destLat: customerAddress.latitude.toString(),
-        destLng: customerAddress.longitude.toString(),
-        // Seller's location (pickup)
-        sellerLat: sellerInfo?.shop_latitude?.toString() || '',
-        sellerLng: sellerInfo?.shop_longitude?.toString() || '',
-        // Address strings for display
-        customerAddress: customerAddress.full_address || '',
-        sellerAddress: sellerInfo ? formatShopAddress(sellerInfo) : '',
-        deliveryId: orderDetails?.delivery?.id || '',
-        orderId: orderDetails?.order_id || '',
+    if (isReturn) {
+      // Return delivery: Navigate to seller's shop (destination is seller)
+      if (!sellerInfo?.shop_latitude || !sellerInfo?.shop_longitude) {
+        Alert.alert(
+          'Location Not Available',
+          'The seller has not pinned their shop location on the map yet. Please contact the seller for directions.',
+          [{ text: 'OK' }]
+        );
+        return;
       }
-    });
+      
+      console.log('🏪 Return delivery - Destination (Seller) coordinates:', {
+        lat: sellerInfo.shop_latitude,
+        lng: sellerInfo.shop_longitude,
+        address: formatShopAddress(sellerInfo)
+      });
+      
+      router.push({
+        pathname: '/rider/RiderMapScreen',
+        params: {
+          // Destination = Seller's shop location (where rider needs to deliver the return item)
+          destLat: sellerInfo.shop_latitude.toString(),
+          destLng: sellerInfo.shop_longitude.toString(),
+          // Pickup location = Buyer's address (where rider picks up the return item from)
+          sellerLat: customerAddress?.latitude?.toString() || '',
+          sellerLng: customerAddress?.longitude?.toString() || '',
+          // Address strings for display
+          customerAddress: formatShopAddress(sellerInfo),
+          sellerAddress: customerAddress?.full_address || '',
+          deliveryId: orderDetails?.delivery?.id || '',
+          orderId: orderDetails?.order_id || '',
+        }
+      });
+    } else {
+      // Normal delivery: Navigate to customer
+      if (!customerAddress?.latitude || !customerAddress?.longitude) {
+        Alert.alert(
+          'Location Not Available',
+          'The buyer has not pinned their exact location on the map yet. Please contact the buyer for directions.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      
+      console.log('📍 Normal delivery - Destination (Customer) coordinates:', {
+        lat: customerAddress.latitude,
+        lng: customerAddress.longitude,
+        address: customerAddress.full_address
+      });
+      
+      router.push({
+        pathname: '/rider/RiderMapScreen',
+        params: {
+          // Destination = Customer's pinned location
+          destLat: customerAddress.latitude.toString(),
+          destLng: customerAddress.longitude.toString(),
+          // Pickup location = Seller's shop
+          sellerLat: sellerInfo?.shop_latitude?.toString() || '',
+          sellerLng: sellerInfo?.shop_longitude?.toString() || '',
+          // Address strings for display
+          customerAddress: customerAddress.full_address || '',
+          sellerAddress: sellerInfo ? formatShopAddress(sellerInfo) : '',
+          deliveryId: orderDetails?.delivery?.id || '',
+          orderId: orderDetails?.order_id || '',
+        }
+      });
+    }
   };
 
   // Handle failed delivery
@@ -1351,7 +1398,7 @@ const getDefaultStatusMessage = (status: string) => {
                     Refund: {formatCurrency(refundAmount)}
                   </Text>
                 ) : (
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#EE4D2D' }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#0e0a09' }}>
                     {formatCurrency(item.total)}
                   </Text>
                 )}
@@ -1696,7 +1743,7 @@ const getDefaultStatusMessage = (status: string) => {
                     color: declineLimitInfo.hasReachedLimit ? '#FFFFFF' : '#DC2626', 
                     textAlign: 'center' 
                   }}>
-                    {declineLimitInfo.hasReachedLimit ? 'Limit Reached' : (isActionLoading ? 'Processing...' : `Decline (${declineLimitInfo.declinesRemaining} left)`)}
+                    {declineLimitInfo.hasReachedLimit ? 'Limit Reached' : (isActionLoading ? 'Processing...' : 'Decline')}
                   </Text>
                 </TouchableOpacity>
                 

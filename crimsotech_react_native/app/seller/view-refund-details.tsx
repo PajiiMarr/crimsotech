@@ -79,17 +79,23 @@ const RiderDetailsCard = ({ deliveryInfo }: { deliveryInfo: any }) => {
 };
 
 // ========== HELPER TO GET DISPLAY STATUS ==========
+// ========== HELPER TO GET DISPLAY STATUS ==========
 const getDisplayStatus = (refund: any) => {
   if (!refund) return '';
   const status = refund.status?.toLowerCase();
   const refundType = refund.refund_type;
   const returnStatus = refund.return_request?.status?.toLowerCase();
+  const deliveryStatus = refund.delivery_info?.status?.toLowerCase();
   
   // For 'return' type
   if (status === 'approved' && refundType === 'return' && returnStatus === 'approved') {
     return 'APPROVED';
   }
   if (status === 'approved' && refundType === 'return' && returnStatus === 'shipped') {
+    // Check if delivery is delivered
+    if (deliveryStatus === 'delivered') {
+      return 'Approved - Delivered';
+    }
     return 'Approved - Shipped';
   }
   if (status === 'approved' && refundType === 'return' && returnStatus === 'received') {
@@ -104,6 +110,9 @@ const getDisplayStatus = (refund: any) => {
     return 'APPROVED';
   }
   if (status === 'approved' && refundType === 'replace' && returnStatus === 'shipped') {
+    if (deliveryStatus === 'delivered') {
+      return 'Replacement Approved - Delivered';
+    }
     return 'Replacement Approved - Shipped';
   }
   if (status === 'approved' && refundType === 'replace' && returnStatus === 'received') {
@@ -118,20 +127,21 @@ const getDisplayStatus = (refund: any) => {
 };
 
 // ========== HELPER TO GET STATUS COLOR ==========
-// ========== HELPER TO GET STATUS COLOR ==========
-// ========== HELPER TO GET STATUS COLOR ==========
-// ========== HELPER TO GET STATUS COLOR ==========
 const getStatusColor = (refund: any) => {
   if (!refund) return '#9CA3AF';
   const status = refund.status?.toLowerCase();
   const refundType = refund.refund_type;
   const returnStatus = refund.return_request?.status?.toLowerCase();
+  const deliveryStatus = refund.delivery_info?.status?.toLowerCase();
   
   // For 'return' type
   if (status === 'approved' && refundType === 'return' && returnStatus === 'approved') {
     return STATUS_COLORS.approved;
   }
   if (status === 'approved' && refundType === 'return' && returnStatus === 'shipped') {
+    if (deliveryStatus === 'delivered') {
+      return '#10B981'; // Green for delivered
+    }
     return STATUS_COLORS.waiting;
   }
   if (status === 'approved' && refundType === 'return' && returnStatus === 'received') {
@@ -146,6 +156,9 @@ const getStatusColor = (refund: any) => {
     return STATUS_COLORS.approved;
   }
   if (status === 'approved' && refundType === 'replace' && returnStatus === 'shipped') {
+    if (deliveryStatus === 'delivered') {
+      return '#10B981';
+    }
     return STATUS_COLORS.waiting;
   }
   if (status === 'approved' && refundType === 'replace' && returnStatus === 'received') {
@@ -970,30 +983,30 @@ const getStatusDescription = () => {
       
       // Show "Mark as Received" button when return status is 'shipped'
       // Show "Mark as Received" button when return status is 'shipped'
-      if (returnStatus === 'shipped') {
-        // Check if delivery is delivered - only enable if delivered
-        const isDelivered = refund.delivery_info?.status === 'delivered';
-        
-        buttons.push(
-          <TouchableOpacity 
-            key="markReceived" 
-            style={[styles.actionBtn, { backgroundColor: isDelivered ? '#10B981' : '#9CA3AF' }]} 
-            onPress={() => {
-              if (isDelivered) {
-                setReturnAction('mark_received');
-                setShowMarkReceivedConfirm(true);
-              } else {
-                Alert.alert('Cannot Mark as Received', 'The rider has not delivered the item yet. Please wait until the item is marked as delivered by the rider.');
-              }
-            }} 
-            disabled={actionLoading || !isDelivered}
-          >
-            <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
-            <Text style={styles.actionBtnText}>Mark as Received</Text>
-          </TouchableOpacity>
-        );
-      }
-      
+      // Show "Mark as Received" button when return status is 'shipped'
+if (returnStatus === 'shipped') {
+  // Check if delivery is delivered - only enable if delivered
+  const isDelivered = refund.delivery_info?.status === 'delivered';
+  
+  buttons.push(
+    <TouchableOpacity 
+      key="markReceived" 
+      style={[styles.actionBtn, { backgroundColor: isDelivered ? '#10B981' : '#9CA3AF' }]} 
+      onPress={() => {
+        if (isDelivered) {
+          setReturnAction('mark_received');
+          setShowMarkReceivedConfirm(true);
+        } else {
+          Alert.alert('Cannot Mark as Received', 'The rider has not delivered the item yet. Please wait until the item is marked as delivered by the rider.');
+        }
+      }} 
+      disabled={actionLoading || !isDelivered}
+    >
+      <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
+      <Text style={styles.actionBtnText}>Mark as Received</Text>
+    </TouchableOpacity>
+  );
+}
       // Show Accept/Decline buttons when return status is 'received' (inspecting)
       if (returnStatus === 'received') {
         buttons.push(
@@ -1723,9 +1736,9 @@ const getStatusDescription = () => {
   <Text style={styles.statusDescription}>{getStatusDescription()}</Text>
   
   {/* ADD RIDER DETAILS - Show for Approved - Shipped status */}
-  {getDisplayStatus(refund) === 'Approved - Shipped' && refund.delivery_info && (
-    <RiderDetailsCard deliveryInfo={refund.delivery_info} />
-  )}
+  {(getDisplayStatus(refund) === 'Approved - Shipped' || getDisplayStatus(refund) === 'Approved - Delivered') && refund.delivery_info && (
+  <RiderDetailsCard deliveryInfo={refund.delivery_info} />
+)}
   
   {/* ADD RETURN DEADLINE - Show for Approved - Waiting for return status */}
   {getDisplayStatus(refund) === 'Approved - Waiting for return' && refund.return_request?.return_deadline && (
@@ -1885,17 +1898,17 @@ const getStatusDescription = () => {
   <View style={styles.card}>
     <Text style={styles.cardTitle}>Return Request</Text>
     <InfoRow label="Method" value={refund.return_request.return_method || 'N/A'} />
-    <InfoRow label="Logistic Service" value={refund.return_request.logistic_service || 'N/A'} />
-    <InfoRow label="Tracking Number" value={refund.return_request.tracking_number || 'N/A'} />
-    <InfoRow label="Status" value={
+    {/* <InfoRow label="Logistic Service" value={refund.return_request.logistic_service || 'N/A'} />
+    <InfoRow label="Tracking Number" value={refund.return_request.tracking_number || 'N/A'} /> */}
+    {/* <InfoRow label="Status" value={
       refund.return_request.status === 'shipped' 
         ? 'Shipped - In Transit' 
         : (refund.return_request.status || 'N/A')
-    } />
-    <InfoRow label="Shipped At" value={formatDate(refund.return_request.shipped_at)} />
+    } /> */}
+    {/* <InfoRow label="Shipped At" value={formatDate(refund.return_request.shipped_at)} /> */}
     <InfoRow label="Received At" value={formatDate(refund.return_request.received_at)} />
     <InfoRow label="Return Deadline" value={formatDate(refund.return_request.return_deadline)} />
-    {refund.return_request.notes && <InfoRow label="Notes" value={refund.return_request.notes} />}
+    {/* {refund.return_request.notes && <InfoRow label="Notes" value={refund.return_request.notes} />} */}
   </View>
 )}
 
@@ -1947,7 +1960,7 @@ const getStatusDescription = () => {
 
 
         {/* Proofs (seller) */}
-        {refund.proofs?.length > 0 && renderMedia(refund.proofs, 'Proofs (Seller)')}
+        {refund.proofs?.length > 0 && renderMedia(refund.proofs, 'Admin Refund Proofs')}
 
         {/* Counter Offers */}
         {refund.counter_requests && refund.counter_requests.length > 0 && (
