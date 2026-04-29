@@ -79,6 +79,8 @@ interface Order {
   };
   approval: string;
   status: string;
+  shop_status?: string;
+  global_order_status?: string;
   total_amount: number;
   payment_method: string | null;
   delivery_method?: string | null;
@@ -202,6 +204,13 @@ const STATUS_CONFIG: Record<
     icon: "checkmark-circle-outline",
     order: 5,
   },
+  partially_delivered: {
+    label: "Partially Delivered",
+    color: "#8b5cf6",
+    bgColor: "#f5f3ff",
+    icon: "cube-outline",
+    order: 6,
+  },
   cancelled: {
     label: "Cancelled",
     color: "#ef4444",
@@ -244,6 +253,7 @@ const STATUS_TABS = [
   // Shared end states
   { id: "delivered", label: "Delivered", icon: "checkmark-circle-outline" },
   { id: "completed", label: "Completed", icon: "checkmark-circle-outline" },
+  { id: "partially_delivered", label: "Partially Delivered", icon: "cube-outline" },
   { id: "cancelled", label: "Cancelled", icon: "close-circle-outline" },
 ];
 
@@ -351,10 +361,11 @@ export default function Orders() {
     }
 
     if (activeTab !== "all") {
-      filtered = filtered.filter(
-        (order) =>
-          (order.status?.toLowerCase() || "") === activeTab.toLowerCase()
-      );
+      filtered = filtered.filter((order) => {
+        // Use global_order_status first, fall back to status
+        const orderStatus = (order.global_order_status || order.status || "").toLowerCase();
+        return orderStatus === activeTab.toLowerCase();
+      });
     }
 
     setFilteredOrders(filtered);
@@ -388,30 +399,45 @@ export default function Orders() {
 
   const isPickupOrder = (order: Order) => order.is_pickup === true;
 
-  const isCancelledOrder = (order: Order) =>
-    order.status?.toLowerCase() === "cancelled";
+  const isCancelledOrder = (order: Order) => {
+    const status = (order.global_order_status || order.status || "").toLowerCase();
+    return status === "cancelled";
+  };
 
   const hasPendingDeliveryOffer = (order: Order): boolean =>
     order.delivery_info?.status === "pending" ||
     order.delivery_info?.is_pending_offer === true;
 
-  const isWaitingForRider = (order: Order): boolean =>
-    order.status?.toLowerCase() === "waiting_for_rider";
+  const isWaitingForRider = (order: Order): boolean => {
+    const status = (order.global_order_status || order.status || "").toLowerCase();
+    return status === "waiting_for_rider";
+  };
 
   const isAwaitingMayaPayment = (order: Order): boolean => {
     const isMaya = order.payment_method?.toLowerCase() === "maya";
-    const isPendingShipment =
-      order.status?.toLowerCase() === "pending_shipment";
+    const status = (order.global_order_status || order.status || "").toLowerCase();
+    const isPendingShipment = status === "pending_shipment";
     const actions = availableActions[order.order_id] || [];
     const canConfirm = actions.includes("confirm");
     return isMaya && isPendingShipment && !canConfirm;
   };
 
+  const getDisplayStatus = (order: Order): string => {
+    // Priority: global_order_status first, then shop_status, then status
+    if (order.global_order_status) {
+      return order.global_order_status.toLowerCase();
+    }
+    if (order.shop_status) {
+      return order.shop_status.toLowerCase();
+    }
+    return (order.status || "default").toLowerCase();
+  };
+
   const getStatusBadge = (order: Order) => {
-    const status = order.status?.toLowerCase() || "default";
+    const displayStatus = getDisplayStatus(order);
     const awaitingMaya = isAwaitingMayaPayment(order);
 
-    let statusKey = status;
+    let statusKey = displayStatus;
     if (awaitingMaya) statusKey = "awaiting_payment";
 
     const config = STATUS_CONFIG[statusKey] || STATUS_CONFIG.default;
@@ -441,9 +467,9 @@ export default function Orders() {
   const getBorderColor = (order: Order): string => {
     const awaitingMaya = isAwaitingMayaPayment(order);
     const isCancelled = isCancelledOrder(order);
-    const status = order.status?.toLowerCase() || "default";
+    const displayStatus = getDisplayStatus(order);
 
-    let statusKey = status;
+    let statusKey = displayStatus;
     if (awaitingMaya) statusKey = "awaiting_payment";
     else if (isCancelled) statusKey = "cancelled";
 
@@ -453,21 +479,26 @@ export default function Orders() {
 
   const totalOrderAmount = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
 
+  const getOrderStatusKey = (order: Order): string => {
+    return (order.global_order_status || order.shop_status || order.status || "default").toLowerCase();
+  };
+
   const counts = {
     all: orders.length,
-    pending_shipment: orders.filter((o) => o.status?.toLowerCase() === "pending_shipment").length,
-    processing: orders.filter((o) => o.status?.toLowerCase() === "processing").length,
-    ready_to_ship: orders.filter((o) => o.status?.toLowerCase() === "ready_to_ship").length,
-    rider_assigned: orders.filter((o) => o.status?.toLowerCase() === "rider_assigned").length,
-    rider_accepted: orders.filter((o) => o.status?.toLowerCase() === "rider_accepted").length,
-    waiting_for_rider: orders.filter((o) => o.status?.toLowerCase() === "waiting_for_rider").length,
-    shipped: orders.filter((o) => o.status?.toLowerCase() === "shipped").length,
-    to_deliver: orders.filter((o) => o.status?.toLowerCase() === "to_deliver").length,
-    ready_for_pickup: orders.filter((o) => o.status?.toLowerCase() === "ready_for_pickup").length,
-    picked_up: orders.filter((o) => o.status?.toLowerCase() === "picked_up").length,
-    delivered: orders.filter((o) => o.status?.toLowerCase() === "delivered").length,
-    completed: orders.filter((o) => o.status?.toLowerCase() === "completed").length,
-    cancelled: orders.filter((o) => o.status?.toLowerCase() === "cancelled").length,
+    pending_shipment: orders.filter((o) => getOrderStatusKey(o) === "pending_shipment").length,
+    processing: orders.filter((o) => getOrderStatusKey(o) === "processing").length,
+    ready_to_ship: orders.filter((o) => getOrderStatusKey(o) === "ready_to_ship").length,
+    rider_assigned: orders.filter((o) => getOrderStatusKey(o) === "rider_assigned").length,
+    rider_accepted: orders.filter((o) => getOrderStatusKey(o) === "rider_accepted").length,
+    waiting_for_rider: orders.filter((o) => getOrderStatusKey(o) === "waiting_for_rider").length,
+    shipped: orders.filter((o) => getOrderStatusKey(o) === "shipped").length,
+    to_deliver: orders.filter((o) => getOrderStatusKey(o) === "to_deliver").length,
+    ready_for_pickup: orders.filter((o) => getOrderStatusKey(o) === "ready_for_pickup").length,
+    picked_up: orders.filter((o) => getOrderStatusKey(o) === "picked_up").length,
+    delivered: orders.filter((o) => getOrderStatusKey(o) === "delivered").length,
+    completed: orders.filter((o) => getOrderStatusKey(o) === "completed").length,
+    partially_delivered: orders.filter((o) => getOrderStatusKey(o) === "partially_delivered").length,
+    cancelled: orders.filter((o) => getOrderStatusKey(o) === "cancelled").length,
   };
 
   if (!shopId) {
@@ -582,6 +613,12 @@ export default function Orders() {
                 </Text>
                 <Text style={styles.statLabel}>Completed</Text>
               </View>
+              <View style={styles.statCard}>
+                <Text style={[styles.statValue, { color: "#8b5cf6" }]}>
+                  {counts.partially_delivered}
+                </Text>
+                <Text style={styles.statLabel}>Partially Delivered</Text>
+              </View>
             </View>
           </ScrollView>
 
@@ -688,6 +725,7 @@ export default function Orders() {
               filteredOrders.map((order) => {
                 const primaryItem = order.items[0];
                 const customerName = formatCustomerName(order.user);
+                const displayStatus = getDisplayStatus(order);
                 const waitingForRider = isWaitingForRider(order);
                 const awaitingMaya = isAwaitingMayaPayment(order);
                 const borderColor = getBorderColor(order);
