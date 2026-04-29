@@ -1166,6 +1166,16 @@ class Order(models.Model):
         """Get shipping fees grouped by shop"""
         return self.shipping_fees_breakdown or {}
     
+class OrderShopStatus(models.Model):
+    """Track order status per shop for multi-shop orders"""
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='shop_statuses')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE)
+    status = models.CharField(max_length=50, default='pending')  # pending, confirmed, processing, ready, etc.
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['order', 'shop']
+
 class Checkout(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
     voucher = models.ForeignKey(
