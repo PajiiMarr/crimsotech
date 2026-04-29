@@ -24714,6 +24714,35 @@ class RiderDeliveryViewSet(viewsets.ViewSet):
     
 class SellerOrderList(viewsets.ViewSet):
     
+
+    def _update_order_status_from_checkouts(self, order):
+        """Update order status based on all checkout items' statuses"""
+        checkouts = Checkout.objects.filter(order=order)
+        
+        if not checkouts.exists():
+            return
+        
+        statuses = [c.status for c in checkouts]
+        
+        if all(s == 'cancelled' for s in statuses):
+            new_status = 'cancelled'
+        elif all(s == 'delivered' for s in statuses):
+            new_status = 'delivered'
+        elif any(s == 'delivered' for s in statuses):
+            new_status = 'partially_delivered'
+        elif any(s == 'shipped' for s in statuses):
+            new_status = 'shipped'
+        elif any(s == 'processing' for s in statuses):
+            new_status = 'processing'
+        else:
+            new_status = 'pending'
+        
+        if order.status != new_status:
+            order.status = new_status
+            order.save(update_fields=['status'])
+            print(f"📦 Order {order.order} status updated to: {new_status} (checkout statuses: {statuses})")
+
+
     def _calculate_driving_distance(self, origin_lat, origin_lng, dest_lat, dest_lng):
         """Calculate driving distance using Google Maps API"""
         GOOGLE_MAPS_API_KEY = getattr(settings, 'GOOGLE_MAPS_API_KEY', None)
@@ -24843,9 +24872,6 @@ class SellerOrderList(viewsets.ViewSet):
                 "is_pending_offer": is_pending_offer
             }
         
-        # Use shop-specific status for shipping status
-        shipping_status = self._get_shop_shipping_status(shop_order_status)
-        
         is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                 for keyword in ['pickup', 'store', 'collect'])
         
@@ -24860,6 +24886,19 @@ class SellerOrderList(viewsets.ViewSet):
         order_items = []
         
         for checkout in shop_checkouts:
+            # Get the actual status from checkout (most accurate)
+            checkout_actual_status = checkout.status if hasattr(checkout, 'status') and checkout.status else 'pending'
+            
+            # Map checkout status to shipping status for display
+            shipping_status_mapping = {
+                'pending': 'pending_shipment',
+                'processing': 'processing',
+                'shipped': 'shipped',
+                'delivered': 'delivered',
+                'cancelled': 'cancelled',
+            }
+            shipping_status = shipping_status_mapping.get(checkout_actual_status, 'pending_shipment')
+            
             if checkout.direct_product_id and not checkout.cart_item:
                 price = float(checkout.direct_product_price or 0)
                 product_data = {
@@ -24874,7 +24913,6 @@ class SellerOrderList(viewsets.ViewSet):
                 if checkout.direct_product_image:
                     product_data["variant_image"] = checkout.direct_product_image
                 
-                # Get shipping fee for this checkout item
                 shipping_fee = float(getattr(checkout, 'shipping_fee', 0))
                 
                 order_items.append({
@@ -24923,7 +24961,6 @@ class SellerOrderList(viewsets.ViewSet):
                 shipping_method = "Standard Shipping" if not is_pickup else "Store Pickup"
                 estimated_delivery = self._get_estimated_delivery(latest_delivery)
             
-            # Get shipping fee for this checkout item
             shipping_fee = float(getattr(checkout, 'shipping_fee', 0))
             
             product_data = {
@@ -24982,7 +25019,10 @@ class SellerOrderList(viewsets.ViewSet):
         ).values('cart_item__product__shop_id', 'direct_shop_id').distinct().count()
         
         # Get confirmed shops count
-        confirmed_shops = OrderShopStatus.objects.filter(order=order, status='processing').count()
+        confirmed_shops = OrderShopStatus.objects.filter(order=order, status='confirmed').count()
+        
+        # Calculate total amount for this shop only
+        shop_total_amount = sum(item['total_amount'] for item in order_items)
         
         order_data = {
             "order_id": str(order.order),
@@ -24998,8 +25038,8 @@ class SellerOrderList(viewsets.ViewSet):
                 "last_name": order.user.last_name,
                 "phone": order.user.contact_number or None
             },
-            "status": shipping_status,
-            "total_amount": float(order.total_amount),
+            "status": shipping_status_mapping.get(shop_order_status, 'pending_shipment'),
+            "total_amount": shop_total_amount,
             "payment_method": order.payment_method,
             "delivery_method": order.delivery_method,
             "shipping_method": "Standard Shipping" if not is_pickup else "Store Pickup",
@@ -25023,7 +25063,8 @@ class SellerOrderList(viewsets.ViewSet):
                 order_data["metadata"]["nearest_rider"] = nearest_rider_data
         
         return order_data
-    
+
+        
     def _decrease_stock_for_order(self, order, shop):
         """Decrease stock for items in this order that belong to the shop"""
         checkouts = Checkout.objects.filter(
@@ -25423,17 +25464,59 @@ class SellerOrderList(viewsets.ViewSet):
                     'checkout_set',
                     queryset=Checkout.objects.filter(
                         Q(cart_item__product__shop=shop) | Q(direct_shop_id=str(shop.id))
-                    ).select_related('cart_item__product__shop', 'cart_item__variant').prefetch_related('cart_item__product__productmedia_set')
+                    ).select_related(
+                        'cart_item__product__shop', 
+                        'cart_item__variant'
+                    ).prefetch_related('cart_item__product__productmedia_set')
                 ),
                 Prefetch('shop_statuses', queryset=OrderShopStatus.objects.filter(shop=shop))
             ).distinct().order_by('-created_at')
             
-            # Ensure OrderShopStatus exists for each order
+            # Ensure OrderShopStatus exists for each order and update checkout statuses
             for order in orders:
                 OrderShopStatus.objects.get_or_create(
                     order=order, shop=shop,
                     defaults={'status': 'pending'}
                 )
+                
+                # IMPORTANT: Update checkout statuses based on delivery status for this shop
+                # Find the delivery for this order and shop
+                delivery = None
+                # First try to find delivery with shop_id in metadata
+                for d in order.deliveries:
+                    if d.metadata and d.metadata.get('shop_id') == str(shop.id):
+                        delivery = d
+                        break
+                # If not found, try to find by direct shop foreign key
+                if not delivery:
+                    for d in order.deliveries:
+                        if hasattr(d, 'shop') and d.shop and d.shop.id == shop.id:
+                            delivery = d
+                            break
+                
+                if delivery:
+                    # Get all checkouts for this shop
+                    shop_checkouts = Checkout.objects.filter(
+                        Q(order=order, cart_item__product__shop=shop) |
+                        Q(order=order, direct_shop_id=str(shop.id))
+                    )
+                    
+                    # Update checkout status based on delivery status
+                    if delivery.status == 'delivered':
+                        for checkout in shop_checkouts:
+                            if checkout.status != 'delivered':
+                                checkout.status = 'delivered'
+                                checkout.save(update_fields=['status'])
+                                print(f"✅ Updated checkout {checkout.id} to delivered for order {order.order}")
+                    elif delivery.status in ['picked_up', 'accepted']:
+                        for checkout in shop_checkouts:
+                            if checkout.status == 'pending':
+                                checkout.status = 'shipped'
+                                checkout.save(update_fields=['status'])
+                                print(f"✅ Updated checkout {checkout.id} to shipped for order {order.order}")
+                
+                # Update order status based on all checkouts
+                self._update_order_status_from_checkouts(order)
             
             orders_data = [self._prepare_order_response(order, shop) for order in orders]
             
@@ -25449,6 +25532,7 @@ class SellerOrderList(viewsets.ViewSet):
             import traceback
             traceback.print_exc()
             return Response({"success": False, "message": f"Error retrieving orders: {str(e)}", "data": []}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
     @action(detail=True, methods=['get'])
     def available_actions(self, request, pk=None):
