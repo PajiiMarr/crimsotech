@@ -2470,7 +2470,9 @@ class WalletTransaction(models.Model):
         ('shop_sale', 'Shop Sale'),
         ('refund', 'Refund'),
         ('dispute', 'Dispute'),
-        ('withdrawal', 'Withdrawal')
+        ('withdrawal', 'Withdrawal'),
+        ('delivery_fee', 'Delivery Fee'),
+        ('cod_collection', 'COD Collection')
     ]
 
     transaction_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -2485,7 +2487,6 @@ class WalletTransaction(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='wallet_transactions', null=True, blank=True)
     def __str__(self):
         return f"Transaction {self.transaction_id} - {self.transaction_type}"
-
 
 # -----------------------------
 # User Payment Details
