@@ -108,6 +108,22 @@ interface PurchaseItem {
   };
 }
 
+interface PurchaseGroup {
+  id: string;
+  order_id: string;
+  order: PurchaseOrder;   
+  items: PurchaseItem[];
+  total_amount: number;
+  shopGroups: Array<{
+    id: string;
+    shop_id: string | null;
+    shop_name: string;
+    shop_picture?: string | null;
+    items: PurchaseItem[];
+    total_amount: number;
+  }>;
+}
+
 // Status tabs configuration
 const STATUS_TABS = [
   { id: 'all', label: 'All' },
@@ -266,13 +282,64 @@ const formatDate = (dateString: string) => {
   }
 };
 
-const formatCurrency = (amount: number) => {
-  return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const formatCurrency = (amount: number | null | undefined) => {
+  const safeAmount = Number(amount ?? 0);
+  return `₱${safeAmount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 // Format large numbers with commas
-const formatNumber = (num: number): string => {
-  return num.toLocaleString('en-PH');
+const formatNumber = (num: number | string | null | undefined): string => {
+  const safeNumber = Number(num ?? 0);
+  return safeNumber.toLocaleString('en-PH');
+};
+
+const groupPurchasesByOrder = (items: PurchaseItem[]): PurchaseGroup[] => {
+  const grouped = new Map<string, PurchaseGroup>();
+
+  items.forEach((item) => {
+    const groupKey = item.order_id;
+    const existing = grouped.get(groupKey);
+
+    if (existing) {
+      existing.items.push(item);
+      existing.total_amount += item.total_amount;
+
+      const shopKey = item.shop_id || item.shop_name;
+      const existingShop = existing.shopGroups.find((shopGroup) => shopGroup.id === shopKey);
+      if (existingShop) {
+        existingShop.items.push(item);
+        existingShop.total_amount += item.total_amount;
+      } else {
+        existing.shopGroups.push({
+          id: shopKey,
+          shop_id: item.shop_id,
+          shop_name: item.shop_name,
+          shop_picture: item.order?.items?.find((orderItem) => orderItem.shop_id === item.shop_id)?.shop_picture || item.item?.shop_picture || undefined,
+          items: [item],
+          total_amount: item.total_amount,
+        });
+      }
+      return;
+    }
+
+    grouped.set(groupKey, {
+      id: groupKey,
+      order_id: item.order_id,
+      order: item.order,
+      items: [item],
+      total_amount: item.total_amount,
+      shopGroups: [{
+        id: item.shop_id || item.shop_name,
+        shop_id: item.shop_id,
+        shop_name: item.shop_name,
+        shop_picture: item.order?.items?.find((orderItem) => orderItem.shop_id === item.shop_id)?.shop_picture || item.item?.shop_picture || undefined,
+        items: [item],
+        total_amount: item.total_amount,
+      }],
+    });
+  });
+
+  return Array.from(grouped.values());
 };
 
 export default function PurchasesPage() {
@@ -522,11 +589,12 @@ export default function PurchasesPage() {
     );
   };
 
-  const renderOrderCard = ({ item }: { item: PurchaseItem }) => {
+  const renderOrderCard = ({ item }: { item: PurchaseGroup }) => {
+    const firstItem = item.items[0];
     const pickupDate = item.order.pickup_date;
     const showPickupBanner =
       isCashOnPickup(item.order) &&
-      (item.status === 'in_progress' || item.status === 'ready_for_pickup' || item.status === 'pending') &&
+      (firstItem.status === 'in_progress' || firstItem.status === 'ready_for_pickup' || firstItem.status === 'pending') &&
       !!pickupDate;
 
     return (
@@ -535,6 +603,19 @@ export default function PurchasesPage() {
         onPress={() => router.push(`/customer/view-order?orderId=${item.order_id}`)}
         activeOpacity={0.7}
       >
+        <View style={styles.orderHeader}>
+          <View>
+            <Text style={styles.orderTitle}>Order #{item.order_id.slice(0, 8)}</Text>
+            <Text style={styles.orderMeta}>
+              {item.shopGroups.length} shop{item.shopGroups.length > 1 ? 's' : ''} • {formatNumber(item.items.length)} item{item.items.length > 1 ? 's' : ''}
+            </Text>
+          </View>
+          <View style={styles.orderTotalContainer}>
+            <Text style={styles.orderTotalLabel}>Order Total</Text>
+            <Text style={styles.orderTotalValue}>{formatCurrency(item.total_amount)}</Text>
+          </View>
+        </View>
+
         {/* Pickup Date Banner */}
         {showPickupBanner && (
           <View style={styles.pickupBanner}>
@@ -565,76 +646,76 @@ export default function PurchasesPage() {
   </View>
 )} */}
 
-        {/* Shop Header */}
-        <View style={styles.shopHeader}>
-          <View style={styles.shopInfo}>
-            <MaterialIcons name="store" size={14} color="#6B7280" />
-            <Text style={styles.shopName} numberOfLines={1}>{item.shop_name}</Text>
-          </View>
-          <MaterialIcons name="chevron-right" size={16} color="#9CA3AF" />
-        </View>
-
-        {/* Product Info */}
-        <View style={styles.productContainer}>
-          <Image 
-            source={{ uri: item.image }} 
-            style={styles.productImage}
-            defaultSource={require('../../assets/images/icon.png')}
-          />
-          <View style={styles.productDetails}>
-            <Text style={styles.productName} numberOfLines={2}>
-              {item.product_name}
-            </Text>
-            
-            {/* Variant - if available */}
-            {item.variant_info && item.variant_info.title && (
-              <View style={styles.infoRow}>
-                <MaterialIcons name="label-outline" size={12} color="#9CA3AF" />
-                <Text style={styles.infoText} numberOfLines={1}>{item.variant_info.title}</Text>
+        {/* Shop Sections */}
+        <View style={styles.shopSectionsContainer}>
+          {item.shopGroups.map((shopGroup, index) => (
+            <View key={shopGroup.id}>
+              {index > 0 && <View style={styles.shopSectionSeparator} />}
+              <View style={styles.shopHeader}>
+                <View style={styles.shopInfo}>
+                  <MaterialIcons name="store" size={14} color="#6B7280" />
+                  <Text style={styles.shopName} numberOfLines={1}>{shopGroup.shop_name}</Text>
+                </View>
+                <MaterialIcons name="chevron-right" size={16} color="#9CA3AF" />
               </View>
-            )}
 
-            {/* Payment Method */}
-            <View style={styles.infoRow}>
-              <MaterialIcons name="payment" size={12} color="#9CA3AF" />
-              <Text style={styles.infoText} numberOfLines={1}>{item.order.payment_method}</Text>
+              {shopGroup.items.map((groupItem, groupIndex) => (
+                <View key={groupItem.id}>
+                  {groupIndex > 0 && <View style={styles.groupItemSeparator} />}
+                  <View style={styles.groupItemRow}>
+                    <Image 
+                      source={{ uri: groupItem.image }} 
+                      style={styles.groupItemImage}
+                      defaultSource={require('../../assets/images/icon.png')}
+                    />
+                    <View style={styles.groupItemDetails}>
+                      <Text style={styles.productName} numberOfLines={2}>
+                        {groupItem.product_name}
+                      </Text>
+
+                      {groupItem.variant_info && groupItem.variant_info.title && (
+                        <View style={styles.infoRow}>
+                          <MaterialIcons name="label-outline" size={12} color="#9CA3AF" />
+                          <Text style={styles.infoText} numberOfLines={1}>{groupItem.variant_info.title}</Text>
+                        </View>
+                      )}
+
+                      <View style={styles.infoRow}>
+                        <MaterialIcons name="payment" size={12} color="#9CA3AF" />
+                        <Text style={styles.infoText} numberOfLines={1}>{groupItem.order.payment_method}</Text>
+                      </View>
+
+                      <View style={styles.statusContainer}>
+                        {getStatusBadge(groupItem.status)}
+                      </View>
+
+                      <View style={styles.priceRow}>
+                        <Text style={styles.quantity}>x{formatNumber(groupItem.quantity)}</Text>
+                        <Text style={styles.price}>{formatCurrency(groupItem.total_amount)}</Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              ))}
+
+              <View style={styles.shopFooter}>
+                <Text style={styles.shopTotalLabel}>Shop Total:</Text>
+                <Text style={styles.shopTotalAmount}>{formatCurrency(shopGroup.total_amount)}</Text>
+              </View>
             </View>
-
-            {/* Status Badge */}
-            <View style={styles.statusContainer}>
-              {getStatusBadge(item.status)}
-            </View>
-
-            {/* Quantity and Price */}
-            {/* Quantity and Price */}
-<View style={styles.priceRow}>
-<Text style={styles.quantity}>x{formatNumber(item.quantity)}</Text>
-<Text style={styles.price}>{formatCurrency(item.total_amount)}</Text>
-</View>
-          </View>
+          ))}
         </View>
-
-        {/* Voucher Applied */}
-        {item.item?.voucher_applied && (
-          <View style={styles.voucherContainer}>
-            <MaterialIcons name="local-offer" size={12} color="#10B981" />
-            <Text style={styles.voucherText} numberOfLines={1}>
-              {item.item.voucher_applied.name} ({item.item.voucher_applied.code})
-            </Text>
-          </View>
-        )}
 
         {/* Total and Action */}
         <View style={styles.footer}>
           <View style={styles.totalContainer}>
-            <Text style={styles.totalLabel}>Total:</Text>
-            <Text style={styles.totalAmount}>{formatCurrency(parseFloat(item.order.total_amount))}</Text>
+            <Text style={styles.totalLabel}>Order Total:</Text>
+            <Text style={styles.totalAmount}>{formatCurrency(item.total_amount)}</Text>
           </View>
 
           {/* Action Buttons */}
           <View style={styles.actionButtons}>
-            {/* View Details button for returns - only for return_refund, not cancelled */}
-            {item.status === 'return_refund' && (
+            {firstItem.status === 'return_refund' && (
               <TouchableOpacity 
                 style={[styles.actionButton, styles.detailsButton]}
                 onPress={() => router.push(`/customer/view-refund?orderId=${item.order_id}`)}
@@ -647,9 +728,9 @@ export default function PurchasesPage() {
         </View>
 
         {/* Cancelled Reason - if available */}
-        {item.reason && (
+        {firstItem.reason && (
           <View style={styles.reasonContainer}>
-            <Text style={styles.reasonText}>{item.reason}</Text>
+            <Text style={styles.reasonText}>{firstItem.reason}</Text>
           </View>
         )}
       </TouchableOpacity>
@@ -657,6 +738,7 @@ export default function PurchasesPage() {
   };
 
   const filteredItems = getFilteredItems();
+  const groupedItems = groupPurchasesByOrder(filteredItems);
 
   if (authLoading || loading) {
     return (
@@ -729,7 +811,7 @@ export default function PurchasesPage() {
           </View>
         ) : (
           <FlatList
-            data={filteredItems}
+            data={groupedItems}
             renderItem={renderOrderCard}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.listContent}
@@ -852,6 +934,38 @@ const styles = StyleSheet.create({
   orderCardWithBanner: {
     borderColor: '#FCD34D',
   },
+  orderHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    marginBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  orderTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  orderMeta: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  orderTotalContainer: {
+    alignItems: 'flex-end',
+  },
+  orderTotalLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  orderTotalValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#F97316',
+    marginTop: 2,
+  },
   pickupBanner: {
     flexDirection: 'row',
     backgroundColor: '#FEF3C7',
@@ -915,6 +1029,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
   },
+  shopSectionsContainer: {
+    marginTop: 2,
+  },
+  shopSectionSeparator: {
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginVertical: 12,
+  },
   shopInfo: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -942,11 +1064,49 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 4,
   },
+  groupItemSeparator: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginVertical: 12,
+  },
+  groupItemRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  groupItemImage: {
+    width: 72,
+    height: 72,
+    borderRadius: 10,
+    marginRight: 12,
+    backgroundColor: '#F3F4F6',
+  },
+  groupItemDetails: {
+    flex: 1,
+  },
   productName: {
     fontSize: 13,
     fontWeight: '600',
     color: '#111827',
     marginBottom: 2,
+  },
+  shopFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  shopTotalLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  shopTotalAmount: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
   },
   cancelledPriceContainer: {
     flexDirection: 'row',
