@@ -1313,7 +1313,6 @@ const CancelConfirmationModal = ({
           <Text style={styles.headerTitle}>Order Detail</Text>
           <View style={styles.headerIcons}>
             <TouchableOpacity>
-              <Ionicons name="ellipsis-horizontal" size={24} color="black" />
             </TouchableOpacity>
           </View>
         </View>

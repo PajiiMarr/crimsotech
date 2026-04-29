@@ -27033,6 +27033,23 @@ class CheckoutOrder(viewsets.ViewSet):
                         base_price = price_with_vat / Decimal('1.12')
                         vat_amount = price_with_vat - base_price
 
+                # Get product image using storage utility
+                product_image_url = None
+                if variant and variant.image and hasattr(variant.image, 'url'):
+                    try:
+                        from api.utils.storage_utils import convert_s3_to_public_url
+                        product_image_url = convert_s3_to_public_url(variant.image.url)
+                    except Exception:
+                        product_image_url = variant.image.url
+                elif product and product.productmedia_set.exists():
+                    first_media = product.productmedia_set.first()
+                    if first_media and first_media.file_data:
+                        try:
+                            from api.utils.storage_utils import convert_s3_to_public_url
+                            product_image_url = convert_s3_to_public_url(first_media.file_data.url)
+                        except Exception:
+                            product_image_url = first_media.file_data.url
+
                 item_data = {
                     "id": str(cart_item.id) if hasattr(cart_item, 'id') else cart_item.id,
                     "product_id": str(product.id) if product else None,
@@ -27042,6 +27059,7 @@ class CheckoutOrder(viewsets.ViewSet):
                     "vat_amount": float(vat_amount),  # VAT amount
                     "vat_percentage": "12%",  # Fixed VAT percentage
                     "quantity": cart_item.quantity,
+                    "image": product_image_url,
                     "shop_name": shop.name if shop else (product.customer.customer.username if product and product.customer else "Personal Seller"),
                     "shop_id": str(shop.id) if shop else None,
                     "seller_id": str(product.customer.customer.id) if product and product.customer else None,
@@ -27051,22 +27069,16 @@ class CheckoutOrder(viewsets.ViewSet):
                     "is_personal_listing": shop is None and product and product.customer is not None
                 }
 
-                if variant and variant.image and hasattr(variant.image, 'url'):
-                    try:
-                        from .utils import convert_s3_to_public_url
-                        item_data['image'] = convert_s3_to_public_url(variant.image.url)
-                    except Exception:
-                        item_data['image'] = variant.image.url
-                elif product and product.productmedia_set.exists():
-                    first_media = product.productmedia_set.first()
-                    if first_media and first_media.file_data:
-                        try:
-                            from .utils import convert_s3_to_public_url
-                            item_data["image"] = convert_s3_to_public_url(first_media.file_data.url)
-                        except Exception:
-                            item_data["image"] = first_media.file_data.url
-
                 if variant:
+                    # Get variant image using storage utility
+                    variant_image_url = None
+                    if variant.image and hasattr(variant.image, 'url'):
+                        try:
+                            from api.utils.storage_utils import convert_s3_to_public_url
+                            variant_image_url = convert_s3_to_public_url(variant.image.url)
+                        except Exception:
+                            variant_image_url = variant.image.url
+                    
                     item_data['variant'] = {
                         'id': str(variant.id),
                         'title': variant.title,
@@ -27078,7 +27090,8 @@ class CheckoutOrder(viewsets.ViewSet):
                         'sku_code': variant.sku_code,
                         'option_title': variant.option_title,
                         'option_ids': variant.option_ids,
-                        'option_map': variant.option_map
+                        'option_map': variant.option_map,
+                        'image': variant_image_url
                     }
 
                 checkout_items.append(item_data)
@@ -27178,7 +27191,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Internal server error", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+        
     def _get_user_purchase_history(self, user_id):
         try:
             completed_orders = Order.objects.filter(
