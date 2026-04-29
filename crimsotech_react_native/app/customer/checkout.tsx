@@ -41,15 +41,17 @@ interface CartItem {
   product_id: string;
   name: string;
   price: number;
-  base_price?: number;  
-  vat_amount?: number; 
-  vat_percentage?: string; 
+  base_price?: number;
+  vat_amount?: number;
+  vat_percentage?: string;
   quantity: number;
   shop_name: string;
   shop_id: string;
   image?: string;
   is_ordered: boolean;
   subtotal: number;
+  distance_km?: number;
+  delivery_fee?: number;
   variant?: {
     id: string;
     title?: string;
@@ -115,7 +117,16 @@ interface ShopAddress {
   shop_contact_number?: string;
   distance_km?: number;
   distance_text?: string;
+  delivery_fee?: number;
   address_type?: string;
+}
+
+interface PerShopDeliveryFee {
+  shop_id: string;
+  shop_name: string;
+  distance_km: number;
+  distance_text: string;
+  delivery_fee: number;
 }
 
 interface UserPurchaseStats {
@@ -133,6 +144,7 @@ interface CheckoutSummary {
   shop_count: number;
   distance_km?: number;
   distance_text?: string;
+  per_shop_delivery_fees?: PerShopDeliveryFee[];
 }
 
 interface CheckoutData {
@@ -200,11 +212,9 @@ export default function CheckoutPage() {
   const { userId, userRole, loading: authLoading } = useAuth();
   const params = useLocalSearchParams();
 
-  // Optional direct params: cartId and productId
   const cartId = params?.cartId ? String(params.cartId).trim() : null;
   const productId = params?.productId ? String(params.productId).trim() : null;
 
-  // Normalize selected ids from query params
   const getSelectedIds = () => {
     const raw = (params?.selected ??
       params?.selectedIds ??
@@ -223,8 +233,6 @@ export default function CheckoutPage() {
   };
 
   const selectedIds = getSelectedIds();
-
-  // Determine if we have a valid entry point
   const hasValidEntry =
     selectedIds.length > 0 || cartId !== null || productId !== null;
 
@@ -242,8 +250,8 @@ export default function CheckoutPage() {
     useState(false);
   const [centerToastVisible, setCenterToastVisible] = useState(false);
   const [centerToastMessage, setCenterToastMessage] = useState("");
+  const [perShopDeliveryFees, setPerShopDeliveryFees] = useState<PerShopDeliveryFee[]>([]);
 
-  // Form state
   const [formData, setFormData] = useState({
     agreeTerms: false,
     shippingMethod: "Pickup from Store" as
@@ -253,6 +261,7 @@ export default function CheckoutPage() {
     remarks: "",
     selectedAddressId: null as string | null,
   });
+
   const [processingOrder, setProcessingOrder] = useState(false);
   const [summary, setSummary] = useState({
     subtotal: 0,
@@ -261,13 +270,14 @@ export default function CheckoutPage() {
     discount: 0,
   });
 
-  // Calculate transaction fee (5% capped at ₱50 for ALL payment methods)
+  // Store the raw delivery fee from API (used when switching to Standard Delivery)
+  const [apiDeliveryFee, setApiDeliveryFee] = useState(0);
+
   const calculateTransactionFee = useCallback((baseTotal: number) => {
     const fee = baseTotal * 0.05;
     return Math.min(fee, 50);
   }, []);
 
-  // Recalculate total whenever subtotal, delivery, or discount changes
   useEffect(() => {
     const baseTotal = summary.subtotal + summary.delivery - summary.discount;
     const fee = calculateTransactionFee(baseTotal);
@@ -275,24 +285,13 @@ export default function CheckoutPage() {
       ...prev,
       total: baseTotal + fee,
     }));
-  }, [
-    summary.subtotal,
-    summary.delivery,
-    summary.discount,
-    calculateTransactionFee,
-  ]);
+  }, [summary.subtotal, summary.delivery, summary.discount, calculateTransactionFee]);
 
   const getTransactionFee = useCallback(() => {
     const baseTotal = summary.subtotal + summary.delivery - summary.discount;
     return calculateTransactionFee(baseTotal);
-  }, [
-    summary.subtotal,
-    summary.delivery,
-    summary.discount,
-    calculateTransactionFee,
-  ]);
+  }, [summary.subtotal, summary.delivery, summary.discount, calculateTransactionFee]);
 
-  // Build API params depending on which entry point was used
   const buildCheckoutApiParams = () => {
     const base: Record<string, any> = { user_id: userId };
     if (cartId) {
@@ -308,7 +307,6 @@ export default function CheckoutPage() {
     return base;
   };
 
-  // Build order request body
   const buildOrderRequestBody = (checkoutItems: CartItem[]) => {
     const base: Record<string, any> = {
       user_id: userId,
@@ -332,12 +330,11 @@ export default function CheckoutPage() {
     return base;
   };
 
-  // Fetch checkout data
   const fetchCheckoutData = useCallback(async () => {
     if (!userId || !hasValidEntry) {
       setLoading(false);
       setError(
-        userId ? "No items selected for checkout" : "Please login to checkout",
+        userId ? "No items selected for checkout" : "Please login to checkout"
       );
       return;
     }
@@ -346,45 +343,88 @@ export default function CheckoutPage() {
       setError(null);
       const response = await AxiosInstance.get(
         "/checkout-order/get_checkout_items/",
-        { params: buildCheckoutApiParams() },
+        { params: buildCheckoutApiParams() }
       );
+
       if (response.data.success) {
         const hasOrderedItems = response.data.checkout_items?.some(
-          (item: any) => item.is_ordered === true,
+          (item: any) => item.is_ordered === true
         );
         if (hasOrderedItems) {
           setError(
-            "Some items in your cart have already been ordered. Please refresh your cart.",
+            "Some items in your cart have already been ordered. Please refresh your cart."
           );
           setCheckoutData(null);
           return;
         }
+
         const normalizedItems = response.data.checkout_items.map(
           (item: any) => ({
             ...item,
             cartItemId: item.id || item.cartItemId,
             variant: item.variant,
             subtotal: item.price * item.quantity,
-          }),
+            distance_km: item.distance_km,
+            delivery_fee: item.delivery_fee,
+          })
         );
 
-        // Ensure available_vouchers is properly set
-        const availableVouchers = response.data.available_vouchers || [];
+        // ─── Extract per-shop delivery fees ───────────────────────────
+        // Primary source: summary.per_shop_delivery_fees from API
+        // Fallback: build from seller_addresses which also has the data
+        let perShopFees: PerShopDeliveryFee[] =
+          response.data.summary?.per_shop_delivery_fees || [];
+
+        if (perShopFees.length === 0 && response.data.seller_addresses) {
+          perShopFees = (response.data.seller_addresses as ShopAddress[])
+            .filter((shop) => shop.delivery_fee && shop.delivery_fee > 0)
+            .map((shop) => ({
+              shop_id: shop.shop_id,
+              shop_name: shop.shop_name,
+              distance_km: shop.distance_km || 0,
+              distance_text:
+                shop.distance_text ||
+                `${Number(shop.distance_km || 0).toFixed(1)} km`,
+              delivery_fee: shop.delivery_fee || 0,
+            }));
+        }
+
+        console.log("[CHECKOUT] per_shop_delivery_fees:", JSON.stringify(perShopFees));
+
+        setPerShopDeliveryFees(perShopFees);
+
+        const totalDeliveryFee = perShopFees.reduce(
+          (sum, shop) => sum + shop.delivery_fee,
+          0
+        );
+
+        // Store the API delivery fee so we can restore it when switching to Standard Delivery
+        setApiDeliveryFee(totalDeliveryFee);
 
         setCheckoutData({
           ...response.data,
           checkout_items: normalizedItems,
-          available_vouchers: availableVouchers,
+          available_vouchers: response.data.available_vouchers || [],
+          summary: {
+            ...response.data.summary,
+            delivery: totalDeliveryFee,
+            per_shop_delivery_fees: perShopFees,
+          },
         });
 
         if (response.data.summary) {
           setSummary((prev) => ({
             ...prev,
             subtotal: response.data.summary.subtotal || 0,
-            delivery: response.data.summary.delivery || 0,
+            // Respect current shipping method: if pickup, delivery stays 0
+            delivery:
+              formData.shippingMethod === "Pickup from Store"
+                ? 0
+                : totalDeliveryFee,
             total: response.data.summary.total || 0,
           }));
         }
+
         if (response.data.default_shipping_address) {
           setFormData((prev) => ({
             ...prev,
@@ -398,7 +438,8 @@ export default function CheckoutPage() {
       console.error("Error fetching checkout data:", error);
       let errorMessage = "Failed to load checkout items";
       if (error.response?.status === 404) {
-        errorMessage = error.response.data?.error || "Checkout items not found";
+        errorMessage =
+          error.response.data?.error || "Checkout items not found";
       } else if (error.response?.status === 400) {
         errorMessage = error.response.data?.error || "Invalid request";
       } else if (!error.response) {
@@ -427,7 +468,6 @@ export default function CheckoutPage() {
     fetchCheckoutData();
   }, [authLoading, userId, hasValidEntry]);
 
-  // Fetch vouchers when subtotal changes
   const fetchVouchersByAmount = useCallback(
     async (amount: number) => {
       if (!userId) return;
@@ -435,35 +475,23 @@ export default function CheckoutPage() {
       try {
         const response = await AxiosInstance.get(
           "/checkout-order/get_vouchers_by_amount/",
-          {
-            params: {
-              user_id: userId,
-              amount: amount,
-            },
-          },
+          { params: { user_id: userId, amount } }
         );
         if (response.data.success && response.data.available_vouchers) {
           setCheckoutData((prev) => {
             if (!prev) return prev;
-            return {
-              ...prev,
-              available_vouchers: response.data.available_vouchers,
-            };
+            return { ...prev, available_vouchers: response.data.available_vouchers };
           });
         }
       } catch (err: any) {
-        console.error(
-          "Error fetching vouchers by amount:",
-          err.response?.data || err,
-        );
+        console.error("Error fetching vouchers by amount:", err.response?.data || err);
       } finally {
         setLoadingVouchers(false);
       }
     },
-    [userId],
+    [userId]
   );
 
-  // Fetch vouchers when subtotal changes
   useEffect(() => {
     if (summary.subtotal > 0 && userId) {
       const timer = setTimeout(() => {
@@ -478,9 +506,8 @@ export default function CheckoutPage() {
     fetchCheckoutData();
   };
 
-  // Handle shipping method selection
   const handleShippingMethodSelect = (
-    method: "Pickup from Store" | "Standard Delivery",
+    method: "Pickup from Store" | "Standard Delivery"
   ) => {
     setFormData((prev) => ({ ...prev, shippingMethod: method }));
 
@@ -494,22 +521,16 @@ export default function CheckoutPage() {
         formData.paymentMethod === "Cash on Pickup" ||
         formData.paymentMethod === "Cash on Delivery"
       ) {
-        setFormData((prev) => ({ ...prev, paymentMethod: methodName }));
+        setFormData((prev) => ({ ...prev, paymentMethod: methodName, shippingMethod: method }));
       }
     }
 
-    const deliveryCost =
-      method === "Pickup from Store"
-        ? 0
-        : checkoutData?.summary?.delivery || 50;
-    setSummary((prev) => ({
-      ...prev,
-      delivery: deliveryCost,
-    }));
+    // When pickup: delivery fee = 0. When standard: restore the API-calculated fee.
+    const deliveryCost = method === "Pickup from Store" ? 0 : apiDeliveryFee;
+    setSummary((prev) => ({ ...prev, delivery: deliveryCost }));
     setIsShippingMethodDropdownOpen(false);
   };
 
-  // Handle payment method change - Radio button style
   const handlePaymentMethodSelect = (methodId: string) => {
     const method = paymentMethods.find((m) => m.id === methodId);
     if (method) {
@@ -517,10 +538,7 @@ export default function CheckoutPage() {
         typeof method.name === "function"
           ? method.name(formData.shippingMethod)
           : method.name;
-      setFormData((prev) => ({
-        ...prev,
-        paymentMethod: methodName,
-      }));
+      setFormData((prev) => ({ ...prev, paymentMethod: methodName }));
     }
   };
 
@@ -533,13 +551,12 @@ export default function CheckoutPage() {
     }
   }, [checkoutData?.default_shipping_address]);
 
-  // Check if voucher is applicable
   const isVoucherApplicable = (voucher: Voucher) => {
     if (voucher.minimum_spend > summary.subtotal) return false;
     if (!voucher.is_general && voucher.shop_name !== "All Shops") {
       return (
         checkoutData?.checkout_items.some(
-          (item) => item.shop_name === voucher.shop_name,
+          (item) => item.shop_name === voucher.shop_name
         ) || false
       );
     }
@@ -552,14 +569,13 @@ export default function CheckoutPage() {
     }
     if (!voucher.is_general && voucher.shop_name !== "All Shops") {
       const hasShop = checkoutData?.checkout_items.some(
-        (item) => item.shop_name === voucher.shop_name,
+        (item) => item.shop_name === voucher.shop_name
       );
       if (!hasShop) return `Only ${voucher.shop_name}`;
     }
     return null;
   };
 
-  // Apply voucher
   const handleApplyVoucher = async (voucher: Voucher) => {
     if (!checkoutData || !userId) {
       setVoucherError("Unable to apply voucher");
@@ -570,7 +586,7 @@ export default function CheckoutPage() {
       Alert.alert(
         "Voucher Not Applicable",
         reason || "This voucher cannot be applied to your current order",
-        [{ text: "OK" }],
+        [{ text: "OK" }]
       );
       return;
     }
@@ -580,7 +596,7 @@ export default function CheckoutPage() {
       let shopId = null;
       if (!voucher.is_general && voucher.shop_name !== "All Shops") {
         const shopItem = checkoutData.checkout_items.find(
-          (item) => item.shop_name === voucher.shop_name,
+          (item) => item.shop_name === voucher.shop_name
         );
         shopId = shopItem?.shop_id || null;
       }
@@ -591,7 +607,7 @@ export default function CheckoutPage() {
           user_id: userId,
           subtotal: summary.subtotal,
           shop_id: shopId,
-        },
+        }
       );
       if (response.data.valid) {
         const validatedVoucher = response.data.voucher;
@@ -609,10 +625,7 @@ export default function CheckoutPage() {
         setAppliedVoucher(voucherWithDiscount);
         setVoucherError(null);
         setIsVoucherModalVisible(false);
-        setSummary((prev) => ({
-          ...prev,
-          discount: discountAmount,
-        }));
+        setSummary((prev) => ({ ...prev, discount: discountAmount }));
         Alert.alert("Success", `Voucher ${voucher.code} applied!`);
       } else {
         const errorMessage =
@@ -632,17 +645,12 @@ export default function CheckoutPage() {
     }
   };
 
-  // Remove voucher
   const handleRemoveVoucher = () => {
     setAppliedVoucher(null);
     setVoucherError(null);
-    setSummary((prev) => ({
-      ...prev,
-      discount: 0,
-    }));
+    setSummary((prev) => ({ ...prev, discount: 0 }));
   };
 
-  // Place order
   const handlePlaceOrder = async () => {
     if (!userId || !checkoutData) {
       Alert.alert("Error", "Please complete all required information");
@@ -654,7 +662,7 @@ export default function CheckoutPage() {
         "Voucher No Longer Applicable",
         reason ||
           "This voucher is no longer applicable to your order. Please remove it or update your cart.",
-        [{ text: "OK" }],
+        [{ text: "OK" }]
       );
       return;
     }
@@ -668,7 +676,7 @@ export default function CheckoutPage() {
     if (!formData.agreeTerms) {
       Alert.alert(
         "Required",
-        "Please agree to the Terms of Service and Privacy Policy",
+        "Please agree to the Terms of Service and Privacy Policy"
       );
       return;
     }
@@ -678,7 +686,7 @@ export default function CheckoutPage() {
       const requestBody = buildOrderRequestBody(checkoutData.checkout_items);
       const response = await AxiosInstance.post(
         "/checkout-order/create_order/",
-        requestBody,
+        requestBody
       );
       if (response.data.success) {
         const orderId = response.data.order_id;
@@ -710,42 +718,32 @@ export default function CheckoutPage() {
     }
   };
 
-  // Get selected address (default)
   const getSelectedAddress = () => {
     return checkoutData?.default_shipping_address || null;
   };
 
-  // Get shop addresses
   const getShopAddressesForProducts = () => {
     if (!checkoutData || !checkoutData.seller_addresses) return [];
     return checkoutData.seller_addresses;
   };
 
-  // Get main shop address
-  const getMainShopAddress = () => {
-    const shopAddresses = getShopAddressesForProducts();
-    return shopAddresses.length > 0 ? shopAddresses[0] : null;
-  };
-
-  // Get all vouchers
   const getAllVouchers = () => {
     if (!checkoutData || !checkoutData.available_vouchers) return [];
     return checkoutData.available_vouchers.flatMap(
-      (category) => category?.vouchers ?? [],
+      (category) => category?.vouchers ?? []
     );
   };
 
-  // Get filtered vouchers
   const getFilteredVouchers = () => {
     if (!checkoutData || !checkoutData.available_vouchers) return [];
     if (activeVoucherCategory === "all") return getAllVouchers();
     const category = checkoutData.available_vouchers.find((cat: any) =>
-      cat.category.includes(activeVoucherCategory.replace("_", " ")),
+      cat.category.includes(activeVoucherCategory.replace("_", " "))
     );
     return category ? category.vouchers : [];
   };
 
-  // ─── Pickup Disclaimer ───────────────────────────────────
+  // ─── Pickup Disclaimer ───────────────────────────────────────────────────
   const PickupDisclaimer = () => {
     if (formData.shippingMethod !== "Pickup from Store") return null;
     return (
@@ -780,7 +778,52 @@ export default function CheckoutPage() {
     );
   };
 
-  // Get tier badge component
+  // ─── Per Shop Delivery Fees Component ───────────────────────────────────
+  // FIX: Removed the shippingMethod guard so this always renders when data exists.
+  // The fees are calculated at checkout time regardless of shipping method selected.
+  const PerShopDeliveryFeesComponent = () => {
+    if (perShopDeliveryFees.length === 0) return null;
+
+    return (
+      <View style={styles.sectionCard}>
+        <View style={styles.sectionHeaderCompact}>
+          <MaterialIcons name="local-shipping" size={20} color="#EA580C" />
+          <Text style={styles.sectionTitleCompact}>Delivery Fees by Shop</Text>
+        </View>
+        {perShopDeliveryFees.map((shop) => (
+          <View key={shop.shop_id} style={styles.deliveryBreakdownRow}>
+            <View style={styles.deliveryBreakdownLeft}>
+              <Text style={styles.deliveryBreakdownShopName}>
+                {shop.shop_name}
+              </Text>
+              <Text style={styles.deliveryBreakdownDistance}>
+                📍{" "}
+                {shop.distance_text ||
+                  `${Number(shop.distance_km).toFixed(1)} km`}
+              </Text>
+            </View>
+            <Text style={styles.deliveryBreakdownFee}>
+              ₱{formatNumber(shop.delivery_fee)}
+            </Text>
+          </View>
+        ))}
+        <View style={styles.deliveryBreakdownTotal}>
+          <Text style={styles.deliveryBreakdownTotalLabel}>
+            Total Delivery Fee
+          </Text>
+          <Text style={styles.deliveryBreakdownTotalValue}>
+            ₱{formatNumber(perShopDeliveryFees.reduce((s, sh) => s + sh.delivery_fee, 0))}
+          </Text>
+        </View>
+        {formData.shippingMethod === "Pickup from Store" && (
+          <Text style={styles.deliveryBreakdownNote}>
+            * Delivery fee applies when switching to Standard Delivery
+          </Text>
+        )}
+      </View>
+    );
+  };
+
   const renderTierBadge = (tier: string) => {
     const tierConfig = {
       platinum: { label: "Platinum", color: "#92400E" },
@@ -797,82 +840,20 @@ export default function CheckoutPage() {
     );
   };
 
-  const isShippingAddressRequired = () =>
-    formData.shippingMethod === "Standard Delivery";
-
   const getPlaceOrderButtonText = () => {
     if (processingOrder) return "Processing Order...";
     return `Place Order • ₱${formatNumber(summary.total)}`;
   };
 
   const transactionFee = getTransactionFee();
-  const baseTotalDisplay =
-    summary.subtotal + summary.delivery - summary.discount;
-
-  // Loading state
-  if (authLoading || loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color="#EA580C" />
-          <Text style={styles.loadingText}>Loading checkout...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // Role guard
-  if (userRole && userRole !== "customer") {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.center}>
-          <MaterialIcons name="warning" size={64} color="#F59E0B" />
-          <Text style={styles.message}>Not authorized to view this page</Text>
-          <Text style={styles.subMessage}>This page is for customers only</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // Error or no data state
-  if (
-    error ||
-    !checkoutData ||
-    !Array.isArray(checkoutData.checkout_items) ||
-    checkoutData.checkout_items.length === 0
-  ) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.center}>
-          <MaterialIcons name="error-outline" size={80} color="#E5E5E5" />
-          <Text style={styles.emptyTitle}>{error || "No items selected"}</Text>
-          <Text style={styles.emptyText}>
-            {error ? error : "Please add items to your cart first"}
-          </Text>
-          <TouchableOpacity
-            style={styles.shopButton}
-            onPress={() => router.push("/customer/cart")}
-          >
-            <Text style={styles.shopButtonText}>Go to Cart</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  const selectedAddress = getSelectedAddress();
-  const allVouchers = getAllVouchers();
-  const filteredVouchers = getFilteredVouchers();
-  const mainShopAddress = getMainShopAddress();
+  const baseTotalDisplay = summary.subtotal + summary.delivery - summary.discount;
 
   const getDeliveryFeeDisplay = () => {
     if (formData.shippingMethod === "Pickup from Store") return "FREE";
-    if (checkoutData?.summary?.delivery)
-      return `₱${formatNumber(checkoutData.summary.delivery)}`;
-    return "₱50.00";
+    return `₱${formatNumber(summary.delivery)}`;
   };
 
-  // ─── Center Toast Notification ───────────────────────────────────
+  // ─── Center Toast ────────────────────────────────────────────────────────
   const CenterToast = ({
     visible,
     message,
@@ -886,6 +867,7 @@ export default function CheckoutPage() {
   }) => {
     const scale = useRef(new Animated.Value(0)).current;
     const opacity = useRef(new Animated.Value(0)).current;
+
     useEffect(() => {
       if (visible) {
         Animated.parallel([
@@ -919,6 +901,7 @@ export default function CheckoutPage() {
         return () => clearTimeout(timer);
       }
     }, [visible]);
+
     if (!visible) return null;
     return (
       <View
@@ -963,19 +946,58 @@ export default function CheckoutPage() {
     );
   };
 
-  const getCurrentPaymentMethodName = () => {
-    const method = paymentMethods.find((m) => {
-      const methodName =
-        typeof m.name === "function" ? m.name(formData.shippingMethod) : m.name;
-      return methodName === formData.paymentMethod;
-    });
-    if (method) {
-      return typeof method.name === "function"
-        ? method.name(formData.shippingMethod)
-        : method.name;
-    }
-    return formData.paymentMethod;
-  };
+  // ─── Loading state ───────────────────────────────────────────────────────
+  if (authLoading || loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#EA580C" />
+          <Text style={styles.loadingText}>Loading checkout...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (userRole && userRole !== "customer") {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.center}>
+          <MaterialIcons name="warning" size={64} color="#F59E0B" />
+          <Text style={styles.message}>Not authorized to view this page</Text>
+          <Text style={styles.subMessage}>This page is for customers only</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (
+    error ||
+    !checkoutData ||
+    !Array.isArray(checkoutData.checkout_items) ||
+    checkoutData.checkout_items.length === 0
+  ) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.center}>
+          <MaterialIcons name="error-outline" size={80} color="#E5E5E5" />
+          <Text style={styles.emptyTitle}>{error || "No items selected"}</Text>
+          <Text style={styles.emptyText}>
+            {error ? error : "Please add items to your cart first"}
+          </Text>
+          <TouchableOpacity
+            style={styles.shopButton}
+            onPress={() => router.push("/customer/cart")}
+          >
+            <Text style={styles.shopButtonText}>Go to Cart</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const selectedAddress = getSelectedAddress();
+  const filteredVouchers = getFilteredVouchers();
+  const shopAddresses = getShopAddressesForProducts();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -985,6 +1007,7 @@ export default function CheckoutPage() {
         iconName="checkmark-circle"
         onHide={() => setCenterToastVisible(false)}
       />
+
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
@@ -1028,67 +1051,86 @@ export default function CheckoutPage() {
             <Text style={styles.sectionTitleCompact}>Order Summary</Text>
           </View>
           <View style={styles.itemsListCompact}>
-          {checkoutData.checkout_items.map((item) => (
-  <View key={item.id} style={styles.itemCardCompact}>
-    {item.image ? (
-      <Image
-        source={{ uri: item.image }}
-        style={styles.itemImageCompact}
-      />
-    ) : (
-      <View
-        style={[
-          styles.itemImageCompact,
-          styles.itemImagePlaceholder,
-        ]}
-      >
-        <MaterialIcons name="image" size={16} color="#9CA3AF" />
-      </View>
-    )}
-    <View style={styles.itemDetailsCompact}>
-      <Text style={styles.itemNameCompact} numberOfLines={2}>
-        {item.name}
-      </Text>
-      {item.variant?.title && (
-        <Text style={styles.itemVariantCompact}>
-          Variant: {item.variant.title}
-        </Text>
-      )}
-      <Text style={styles.itemShopCompact}>{item.shop_name}</Text>
+            {checkoutData.checkout_items.map((item) => (
+              <View key={item.id} style={styles.itemCardCompact}>
+                {item.image ? (
+                  <Image
+                    source={{ uri: item.image }}
+                    style={styles.itemImageCompact}
+                  />
+                ) : (
+                  <View
+                    style={[
+                      styles.itemImageCompact,
+                      styles.itemImagePlaceholder,
+                    ]}
+                  >
+                    <MaterialIcons name="image" size={16} color="#9CA3AF" />
+                  </View>
+                )}
+                <View style={styles.itemDetailsCompact}>
+                  <Text style={styles.itemNameCompact} numberOfLines={2}>
+                    {item.name}
+                  </Text>
+                  {item.variant?.title && (
+                    <Text style={styles.itemVariantCompact}>
+                      Variant: {item.variant.title}
+                    </Text>
+                  )}
+                  <Text style={styles.itemShopCompact}>{item.shop_name}</Text>
 
-      {/* Price Breakdown with VAT */}
-      <View style={styles.itemPriceBreakdown}>
-        <View style={styles.itemPriceRow}>
-          <Text style={styles.itemPriceLabel}>Base Price (excl. VAT):</Text>
-          <Text style={styles.itemBasePrice}>
-            ₱{formatNumber(item.base_price || item.price / 1.12)}
-          </Text>
-        </View>
-        <View style={styles.itemPriceRow}>
-          <Text style={styles.itemPriceLabel}>VAT ({item.vat_percentage || '12%'}):</Text>
-          <Text style={styles.itemVatPrice}>
-            ₱{formatNumber(item.vat_amount || (item.price - (item.base_price || item.price / 1.12)))}
-          </Text>
-        </View>
-        <View style={styles.itemPriceTotalRow}>
-          <Text style={styles.itemTotalLabel}>Selling Price (incl. VAT):</Text>
-          <Text style={styles.itemTotalPrice}>
-            ₱{formatNumber(item.price)}
-          </Text>
-        </View>
-      </View>
+                  {/* Price Breakdown with VAT */}
+                  <View style={styles.itemPriceBreakdown}>
+                    <View style={styles.itemPriceRow}>
+                      <Text style={styles.itemPriceLabel}>
+                        Base Price (excl. VAT):
+                      </Text>
+                      <Text style={styles.itemBasePrice}>
+                        ₱{formatNumber(item.base_price || item.price / 1.12)}
+                      </Text>
+                    </View>
+                    <View style={styles.itemPriceRow}>
+                      <Text style={styles.itemPriceLabel}>
+                        VAT ({item.vat_percentage || "12%"}):
+                      </Text>
+                      <Text style={styles.itemVatPrice}>
+                        ₱
+                        {formatNumber(
+                          item.vat_amount ||
+                            item.price -
+                              (item.base_price || item.price / 1.12)
+                        )}
+                      </Text>
+                    </View>
+                    <View style={styles.itemPriceTotalRow}>
+                      <Text style={styles.itemTotalLabel}>
+                        Selling Price (incl. VAT):
+                      </Text>
+                      <Text style={styles.itemTotalPrice}>
+                        ₱{formatNumber(item.price)}
+                      </Text>
+                    </View>
+                  </View>
 
-      <View style={styles.itemBottomRowCompact}>
-        <Text style={styles.quantityTextCompact}>
-          Quantity: x{item.quantity}
-        </Text>
-        <Text style={styles.itemSubtotalCompact}>
-          Subtotal: ₱{formatNumber(item.price * item.quantity)}
-        </Text>
-      </View>
-    </View>
-  </View>
-))}
+                  <View style={styles.itemBottomRowCompact}>
+                    <Text style={styles.quantityTextCompact}>
+                      Quantity: x{item.quantity}
+                    </Text>
+                    <Text style={styles.itemSubtotalCompact}>
+                      Subtotal: ₱{formatNumber(item.price * item.quantity)}
+                    </Text>
+                  </View>
+
+                  {formData.shippingMethod === "Standard Delivery" &&
+                    item.delivery_fee &&
+                    item.delivery_fee > 0 && (
+                      <Text style={styles.itemShippingFeeCompact}>
+                        Shipping: ₱{formatNumber(item.delivery_fee)}
+                      </Text>
+                    )}
+                </View>
+              </View>
+            ))}
           </View>
         </View>
 
@@ -1113,36 +1155,45 @@ export default function CheckoutPage() {
           </View>
         )}
 
-        {/* Shop Address */}
-        {mainShopAddress && (
+        {/* Shop Addresses */}
+        {shopAddresses.length > 0 && (
           <View style={styles.sectionCard}>
             <View style={styles.addressHeaderCompact}>
               <MaterialIcons name="store" size={16} color="#EA580C" />
-              <Text style={styles.sectionTitleCompact}>Shop Address</Text>
-            </View>
-            <View style={styles.addressDisplayCompact}>
-              <Text style={styles.addressNameCompact}>
-                {mainShopAddress.shop_name}
+              <Text style={styles.sectionTitleCompact}>
+                Seller Locations ({shopAddresses.length})
               </Text>
-              <Text style={styles.addressFullCompact}>
-                {mainShopAddress.shop_address}
-              </Text>
-              {mainShopAddress.shop_contact_number && (
-                <Text style={styles.addressPhoneCompact}>
-                  Contact: {mainShopAddress.shop_contact_number}
-                </Text>
-              )}
-              {checkoutData.summary.distance_text && (
-                <Text style={styles.distanceText}>
-                  📍 Distance: {checkoutData.summary.distance_text}
-                </Text>
-              )}
             </View>
+            {shopAddresses.map((shop) => (
+              <View key={shop.shop_id} style={styles.shopAddressItem}>
+                <Text style={styles.addressNameCompact}>{shop.shop_name}</Text>
+                <Text style={styles.addressFullCompact}>
+                  {shop.shop_address}
+                </Text>
+                {shop.shop_contact_number && (
+                  <Text style={styles.addressPhoneCompact}>
+                    Contact: {shop.shop_contact_number}
+                  </Text>
+                )}
+                {shop.distance_text && (
+                  <Text style={styles.distanceText}>
+                    📍 Distance: {shop.distance_text}
+                  </Text>
+                )}
+                {formData.shippingMethod === "Standard Delivery" &&
+                  shop.delivery_fee &&
+                  shop.delivery_fee > 0 && (
+                    <Text style={styles.deliveryFeeText}>
+                      🚚 Delivery Fee: ₱{formatNumber(shop.delivery_fee)}
+                    </Text>
+                  )}
+              </View>
+            ))}
             <PickupDisclaimer />
           </View>
         )}
 
-        {/* Shipping Method - Dropdown */}
+        {/* Shipping Method */}
         <View style={styles.sectionCard}>
           <TouchableOpacity
             style={styles.dropdownRowCompact}
@@ -1169,15 +1220,14 @@ export default function CheckoutPage() {
               />
             </View>
           </TouchableOpacity>
+
           {isShippingMethodDropdownOpen && (
             <View style={styles.dropdownMenuCompact}>
               {shippingMethods.map((method) => {
                 const costDisplay =
                   method.name === "Pickup from Store"
                     ? "FREE"
-                    : checkoutData?.summary?.delivery
-                      ? `₱${formatNumber(checkoutData.summary.delivery)}`
-                      : "₱50.00";
+                    : `₱${formatNumber(apiDeliveryFee)}`;
                 const isSelected = formData.shippingMethod === method.name;
                 return (
                   <TouchableOpacity
@@ -1224,7 +1274,11 @@ export default function CheckoutPage() {
           )}
         </View>
 
-        {/* Payment Method - Radio buttons */}
+        {/* ─── Per Shop Delivery Fees Breakdown ─────────────────────────────
+            FIX: Moved outside sectionCard, always renders when data available */}
+        <PerShopDeliveryFeesComponent />
+
+        {/* Payment Method */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitleCompact}>Payment Method</Text>
           <View style={styles.paymentMethodsContainerCompact}>
@@ -1356,14 +1410,12 @@ export default function CheckoutPage() {
                 ₱{formatNumber(summary.subtotal)}
               </Text>
             </View>
-
             <View style={styles.summaryRowCompact}>
               <Text style={styles.summaryLabelCompact}>Delivery Fee</Text>
               <Text style={styles.summaryValueCompact}>
                 {getDeliveryFeeDisplay()}
               </Text>
             </View>
-
             {appliedVoucher && (
               <View style={styles.discountRowCompact}>
                 <Text style={styles.discountLabelCompact}>
@@ -1374,8 +1426,6 @@ export default function CheckoutPage() {
                 </Text>
               </View>
             )}
-
-            {/* Transaction Fee */}
             <View style={styles.transactionFeeRowCompact}>
               <View>
                 <Text style={styles.transactionFeeLabelCompact}>
@@ -1389,9 +1439,7 @@ export default function CheckoutPage() {
                 ₱{formatNumber(transactionFee)}
               </Text>
             </View>
-
             <View style={styles.dividerCompact} />
-
             <View style={styles.totalRowCompact}>
               <Text style={styles.totalLabelCompact}>Total Payment</Text>
               <View style={styles.totalRightCompact}>
@@ -1400,7 +1448,6 @@ export default function CheckoutPage() {
                 </Text>
               </View>
             </View>
-
             <Text style={styles.transactionFeeInfoCompact}>
               * Includes ₱{formatNumber(transactionFee)} transaction fee (5% of
               ₱{formatNumber(baseTotalDisplay)}, capped at ₱50)
@@ -1408,12 +1455,15 @@ export default function CheckoutPage() {
           </View>
         </View>
 
-        {/* Terms and Conditions */}
+        {/* Terms */}
         <View style={styles.sectionCard}>
           <TouchableOpacity
             style={styles.termsRowCompact}
             onPress={() =>
-              setFormData((prev) => ({ ...prev, agreeTerms: !prev.agreeTerms }))
+              setFormData((prev) => ({
+                ...prev,
+                agreeTerms: !prev.agreeTerms,
+              }))
             }
           >
             <View
@@ -1479,7 +1529,7 @@ export default function CheckoutPage() {
         </View>
       </View>
 
-      {/* Voucher Selection Modal */}
+      {/* Voucher Modal */}
       <Modal
         visible={isVoucherModalVisible}
         animationType="slide"
@@ -1548,6 +1598,7 @@ export default function CheckoutPage() {
                     ))}
                   </ScrollView>
                 )}
+
               {loadingVouchers ? (
                 <View style={styles.loadingVouchers}>
                   <ActivityIndicator size="large" color="#EA580C" />
@@ -1700,8 +1751,78 @@ export default function CheckoutPage() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F8F9FA" },
-
-  // Compact Section Card
+  scrollView: { flex: 1 },
+  center: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  loadingText: { marginTop: 12, fontSize: 14, color: "#6B7280" },
+  message: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#374151",
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  subMessage: {
+    fontSize: 14,
+    color: "#6B7280",
+    textAlign: "center",
+    marginBottom: 24,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#374151",
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: "#6B7280",
+    textAlign: "center",
+    marginBottom: 24,
+  },
+  shopButton: {
+    backgroundColor: "#EA580C",
+    paddingHorizontal: 32,
+    paddingVertical: 14,
+    borderRadius: 8,
+  },
+  shopButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
+  headerSafeArea: {
+    backgroundColor: "#FFF",
+    paddingTop: Platform.OS === "android" ? 40 : 0,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#FFFFFF",
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#F0F0F0",
+  },
+  backButton: { padding: 6 },
+  headerTitleContainer: { alignItems: "center" },
+  headerTitle: { fontSize: 16, fontWeight: "700", color: "#111827" },
+  headerSubtitle: { fontSize: 11, color: "#6B7280", marginTop: 1 },
+  errorCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF2F2",
+    borderWidth: 0.5,
+    borderColor: "#FECACA",
+    marginHorizontal: 12,
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 6,
+    gap: 6,
+  },
+  errorText: { flex: 1, fontSize: 11, color: "#DC2626" },
   sectionCard: {
     backgroundColor: "#FFFFFF",
     marginBottom: 6,
@@ -1711,8 +1832,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 0.5,
     borderColor: "#F0F0F0",
   },
-
-  // Compact Section Header
   sectionHeaderCompact: {
     flexDirection: "row",
     alignItems: "center",
@@ -1724,7 +1843,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
   },
-
   // Item Price Breakdown
   itemPriceBreakdown: {
     marginTop: 4,
@@ -1737,19 +1855,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 2,
   },
-  itemPriceLabel: {
-    fontSize: 10,
-    color: "#6B7280",
-  },
-  itemBasePrice: {
-    fontSize: 10,
-    color: "#374151",
-  },
-  itemVatPrice: {
-    fontSize: 10,
-    color: "#059669",
-    fontWeight: "500",
-  },
+  itemPriceLabel: { fontSize: 10, color: "#6B7280" },
+  itemBasePrice: { fontSize: 10, color: "#374151" },
+  itemVatPrice: { fontSize: 10, color: "#059669", fontWeight: "500" },
   itemPriceTotalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1758,24 +1866,25 @@ const styles = StyleSheet.create({
     borderTopWidth: 0.5,
     borderTopColor: "#E5E7EB",
   },
-  itemTotalLabel: {
+  itemTotalLabel: { fontSize: 11, fontWeight: "600", color: "#111827" },
+  itemTotalPrice: { fontSize: 11, fontWeight: "700", color: "#EA580C" },
+  itemVariantCompact: {
     fontSize: 11,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  itemTotalPrice: {
-    fontSize: 11,
-    fontWeight: "700",
     color: "#EA580C",
+    fontWeight: "500",
+    marginBottom: 2,
   },
-
-  distanceText: {
+  itemSubtotalCompact: {
     fontSize: 11,
-    color: "#F97316",
-    marginTop: 4,
+    color: "#374151",
+    fontWeight: "500",
   },
-
-  // Compact Items List
+  itemShippingFeeCompact: {
+    fontSize: 10,
+    color: "#EA580C",
+    marginTop: 2,
+    textAlign: "right",
+  },
   itemsListCompact: { gap: 8 },
   itemCardCompact: {
     flexDirection: "row",
@@ -1805,8 +1914,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   quantityTextCompact: { fontSize: 11, color: "#6B7280" },
-
-  // Compact Address Display
   addressHeaderCompact: {
     flexDirection: "row",
     alignItems: "center",
@@ -1818,6 +1925,12 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 6,
   },
+  shopAddressItem: {
+    backgroundColor: "#F9FAFB",
+    padding: 8,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
   addressNameCompact: {
     fontSize: 13,
     fontWeight: "500",
@@ -1826,17 +1939,85 @@ const styles = StyleSheet.create({
   },
   addressPhoneCompact: { fontSize: 11, color: "#6B7280", marginBottom: 2 },
   addressFullCompact: { fontSize: 11, color: "#374151", lineHeight: 15 },
-
-  // Compact Dropdown
+  distanceText: { fontSize: 11, color: "#F97316", marginTop: 2 },
+  deliveryFeeText: {
+    fontSize: 11,
+    color: "#EA580C",
+    marginTop: 2,
+    fontWeight: "500",
+  },
+  // ─── Delivery Breakdown ────────────────────────────────────────────────
+  deliveryBreakdownRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+    paddingVertical: 4,
+  },
+  deliveryBreakdownLeft: { flex: 1 },
+  deliveryBreakdownShopName: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#111827",
+  },
+  deliveryBreakdownDistance: {
+    fontSize: 10,
+    color: "#6B7280",
+    marginTop: 1,
+  },
+  deliveryBreakdownFee: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  deliveryBreakdownTotal: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 0.5,
+    borderTopColor: "#E5E7EB",
+  },
+  deliveryBreakdownTotalLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  deliveryBreakdownTotalValue: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#EA580C",
+  },
+  deliveryBreakdownNote: {
+    fontSize: 10,
+    color: "#9CA3AF",
+    fontStyle: "italic",
+    marginTop: 6,
+    textAlign: "center",
+  },
+  // Dropdown
   dropdownRowCompact: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: 6,
   },
-  dropdownLeftCompact: { flexDirection: "row", alignItems: "center", gap: 10 },
-  dropdownLabelCompact: { fontSize: 14, fontWeight: "500", color: "#111827" },
-  dropdownRightCompact: { flexDirection: "row", alignItems: "center", gap: 6 },
+  dropdownLeftCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  dropdownLabelCompact: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#111827",
+  },
+  dropdownRightCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   dropdownValueCompact: { fontSize: 13, color: "#6B7280" },
   dropdownMenuCompact: {
     marginTop: 8,
@@ -1869,15 +2050,18 @@ const styles = StyleSheet.create({
     color: "#374151",
   },
   dropdownItemTitleSelectedCompact: { color: "#EA580C" },
-  dropdownItemSubtitleCompact: { fontSize: 11, color: "#6B7280", marginTop: 1 },
+  dropdownItemSubtitleCompact: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginTop: 1,
+  },
   dropdownItemPriceCompact: {
     fontSize: 13,
     fontWeight: "600",
     color: "#111827",
   },
   dropdownItemPriceSelectedCompact: { color: "#EA580C" },
-
-  // Compact Payment Methods
+  // Payment Methods
   paymentMethodsContainerCompact: { gap: 8, marginTop: 4 },
   paymentMethodCardCompact: {
     flexDirection: "row",
@@ -1932,8 +2116,7 @@ const styles = StyleSheet.create({
     borderColor: "#EA580C",
     backgroundColor: "#EA580C",
   },
-
-  // Compact Applied Voucher
+  // Applied Voucher
   appliedVoucherCompact: {
     flexDirection: "row",
     alignItems: "center",
@@ -1959,8 +2142,7 @@ const styles = StyleSheet.create({
     color: "#059669",
     fontWeight: "500",
   },
-
-  // Transaction Fee Styles
+  // Transaction Fee
   transactionFeeRowCompact: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1976,11 +2158,7 @@ const styles = StyleSheet.create({
     color: "#EA580C",
     fontWeight: "500",
   },
-  transactionFeeNoteCompact: {
-    fontSize: 9,
-    color: "#9CA3AF",
-    marginTop: 1,
-  },
+  transactionFeeNoteCompact: { fontSize: 9, color: "#9CA3AF", marginTop: 1 },
   transactionFeeValueCompact: {
     fontSize: 12,
     color: "#EA580C",
@@ -2004,8 +2182,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#E5E7EB",
     marginVertical: 6,
   },
-
-  // Compact Order Summary
+  // Order Summary
   orderSummaryCompact: { gap: 6, marginTop: 4 },
   summaryRowCompact: {
     flexDirection: "row",
@@ -2013,7 +2190,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   summaryLabelCompact: { fontSize: 12, color: "#6B7280" },
-  summaryValueCompact: { fontSize: 12, color: "#374151", fontWeight: "500" },
+  summaryValueCompact: {
+    fontSize: 12,
+    color: "#374151",
+    fontWeight: "500",
+  },
   discountRowCompact: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -2023,7 +2204,11 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   discountLabelCompact: { fontSize: 12, color: "#059669" },
-  discountValueCompact: { fontSize: 12, color: "#059669", fontWeight: "600" },
+  discountValueCompact: {
+    fontSize: 12,
+    color: "#059669",
+    fontWeight: "600",
+  },
   totalRowCompact: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -2032,8 +2217,7 @@ const styles = StyleSheet.create({
   totalLabelCompact: { fontSize: 14, fontWeight: "600", color: "#111827" },
   totalRightCompact: { alignItems: "flex-end" },
   totalValueCompact: { fontSize: 16, fontWeight: "700", color: "#111827" },
-
-  // Compact Remarks
+  // Remarks
   remarksInputCompact: {
     borderWidth: 0.5,
     borderColor: "#D1D5DB",
@@ -2052,8 +2236,7 @@ const styles = StyleSheet.create({
     textAlign: "right",
     marginTop: 2,
   },
-
-  // Compact Terms
+  // Terms
   termsRowCompact: { flexDirection: "row", alignItems: "center" },
   checkboxCompact: {
     width: 16,
@@ -2070,7 +2253,6 @@ const styles = StyleSheet.create({
     borderColor: "#EA580C",
   },
   termsTextCompact: { fontSize: 12, color: "#374151", flex: 1 },
-
   // Footer
   footer: {
     backgroundColor: "#FFFFFF",
@@ -2105,82 +2287,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   footerNoteTextCompact: { fontSize: 10, color: "#6B7280" },
-
-  // Keep existing styles from original that are still used
-  center: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  loadingText: { marginTop: 12, fontSize: 14, color: "#6B7280" },
-  message: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#374151",
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  subMessage: {
-    fontSize: 14,
-    color: "#6B7280",
-    textAlign: "center",
-    marginBottom: 24,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#374151",
-    marginTop: 20,
-    marginBottom: 8,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: "#6B7280",
-    textAlign: "center",
-    marginBottom: 24,
-  },
-  shopButton: {
-    backgroundColor: "#EA580C",
-    paddingHorizontal: 32,
-    paddingVertical: 14,
-    borderRadius: 8,
-  },
-  shopButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
-  scrollView: { flex: 1 },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "#FFFFFF",
-    borderBottomWidth: 0.5,
-    borderBottomColor: "#F0F0F0",
-  },
-  headerSafeArea: {
-    backgroundColor: "#FFF",
-    paddingTop: Platform.OS === "android" ? 40 : 0,
-  },
-  backButton: { padding: 6 },
-  headerTitleContainer: { alignItems: "center" },
-  headerTitle: { fontSize: 16, fontWeight: "700", color: "#111827" },
-  headerSubtitle: { fontSize: 11, color: "#6B7280", marginTop: 1 },
-  errorCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FEF2F2",
-    borderWidth: 0.5,
-    borderColor: "#FECACA",
-    marginHorizontal: 12,
-    marginTop: 8,
-    padding: 10,
-    borderRadius: 6,
-    gap: 6,
-  },
-  errorText: { flex: 1, fontSize: 11, color: "#DC2626" },
-
-  // Modal Styles
+  // Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
@@ -2254,9 +2361,21 @@ const styles = StyleSheet.create({
   },
   recommendedBadgeText: { fontSize: 9, color: "#FFFFFF", fontWeight: "600" },
   modalVoucherName: { fontSize: 12, color: "#374151", marginBottom: 2 },
-  modalVoucherDescription: { fontSize: 11, color: "#6B7280", marginBottom: 8 },
-  modalVoucherDetails: { flexDirection: "row", alignItems: "center", gap: 12 },
-  modalVoucherDetail: { flexDirection: "row", alignItems: "center", gap: 3 },
+  modalVoucherDescription: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginBottom: 8,
+  },
+  modalVoucherDetails: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  modalVoucherDetail: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
   modalVoucherDetailText: { fontSize: 10, color: "#6B7280" },
   notApplicableContainer: {
     flexDirection: "row",
@@ -2301,14 +2420,14 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingHorizontal: 16,
   },
-  // Pickup Disclaimer Styles
+  // Pickup Disclaimer
   pickupDisclaimerContainer: {
     backgroundColor: "#FFF7ED",
-    marginHorizontal: 0,
-    marginBottom: 6,
+    marginTop: 8,
     padding: 12,
     borderWidth: 0.5,
     borderColor: "#FED7AA",
+    borderRadius: 6,
   },
   pickupDisclaimerHeader: {
     flexDirection: "row",
@@ -2321,9 +2440,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#EA580C",
   },
-  pickupDisclaimerList: {
-    gap: 8,
-  },
+  pickupDisclaimerList: { gap: 8 },
   pickupDisclaimerItem: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -2334,17 +2451,5 @@ const styles = StyleSheet.create({
     color: "#92400E",
     flex: 1,
     lineHeight: 16,
-  },
-  itemVariantCompact: {
-  
-    fontSize: 11,
-    color: "#EA580C",
-    fontWeight: "500",
-    marginBottom: 2,
-  },
-  itemSubtotalCompact: {
-    fontSize: 11,
-    color: "#374151",
-    fontWeight: "500",
   },
 });

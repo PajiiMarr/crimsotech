@@ -26734,7 +26734,7 @@ class CheckoutOrder(viewsets.ViewSet):
         
         print(f"[COORDS] ❌ No coordinates found for customer")
         return None, None, None
-
+    
     @action(detail=False, methods=['GET'], url_path='get_checkout_items')
     def get_checkout_items(self, request):
         user_id = request.GET.get("user_id")
@@ -26902,6 +26902,7 @@ class CheckoutOrder(viewsets.ViewSet):
             shop_ids = set()
             shop_addresses = {}
             personal_seller_addresses = {}
+            per_shop_delivery_fees = []  # NEW: Store per-shop delivery fees
 
             # Get customer coordinates (auto-fallback to user profile if no address selected)
             customer_lat, customer_lng, coord_source = self._get_customer_coordinates(user_id, selected_address_id)
@@ -26914,6 +26915,7 @@ class CheckoutOrder(viewsets.ViewSet):
 
             # Track totals - VAT already included in variant price
             subtotal = Decimal('0')
+            total_delivery_fee = Decimal('0')  # NEW: Track total delivery fee
 
             for cart_item in cart_items:
                 product = cart_item.product
@@ -26945,6 +26947,7 @@ class CheckoutOrder(viewsets.ViewSet):
                         
                         distance_km = None
                         distance_text = None
+                        shop_delivery_fee = Decimal('0')
                         
                         if customer_lat and customer_lng:
                             if shop.latitude and shop.longitude:
@@ -26957,7 +26960,20 @@ class CheckoutOrder(viewsets.ViewSet):
                                         float(shop.longitude)
                                     )
                                     distance_text = self._format_distance(distance_km)
+                                    shop_delivery_fee = Decimal(str(self._calculate_delivery_fee(distance_km)))
+                                    total_delivery_fee += shop_delivery_fee
+                                    
+                                    # Store per-shop delivery fee
+                                    per_shop_delivery_fees.append({
+                                        'shop_id': str(shop.id),
+                                        'shop_name': shop.name,
+                                        'distance_km': distance_km,
+                                        'distance_text': distance_text,
+                                        'delivery_fee': float(shop_delivery_fee)
+                                    })
+                                    
                                     print(f"[DISTANCE] ✅ Calculated distance: {distance_km} km ({distance_text})")
+                                    print(f"[DISTANCE] 💰 Shop delivery fee: ₱{shop_delivery_fee}")
                                     logger.info(f"📏 Calculated distance: {distance_text}")
                                 except (ValueError, TypeError) as e:
                                     print(f"[DISTANCE] ❌ Error calculating distance: {e}")
@@ -26977,7 +26993,8 @@ class CheckoutOrder(viewsets.ViewSet):
                             'shop_contact_number': shop.contact_number,
                             'address_type': 'shop',
                             'distance_km': distance_km,
-                            'distance_text': distance_text
+                            'distance_text': distance_text,
+                            'delivery_fee': float(shop_delivery_fee) if shop_delivery_fee else 0  # Add delivery fee to shop address
                         }
                 elif product and product.customer:
                     seller_user = product.customer.customer
@@ -27013,6 +27030,7 @@ class CheckoutOrder(viewsets.ViewSet):
                         
                         distance_km = None
                         distance_text = None
+                        seller_delivery_fee = Decimal('0')
                         
                         if customer_lat and customer_lng:
                             if hasattr(seller_user, 'latitude') and seller_user.latitude and hasattr(seller_user, 'longitude') and seller_user.longitude:
@@ -27025,7 +27043,20 @@ class CheckoutOrder(viewsets.ViewSet):
                                         float(seller_user.longitude)
                                     )
                                     distance_text = self._format_distance(distance_km)
+                                    seller_delivery_fee = Decimal(str(self._calculate_delivery_fee(distance_km)))
+                                    total_delivery_fee += seller_delivery_fee
+                                    
+                                    # Store per-seller delivery fee
+                                    per_shop_delivery_fees.append({
+                                        'shop_id': seller_id,
+                                        'shop_name': f"{seller_user.first_name} {seller_user.last_name}".strip() or seller_user.username,
+                                        'distance_km': distance_km,
+                                        'distance_text': distance_text,
+                                        'delivery_fee': float(seller_delivery_fee)
+                                    })
+                                    
                                     print(f"[DISTANCE] ✅ Calculated distance: {distance_km} km ({distance_text})")
+                                    print(f"[DISTANCE] 💰 Seller delivery fee: ₱{seller_delivery_fee}")
                                     logger.info(f"📏 Calculated distance: {distance_text}")
                                 except (ValueError, TypeError) as e:
                                     print(f"[DISTANCE] ❌ Error calculating distance: {e}")
@@ -27045,7 +27076,8 @@ class CheckoutOrder(viewsets.ViewSet):
                             'seller_contact_number': seller_user.contact_number,
                             'address_type': 'personal',
                             'distance_km': distance_km,
-                            'distance_text': distance_text
+                            'distance_text': distance_text,
+                            'delivery_fee': float(seller_delivery_fee) if seller_delivery_fee else 0
                         }
 
                 # Get price (already includes VAT from variant)
@@ -27065,16 +27097,10 @@ class CheckoutOrder(viewsets.ViewSet):
 
                 if variant and variant.price is not None:
                     price_with_vat = Decimal(str(variant.price))
-                    # Get the depreciated base price from the variant's stored value
-                    # The base price should be stored in original_price or calculated from depreciation
-                    # Use the variant's value_added_tax_amount which is 12% of the depreciated base price
                     if variant.value_added_tax_amount and variant.value_added_tax_amount > 0:
-                        # VAT amount is already stored (12% of depreciated base price)
                         vat_amount = Decimal(str(variant.value_added_tax_amount))
-                        # Calculate base price: selling price - VAT amount
                         base_price = price_with_vat - vat_amount
                     else:
-                        # Fallback calculation
                         base_price = price_with_vat / Decimal('1.12')
                         vat_amount = price_with_vat - base_price
 
@@ -27095,14 +27121,29 @@ class CheckoutOrder(viewsets.ViewSet):
                         except Exception:
                             product_image_url = first_media.file_data.url
 
+                # Get delivery fee for this specific item's shop
+                item_delivery_fee = Decimal('0')
+                if shop:
+                    shop_id_str = str(shop.id)
+                    for shop_fee in per_shop_delivery_fees:
+                        if shop_fee['shop_id'] == shop_id_str:
+                            item_delivery_fee = Decimal(str(shop_fee['delivery_fee']))
+                            break
+                elif product and product.customer:
+                    seller_id_str = str(product.customer.customer.id)
+                    for seller_fee in per_shop_delivery_fees:
+                        if seller_fee['shop_id'] == seller_id_str:
+                            item_delivery_fee = Decimal(str(seller_fee['delivery_fee']))
+                            break
+
                 item_data = {
                     "id": str(cart_item.id) if hasattr(cart_item, 'id') else cart_item.id,
                     "product_id": str(product.id) if product else None,
                     "name": product.name if product else "Unknown Product",
-                    "price": float(price_with_vat),  # This is the price with VAT already
-                    "base_price": float(base_price),  # Price without VAT
-                    "vat_amount": float(vat_amount),  # VAT amount
-                    "vat_percentage": "12%",  # Fixed VAT percentage
+                    "price": float(price_with_vat),
+                    "base_price": float(base_price),
+                    "vat_amount": float(vat_amount),
+                    "vat_percentage": "12%",
                     "quantity": cart_item.quantity,
                     "image": product_image_url,
                     "shop_name": shop.name if shop else (product.customer.customer.username if product and product.customer else "Personal Seller"),
@@ -27111,11 +27152,12 @@ class CheckoutOrder(viewsets.ViewSet):
                     "added_at": cart_item.added_at.isoformat() if hasattr(cart_item, 'added_at') and cart_item.added_at else None,
                     "subtotal": float(line_total),
                     "is_ordered": cart_item.is_ordered if hasattr(cart_item, 'is_ordered') else False,
-                    "is_personal_listing": shop is None and product and product.customer is not None
+                    "is_personal_listing": shop is None and product and product.customer is not None,
+                    "delivery_fee": float(item_delivery_fee),  # NEW: Add delivery fee per item
+                    "distance_km": float(item_delivery_fee / 40) if item_delivery_fee > 0 and item_delivery_fee < 300 else None  # Approximate distance from fee
                 }
 
                 if variant:
-                    # Get variant image using storage utility
                     variant_image_url = None
                     if variant.image and hasattr(variant.image, 'url'):
                         try:
@@ -27141,33 +27183,20 @@ class CheckoutOrder(viewsets.ViewSet):
 
                 checkout_items.append(item_data)
 
-            max_distance = 0
-            for shop_id, shop_info in shop_addresses.items():
-                distance = shop_info.get('distance_km', 0)
-                if distance and distance > max_distance:
-                    max_distance = distance
-                    print(f"[DISTANCE] Farthest shop: {shop_info.get('shop_name')} - Distance: {distance} km")
+            print(f"[DISTANCE] Total delivery fee across all shops: ₱{total_delivery_fee}")
             
-            for seller_id, seller_info in personal_seller_addresses.items():
-                distance = seller_info.get('distance_km', 0)
-                if distance and distance > max_distance:
-                    max_distance = distance
-                    print(f"[DISTANCE] Farthest personal seller: {seller_info.get('seller_name')} - Distance: {distance} km")
-            
-            print(f"[DISTANCE] Max distance found: {max_distance} km")
-            
-            delivery_fee = self._calculate_delivery_fee(max_distance)
-            total = float(subtotal) + delivery_fee
+            # Calculate final total
+            total = float(subtotal) + float(total_delivery_fee)
             
             print("=" * 80)
             print("[TOTALS]")
             print(f"  Subtotal: ₱{subtotal:.2f}")
-            print(f"  Delivery Fee: ₱{delivery_fee:.2f}")
+            print(f"  Total Delivery Fee: ₱{total_delivery_fee:.2f}")
             print(f"  Total: ₱{total:.2f}")
             print("=" * 80)
             
             logger.info(f"💰 Subtotal: ₱{subtotal:.2f}")
-            logger.info(f"💰 Delivery Fee: ₱{delivery_fee:.2f} (based on {max_distance:.2f} km distance at ₱40/km, capped at ₱300)")
+            logger.info(f"💰 Total Delivery Fee: ₱{total_delivery_fee:.2f} (sum of per-shop fees)")
             logger.info(f"💰 Total: ₱{total:.2f}")
 
             user_purchase_history = self._get_user_purchase_history(user_id)
@@ -27206,17 +27235,16 @@ class CheckoutOrder(viewsets.ViewSet):
                 "checkout_items": checkout_items,
                 "summary": {
                     "subtotal": float(subtotal),
-                    "delivery": delivery_fee,
+                    "delivery": float(total_delivery_fee),  # Now this is the SUM of all per-shop fees
                     "total": total,
                     "item_count": len(checkout_items),
-                    "shop_count": len(shop_ids),
+                    "shop_count": len(shop_ids) + len(personal_seller_addresses),
                     "personal_seller_count": len(personal_seller_addresses),
-                    "distance_km": max_distance,
-                    "distance_text": self._format_distance(max_distance),
-                    "delivery_fee_rate": "₱40/km, capped at ₱300",
+                    "delivery_fee_rate": "₱40/km, capped at ₱300 per shop",
                     "customer_coordinates_source": coord_source if customer_lat else None,
                     "customer_latitude": customer_lat,
-                    "customer_longitude": customer_lng
+                    "customer_longitude": customer_lng,
+                    "per_shop_delivery_fees": per_shop_delivery_fees  # NEW: Send per-shop breakdown to frontend
                 },
                 "available_vouchers": available_vouchers,
                 "user_purchase_stats": user_purchase_history,
@@ -27816,43 +27844,58 @@ class CheckoutOrder(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            # Calculate delivery fee based on distance (if Standard Delivery)
-            delivery_fee = Decimal('0')
+            # Calculate per-shop delivery fees
+            shipping_fees_breakdown = {}
+            shops_distances = {}
+            total_delivery_fee = Decimal('0')
+            
             if shipping_method.lower() == "standard delivery" and shipping_address:
                 customer_lat, customer_lng, _ = self._get_customer_coordinates(user_id, shipping_address_id)
                 
-                max_distance = 0
                 if customer_lat and customer_lng:
+                    # Group items by shop and calculate distance per shop
                     if is_direct_checkout and direct_product and direct_product.shop:
                         shop = direct_product.shop
+                        shop_id = str(shop.id)
+                        
                         if shop.latitude and shop.longitude:
-                            max_distance = self._calculate_distance(
-                                customer_lat,
-                                customer_lng,
-                                float(shop.latitude),
-                                float(shop.longitude)
+                            distance = self._calculate_distance(
+                                customer_lat, customer_lng,
+                                float(shop.latitude), float(shop.longitude)
                             )
+                            fee = Decimal(str(self._calculate_delivery_fee(distance)))
+                            shops_distances[shop_id] = {
+                                'distance_km': distance,
+                                'fee': fee,
+                                'shop_name': shop.name,
+                                'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                            }
+                            shipping_fees_breakdown[shop_id] = float(fee)
+                            total_delivery_fee += fee
+                            
                     else:
                         for cart_item in cart_items:
                             if cart_item.product and cart_item.product.shop:
                                 shop = cart_item.product.shop
-                                if shop.latitude and shop.longitude:
+                                shop_id = str(shop.id)
+                                
+                                if shop_id not in shops_distances and shop.latitude and shop.longitude:
                                     distance = self._calculate_distance(
-                                        customer_lat,
-                                        customer_lng,
-                                        float(shop.latitude),
-                                        float(shop.longitude)
+                                        customer_lat, customer_lng,
+                                        float(shop.latitude), float(shop.longitude)
                                     )
-                                    if distance > max_distance:
-                                        max_distance = distance
-                delivery_fee = Decimal(str(self._calculate_delivery_fee(max_distance)))
+                                    fee = Decimal(str(self._calculate_delivery_fee(distance)))
+                                    shops_distances[shop_id] = {
+                                        'distance_km': distance,
+                                        'fee': fee,
+                                        'shop_name': shop.name,
+                                        'shop_address': f"{shop.street}, {shop.barangay}, {shop.city}, {shop.province}"
+                                    }
+                                    shipping_fees_breakdown[shop_id] = float(fee)
+                                    total_delivery_fee += fee
             
-            # Shipping fee IS the delivery fee (distance-based, ₱40/km capped at ₱300)
-            # This is the fee paid to the rider for delivery
-            shipping_fee = delivery_fee
-            
-            # Calculate base total (subtotal + delivery_fee - discount_amount)
-            base_total = subtotal + delivery_fee - discount_amount
+            # Calculate base total (subtotal + total_delivery_fee - discount_amount)
+            base_total = subtotal + total_delivery_fee - discount_amount
             
             # Calculate transaction fee for ALL payment methods (5% capped at ₱50)
             transaction_fee = self._calculate_transaction_fee(base_total, payment_method)
@@ -27862,6 +27905,7 @@ class CheckoutOrder(viewsets.ViewSet):
 
             initial_status = 'pending'
             
+            # Create order with shipping_fees_breakdown
             order = Order.objects.create(
                 user=user,
                 shipping_address=shipping_address,
@@ -27871,29 +27915,27 @@ class CheckoutOrder(viewsets.ViewSet):
                 delivery_method=shipping_method,
                 delivery_address_text=delivery_address_text,
                 transaction_fee=float(transaction_fee),
-                shipping_fee=float(shipping_fee)  # Stores the delivery fee (distance-based)
+                shipping_fees_breakdown=shipping_fees_breakdown,  # Store per-shop fees
+                metadata={}
             )
             
             # Store transaction fee in metadata for reference
             if transaction_fee > 0:
-                order.metadata = order.metadata or {}
                 order.metadata['transaction_fee'] = float(transaction_fee)
                 order.metadata['transaction_fee_percentage'] = 5
                 order.metadata['transaction_fee_cap'] = 50
                 order.metadata['transaction_fee_note'] = f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment"
-                order.save(update_fields=['metadata'])
             
             # Store delivery fee info in metadata
-            if delivery_fee > 0:
-                order.metadata = order.metadata or {}
-                order.metadata['delivery_fee'] = float(delivery_fee)
-                order.metadata['delivery_fee_note'] = f"Delivery fee of ₱{float(delivery_fee):.2f} (₱40/km capped at ₱300)"
-                order.save(update_fields=['metadata'])
+            if total_delivery_fee > 0:
+                order.metadata['total_delivery_fee'] = float(total_delivery_fee)
+                order.metadata['delivery_fee_note'] = f"Total delivery fee of ₱{float(total_delivery_fee):.2f} (₱40/km capped at ₱300 per shop)"
+                order.metadata['delivery_fees_by_shop'] = shipping_fees_breakdown
             
             if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() and pickup_date:
-                order.metadata = order.metadata or {}
                 order.metadata['pickup_date'] = pickup_date
-                order.save(update_fields=['metadata'])
+            
+            order.save(update_fields=['metadata'])
 
             cart_item_ids = []
             checkout_items = []
@@ -27902,16 +27944,21 @@ class CheckoutOrder(viewsets.ViewSet):
                 unit_price = Decimal(str(direct_variant.price)) if direct_variant.price else Decimal('0')
                 checkout_total = unit_price * direct_quantity
                 
+                # Get shipping fee for this shop
+                shop_id = str(direct_product.shop.id) if direct_product.shop else None
+                item_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
+                item_distance = Decimal(str(shops_distances.get(shop_id, {}).get('distance_km', 0))) if shop_id else None
+                
                 product_image_url = None
                 if direct_product.productmedia_set.exists():
                     first_media = direct_product.productmedia_set.first()
                     if first_media and first_media.file_data:
-                        from .utils import convert_s3_to_public_url
+                        from api.utils.storage_utils import convert_s3_to_public_url
                         product_image_url = convert_s3_to_public_url(first_media.file_data.url)
                 
                 variant_image_url = None
                 if direct_variant.image:
-                    from .utils import convert_s3_to_public_url
+                    from api.utils.storage_utils import convert_s3_to_public_url
                     variant_image_url = convert_s3_to_public_url(direct_variant.image.url)
 
                 checkout_item = Checkout.objects.create(
@@ -27928,7 +27975,9 @@ class CheckoutOrder(viewsets.ViewSet):
                     direct_product_price=unit_price,
                     direct_product_image=variant_image_url or product_image_url,
                     direct_shop_id=direct_product.shop.id if direct_product.shop else None,
-                    direct_shop_name=direct_product.shop.name if direct_product.shop else None
+                    direct_shop_name=direct_product.shop.name if direct_product.shop else None,
+                    shipping_fee=item_shipping_fee,
+                    distance_km=item_distance
                 )
 
                 cart_item_ids.append(f"direct_{direct_product.id}_{direct_variant.id}")
@@ -27944,6 +27993,8 @@ class CheckoutOrder(viewsets.ViewSet):
                     "quantity": direct_quantity,
                     "price": float(unit_price),
                     "total_amount": float(checkout_total),
+                    "shipping_fee": float(item_shipping_fee),
+                    "distance_km": float(item_distance) if item_distance else None,
                     "status": "pending",
                     "product_image": variant_image_url or product_image_url,
                     "is_refundable": direct_variant.is_refundable or getattr(direct_product, 'is_refundable', False)
@@ -27957,6 +28008,11 @@ class CheckoutOrder(viewsets.ViewSet):
                         unit_price = Decimal(str(cart_item.product.price)) if cart_item.product and cart_item.product.price is not None else Decimal('0')
 
                     checkout_total = unit_price * cart_item.quantity
+                    
+                    # Get shipping fee for this item's shop
+                    shop_id = str(cart_item.product.shop.id) if cart_item.product and cart_item.product.shop else None
+                    item_shipping_fee = Decimal(str(shipping_fees_breakdown.get(shop_id, 0))) if shop_id else Decimal('0')
+                    item_distance = Decimal(str(shops_distances.get(shop_id, {}).get('distance_km', 0))) if shop_id else None
 
                     checkout_item = Checkout.objects.create(
                         order=order,
@@ -27965,10 +28021,30 @@ class CheckoutOrder(viewsets.ViewSet):
                         quantity=cart_item.quantity,
                         total_amount=checkout_total,
                         status='pending',
-                        remarks=remarks[:500] if remarks else None
+                        remarks=remarks[:500] if remarks else None,
+                        shipping_fee=item_shipping_fee,
+                        distance_km=item_distance
                     )
 
                     cart_item_ids.append(str(cart_item.id))
+                    
+                    # Get product image using storage utility
+                    product_image_url = None
+                    if cart_item.variant and cart_item.variant.image:
+                        try:
+                            from api.utils.storage_utils import convert_s3_to_public_url
+                            product_image_url = convert_s3_to_public_url(cart_item.variant.image.url)
+                        except Exception:
+                            product_image_url = cart_item.variant.image.url
+                    elif cart_item.product and cart_item.product.productmedia_set.exists():
+                        first_media = cart_item.product.productmedia_set.first()
+                        if first_media and first_media.file_data:
+                            try:
+                                from api.utils.storage_utils import convert_s3_to_public_url
+                                product_image_url = convert_s3_to_public_url(first_media.file_data.url)
+                            except Exception:
+                                product_image_url = first_media.file_data.url
+                    
                     checkout_items.append({
                         "id": str(checkout_item.id),
                         "cart_item_id": str(cart_item.id),
@@ -27981,7 +28057,10 @@ class CheckoutOrder(viewsets.ViewSet):
                         "quantity": cart_item.quantity,
                         "price": float(unit_price),
                         "total_amount": float(checkout_total),
+                        "shipping_fee": float(item_shipping_fee),
+                        "distance_km": float(item_distance) if item_distance else None,
                         "status": "pending",
+                        "product_image": product_image_url,
                         "is_refundable": cart_item.variant.is_refundable if cart_item.variant else getattr(cart_item.product, 'is_refundable', False)
                     })
 
@@ -28005,6 +28084,17 @@ class CheckoutOrder(viewsets.ViewSet):
             # Decrease stock for the order items
             self._decrease_stock_for_order(order)
 
+            # Build breakdown message for response
+            breakdown_message = ""
+            if shipping_fees_breakdown:
+                breakdown_parts = []
+                for shop_id, fee in shipping_fees_breakdown.items():
+                    shop_info = shops_distances.get(shop_id, {})
+                    shop_name = shop_info.get('shop_name', 'Unknown Shop')
+                    distance = shop_info.get('distance_km', 0)
+                    breakdown_parts.append(f"{shop_name}: ₱{fee:.2f} ({distance:.1f} km)")
+                breakdown_message = " | ".join(breakdown_parts)
+
             response_data = {
                 "success": True,
                 "message": "Order created successfully. Waiting for seller confirmation.",
@@ -28013,8 +28103,17 @@ class CheckoutOrder(viewsets.ViewSet):
                 "checkout_items": checkout_items,
                 "total_amount": float(total_amount),
                 "subtotal": float(subtotal),
-                "delivery_fee": float(delivery_fee),
-                "shipping_fee": float(shipping_fee),
+                "total_delivery_fee": float(total_delivery_fee),
+                "delivery_fees_breakdown": shipping_fees_breakdown,
+                "delivery_fees_by_shop": [
+                    {
+                        "shop_id": shop_id,
+                        "shop_name": info.get('shop_name'),
+                        "distance_km": info.get('distance_km'),
+                        "delivery_fee": float(info.get('fee', 0))
+                    }
+                    for shop_id, info in shops_distances.items()
+                ],
                 "discount_applied": float(discount_amount),
                 "transaction_fee": float(transaction_fee),
                 "voucher_used": voucher.code if voucher else None,
@@ -28023,7 +28122,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 "shipping_method": shipping_method,
                 "pickup_date": pickup_date if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() else None,
                 "transaction_fee_note": f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment",
-                "delivery_fee_note": f"Delivery fee of ₱{float(delivery_fee):.2f} (₱40/km capped at ₱300)" if delivery_fee > 0 else None
+                "delivery_fee_note": f"Total delivery fee of ₱{float(total_delivery_fee):.2f} (₱40/km capped at ₱300 per shop). Breakdown: {breakdown_message}" if total_delivery_fee > 0 else None
             }
             
             return Response(response_data)
