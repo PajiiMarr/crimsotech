@@ -1116,28 +1116,10 @@ class ShippingAddress(models.Model):
 class Order(models.Model):
     order = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    shipping_address = models.ForeignKey(
-        ShippingAddress,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='orders'
-    )
+    shipping_address = models.ForeignKey(ShippingAddress, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
     transaction_fee = models.FloatField(null=True, blank=True)
-    shipping_fee = models.IntegerField(null=True, blank=True)
-    approval = models.CharField(max_length=20, choices=[
-        ('pending', 'Pending'),
-        ('accepted', 'Accepted'),
-        ('rejected', 'Rejected'),
-    ], default='pending')
-    status = models.CharField(max_length=20, choices=[
-        ('pending', 'Pending'),
-        ('processing', 'Processing'),
-        ('shipped', 'Shipped'),
-        ('delivered', 'Delivered'),
-        ('cancelled', 'Cancelled'),
-        ('refunded', 'Refunded')
-    ], default='pending')
+    approval = models.CharField(max_length=20, choices=[('pending','Pending'),('accepted','Accepted'),('rejected','Rejected')], default='pending')
+    status = models.CharField(max_length=20, choices=[('pending','Pending'),('processing','Processing'),('shipped','Shipped'),('delivered','Delivered'),('cancelled','Cancelled'),('refunded','Refunded')], default='pending')
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_method = models.CharField(max_length=50)
     delivery_method = models.CharField(max_length=50, null=True, blank=True)
@@ -1150,6 +1132,9 @@ class Order(models.Model):
     pickup_date = models.DateTimeField(null=True, blank=True)
     pickup_expire_date = models.DateTimeField(null=True, blank=True)
     refund_expire_date = models.DateTimeField(null=True, blank=True)
+
+    # Add this field to store per-item shipping fees as JSON
+    shipping_fees_breakdown = models.JSONField(null=True, blank=True, default=dict)
 
     class Meta:
         indexes = [
@@ -1167,9 +1152,20 @@ class Order(models.Model):
         if self.shipping_address and not self.delivery_address_text:
             self.delivery_address_text = self.shipping_address.get_full_address()
         super().save(*args, **kwargs)
+    
+    @property
+    def total_shipping_fee(self):
+        """Calculate total shipping fee from breakdown"""
+        if self.shipping_fees_breakdown:
+            return sum(self.shipping_fees_breakdown.values())
+        return 0
 
+    @property
+    def shipping_fees_by_shop(self):
+        """Get shipping fees grouped by shop"""
+        return self.shipping_fees_breakdown or {}
+    
 class Checkout(models.Model):
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
     voucher = models.ForeignKey(
         'Voucher',
@@ -1203,19 +1199,35 @@ class Checkout(models.Model):
         ('cancelled', 'Cancelled'),
         ('completed', 'Completed'),
     ], default='pending')
-
     remarks = models.CharField(max_length=500, null=True, blank=True)
     created_at = models.DateField(auto_now_add=True)
+    
+    # NEW: Add shipping fee for this checkout item (per shop)
+    shipping_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True, blank=True)
+    distance_km = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     class Meta:
         indexes = [
             models.Index(fields=['order']),
             models.Index(fields=['created_at']),
+            # REMOVE the shop_id index - it doesn't exist as a field
+            # If you need to index by shop, you can add a database index on direct_shop_id
+            models.Index(fields=['direct_shop_id']),  # This is fine since direct_shop_id is a field
         ]
 
     def __str__(self):
         return f"Checkout {self.id}"
-
+    
+    @property
+    def shop_id(self):
+        """Get shop ID from either direct checkout or cart item"""
+        if self.direct_shop_id:
+            return self.direct_shop_id
+        if self.cart_item and self.cart_item.product and self.cart_item.product.shop:
+            return self.cart_item.product.shop.id
+        return None
+    
+    
 class Review(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     customer = models.ForeignKey(
