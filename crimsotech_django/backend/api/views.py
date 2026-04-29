@@ -25415,6 +25415,8 @@ class SellerOrderList(viewsets.ViewSet):
             has_pending_offer = Delivery.objects.filter(order=order, status__in=['pending', 'accepted', 'declined']).exists()
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                     for keyword in ['pickup', 'store', 'collect'])
+            
+            # IMPORTANT: Get the latest delivery BEFORE using it
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
             
             current_shipping_status = self._get_shop_shipping_status(current_shop_status)
@@ -25426,53 +25428,56 @@ class SellerOrderList(viewsets.ViewSet):
             available_actions = []
             
             # Determine available actions based on THIS SHOP's status ONLY
-            # Do NOT block actions based on other shops' status
             if current_shop_status == 'pending':
                 if can_confirm:
                     available_actions = ['confirm']
-                    
+                        
             elif current_shop_status == 'confirmed':
-                # Shop has confirmed - allow arrangement regardless of other shops
                 if is_pickup:
                     available_actions = ['ready_for_pickup', 'cancel', 'view_details']
                 else:
                     available_actions = ['arrange_shipment', 'cancel', 'view_details']
-                    
+                        
             elif current_shop_status == 'processing':
                 if is_pickup:
                     available_actions = ['ready_for_pickup', 'cancel', 'view_details']
                 else:
                     available_actions = ['arrange_shipment', 'cancel', 'view_details']
-                    
+                        
             elif current_shop_status == 'ready':
-                # Only show ready_to_ship if rider has accepted
-                if latest_delivery and latest_delivery.status in ['accepted']:
-                    if is_pickup:
-                        available_actions = ['picked_up', 'view_details']
-                    else:
-                        available_actions = ['ready_to_ship', 'cancel', 'view_details']
+                if is_pickup:
+                    available_actions = ['picked_up', 'view_details']
                 else:
-                    # Rider hasn't accepted yet - only show waiting message
-                    available_actions = ['view_details']
-                    
+                    available_actions = ['ready_to_ship', 'cancel', 'view_details']
+                        
             elif current_shop_status == 'shipped':
-                # Only show to_deliver if rider has accepted or picked up
                 if latest_delivery and latest_delivery.status in ['accepted', 'picked_up']:
                     available_actions = ['to_deliver', 'view_details']
                 else:
                     available_actions = ['view_details']
-                    
+                        
             elif current_shop_status == 'to_deliver':
                 available_actions = ['delivered', 'view_details']
-                
+                    
             elif current_shop_status == 'delivered':
                 available_actions = ['complete', 'view_details']
-                
+                    
             elif current_shop_status == 'completed':
                 available_actions = ['view_details']
-                
+                    
             elif current_shop_status == 'cancelled':
                 available_actions = ['view_details']
+            
+            # ========== CRITICAL FIX: Add arrange_shipment for declined deliveries ==========
+            # Check if the delivery was declined by the rider
+            if latest_delivery and latest_delivery.status == 'declined':
+                print(f"🔴 Delivery is declined for order {order.order} - adding arrange_shipment")
+                if 'arrange_shipment' not in available_actions:
+                    available_actions.append('arrange_shipment')
+                if 'cancel' not in available_actions:
+                    available_actions.append('cancel')
+                if 'view_details' not in available_actions:
+                    available_actions.append('view_details')
             
             # Add print_waybill for delivery orders with assigned rider
             if not is_pickup and latest_delivery and latest_delivery.rider and latest_delivery.status in ['accepted', 'picked_up', 'in_progress']:
@@ -25482,6 +25487,8 @@ class SellerOrderList(viewsets.ViewSet):
             available_actions = list(set(available_actions))
             if 'view_details' not in available_actions:
                 available_actions.append('view_details')
+            
+            print(f"📋 Available actions for order {order.order}: {available_actions}")
             
             return Response({
                 "success": True,
@@ -25502,6 +25509,8 @@ class SellerOrderList(viewsets.ViewSet):
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+        
     @action(detail=True, methods=['patch'])
     def update_status(self, request, pk=None):
         try:
@@ -25630,15 +25639,35 @@ class SellerOrderList(viewsets.ViewSet):
                 if is_pickup:
                     return Response({"success": False, "message": "This action is for delivery orders only"}, status=status.HTTP_400_BAD_REQUEST)
                 
+                # Reset shop status if it was cancelled
+                if shop_status.status == 'cancelled':
+                    shop_status.status = 'processing'
+                    shop_status.confirmed_at = None
+                    shop_status.save()
+                    print(f"✅ Reset shop status from cancelled to processing for shop {shop.name}")
+                
+                # Check if order is confirmed (after potential reset)
                 if shop_status.status not in ['confirmed', 'processing']:
                     return Response({"success": False, "message": "Order must be confirmed before arranging shipment"}, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Check for active deliveries
+                # Check for active deliveries (accepted, picked_up, in_progress)
                 active_delivery = Delivery.objects.filter(
                     order=order, status__in=['accepted', 'picked_up', 'in_progress']
                 ).exists()
                 if active_delivery:
                     return Response({"success": False, "message": "Order already has an active delivery in progress"}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Handle existing declined delivery - reset it instead of creating new
+                existing_delivery = Delivery.objects.filter(order=order).first()
+                if existing_delivery and existing_delivery.status == 'declined':
+                    # Reset the declined delivery to pending
+                    existing_delivery.status = 'pending'
+                    existing_delivery.rider = None
+                    existing_delivery.picked_at = None
+                    existing_delivery.delivered_at = None
+                    existing_delivery.failed_reason = None
+                    existing_delivery.save()
+                    print(f"✅ Reset declined delivery to pending for order {order.order}")
                 
                 available_riders = Rider.objects.filter(
                     verified=True, 
@@ -25681,6 +25710,7 @@ class SellerOrderList(viewsets.ViewSet):
                     rider_lat = float(rider.rider.latitude)
                     rider_lng = float(rider.rider.longitude)
                     
+                    # Skip riders who previously rejected/declined this order
                     rejected_before = Delivery.objects.filter(
                         order=order,
                         rider=rider,
@@ -25688,6 +25718,7 @@ class SellerOrderList(viewsets.ViewSet):
                     ).exists()
                     
                     if rejected_before:
+                        print(f"⚠️ Rider {rider.rider.username} previously rejected/declined this order - SKIPPING")
                         continue
                     
                     distance_to_pickup = self._calculate_driving_distance(rider_lat, rider_lng, pickup_lat, pickup_lng)
@@ -25730,6 +25761,7 @@ class SellerOrderList(viewsets.ViewSet):
                         }
                     }, status=status.HTTP_200_OK)
                 
+                # Sort by total distance (nearest first)
                 rider_distances.sort(key=lambda x: x['total_distance'])
                 rider_comparison.sort(key=lambda x: x['total_distance_km'])
                 
@@ -25742,10 +25774,11 @@ class SellerOrderList(viewsets.ViewSet):
                 delivery_fee = self._calculate_delivery_fee(total_distance)
                 estimated_minutes = self._calculate_estimated_time(total_distance)
                 
-                # Create or update delivery
+                # Check if there's an existing delivery (resetting declined one)
                 existing_delivery = Delivery.objects.filter(order=order).first()
                 
                 if existing_delivery:
+                    # Update existing delivery with new rider
                     existing_delivery.rider = selected_rider
                     existing_delivery.status = 'pending'
                     existing_delivery.distance_km = Decimal(str(total_distance))
@@ -25757,6 +25790,7 @@ class SellerOrderList(viewsets.ViewSet):
                         'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
                         'destination_location': {'lat': dest_lat, 'lng': dest_lng},
                         'all_riders_compared': rider_comparison,
+                        'shop_id': str(shop.id),
                         'nearest_rider': {
                             'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
                             'username': selected_rider.rider.username,
@@ -25766,8 +25800,10 @@ class SellerOrderList(viewsets.ViewSet):
                         }
                     }
                     existing_delivery.save()
+                    delivery = existing_delivery
                 else:
-                    existing_delivery = Delivery.objects.create(
+                    # Create new delivery
+                    delivery = Delivery.objects.create(
                         order=order,
                         rider=selected_rider,
                         status='pending',
@@ -25780,6 +25816,7 @@ class SellerOrderList(viewsets.ViewSet):
                             'pickup_location': {'lat': pickup_lat, 'lng': pickup_lng, 'name': pickup_name},
                             'destination_location': {'lat': dest_lat, 'lng': dest_lng},
                             'all_riders_compared': rider_comparison,
+                            'shop_id': str(shop.id),
                             'nearest_rider': {
                                 'name': f"{selected_rider.rider.first_name} {selected_rider.rider.last_name}".strip() or selected_rider.rider.username,
                                 'username': selected_rider.rider.username,
@@ -25790,6 +25827,7 @@ class SellerOrderList(viewsets.ViewSet):
                         }
                     )
                 
+                # Send notification to the new rider
                 Notification.objects.create(
                     user=selected_rider.rider,
                     title='New Delivery Assignment',
@@ -25799,6 +25837,7 @@ class SellerOrderList(viewsets.ViewSet):
                     is_read=False
                 )
                 
+                # Update shop status and order status
                 shop_status.status = 'ready'
                 shop_status.save()
                 order.status = 'rider_assigned'
@@ -25812,7 +25851,7 @@ class SellerOrderList(viewsets.ViewSet):
                     "message": message,
                     "data": {
                         "order_id": str(order.order),
-                        "delivery_id": str(existing_delivery.id),
+                        "delivery_id": str(delivery.id),
                         "shop_status": shop_status.status,
                         "rider_count": 1,
                         "pickup_location": pickup_name,
@@ -25826,6 +25865,7 @@ class SellerOrderList(viewsets.ViewSet):
                         "all_riders_compared": rider_comparison
                     }
                 }, status=status.HTTP_200_OK)
+
             
             elif action_type == 'ready_to_ship':
                 if is_pickup:
@@ -29324,12 +29364,39 @@ class PurchasesBuyer(viewsets.ViewSet):
         if event_date and event_date <= twenty_four_hours_ago:
             order.status = 'completed'
             order.completed_at = timezone.now()
-            # Set refund_expire_date to 3 days after completed_at
+            # Set refund_expire_date to 1 day after completed_at
             order.refund_expire_date = order.completed_at + timedelta(days=1)
             order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
             return True
         
         return False
+    
+    def _update_order_status_from_checkouts(self, order):
+        """Update order status based on all checkout items' statuses"""
+        checkouts = Checkout.objects.filter(order=order)
+        
+        if not checkouts.exists():
+            return
+        
+        statuses = [c.status for c in checkouts]
+        
+        if all(s == 'cancelled' for s in statuses):
+            new_status = 'cancelled'
+        elif all(s == 'delivered' for s in statuses):
+            new_status = 'delivered'
+        elif any(s == 'delivered' for s in statuses):
+            new_status = 'partially_delivered'
+        elif any(s == 'shipped' for s in statuses):
+            new_status = 'shipped'
+        elif any(s == 'processing' for s in statuses):
+            new_status = 'processing'
+        else:
+            new_status = 'pending'
+        
+        if order.status != new_status:
+            order.status = new_status
+            order.save(update_fields=['status'])
+            print(f"📦 Order {order.order} status updated to: {new_status} (checkout statuses: {statuses})")
     
     @action(detail=False, methods=['get'], url_path='user-purchases')
     def user_purchases(self, request):
@@ -29364,6 +29431,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             # AUTO-COMPLETE CHECK
             for order in orders:
                 self._auto_complete_if_needed(order)
+                self._update_order_status_from_checkouts(order)
             
             # Get related payments and deliveries in bulk
             order_ids = list(orders.values_list('order', flat=True))
@@ -29381,16 +29449,13 @@ class PurchasesBuyer(viewsets.ViewSet):
             
             for order in orders:
                 for checkout in order.checkout_set.all():
-                    # Check if checkout has direct product info (from Buy Now)
                     if hasattr(checkout, 'direct_product_id') and checkout.direct_product_id:
                         product_ids.add(checkout.direct_product_id)
                         if hasattr(checkout, 'direct_variant_id') and checkout.direct_variant_id:
                             variant_ids.add(checkout.direct_variant_id)
                         if hasattr(checkout, 'direct_shop_id') and checkout.direct_shop_id:
                             shop_ids.add(checkout.direct_shop_id)
-                    # Check if checkout has cart_item
                     elif checkout.cart_item_id:
-                        # We'll get the cart_item separately
                         pass
             
             # Fetch all products, variants, and shops in bulk
@@ -29402,7 +29467,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 products = Product.objects.filter(id__in=product_ids).select_related('shop', 'customer__customer')
                 products_dict = {str(p.id): p for p in products}
                 
-                # Get product media in bulk
                 product_media_dict = {}
                 all_product_media = ProductMedia.objects.filter(product_id__in=product_ids)
                 for media in all_product_media:
@@ -29419,7 +29483,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 shops = Shop.objects.filter(id__in=shop_ids)
                 shops_dict = {str(s.id): s for s in shops}
             
-            # Get cart_items in bulk for regular checkout items
+            # Get cart_items in bulk
             cart_item_ids = []
             for order in orders:
                 for checkout in order.checkout_set.all():
@@ -29436,11 +29500,9 @@ class PurchasesBuyer(viewsets.ViewSet):
             # Prepare response data
             purchases = []
             for order in orders:
-                # Get payment and delivery for this order
                 payment = payment_dict.get(str(order.order))
                 delivery = delivery_dict.get(str(order.order))
 
-                # If order is delivered, set completed_at using delivery timestamps when available
                 if order.status == 'delivered' and not getattr(order, 'completed_at', None):
                     try:
                         delivery_completed_at = (
@@ -29456,7 +29518,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                     except Exception as _e:
                         print(f"DEBUG: Failed to set completed_at for order {order.order}: {_e}")
 
-                # Get delivery address
                 delivery_address = None
                 if order.shipping_address:
                     delivery_address = order.shipping_address.get_full_address()
@@ -29479,20 +29540,15 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'items': []
                 }
                 
-                # Process all checkouts for this order
                 for checkout in order.checkout_set.all():
-                    # Try to get product data from direct checkout first
                     if hasattr(checkout, 'direct_product_id') and checkout.direct_product_id and checkout.direct_product_name:
-                        # Use snapshot data from direct checkout
                         product = products_dict.get(str(checkout.direct_product_id))
                         variant = variants_dict.get(str(checkout.direct_variant_id)) if hasattr(checkout, 'direct_variant_id') and checkout.direct_variant_id else None
                         
-                        # Get product images from product if available, otherwise use snapshot
                         product_images = []
                         primary_image = None
                         
                         if product and product.id:
-                            # Product still exists - fetch fresh data
                             product_media = product_media_dict.get(str(product.id), [])
                             for media in product_media:
                                 if media.file_data:
@@ -29504,7 +29560,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                                             'file_type': media.file_type
                                         })
                         elif hasattr(checkout, 'direct_product_image') and checkout.direct_product_image:
-                            # Use snapshot image
                             product_images.append({
                                 'id': None,
                                 'url': checkout.direct_product_image,
@@ -29517,17 +29572,11 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'file_type': product_images[0]['file_type']
                             }
                         
-                        # Get price
                         price = str(checkout.direct_product_price) if hasattr(checkout, 'direct_product_price') and checkout.direct_product_price else '0.00'
-                        
-                        # Get shop name
                         shop_name = checkout.direct_shop_name if hasattr(checkout, 'direct_shop_name') and checkout.direct_shop_name else 'Unknown Shop'
                         shop_id = str(checkout.direct_shop_id) if hasattr(checkout, 'direct_shop_id') and checkout.direct_shop_id else None
-                        
-                        # Get variant title
                         variant_title = variant.title if variant else None
                         
-                        # Check if user has reviewed this product
                         has_reviewed = False
                         if product and product.id:
                             try:
@@ -29539,19 +29588,21 @@ class PurchasesBuyer(viewsets.ViewSet):
                             except Customer.DoesNotExist:
                                 has_reviewed = False
                         
-                        # Check if item is refundable
                         is_refundable = False
                         if variant and hasattr(variant, 'is_refundable'):
                             is_refundable = variant.is_refundable
                         elif product and hasattr(product, 'is_refundable'):
                             is_refundable = product.is_refundable
                         
+                        # Use checkout.status for item status
+                        item_status = checkout.status if hasattr(checkout, 'status') else 'pending'
+                        
                         item_data = {
                             'checkout_id': str(checkout.id),
                             'cart_item_id': None,
                             'product_id': str(checkout.direct_product_id),
                             'product_name': checkout.direct_product_name,
-                            'item_status': checkout.status,
+                            'item_status': item_status,
                             'product_description': product.description if product else '',
                             'product_condition': product.condition if product else 0,
                             'product_status': product.status if product else '',
@@ -29565,8 +29616,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'quantity': checkout.quantity,
                             'price': price,
                             'subtotal': str(checkout.total_amount),
-                            'status': checkout.status if checkout.status == 'cancelled' else order.status,
-                            'item_status': checkout.status,
+                            'status': item_status,
                             'remarks': checkout.remarks,
                             'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
                             'product_images': product_images,
@@ -29576,7 +29626,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'name': checkout.voucher.name,
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
-                            'can_review': not has_reviewed and order.status == 'delivered',
+                            'can_review': item_status == 'delivered' and not has_reviewed,
                             'is_refundable': is_refundable,
                             'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
                             'distance_km': getattr(checkout, 'distance_km', None),
@@ -29584,14 +29634,12 @@ class PurchasesBuyer(viewsets.ViewSet):
                         order_data['items'].append(item_data)
                         
                     elif checkout.cart_item_id:
-                        # Regular cart-based checkout
                         cart_item = cart_items_dict.get(str(checkout.cart_item_id))
                         
                         if cart_item and cart_item.product:
                             product = cart_item.product
                             variant = cart_item.variant
                             
-                            # Get product images
                             product_images = []
                             for media in product.productmedia_set.all():
                                 if media.file_data:
@@ -29603,7 +29651,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                                             'file_type': media.file_type
                                         })
                             
-                            # Get primary image
                             primary_image = None
                             if product_images:
                                 primary_image = {
@@ -29611,14 +29658,12 @@ class PurchasesBuyer(viewsets.ViewSet):
                                     'file_type': product_images[0]['file_type']
                                 }
                             
-                            # Get variant price
                             product_price = getattr(product, 'price', 0)
                             variant_price_value = variant.price if variant and variant.price is not None else product_price
                             variant_price = str(variant_price_value)
                             variant_title = variant.title if variant else None
                             variant_sku = variant.sku_code if variant else None
                             
-                            # Check if user has reviewed this product
                             has_reviewed = False
                             try:
                                 customer_profile = Customer.objects.get(customer=user)
@@ -29629,17 +29674,17 @@ class PurchasesBuyer(viewsets.ViewSet):
                             except Customer.DoesNotExist:
                                 has_reviewed = False
                             
-                            # Get shop picture
                             shop_picture_url = None
                             if product.shop and product.shop.shop_picture:
                                 shop_picture_url = get_media_url(product.shop.shop_picture)
                             
-                            # Check if item is refundable
                             is_refundable = False
                             if variant and hasattr(variant, 'is_refundable'):
                                 is_refundable = variant.is_refundable
                             else:
                                 is_refundable = getattr(product, 'is_refundable', False)
+                            
+                            item_status = checkout.status if hasattr(checkout, 'status') else 'pending'
                             
                             item_data = {
                                 'checkout_id': str(checkout.id),
@@ -29659,8 +29704,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'quantity': checkout.quantity,
                                 'price': variant_price,
                                 'subtotal': str(checkout.total_amount),
-                                'status': checkout.status if checkout.status == 'cancelled' else order.status,  
-                                'item_status': checkout.status, 
+                                'status': item_status,
+                                'item_status': item_status,
                                 'remarks': checkout.remarks,
                                 'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
                                 'product_images': product_images,
@@ -29670,12 +29715,13 @@ class PurchasesBuyer(viewsets.ViewSet):
                                     'name': checkout.voucher.name,
                                     'code': checkout.voucher.code
                                 } if checkout.voucher else None,
-                                'can_review': not has_reviewed and order.status == 'delivered',
-                                'is_refundable': is_refundable
+                                'can_review': item_status == 'delivered' and not has_reviewed,
+                                'is_refundable': is_refundable,
+                                'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
                             }
                             order_data['items'].append(item_data)
                         else:
-                            # Cart item or product no longer exists
+                            item_status = checkout.status if hasattr(checkout, 'status') else 'pending'
                             item_data = {
                                 'checkout_id': str(checkout.id),
                                 'cart_item_id': str(checkout.cart_item_id),
@@ -29694,7 +29740,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'quantity': checkout.quantity,
                                 'price': '0.00',
                                 'subtotal': str(checkout.total_amount),
-                                'status': order.status,
+                                'status': item_status,
+                                'item_status': item_status,
                                 'remarks': checkout.remarks,
                                 'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
                                 'product_images': [],
@@ -29705,7 +29752,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                             }
                             order_data['items'].append(item_data)
                     else:
-                        # Fallback for old data with no reference
+                        item_status = checkout.status if hasattr(checkout, 'status') else 'pending'
                         item_data = {
                             'checkout_id': str(checkout.id),
                             'cart_item_id': None,
@@ -29724,7 +29771,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'quantity': checkout.quantity,
                             'price': '0.00',
                             'subtotal': str(checkout.total_amount),
-                            'status': checkout.status if checkout.status == 'cancelled' else order.status,
+                            'status': item_status,
+                            'item_status': item_status,
                             'remarks': checkout.remarks,
                             'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else str(checkout.created_at),
                             'product_images': [],
@@ -29735,7 +29783,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                         }
                         order_data['items'].append(item_data)
                 
-                # Include refund/dispute metadata
                 try:
                     refund_obj = Refund.objects.filter(order_id=order.order).order_by('-created_at').first()
                     if refund_obj:
@@ -29768,7 +29815,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-
     @action(detail=False, methods=['get'], url_path='status-counts')
     def status_counts(self, request):
         """Return counts per order status for the session user."""
@@ -29814,24 +29860,19 @@ class PurchasesBuyer(viewsets.ViewSet):
         except Order.DoesNotExist:
             return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Do not allow cancelling if already shipped/delivered/completed or already cancelled/refunded
         if order.status in ['shipped', 'delivered', 'completed', 'cancelled', 'refunded']:
             return Response({'error': 'Order cannot be cancelled at this stage'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             order.status = 'cancelled'
             order.save()
-
-            # Optionally: create a log entry or send notification here
             return Response({'success': True, 'message': 'Order cancelled successfully'}, status=status.HTTP_200_OK)
         except Exception as e:
             logger.exception('Error cancelling order: %s', e)
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def retrieve(self, request, pk=None):
-        """
-        Get a single order by ID
-        """
+        """Get a single order by ID"""
         user_id = request.headers.get("X-User-Id")
         if not user_id:
             return Response(
@@ -29855,27 +29896,23 @@ class PurchasesBuyer(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # AUTO-COMPLETE CHECK
         self._auto_complete_if_needed(order)
+        self._update_order_status_from_checkouts(order)
         
-        # Get payment and delivery for this order
         payment = Payment.objects.filter(order_id=order.order).first()
         delivery = Delivery.objects.filter(order_id=order.order).first()
         
-        # Get delivery address
         delivery_address = None
         if order.shipping_address:
             delivery_address = order.shipping_address.get_full_address()
         elif order.delivery_address_text:
             delivery_address = order.delivery_address_text
         
-        # Get order items
         items_data = []
         for checkout in order.checkout_set.all():
             if checkout.cart_item and checkout.cart_item.product:
                 product = checkout.cart_item.product
                 
-                # Get variant information if available
                 variant = checkout.cart_item.variant
                 variant_title = variant.title if variant else None
                 product_price = getattr(product, 'price', 0)
@@ -29883,7 +29920,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 variant_price = str(variant_price_value)
                 variant_sku = variant.sku_code if variant else None
                 
-                # Get product media (images) - UPDATED to use get_media_url
                 product_images = []
                 for media in product.productmedia_set.all():
                     if media.file_data:
@@ -29895,10 +29931,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'file_type': media.file_type
                             })
                 
-                # Get primary image (first image)
                 primary_image = product_images[0] if product_images else None
                 
-                # Check if user has reviewed this product
                 has_reviewed = False
                 try:
                     customer_profile = Customer.objects.get(customer=user)
@@ -29909,10 +29943,11 @@ class PurchasesBuyer(viewsets.ViewSet):
                 except Customer.DoesNotExist:
                     has_reviewed = False
                 
-                # Get shop picture using get_media_url
                 shop_picture_url = None
                 if product.shop and product.shop.shop_picture:
                     shop_picture_url = get_media_url(product.shop.shop_picture)
+                
+                item_status = checkout.status if hasattr(checkout, 'status') else 'pending'
                 
                 item_data = {
                     'checkout_id': str(checkout.id),
@@ -29932,7 +29967,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'quantity': checkout.quantity,
                     'price': variant_price,
                     'subtotal': str(checkout.total_amount),
-                    'status': order.status,
+                    'status': item_status,
+                    'item_status': item_status,
                     'remarks': checkout.remarks,
                     'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
                     'product_images': product_images,
@@ -29942,11 +29978,12 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'name': checkout.voucher.name,
                         'code': checkout.voucher.code
                     } if checkout.voucher else None,
-                    'can_review': not has_reviewed and order.status == 'delivered'
+                    'can_review': item_status == 'delivered' and not has_reviewed,
+                    'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
                 }
                 items_data.append(item_data)
             else:
-                # Handle case where cart_item or product might be null
+                item_status = checkout.status if hasattr(checkout, 'status') else 'pending'
                 item_data = {
                     'checkout_id': str(checkout.id),
                     'cart_item_id': None,
@@ -29965,7 +30002,8 @@ class PurchasesBuyer(viewsets.ViewSet):
                     'quantity': checkout.quantity,
                     'price': '0.00',
                     'subtotal': str(checkout.total_amount),
-                    'status': order.status,
+                    'status': item_status,
+                    'item_status': item_status,
                     'remarks': checkout.remarks,
                     'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
                     'product_images': [],
@@ -30026,11 +30064,11 @@ class PurchasesBuyer(viewsets.ViewSet):
             logger.exception('view_order_detail order lookup failed: %s', exc)
             return Response({'error': 'Invalid order identifier'}, status=status.HTTP_400_BAD_REQUEST)
         
-        # AUTO-COMPLETE CHECK
+        # Update order status based on checkout items
+        self._update_order_status_from_checkouts(order)
         self._auto_complete_if_needed(order)
         
         try:
-            # Get payment and delivery details
             payment = Payment.objects.filter(order_id=order.order).first()
             delivery = Delivery.objects.filter(order_id=order.order).first()
 
@@ -30047,14 +30085,12 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'proof_type_display': proof.get_proof_type_display(),
                     })
             
-            # Get shipping/delivery address
             delivery_address = None
             if order.shipping_address:
                 delivery_address = order.shipping_address.get_full_address()
             elif order.delivery_address_text:
                 delivery_address = order.delivery_address_text
             
-            # Prefer a full_name field if available
             full_name = None
             if hasattr(user, 'full_name') and user.full_name:
                 full_name = user.full_name
@@ -30063,7 +30099,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 last = getattr(user, 'last_name', '') or ''
                 full_name = (f"{first} {last}".strip() if (first or last) else getattr(user, 'username', None))
             
-            # Prepare shipping information
             shipping_info = {
                 'logistics_carrier': order.delivery_method if order.delivery_method else 'Standard Delivery',
                 'tracking_number': f"PH{order.created_at.strftime('%y%m%d')}{str(order.order)[:6].upper()}" if order.order else None,
@@ -30071,7 +30106,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'estimated_delivery': (order.created_at + timedelta(days=3)).strftime('%m/%d/%Y') if order.created_at else None,
             }
             
-            # Prepare delivery address details
             delivery_address_info = {
                 'recipient_name': full_name or getattr(user, 'username', ''),
                 'phone_number': user.phone_number if hasattr(user, 'phone_number') else '(+63) 912 345 6789',
@@ -30085,7 +30119,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 }
             }
             
-            # Get all items in this order
             items_data = []
             total_items = 0
             subtotal = 0
@@ -30095,7 +30128,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                     product = checkout.cart_item.product
                     total_items += checkout.quantity
                     
-                    # Get variant information
                     variant = checkout.cart_item.variant
                     variant_title = variant.title if variant else 'Default'
                     product_price = getattr(product, 'price', 0)
@@ -30112,21 +30144,17 @@ class PurchasesBuyer(viewsets.ViewSet):
                     
                     subtotal += float(checkout.total_amount or 0)
                     
-                    # FIXED: Use ProductSerializer to get properly formatted images (like in user_purchases)
                     product_serializer = ProductSerializer(product, context={'request': request})
                     product_data = product_serializer.data
                     
-                    # Get product images from serializer
                     product_images = product_data.get('media_files', [])
                     primary_image = product_data.get('primary_image')
                     
-                    # Get shop information
                     shop_info = {}
                     if product.shop:
                         shop_picture_url = None
                         if product.shop.shop_picture:
                             try:
-                                # Use get_media_url helper function (no request parameter needed)
                                 shop_picture_url = get_media_url(product.shop.shop_picture)
                             except Exception:
                                 shop_picture_url = None
@@ -30139,12 +30167,11 @@ class PurchasesBuyer(viewsets.ViewSet):
                             'picture': shop_picture_url,
                             'description': product.shop.description if hasattr(product.shop, 'description') else '',
                             'items_count': product.shop.products.count() if product.shop else 0,
-                            'followers_count': followers_count,  # Changed from hardcoded 178000
-                            'is_choices': False,  # You can determine this based on product variants
+                            'followers_count': followers_count,
+                            'is_choices': False,
                             'is_new': False,
                         }
                     
-                    # Check if user has reviewed this product
                     has_reviewed = False
                     try:
                         customer_profile = Customer.objects.get(customer=user)
@@ -30154,6 +30181,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                         ).exists()
                     except Customer.DoesNotExist:
                         has_reviewed = False
+                    
+                    # Use checkout.status for per-item status
+                    item_status = checkout.status if hasattr(checkout, 'status') else 'pending'
                     
                     item_data = {
                         'checkout_id': str(checkout.id),
@@ -30167,16 +30197,49 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'price': variant_price,
                         'original_price': variant_original_price,
                         'subtotal': str(checkout.total_amount or '0.00'),
-                        'status': checkout.status if checkout.status == 'cancelled' else order.status,
-                        'item_status': checkout.status,  
+                        'status': item_status,
+                        'item_status': item_status,
                         'purchased_at': checkout.created_at.isoformat(),
                         'product_images': product_images,
                         'primary_image': primary_image,
                         'shop_info': shop_info,
-                        'can_review': not has_reviewed and order.status == 'delivered',
-                        'can_return': order.status == 'delivered' and not has_reviewed,
+                        'can_review': item_status == 'delivered' and not has_reviewed,
+                        'can_return': item_status == 'delivered' and not has_reviewed,
                         'is_refundable': variant_is_refundable,
                         'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
+                        'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
+                        'distance_km': getattr(checkout, 'distance_km', None),
+                    }
+                    items_data.append(item_data)
+                else:
+                    item_status = checkout.status if hasattr(checkout, 'status') else 'pending'
+                    item_data = {
+                        'checkout_id': str(checkout.id),
+                        'cart_item_id': None,
+                        'product_id': None,
+                        'product_name': 'Item no longer available',
+                        'product_description': '',
+                        'product_condition': '',
+                        'product_status': '',
+                        'variant_id': None,
+                        'variant_title': None,
+                        'variant_sku': None,
+                        'shop_id': None,
+                        'shop_name': 'Unknown Shop',
+                        'shop_picture': None,
+                        'seller_username': None,
+                        'quantity': checkout.quantity,
+                        'price': '0.00',
+                        'subtotal': str(checkout.total_amount),
+                        'status': item_status,
+                        'item_status': item_status,
+                        'remarks': checkout.remarks,
+                        'purchased_at': checkout.created_at.isoformat() if hasattr(checkout.created_at, 'isoformat') else checkout.created_at,
+                        'product_images': [],
+                        'primary_image': None,
+                        'voucher_applied': None,
+                        'can_review': False,
+                        'is_refundable': False
                     }
                     items_data.append(item_data)
             
@@ -30192,7 +30255,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             order_summary = {
                 'subtotal': str(subtotal),
                 'shipping_fee': str(total_shipping_fee),
-                'shipping_fees_breakdown': shipping_fees_by_shop,  # Add per-shop breakdown
+                'shipping_fees_breakdown': shipping_fees_by_shop,
                 'tax': str(float(subtotal) * 0.12),
                 'discount': '0.00',
                 'total': str(order.total_amount),
@@ -30200,7 +30263,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'payment_fee': str(float(order.transaction_fee) if order.transaction_fee else 0.00),
             }
             
-            # Prepare response
             response_data = {
                 'order': {
                     'id': str(order.order),
@@ -30240,9 +30302,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'timeline': self._get_order_timeline(order, delivery, payment),
                 'actions': {
                     'can_cancel': order.status in ['pending', 'processing'],
-                    'can_track': order.status in ['shipped', 'delivered', 'completed'],
-                    'can_review': order.status == 'delivered' and any(item['can_review'] for item in items_data),
-                    'can_return': order.status == 'delivered' and any(item['can_return'] for item in items_data),
+                    'can_track': order.status in ['shipped', 'delivered', 'completed', 'partially_delivered'],
+                    'can_review': any(item['can_review'] for item in items_data),
+                    'can_return': any(item['can_return'] for item in items_data),
                     'can_contact_seller': True,
                     'can_buy_again': True,
                 },
@@ -30256,14 +30318,10 @@ class PurchasesBuyer(viewsets.ViewSet):
             return Response({'error': 'An internal error occurred while fetching the order'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _get_item_status(self, order, checkout):
-        """
-        Determine the correct status for an item.
-        For cancelled items, use checkout.status.
-        For other statuses, use order.status.
-        """
+        """Determine the correct status for an item"""
         if checkout.status == 'cancelled':
             return checkout.status
-        return order.status
+        return checkout.status if hasattr(checkout, 'status') else order.status
     
     def _get_status_display(self, status):
         status_map = {
@@ -30271,6 +30329,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             'processing': 'Processing',
             'shipped': 'Shipped',
             'delivered': 'Delivered',
+            'partially_delivered': 'Partially Delivered',
             'completed': 'Completed',
             'cancelled': 'Cancelled',
             'refunded': 'Refunded',
@@ -30279,13 +30338,14 @@ class PurchasesBuyer(viewsets.ViewSet):
     
     def _get_status_color(self, status):
         color_map = {
-            'pending': '#F59E0B',  # Amber
-            'processing': '#F59E0B',  # Amber
-            'shipped': '#3B82F6',  # Blue
-            'delivered': '#10B981',  # Green
-            'completed': '#10B981',  # Green
-            'cancelled': '#EF4444',  # Red
-            'refunded': '#EF4444',  # Red
+            'pending': '#F59E0B',
+            'processing': '#F59E0B',
+            'shipped': '#3B82F6',
+            'delivered': '#10B981',
+            'partially_delivered': '#F97316',
+            'completed': '#10B981',
+            'cancelled': '#EF4444',
+            'refunded': '#EF4444',
         }
         return color_map.get(status, '#6B7280')
     
@@ -30293,7 +30353,6 @@ class PurchasesBuyer(viewsets.ViewSet):
         """Generate timeline events for the order"""
         timeline = []
         
-        # Order placed
         timeline.append({
             'event': 'Order Placed',
             'date': order.created_at.isoformat(),
@@ -30303,7 +30362,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             'completed': True,
         })
         
-        # Payment confirmed
         if payment and payment.status == 'completed':
             timeline.append({
                 'event': 'Payment Confirmed',
@@ -30314,7 +30372,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'completed': True,
             })
         
-        # Get all shops involved in this order
         shops_involved = set()
         for checkout in order.checkout_set.all():
             if checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
@@ -30325,8 +30382,7 @@ class PurchasesBuyer(viewsets.ViewSet):
         shop_count = len(shops_involved)
         shop_names = ', '.join(list(shops_involved)) if shops_involved else 'Seller'
         
-        # Order processed (per shop)
-        if order.status in ['processing', 'shipped', 'delivered', 'completed']:
+        if order.status in ['processing', 'shipped', 'delivered', 'partially_delivered', 'completed']:
             timeline.append({
                 'event': 'Order Processed',
                 'date': order.updated_at.isoformat() if order.updated_at else order.created_at.isoformat(),
@@ -30336,8 +30392,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'completed': True,
             })
         
-        # Shipped (may have multiple shipments)
-        if order.status in ['shipped', 'delivered', 'completed']:
+        if order.status in ['shipped', 'delivered', 'partially_delivered', 'completed']:
             shipped_date = delivery.created_at if delivery else order.updated_at
             timeline.append({
                 'event': 'Shipped',
@@ -30348,24 +30403,23 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'completed': True,
             })
         
-        # Delivered
-        if order.status in ['delivered', 'completed']:
+        if order.status in ['delivered', 'partially_delivered', 'completed']:
             delivered_date = (
                 (getattr(delivery, 'delivery_date', None)
                 or getattr(delivery, 'delivered_at', None)
                 or getattr(delivery, 'updated_at', None))
                 if delivery else order.updated_at
             )
+            delivery_status_text = 'Your order has been delivered' if order.status == 'delivered' else 'Some items have been delivered'
             timeline.append({
-                'event': 'Delivered',
+                'event': 'Delivery Status',
                 'date': delivered_date.isoformat() if delivered_date else None,
-                'description': f'Your order from {shop_names} has been delivered',
+                'description': f'{delivery_status_text} from {shop_names}',
                 'icon': 'checkmark-done',
                 'color': '#10B981',
-                'completed': True,
+                'completed': order.status == 'delivered',
             })
         
-        # Completed
         if order.status == 'completed':
             timeline.append({
                 'event': 'Completed',
@@ -30376,7 +30430,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'completed': True,
             })
         
-        # Future/pending events
         if order.status == 'pending':
             timeline.append({
                 'event': 'Processing',
@@ -30404,7 +30457,6 @@ class PurchasesBuyer(viewsets.ViewSet):
         if str(order.user.id) != str(user_id):
             return Response({'success': False, 'message': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
 
-        # Allow completion from either 'delivered' or 'picked_up' status
         if order.status not in ['delivered', 'picked_up']:
             return Response({
                 'success': False, 
@@ -30415,16 +30467,11 @@ class PurchasesBuyer(viewsets.ViewSet):
             from django.utils import timezone
             from datetime import timedelta
             
-            # Update order status to completed
             order.status = 'completed'
             order.completed_at = timezone.now()
-            
-            # Set refund_expire_date to 3 days after completed_at
             order.refund_expire_date = order.completed_at + timedelta(days=1)
-            
             order.save(update_fields=['status', 'completed_at', 'refund_expire_date'])
 
-            # Update delivery status to delivered if it exists
             delivery = Delivery.objects.filter(order=order).first()
             if delivery:
                 delivery.status = 'completed'
@@ -30452,18 +30499,15 @@ class PurchasesBuyer(viewsets.ViewSet):
 
         try:
             user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
             order = Order.objects.get(order=pk, user=user)
-        except Order.DoesNotExist:
-            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+        except (User.DoesNotExist, Order.DoesNotExist):
+            return Response({'error': 'Order not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
 
+        self._update_order_status_from_checkouts(order)
+        
         payment = Payment.objects.filter(order_id=order.order).first()
         delivery = Delivery.objects.filter(order_id=order.order).first()
 
-        # Basic order info
         order_info = {
             'id': str(order.order),
             'status': order.status,
@@ -30472,11 +30516,9 @@ class PurchasesBuyer(viewsets.ViewSet):
             'created_at': order.created_at.isoformat(),
         }
 
-        # Tracking info
         tracking_status = delivery.status if delivery else order.status
         tracking_last = delivery.updated_at.isoformat() if delivery and getattr(delivery, 'updated_at', None) else order.updated_at.isoformat() if order.updated_at else None
 
-        # Simple progress map
         status_to_progress = {
             'pending': 5,
             'processing': 30,
@@ -30484,6 +30526,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             'shipped': 70,
             'out_for_delivery': 90,
             'delivered': 100,
+            'partially_delivered': 85,
             'completed': 100,
             'cancelled': 0,
             'refunded': 0,
@@ -30500,9 +30543,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             'delivery_date': delivery.delivery_date.isoformat() if delivery and getattr(delivery, 'delivery_date', None) else None,
         }
 
-        # Shipping info (carrier/from/to)
         from_address = None
-        # try to get shop info from first item
         first_item = order.checkout_set.filter(cart_item__product__shop__isnull=False).select_related('cart_item__product__shop').first()
         if first_item and first_item.cart_item and first_item.cart_item.product and first_item.cart_item.product.shop:
             shop = first_item.cart_item.product.shop
@@ -30549,7 +30590,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             }
         }
 
-        # Package contents
         package_items = []
         total_value = 0
         total_items = 0
@@ -30558,7 +30598,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 prod = checkout.cart_item.product
                 qty = checkout.quantity
                 
-                # Get variant price if available
                 variant = checkout.cart_item.variant
                 product_price = getattr(prod, 'price', 0)
                 price = float(variant.price) if variant and variant.price is not None else float(product_price or 0)
@@ -30579,7 +30618,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             'total_value': str(total_value)
         }
 
-        # Rider info
         rider_info = None
         if delivery and delivery.rider and getattr(delivery.rider, 'rider', None):
             r = delivery.rider.rider
@@ -30591,7 +30629,6 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'eta': tracking['estimated_delivery']
             }
 
-        # Timeline - map backend timeline to frontend expected keys
         raw_timeline = self._get_order_timeline(order, delivery, payment)
         mapped_timeline = []
         for ev in raw_timeline:
@@ -30621,7 +30658,6 @@ class PurchasesBuyer(viewsets.ViewSet):
 
         return Response(data, status=status.HTTP_200_OK)
 
-    # Add: return rider info for an order
     @action(detail=True, methods=['get'], url_path='get-rider-info')
     def get_rider_info(self, request, pk=None):
         """Return rider(s) assigned to deliveries for an order."""
@@ -30641,12 +30677,11 @@ class PurchasesBuyer(viewsets.ViewSet):
         for delivery in deliveries:
             if delivery.rider:
                 rider = delivery.rider
-                # FIXED: Use rider.rider_id instead of rider.rider.id
                 riders_data.append({
-                    "id": str(rider.rider_id),  # Rider's ID
-                    "rider_id": str(rider.rider_id),  # Rider's ID
+                    "id": str(rider.rider_id),
+                    "rider_id": str(rider.rider_id),
                     "user": {
-                        "id": str(rider.rider.id),  # User's ID (this is correct)
+                        "id": str(rider.rider.id),
                         "first_name": rider.rider.first_name if rider.rider else '',
                         "last_name": rider.rider.last_name if rider.rider else '',
                         "phone": rider.rider.contact_number if rider.rider else ''
@@ -30657,7 +30692,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             "success": True, 
             "order_id": str(order.order), 
             "riders": riders_data
-    })
+        })
 
     @action(detail=True, methods=['post'], url_path='cancel-items')
     def cancel_items(self, request, pk=None):
@@ -30682,12 +30717,10 @@ class PurchasesBuyer(viewsets.ViewSet):
         except Order.DoesNotExist:
             return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Get checkout IDs from request
         checkout_ids = request.data.get('checkout_ids', [])
         if not checkout_ids:
             return Response({'error': 'checkout_ids array is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Only allow cancellation for pending or processing orders
         if order.status not in ['pending', 'processing']:
             return Response({
                 'error': f'Cannot cancel items for order with status: {order.status}',
@@ -30695,7 +30728,6 @@ class PurchasesBuyer(viewsets.ViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # Get the checkout items to cancel
             checkouts = Checkout.objects.filter(
                 order=order,
                 id__in=checkout_ids
@@ -30712,19 +30744,15 @@ class PurchasesBuyer(viewsets.ViewSet):
             cancelled_total = Decimal('0')
             
             for checkout in checkouts:
-                # Only cancel if still pending
                 if checkout.status == 'pending':
-                    # Mark as cancelled
                     checkout.status = 'cancelled'
                     checkout.save(update_fields=['status'])
                     cancelled_count += 1
                     cancelled_items.append(str(checkout.id))
                     
-                    # Track cancelled amount to update order total
                     if checkout.total_amount:
                         cancelled_total += checkout.total_amount
                     
-                    # Restore stock if needed
                     if checkout.cart_item and checkout.cart_item.variant:
                         variant = checkout.cart_item.variant
                         variant.quantity += checkout.quantity
@@ -30741,16 +30769,15 @@ class PurchasesBuyer(viewsets.ViewSet):
                         except Variants.DoesNotExist:
                             pass
             
-            # Update order total amount
             if cancelled_total > 0:
                 new_total = order.total_amount - cancelled_total
-                # Ensure total doesn't go negative
                 if new_total < 0:
                     new_total = Decimal('0')
                 order.total_amount = new_total
                 order.save(update_fields=['total_amount'])
             
-            # If all items are cancelled, mark the order as cancelled
+            self._update_order_status_from_checkouts(order)
+            
             remaining_checkouts = Checkout.objects.filter(order=order).exclude(status='cancelled')
             if remaining_checkouts.count() == 0:
                 order.status = 'cancelled'
@@ -30773,6 +30800,10 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'error': str(e),
                 'success': False
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
@@ -31797,7 +31828,7 @@ class RiderOrdersActive(viewsets.ViewSet):
         except (ValueError, AttributeError):
             return Response(
                 {"error": "Invalid identifier format. Must be a valid UUID."},
-                status=status.HTTP_400_BADDRESS_REQUEST
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         # Get the rider from request
@@ -31809,6 +31840,12 @@ class RiderOrdersActive(viewsets.ViewSet):
                 {"error": "This delivery is not assigned to you"},
                 status=status.HTTP_403_FORBIDDEN
             )
+
+        # ========== Get shop_id from delivery metadata ==========
+        delivery_shop_id = None
+        if delivery and delivery.metadata and delivery.metadata.get('shop_id'):
+            delivery_shop_id = delivery.metadata.get('shop_id')
+            print(f"🏪 Delivery is for shop_id: {delivery_shop_id}")
 
         return_request_info = None
         refund_id = None 
@@ -31895,18 +31932,46 @@ class RiderOrdersActive(viewsets.ViewSet):
 
         payment = Payment.objects.filter(order=order).first()
         
-        # Get checkout items with variant and product media
-        checkout_items = Checkout.objects.filter(order=order).select_related(
+        # Get all checkout items with variant and product media
+        all_checkout_items = Checkout.objects.filter(order=order).select_related(
             'cart_item__variant',
             'cart_item__variant__product__shop',
             'cart_item__variant__product__customer__customer'
         )
+        
+        # FILTER: Only get items from the shop assigned to this delivery (using metadata shop_id)
+        checkout_items = []
+        shop_total_amount = Decimal('0.00')
+        
+        for item in all_checkout_items:
+            item_shop_id = None
+            
+            # Try to get shop_id from direct checkout
+            if hasattr(item, 'direct_shop_id') and item.direct_shop_id:
+                item_shop_id = str(item.direct_shop_id)
+            # Try to get shop_id from cart_item's product
+            elif item.cart_item and item.cart_item.product and item.cart_item.product.shop:
+                item_shop_id = str(item.cart_item.product.shop.id)
+            
+            # If delivery has a shop_id in metadata, only include items from that shop
+            if delivery_shop_id and item_shop_id == delivery_shop_id:
+                checkout_items.append(item)
+                shop_total_amount += item.total_amount
+                print(f"✅ Added item from shop {item_shop_id}, amount: {item.total_amount}")
+            elif not delivery_shop_id:
+                # No shop_id in delivery (legacy or single shop order) - include all
+                checkout_items.append(item)
+                shop_total_amount += item.total_amount
+                print(f"📦 Added all items (legacy/single shop mode)")
+        
+        print(f"📦 Total items for this delivery: {len(checkout_items)}")
+        print(f"💰 Shop total amount: {shop_total_amount}")
 
-        # Build the response data
+        # Build the response data - use shop_total_amount instead of order.total_amount
         order_data = {
             "order_id": str(order.order),
             "order_status": order.status,
-            "total_amount": str(order.total_amount),
+            "total_amount": str(shop_total_amount),  # ← CHANGED: Use shop total instead of order total
             "payment_method": order.payment_method,
             "delivery_method": order.delivery_method,
             "created_at": order.created_at,
@@ -31938,6 +32003,7 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "rider_id": str(delivery.rider.rider.id) if delivery and delivery.rider and delivery.rider.rider else None,
                 "rider_name": f"{delivery.rider.rider.first_name} {delivery.rider.rider.last_name}" if delivery and delivery.rider and delivery.rider.rider else None,
                 "rider_contact": delivery.rider.rider.contact_number if delivery and delivery.rider and delivery.rider.rider else None,
+                "shop_id": delivery_shop_id,
                 "picked_at": delivery.picked_at if delivery else None,
                 "delivered_at": delivery.delivered_at if delivery else None,
                 "created_at": delivery.created_at if delivery else None,
@@ -31955,7 +32021,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             "items": []
         }
         
-        # Build items list (all items from the order, but for return deliveries we'll filter in frontend)
+        # Build items list (only items from the delivery's shop)
         for item in checkout_items:
             try:
                 if item.cart_item and item.cart_item.variant:
@@ -32008,7 +32074,6 @@ class RiderOrdersActive(viewsets.ViewSet):
                         shop_latitude = float(product.shop.latitude) if product.shop.latitude else None   
                         shop_longitude = float(product.shop.longitude) if product.shop.longitude else None
                         
-                    
                     item_data = {
                         "checkout_id": str(item.id),
                         "product_id": str(product.id) if product else None,
@@ -32037,7 +32102,9 @@ class RiderOrdersActive(viewsets.ViewSet):
                 continue
 
         return Response(order_data, status=status.HTTP_200_OK)
-    
+
+
+        
     @action(detail=False, methods=['get'])
     def get_metrics(self, request):
         """
@@ -32656,7 +32723,6 @@ class RiderOrdersActive(viewsets.ViewSet):
         # Ensure refund_id is preserved in metadata for return deliveries
         if delivery.delivery_type == 'return' and not delivery.metadata:
             delivery.metadata = {}
-            # Try to get refund from the order
             from api.models import Refund
             refund = Refund.objects.filter(order_id=order).first()
             if refund:
@@ -32669,16 +32735,32 @@ class RiderOrdersActive(viewsets.ViewSet):
 
         if delivery.delivery_type == 'return':
             # For return deliveries, DO NOT change the order status
-            # The original order status should remain as is (delivered/completed)
             print(f"🔄 Return delivery - skipping order status update. Order {order.order} remains {order.status}")
         else:
-            # For regular deliveries, update the order status
+            # For regular deliveries, update checkout status to 'shipped' for this shop's items
+            delivery_shop_id = None
+            if hasattr(delivery, 'shop') and delivery.shop:
+                delivery_shop_id = str(delivery.shop.id)
+            elif delivery.metadata and delivery.metadata.get('shop_id'):
+                delivery_shop_id = delivery.metadata.get('shop_id')
+            
+            if delivery_shop_id:
+                checkouts = Checkout.objects.filter(
+                    Q(order=order, direct_shop_id=delivery_shop_id) |
+                    Q(order=order, cart_item__product__shop_id=delivery_shop_id)
+                )
+                for checkout in checkouts:
+                    if checkout.status == 'pending':
+                        checkout.status = 'shipped'
+                        checkout.save(update_fields=['status'])
+                print(f"✅ Marked checkouts as shipped for shop {delivery_shop_id}")
+            
             order.status = 'shipped'
             order.updated_at = timezone.now()
             order.save()
             print(f"📦 Regular delivery - updated order {order.order} status to shipped")
         
-        # ========== ADD THIS BLOCK - For return deliveries, update ReturnRequestItem status to 'shipped' ==========
+        # For return deliveries, update ReturnRequestItem status to 'shipped'
         if delivery.delivery_type == 'return':
             try:
                 from api.models import Refund, ReturnRequestItem
@@ -32686,14 +32768,12 @@ class RiderOrdersActive(viewsets.ViewSet):
                 if refund:
                     return_request_item = ReturnRequestItem.objects.filter(refund_id=refund).first()
                     if return_request_item:
-                        # Update status to 'shipped'
                         return_request_item.status = 'shipped'
                         return_request_item.updated_at = timezone.now()
                         if hasattr(return_request_item, 'updated_by') and hasattr(rider, 'rider'):
                             return_request_item.updated_by = rider.rider
                         return_request_item.save()
                         
-                        # Create notification for buyer
                         Notification.objects.create(
                             user=refund.requested_by,
                             title='Return Item Picked Up',
@@ -32702,7 +32782,6 @@ class RiderOrdersActive(viewsets.ViewSet):
                             is_read=False
                         )
                         
-                        # Create notification for seller
                         try:
                             checkout = Checkout.objects.filter(order=order).first()
                             if checkout and checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
@@ -32721,7 +32800,6 @@ class RiderOrdersActive(viewsets.ViewSet):
                         print(f"✅ Updated ReturnRequestItem status to 'shipped' for refund {refund.refund_id}")
             except Exception as e:
                 print(f"Error updating ReturnRequestItem status: {e}")
-        # ========== END OF ADDED BLOCK ==========
         
         return Response({
             "success": True,
@@ -32737,7 +32815,7 @@ class RiderOrdersActive(viewsets.ViewSet):
     @action(detail=False, methods=['post'])
     def deliver_order(self, request):
         """
-        Rider delivers an order
+        Rider delivers an order - only marks this specific delivery's items as delivered
         """
         rider = self._get_rider(request)
         if not rider:
@@ -32773,7 +32851,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             )
         
         # Verify delivery status allows delivery
-        if delivery.status != 'picked_up':
+        if delivery.status not in ['picked_up', 'accepted']:
             return Response(
                 {"success": False, "error": f"Cannot deliver order with status: {delivery.status}. Order must be picked up first."},
                 status=status.HTTP_400_BAD_REQUEST
@@ -32785,15 +32863,49 @@ class RiderOrdersActive(viewsets.ViewSet):
         delivery.updated_at = timezone.now()
         delivery.save()
         
-        # Update order status
         order = delivery.order
-        order.status = 'delivered'
-        order.updated_at = timezone.now()
-        order.save()
+        
+        # Get the shop from delivery (direct foreign key) or from metadata
+        delivery_shop = None
+        if hasattr(delivery, 'shop') and delivery.shop:
+            delivery_shop = delivery.shop
+            delivery_shop_id = str(delivery_shop.id)
+        elif delivery.metadata and delivery.metadata.get('shop_id'):
+            delivery_shop_id = delivery.metadata.get('shop_id')
+            try:
+                delivery_shop = Shop.objects.get(id=delivery_shop_id)
+            except Shop.DoesNotExist:
+                delivery_shop = None
+        else:
+            delivery_shop_id = None
+        
+        # Update ONLY the checkouts from this shop to 'delivered'
+        updated_count = 0
+        if delivery_shop_id:
+            # Find checkouts for this shop
+            checkouts = Checkout.objects.filter(
+                Q(order=order, direct_shop_id=delivery_shop_id) |
+                Q(order=order, cart_item__product__shop_id=delivery_shop_id)
+            )
+            
+            for checkout in checkouts:
+                if checkout.status != 'delivered':
+                    checkout.status = 'delivered'
+                    checkout.save(update_fields=['status'])
+                    updated_count += 1
+                    print(f"✅ Marked checkout {checkout.id} as delivered for shop {delivery_shop_id}")
+            
+            print(f"✅ Marked {updated_count} items as delivered for shop {delivery_shop_id}")
+        
+        # Update order status based on all checkouts
+        # Import the method from PurchasesBuyer
+        from views import PurchasesBuyer 
+        purchases_buyer = PurchasesBuyer()
+        purchases_buyer._update_order_status_from_checkouts(order)
         
         return Response({
             "success": True,
-            "message": "Order delivered successfully",
+            "message": f"Order delivered successfully. {updated_count} item(s) marked as delivered.",
             "delivery": {
                 "id": str(delivery.id),
                 "status": delivery.status,
@@ -32801,6 +32913,7 @@ class RiderOrdersActive(viewsets.ViewSet):
             }
         })
 
+        
     @action(detail=False, methods=['post'])
     def decline_order(self, request):
         """
@@ -47894,6 +48007,8 @@ class CustomerOrderList(viewsets.ViewSet):
             has_pending_offer = Delivery.objects.filter(order=order, status__in=['pending', 'accepted', 'declined']).exists()
             is_pickup = order.delivery_method and any(keyword in order.delivery_method.lower()
                                                     for keyword in ['pickup', 'store', 'collect'])
+            
+            # IMPORTANT: Get the latest delivery BEFORE using it
             latest_delivery = Delivery.objects.filter(order=order).order_by('-created_at').first()
             
             current_shipping_status = self._get_shop_shipping_status(current_shop_status)
@@ -47904,58 +48019,87 @@ class CustomerOrderList(viewsets.ViewSet):
             
             available_actions = []
             
+            # DEBUG: Print current shop status
+            print(f"🔍 [DEBUG] Order: {order.order}, Shop: {shop.name}")
+            print(f"🔍 [DEBUG] Current shop status: {current_shop_status}")
+            print(f"🔍 [DEBUG] Is pickup: {is_pickup}")
+            
             # Determine available actions based on THIS SHOP's status ONLY
-            # Do NOT block actions based on other shops' status
             if current_shop_status == 'pending':
                 if can_confirm:
                     available_actions = ['confirm']
-                    
+                print(f"🔍 [DEBUG] Status pending - actions: {available_actions}")
+                        
             elif current_shop_status == 'confirmed':
-                # Shop has confirmed - allow arrangement regardless of other shops
                 if is_pickup:
                     available_actions = ['ready_for_pickup', 'cancel', 'view_details']
                 else:
                     available_actions = ['arrange_shipment', 'cancel', 'view_details']
-                    
+                print(f"🔍 [DEBUG] Status confirmed - actions: {available_actions}")
+                        
             elif current_shop_status == 'processing':
                 if is_pickup:
                     available_actions = ['ready_for_pickup', 'cancel', 'view_details']
                 else:
                     available_actions = ['arrange_shipment', 'cancel', 'view_details']
-                    
+                print(f"🔍 [DEBUG] Status processing - actions: {available_actions}")
+                        
             elif current_shop_status == 'ready':
                 if is_pickup:
                     available_actions = ['picked_up', 'view_details']
                 else:
                     available_actions = ['ready_to_ship', 'cancel', 'view_details']
-                    
+                print(f"🔍 [DEBUG] Status ready - actions: {available_actions}")
+                        
             elif current_shop_status == 'shipped':
-                # Only show to_deliver if rider has accepted or picked up
                 if latest_delivery and latest_delivery.status in ['accepted', 'picked_up']:
                     available_actions = ['to_deliver', 'view_details']
                 else:
                     available_actions = ['view_details']
-                    
+                print(f"🔍 [DEBUG] Status shipped - actions: {available_actions}")
+                        
             elif current_shop_status == 'to_deliver':
                 available_actions = ['delivered', 'view_details']
-                
+                print(f"🔍 [DEBUG] Status to_deliver - actions: {available_actions}")
+                        
             elif current_shop_status == 'delivered':
                 available_actions = ['complete', 'view_details']
-                
+                print(f"🔍 [DEBUG] Status delivered - actions: {available_actions}")
+                        
             elif current_shop_status == 'completed':
                 available_actions = ['view_details']
-                
+                print(f"🔍 [DEBUG] Status completed - actions: {available_actions}")
+                        
             elif current_shop_status == 'cancelled':
                 available_actions = ['view_details']
+                print(f"🔍 [DEBUG] Status cancelled - actions: {available_actions}")
+            
+            # ========== CHECK FOR DECLINED DELIVERIES ==========
+            if latest_delivery:
+                print(f"🔍 [DEBUG] Latest delivery status: {latest_delivery.status}")
+                if latest_delivery.status == 'declined':
+                    print(f"🔴 Delivery is declined for order {order.order} - adding arrange_shipment")
+                    if 'arrange_shipment' not in available_actions:
+                        available_actions.append('arrange_shipment')
+                    if 'cancel' not in available_actions:
+                        available_actions.append('cancel')
+                    if 'view_details' not in available_actions:
+                        available_actions.append('view_details')
+            else:
+                print(f"🔍 [DEBUG] No delivery found for order {order.order}")
             
             # Add print_waybill for delivery orders with assigned rider
             if not is_pickup and latest_delivery and latest_delivery.rider and latest_delivery.status in ['accepted', 'picked_up', 'in_progress']:
                 available_actions.append('print_waybill')
+                print(f"🔍 [DEBUG] Added print_waybill")
             
             # Remove duplicates and ensure view_details is present
             available_actions = list(set(available_actions))
             if 'view_details' not in available_actions:
                 available_actions.append('view_details')
+            
+            print(f"📋 FINAL Available actions for order {order.order}: {available_actions}")
+            print("=" * 80)
             
             return Response({
                 "success": True,
@@ -47974,8 +48118,13 @@ class CustomerOrderList(viewsets.ViewSet):
                 }
             }, status=status.HTTP_200_OK)
         except Exception as e:
+            print(f"❌ Error in available_actions: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
+
+
     @action(detail=True, methods=['patch'])
     def update_status(self, request, pk=None):
         """

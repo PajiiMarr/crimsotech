@@ -1343,7 +1343,14 @@ class Delivery(models.Model):
         ('return', 'Return Pickup'),        
         ('replacement', 'Replacement'),    
     ]
-
+    
+    shop = models.ForeignKey(
+        'Shop', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='deliveries'
+    )
     delivery_type = models.CharField(max_length=20, choices=DELIVERY_TYPE_CHOICES, default='order')  
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.CASCADE)
