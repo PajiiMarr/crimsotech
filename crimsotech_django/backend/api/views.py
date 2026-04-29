@@ -32177,37 +32177,44 @@ class RiderOrdersActive(viewsets.ViewSet):
 
             # For return deliveries, get the refund amount
             # For return deliveries, get the refund amount
+            # For return deliveries, get the refund amount
             display_total_amount = float(order.total_amount)
+            is_return_delivery = False
+            refund_amount = None
 
-            # Check if this is a return delivery by checking delivery_type OR if there's a refund
-            is_return_delivery = delivery.delivery_type == 'return'
-
-            # Also check if there's a refund record (as fallback)
-            if not is_return_delivery:
-                try:
-                    from api.models import Refund
-                    refund_exists = Refund.objects.filter(order_id=order).exists()
-                    if refund_exists:
-                        is_return_delivery = True
-                except:
-                    pass
-
-            if is_return_delivery:
+            # ONLY check if this is a return delivery by delivery_type
+            if delivery.delivery_type == 'return':
+                is_return_delivery = True
                 try:
                     from api.models import Refund, RefundItem
-                    refund = Refund.objects.filter(order_id=order).first()
-                    if refund:
+                    # Try to get refund_id from delivery metadata first
+                    refund_id = None
+                    if delivery.metadata and delivery.metadata.get('refund_id'):
+                        refund_id = delivery.metadata.get('refund_id')
+                    else:
+                        # Fallback: find refund by order
+                        refund = Refund.objects.filter(order_id=order).first()
+                        if refund:
+                            refund_id = str(refund.refund_id)
+                    
+                    if refund_id:
+                        refund = Refund.objects.get(refund_id=refund_id)
                         refund_items = RefundItem.objects.filter(refund=refund)
                         total_refund_amount = sum(float(item.amount) for item in refund_items if item.amount)
                         if total_refund_amount > 0:
                             display_total_amount = total_refund_amount
-                            print(f"✅ Return delivery detected for order {order.order}: showing refund amount {total_refund_amount} instead of {order.total_amount}")
+                            refund_amount = total_refund_amount
+                            print(f"✅ Return delivery for order {order.order}: showing refund amount {total_refund_amount}")
                         else:
                             print(f"⚠️ Return delivery but no refund items found for order {order.order}")
                     else:
                         print(f"⚠️ Return delivery but no refund record for order {order.order}")
                 except Exception as e:
-                    print(f"Error getting refund amount: {e}")
+                    print(f"Error getting refund amount for return delivery: {e}")
+            else:
+                # For normal deliveries (delivery_type = 'order'), ALWAYS use order.total_amount
+                display_total_amount = float(order.total_amount)
+                print(f"📦 Normal delivery for order {order.order}: showing order total {display_total_amount}")
             
             # Handle null shipping_address
             shipping_address = order.shipping_address
@@ -32238,6 +32245,9 @@ class RiderOrdersActive(viewsets.ViewSet):
                 "product_image": product_image_url,
                 "order_id": str(order.order),
                 "delivery_fee": delivery.delivery_fee,
+                "delivery_type": delivery.delivery_type,  # ADD THIS LINE
+                "refund_amount": refund_amount if is_return_delivery else None,  # ADD THIS LINE
+                "original_total": float(order.total_amount) if is_return_delivery else None, 
                 "order": {
                     "order_id": str(order.order),
                     "customer": {

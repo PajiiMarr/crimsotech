@@ -214,11 +214,13 @@ const showConfirmationModal = (config: {
         setOrderDetails(response.data);
         
         // Check for delivery_type === 'return'
+        // Check for delivery_type === 'return'
         if (response.data.delivery?.delivery_type === 'return') {
           console.log('✅ This is a RETURN delivery!');
           setIsReturnDelivery(true);
         } else {
           console.log('❌ This is NOT a return delivery, delivery_type =', response.data.delivery?.delivery_type);
+          setIsReturnDelivery(false);  // ADD THIS LINE
         }
         
         // Fetch proofs after getting delivery ID
