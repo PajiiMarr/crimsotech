@@ -10255,6 +10255,75 @@ class AdminRefunds(viewsets.ViewSet):
                     if not RefundProof.objects.filter(refund=refund).exists():
                         return Response({'error': 'Proof required before completing refund'}, status=status.HTTP_400_BAD_REQUEST)
 
+                    # ── Deduct refund amount from seller wallet ──────────────────
+                    refund_amount = refund.approved_refund_amount or refund.total_refund_amount
+                    if refund_amount and refund_amount > Decimal('0'):
+                        try:
+                            # Guard: skip if a refund debit was already recorded for this order
+                            already_deducted = WalletTransaction.objects.filter(
+                                order=refund.order_id,
+                                source_type='refund',
+                                transaction_type='debit',
+                                status='completed'
+                            ).exists()
+
+                            if not already_deducted and refund.order_id:
+                                seller_user = None
+
+                                # Find the seller via the order's checkout items
+                                checkout_items = Checkout.objects.filter(
+                                    order=refund.order_id
+                                ).select_related(
+                                    'cart_item__product__shop__customer__customer'
+                                )
+                                for ci in checkout_items:
+                                    if (
+                                        ci.cart_item and
+                                        ci.cart_item.product and
+                                        ci.cart_item.product.shop and
+                                        ci.cart_item.product.shop.customer
+                                    ):
+                                        seller_user = ci.cart_item.product.shop.customer.customer
+                                        break
+
+                                if seller_user:
+                                    with transaction.atomic():
+                                        seller_wallet, _ = UserWallet.objects.get_or_create(user=seller_user)
+                                        deduction = Decimal(str(refund_amount))
+
+                                        # Deduct from pending_balance first, then available_balance
+                                        if seller_wallet.pending_balance >= deduction:
+                                            seller_wallet.pending_balance -= deduction
+                                        else:
+                                            remaining = deduction - seller_wallet.pending_balance
+                                            seller_wallet.pending_balance = Decimal('0')
+                                            seller_wallet.available_balance = max(
+                                                Decimal('0'),
+                                                seller_wallet.available_balance - remaining
+                                            )
+
+                                        seller_wallet.save()
+
+                                        WalletTransaction.objects.create(
+                                            wallet=seller_wallet,
+                                            user=seller_user,
+                                            amount=deduction,
+                                            transaction_type='debit',
+                                            source_type='refund',
+                                            status='completed',
+                                            order=refund.order_id
+                                        )
+                                        logger.info(
+                                            f"Refund {pk}: deducted ₱{deduction} from seller "
+                                            f"{seller_user.username} wallet (pending_balance first, "
+                                            f"available_balance if needed)"
+                                        )
+                        except Exception as wallet_err:
+                            logger.error(
+                                f"Refund {pk}: failed to deduct seller wallet: {wallet_err}"
+                            )
+                    # ────────────────────────────────────────────────────────────
+
                 refund.refund_payment_status = set_status
 
                 if set_status in ['processing', 'completed', 'failed']:
@@ -39257,6 +39326,25 @@ class DisputeViewSet(viewsets.ModelViewSet):
                     
                     refund.save()
                     
+                    # Refund the Buyer
+                    if adjusted_amount and Decimal(str(adjusted_amount)) > 0:
+                        buyer_user = refund.requested_by
+                        buyer_wallet, _ = UserWallet.objects.get_or_create(user=buyer_user)
+                        
+                        buyer_wallet.available_balance += Decimal(str(adjusted_amount))
+                        buyer_wallet.save()
+                        
+                        from .models import WalletTransaction
+                        WalletTransaction.objects.create(
+                            wallet=buyer_wallet,
+                            user=buyer_user,
+                            amount=Decimal(str(adjusted_amount)),
+                            transaction_type='credit',
+                            source_type='refund',
+                            status='completed',
+                            order=refund.order_id
+                        )
+                        
                     # Also update seller_deduction_amount and rider_deduction_amount if liability distribution provided
                     if liability_distribution:
                         seller_pct = liability_distribution.get('seller', 0)
@@ -39264,8 +39352,56 @@ class DisputeViewSet(viewsets.ModelViewSet):
                         
                         if seller_pct > 0 and adjusted_amount:
                             dispute.seller_deduction_amount = Decimal(str(adjusted_amount)) * Decimal(str(seller_pct)) / Decimal('100')
+                            
+                            # Deduct from Seller Wallet
+                            if refund.order_id and refund.order_id.shop:
+                                seller_user = refund.order_id.shop.seller
+                                seller_wallet, _ = UserWallet.objects.get_or_create(user=seller_user)
+                                
+                                deduction = dispute.seller_deduction_amount
+                                if seller_wallet.pending_balance >= deduction:
+                                    seller_wallet.pending_balance -= deduction
+                                else:
+                                    remaining = deduction - seller_wallet.pending_balance
+                                    seller_wallet.pending_balance = 0
+                                    seller_wallet.available_balance -= remaining
+                                    
+                                seller_wallet.save()
+
+                                
+                                WalletTransaction.objects.create(
+                                    wallet=seller_wallet,
+                                    user=seller_user,
+                                    amount=dispute.seller_deduction_amount,
+                                    transaction_type='debit',
+                                    source_type='dispute',
+                                    status='completed',
+                                    order=refund.order_id
+                                )
+
                         if rider_pct > 0 and adjusted_amount:
                             dispute.rider_deduction_amount = Decimal(str(adjusted_amount)) * Decimal(str(rider_pct)) / Decimal('100')
+                            
+                            # Deduct from Rider Wallet
+                            if refund.order_id:
+                                from .models import Delivery
+                                delivery = Delivery.objects.filter(order=refund.order_id).first()
+                                if delivery and delivery.rider and delivery.rider.user:
+                                    rider_user = delivery.rider.user
+                                    rider_wallet, _ = UserWallet.objects.get_or_create(user=rider_user)
+                                    rider_wallet.available_balance -= dispute.rider_deduction_amount
+                                    rider_wallet.save()
+                                    
+                                    WalletTransaction.objects.create(
+                                        wallet=rider_wallet,
+                                        user=rider_user,
+                                        amount=dispute.rider_deduction_amount,
+                                        transaction_type='debit',
+                                        source_type='dispute',
+                                        status='completed',
+                                        order=refund.order_id
+                                    )
+
                         dispute.save(update_fields=['seller_deduction_amount', 'rider_deduction_amount'])
                     
                 elif decision == 'reject':
@@ -42093,6 +42229,19 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
 
         unremitted_data = delivered_deliveries.aggregate(unremitted_count=Count('id'))
 
+        # Calculate deductions from disputes
+        try:
+            from .models import WalletTransaction, UserWallet
+            rider_wallet = UserWallet.objects.get(user=rider.user)
+            deductions = WalletTransaction.objects.filter(
+                wallet=rider_wallet,
+                transaction_type='debit',
+                source_type='dispute'
+            ).aggregate(total=Sum('amount'))['total'] or 0.0
+            deductions = float(deductions)
+        except Exception:
+            deductions = 0.0
+
         return {
             'total_deliveries': aggregated['total_deliveries'],
             'delivered_count': aggregated['delivered_count'],
@@ -42117,6 +42266,7 @@ class RiderOrderHistoryViewSet(viewsets.ViewSet):
                 'total_order_amount': total_online_amount,
                 'total_with_fees': total_online_amount
             },
+            'deductions': deductions,
             'unremitted_count': unremitted_data['unremitted_count'],
             'avg_delivery_time': round(aggregated['avg_delivery_time'] or 0, 1),
             'avg_rating': round(
@@ -50645,6 +50795,15 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             transaction_type='credit',
             status__in=['completed', 'pending']
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        
+        # Include both dispute resolutions and direct refund deductions
+        refund_debits = transactions_qs.filter(
+            transaction_type='debit',
+            source_type__in=['dispute', 'refund'],
+            status='completed'
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        lifetime_earnings = max(Decimal('0'), total_credits - refund_debits)
 
         total_debits = transactions_qs.filter(
             transaction_type='debit',
@@ -50662,7 +50821,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             'available_balance': float(wallet.available_balance),
             'pending_balance': float(wallet.pending_balance),
             'total_balance': float(wallet.available_balance + wallet.pending_balance),
-            'lifetime_earnings': float(total_credits),
+            'lifetime_earnings': float(lifetime_earnings),
             'lifetime_withdrawals': float(total_debits),
             'pending_withdrawals': float(pending_withdrawals),
         })
@@ -52259,8 +52418,28 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
                     "error": "Rejection reason is required"
                 }, status=400)
             
-            withdrawal.status = 'rejected'
-            withdrawal.save()
+            with transaction.atomic():
+                withdrawal.status = 'rejected'
+                withdrawal.save()
+                
+                # Refund available balance and deduct from pending balance
+                if withdrawal.wallet:
+                    withdrawal.wallet.available_balance += withdrawal.amount
+                    withdrawal.wallet.pending_balance -= withdrawal.amount
+                    withdrawal.wallet.save()
+                
+                # Update corresponding WalletTransaction
+                wallet_tx = WalletTransaction.objects.filter(
+                    user=withdrawal.user,
+                    amount=withdrawal.amount,
+                    transaction_type='debit',
+                    source_type='withdrawal',
+                    status='pending'
+                ).first()
+                
+                if wallet_tx:
+                    wallet_tx.status = 'rejected'
+                    wallet_tx.save()
             
             return Response({
                 "success": True,
@@ -52340,10 +52519,30 @@ class AdminWithdrawalViewSet(viewsets.ViewSet):
                     "error": "Proof of payment is required"
                 }, status=400)
             
-            withdrawal.status = 'completed'
-            withdrawal.completed_at = timezone.now()
-            withdrawal.admin_proof = admin_proof
-            withdrawal.save()
+            with transaction.atomic():
+                withdrawal.status = 'completed'
+                withdrawal.completed_at = timezone.now()
+                withdrawal.admin_proof = admin_proof
+                withdrawal.save()
+                
+                # Deduct from pending balance (was added during request)
+                if withdrawal.wallet:
+                    withdrawal.wallet.pending_balance -= withdrawal.amount
+                    withdrawal.wallet.save()
+                    
+                # Update corresponding WalletTransaction to completed
+                # Look for processing or pending transaction
+                wallet_tx = WalletTransaction.objects.filter(
+                    user=withdrawal.user,
+                    amount=withdrawal.amount,
+                    transaction_type='debit',
+                    source_type='withdrawal',
+                    status__in=['pending', 'processing']
+                ).first()
+                
+                if wallet_tx:
+                    wallet_tx.status = 'completed'
+                    wallet_tx.save()
             
             # Convert the saved admin_proof URL to public URL
             admin_proof_url = None

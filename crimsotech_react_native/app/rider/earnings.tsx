@@ -25,6 +25,7 @@ interface EarningsMetrics {
     total_order_amount: number;
     total_with_fees: number;
   };
+  deductions?: number;
 }
 
 interface DeliveryData {
@@ -43,7 +44,7 @@ export default function Earnings() {
   const [metrics, setMetrics] = useState<EarningsMetrics | null>(null);
   const [totalCollected, setTotalCollected] = useState<number>(0);
 
-  const deductions = 0;
+  const deductions = metrics?.deductions || 0;
 
   const formatCurrency = (amount: number) =>
     `PHP ${amount.toLocaleString('en-PH', {
@@ -166,8 +167,8 @@ export default function Earnings() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      <RiderPageHeader 
-        title="Earnings" 
+      <RiderPageHeader
+        title="Earnings"
         subtitle="Quick summary of your delivery performance"
       />
       <ScrollView

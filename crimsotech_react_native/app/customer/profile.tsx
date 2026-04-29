@@ -1417,10 +1417,9 @@ export default function ProfileScreen() {
     </ScrollView>
 
     {/* ── Balance cards with shadow and border ── */}
-    {/* ── Balance cards with shadow and border ── */}
-<View style={styles.balanceGrid}>
-  {/* Pending - NOW FIRST */}
-  <View style={[styles.balanceCardStyled, { flex: 1 }]}>
+    <View style={[styles.balanceGrid, { marginBottom: 10 }]}>
+      {/* Pending - NOW FIRST */}
+      <View style={[styles.balanceCard, { flex: 1 }]}>
     <View style={styles.balanceCardHeader}>
       <MaterialIcons name="hourglass-empty" size={16} color="#D97706" />
       <Text style={styles.balanceCardLabel}>Pending</Text>
@@ -1440,8 +1439,8 @@ export default function ProfileScreen() {
     <Text style={styles.balanceCardSub}>Awaiting release (3-day hold)</Text>
   </View>
 
-  {/* Available - NOW SECOND */}
-  <View style={[styles.balanceCardStyled, { flex: 1.2 }]}>
+      {/* Available - NOW SECOND */}
+      <View style={[styles.balanceCard, { flex: 1 }]}>
     <View style={styles.balanceCardHeader}>
       <MaterialIcons name="account-balance-wallet" size={16} color="#2563EB" />
       <Text style={styles.balanceCardLabel}>Available</Text>
@@ -1456,31 +1455,28 @@ export default function ProfileScreen() {
 </View>
 
     <View style={styles.balanceGrid}>
-      {/* Total */}
-      <View style={[styles.balanceCardStyled, { flex: 1 }]}>
+      {/* Total Sales */}
+      <View style={[styles.balanceCard, { flex: 1 }]}>
         <View style={styles.balanceCardHeader}>
           <MaterialIcons
             name="trending-up"
             size={16}
             color="#059669"
           />
-          <Text style={styles.balanceCardLabel}>Total</Text>
+          <Text style={styles.balanceCardLabel}>Total Sales</Text>
         </View>
         <Text style={styles.balanceAmount}>
           {showBalance
-            ? formatCurrency(wallet?.total_balance || 0)
+            ? formatCurrency(wallet?.lifetime_earnings || 0)
             : "••••••"}
         </Text>
         <Text style={styles.balanceCardSub}>
-          Lifetime:{" "}
-          {showBalance
-            ? formatCurrency(wallet?.lifetime_earnings || 0)
-            : "••••"}
+          Lifetime earnings
         </Text>
       </View>
 
       {/* Withdrawals */}
-      <View style={[styles.balanceCardStyled, { flex: 1 }]}>
+      <View style={[styles.balanceCard, { flex: 1 }]}>
         <View style={styles.balanceCardHeader}>
           <MaterialIcons
             name="trending-down"
@@ -1494,7 +1490,11 @@ export default function ProfileScreen() {
             ? formatCurrency(wallet?.lifetime_withdrawals || 0)
             : "••••••"}
         </Text>
-        <Text style={styles.balanceCardSub}>All time</Text>
+        <Text style={styles.balanceCardSub}>
+          {(wallet?.pending_withdrawals ?? 0) > 0 
+            ? `+ ${formatCurrency(wallet!.pending_withdrawals)} pending` 
+            : "All time"}
+        </Text>
       </View>
     </View>
 
@@ -1511,7 +1511,13 @@ export default function ProfileScreen() {
             wallet.available_balance < 100) &&
             styles.primaryButtonDisabled,
         ]}
-        onPress={() => setShowWithdrawModal(true)}
+        onPress={() => {
+          setShowWithdrawModal(true);
+          if (paymentMethods.length > 0 && !selectedPaymentMethod) {
+            const defaultMethod = paymentMethods.find((m) => m.is_default) || paymentMethods[0];
+            setSelectedPaymentMethod(defaultMethod.payment_id);
+          }
+        }}
         disabled={
           !wallet?.available_balance || wallet.available_balance < 100
         }
@@ -1798,7 +1804,11 @@ export default function ProfileScreen() {
 
               <View style={styles.modalActions}>
                 <TouchableOpacity
-                  style={[styles.primaryButton, { flex: 1 }]}
+                  style={[
+                    styles.primaryButton, 
+                    { flex: 1 },
+                    (submittingWithdraw || !selectedPaymentMethod || !withdrawAmount) && styles.primaryButtonDisabled
+                  ]}
                   onPress={handleWithdraw}
                   disabled={
                     submittingWithdraw ||
