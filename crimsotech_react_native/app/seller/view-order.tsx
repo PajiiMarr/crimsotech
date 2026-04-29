@@ -473,6 +473,12 @@ export default function SellerViewOrder() {
 
     let enhancedAvailableActions = [...availableActions];
 
+    // DEBUG LOGS
+    console.log("🔍 [FRONTEND] availableActions from API:", availableActions);
+    console.log("🔍 [FRONTEND] shop_status:", shopStatus);
+    console.log("🔍 [FRONTEND] isRiderDeclined:", isRiderDeclined);
+    console.log("🔍 [FRONTEND] currentStatus:", currentStatus);
+
     if (isRiderAccepted && currentStatus === "waiting_for_rider") {
       if (!enhancedAvailableActions.includes("ready_to_ship")) {
         enhancedAvailableActions.push("ready_to_ship");
@@ -493,16 +499,19 @@ export default function SellerViewOrder() {
     const showOutForDelivery =
       hasToDeliverAction && (isRiderAccepted || isRiderPickedUp);
 
+    const showArrangeShipment =
+      enhancedAvailableActions.includes("arrange_shipment");
+    console.log("🔍 [FRONTEND] showArrangeShipment:", showArrangeShipment);
+
     return {
       showConfirm: enhancedAvailableActions.includes("confirm") || canConfirm,
       showCancel:
         enhancedAvailableActions.includes("cancel") && !shouldHideCancel,
       showReadyToShip: enhancedAvailableActions.includes("ready_to_ship"),
-      showArrangeShipment:
-        enhancedAvailableActions.includes("arrange_shipment"),
+      showArrangeShipment: showArrangeShipment,
       showReadyForPickup: enhancedAvailableActions.includes("ready_for_pickup"),
       showPickedUp: enhancedAvailableActions.includes("picked_up"),
-      showToDeliver: showOutForDelivery, // Only show when rider has accepted/picked up
+      showToDeliver: showOutForDelivery,
       showDelivered: enhancedAvailableActions.includes("delivered"),
       showComplete: enhancedAvailableActions.includes("complete"),
     };
@@ -1118,7 +1127,6 @@ export default function SellerViewOrder() {
             </TouchableOpacity>
           )}
 
-          {/* Arrange Shipment button - show for processing, pending_rider, and when rider declined */}
           {((isProcessing && showArrangeShipment) ||
             currentStatus === "pending_rider" ||
             isRiderDeclined) &&
