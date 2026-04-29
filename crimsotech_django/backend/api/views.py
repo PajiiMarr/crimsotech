@@ -17245,12 +17245,10 @@ class CustomerShops(APIView):
 
     def geocode_address(self, street, barangay, city, province):
         """Convert address to coordinates using Google Maps Geocoding API."""
-        # Check if all required address parts are present
         if not all([street, barangay, city, province]):
             print(f"[GEOCODE] Missing address parts - street:{bool(street)}, barangay:{bool(barangay)}, city:{bool(city)}, province:{bool(province)}")
             return None, None
         
-        # Build full address
         full_address = f"{street}, {barangay}, {city}, {province}, Philippines"
         
         GOOGLE_MAPS_API_KEY = getattr(settings, 'GOOGLE_MAPS_API_KEY', None)
@@ -17263,7 +17261,7 @@ class CustomerShops(APIView):
             params = {
                 'address': full_address,
                 'key': GOOGLE_MAPS_API_KEY,
-                'components': 'country:PH'  # Restrict to Philippines
+                'components': 'country:PH'
             }
             
             print(f"[GEOCODE] Geocoding address: {full_address}")
@@ -17298,7 +17296,6 @@ class CustomerShops(APIView):
         if shop.latitude and shop.longitude:
             return float(shop.latitude), float(shop.longitude)
         
-        # Try to geocode if coordinates are missing but address exists
         if shop.street and shop.barangay and shop.city and shop.province:
             lat, lng = self.geocode_address(shop.street, shop.barangay, shop.city, shop.province)
             if lat and lng:
@@ -17308,6 +17305,53 @@ class CustomerShops(APIView):
                 return float(lat), float(lng)
         
         return None, None
+
+    # ── Helper: Get follower count for a shop ───────────────────────────────────
+
+    def get_follower_count(self, shop):
+        """Get the number of followers for a shop"""
+        try:
+            return ShopFollow.objects.filter(shop=shop).count()
+        except Exception as e:
+            print(f"Error getting follower count for shop {shop.id}: {e}")
+            return 0
+
+    # ── Helper: Get total sales for a shop (EXCLUDING VAT) ─────────────────────
+
+    def get_shop_total_sales(self, shop):
+        """
+        Calculate total sales for a shop from delivered orders.
+        Sales exclude VAT (uses variant price without VAT or direct_product_price).
+        """
+        try:
+            # Get all checkout items for this shop from delivered orders
+            checkout_items = Checkout.objects.filter(
+                order__checkout__cart_item__product__shop=shop,
+                order__status='delivered'
+            ).exclude(
+                order__status__in=['cancelled', 'refunded']
+            ).select_related('order')
+            
+            total_sales = Decimal('0.00')
+            
+            for checkout_item in checkout_items:
+                if checkout_item.direct_product_price:
+                    # Direct checkout (product page purchase)
+                    total_sales += checkout_item.direct_product_price * checkout_item.quantity
+                elif checkout_item.cart_item and checkout_item.cart_item.variant:
+                    # Cart checkout with variant
+                    variant_price = checkout_item.cart_item.variant.price or Decimal('0.00')
+                    total_sales += variant_price * checkout_item.quantity
+                elif checkout_item.cart_item and checkout_item.cart_item.product:
+                    # Cart checkout without variant (legacy)
+                    product_price = Decimal(str(getattr(checkout_item.cart_item.product, 'price', 0)))
+                    total_sales += product_price * checkout_item.quantity
+            
+            return float(total_sales)
+            
+        except Exception as e:
+            print(f"Error calculating total sales for shop {shop.id}: {e}")
+            return 0.00
 
     # ── Image URL helper ───────────────────────────────────────────────────────
 
@@ -17356,11 +17400,17 @@ class CustomerShops(APIView):
             customer = Customer.objects.get(customer_id=customer_id)
             shops_queryset = Shop.objects.filter(customer=customer).order_by('name')
             
-            # Prepare shop data with coordinates
+            # Prepare shop data with coordinates, followers, and total sales
             shops_data = []
             for shop in shops_queryset:
                 # Get coordinates (geocode if missing)
                 lat, lng = self.get_coordinates_from_shop(shop)
+                
+                # Get follower count
+                follower_count = self.get_follower_count(shop)
+                
+                # Get total sales (from delivered orders, excluding VAT)
+                total_sales = self.get_shop_total_sales(shop)
                 
                 shop_dict = {
                     'id': str(shop.id),
@@ -17373,12 +17423,14 @@ class CustomerShops(APIView):
                     'contact_number': shop.contact_number,
                     'verified': shop.verified,
                     'status': shop.status,
-                    'total_sales': str(shop.total_sales),
+                    'total_sales': total_sales,
+                    'follower_count': follower_count,
                     'created_at': shop.created_at.isoformat(),
                     'updated_at': shop.updated_at.isoformat(),
                     'shop_picture': self.get_media_url(shop.shop_picture),
                     'latitude': lat,
                     'longitude': lng,
+                    'is_suspended': shop.is_suspended,
                     **self.build_shop_legal_docs(shop),
                 }
                 shops_data.append(shop_dict)
@@ -17566,7 +17618,6 @@ class CustomerShops(APIView):
 
                 shop.save()
 
-                # Log geocoding result
                 if latitude and longitude:
                     logger.info(f"📍 Shop '{shop.name}' created with coordinates: ({latitude}, {longitude})")
                 else:
@@ -17581,7 +17632,6 @@ class CustomerShops(APIView):
                         message=f'A new shop "{shop.name}" has been submitted with legal documents and is awaiting your approval.'
                     )
 
-                # Build response — all images via get_media_url
                 shop_data = {
                     'id':             str(shop.id),
                     'name':           shop.name,
@@ -17594,7 +17644,8 @@ class CustomerShops(APIView):
                     'customer':       str(shop.customer.customer_id) if shop.customer else None,
                     'verified':       shop.verified,
                     'status':         shop.status,
-                    'total_sales':    str(shop.total_sales),
+                    'total_sales':    0.00,
+                    'follower_count': 0,
                     'created_at':     shop.created_at.isoformat(),
                     'updated_at':     shop.updated_at.isoformat(),
                     'shop_picture':   self.get_media_url(shop.shop_picture),
@@ -17645,7 +17696,6 @@ class CustomerShops(APIView):
             customer = Customer.objects.get(customer_id=customer_id)
             shop     = Shop.objects.get(id=shop_id, customer=customer)
 
-            # Get coordinates (geocode if missing)
             lat, lng = self.get_coordinates_from_shop(shop)
 
             return Response({
@@ -17678,14 +17728,12 @@ class CustomerShops(APIView):
             customer = Customer.objects.get(customer_id=customer_id)
             shop     = Shop.objects.get(id=shop_id, customer=customer)
 
-            # Update address fields
             shop.province       = request.data.get('province',       shop.province)
             shop.city           = request.data.get('city',           shop.city)
             shop.barangay       = request.data.get('barangay',       shop.barangay)
             shop.street         = request.data.get('street',         shop.street)
             shop.contact_number = request.data.get('contact_number', shop.contact_number)
             
-            # Re-geocode if address fields were updated
             address_changed = any([
                 'province' in request.data,
                 'city' in request.data,
@@ -17710,13 +17758,11 @@ class CustomerShops(APIView):
                     logger.info(f"📍 Shop '{shop.name}' coordinates updated to: ({latitude}, {longitude})")
                 else:
                     logger.warning(f"⚠️ Could not geocode updated address for shop '{shop.name}'")
-                    # Keep existing coordinates if available
                     if not (shop.latitude and shop.longitude):
                         logger.warning(f"⚠️ Shop '{shop.name}' has no coordinates after update")
             
             shop.save()
 
-            # Get final coordinates for response
             final_lat = float(shop.latitude) if shop.latitude else (float(latitude) if latitude else None)
             final_lng = float(shop.longitude) if shop.longitude else (float(longitude) if longitude else None)
 
@@ -17743,7 +17789,6 @@ class CustomerShops(APIView):
             return Response({'error': 'Shop not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
 
 
 class CustomerShopsAddSeller(viewsets.ViewSet):
