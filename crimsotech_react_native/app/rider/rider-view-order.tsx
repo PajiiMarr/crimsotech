@@ -183,15 +183,23 @@ const showConfirmationModal = (config: {
   };
 
   // Fetch order details
+  // Fetch order details
   const fetchOrderDetails = async () => {
     try {
       setIsLoading(true);
       
-      if (!orderId) {
-        throw new Error('Order ID is required');
+      // Prioritize deliveryId over orderId
+      const idToFetch = deliveryId || orderId;
+      
+      if (!idToFetch) {
+        throw new Error('No delivery ID or order ID provided');
       }
       
-      const response = await AxiosInstance.get(`/rider-orders-active/order-details/${orderId}/`, {
+      console.log('🆔 Fetching order details with identifier:', idToFetch);
+      console.log('deliveryId param:', deliveryId);
+      console.log('orderId param:', orderId);
+      
+      const response = await AxiosInstance.get(`/rider-orders-active/order-details/${idToFetch}/`, {
         headers: {
           'X-User-Id': user?.user_id
         }
@@ -201,6 +209,7 @@ const showConfirmationModal = (config: {
         console.log('=== ORDER DETAILS RESPONSE ===');
         console.log('delivery object:', response.data.delivery);
         console.log('delivery_type:', response.data.delivery?.delivery_type);
+        console.log('refund_items:', response.data.refund_items);
         
         setOrderDetails(response.data);
         
@@ -860,13 +869,14 @@ const getDefaultStatusMessage = (status: string) => {
   };
 
   useEffect(() => {
-    if (orderId) {
+    const idToFetch = deliveryId || orderId;
+    if (idToFetch) {
       fetchOrderDetails();
     } else {
       setIsLoading(false);
-      Alert.alert('Error', 'Order ID is missing');
+      Alert.alert('Error', 'No delivery ID or order ID provided');
     }
-  }, [orderId]);
+  }, [deliveryId, orderId]);
 
   // Loading skeleton
   if (isLoading) {
@@ -1325,32 +1335,108 @@ const getDefaultStatusMessage = (status: string) => {
 
       
 
-        {/* CARD 3: Order Items - Edge to Edge */}
-{/* CARD 3: Order Items - Edge to Edge */}
+{/* CARD 3: Order/Refund Items - Edge to Edge */}
 <View style={{ backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderTopWidth: 1, borderColor: '#F3F4F6', marginBottom: (showAcceptDecline || showAcceptedActions || showInTransitActions || showDelivered) ? 0 : 80, marginTop: -1 }}>
   <View style={{ padding: 16 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
       <Ionicons name="cube-outline" size={22} color="#EE4D2D" />
-      <Text style={{ fontSize: 16, fontWeight: '600', marginLeft: 8 }}>Order Items</Text>
-      <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6 }}>({orderDetails.items?.length || 0})</Text>
+      <Text style={{ fontSize: 16, fontWeight: '600', marginLeft: 8 }}>
+        {isReturnDelivery ? 'Refund Items' : 'Order Items'}
+      </Text>
+      {!isReturnDelivery && (
+        <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6 }}>({orderDetails.items?.length || 0})</Text>
+      )}
+      {isReturnDelivery && orderDetails.refund_items && (
+        <Text style={{ fontSize: 13, color: '#6B7280', marginLeft: 6 }}>({orderDetails.refund_items.length})</Text>
+      )}
     </View>
     
-    {orderDetails.items && orderDetails.items.map((item, index) => {
-      // For return deliveries, find the refund amount from refund_items
-      let refundAmount = null;
-      if (isReturnDelivery && orderDetails.refund_items && orderDetails.refund_items.length > 0) {
-        const refundItem = orderDetails.refund_items.find(
-          (ri: any) => ri.checkout_id === item.checkout_id
+    {/* For Return Deliveries - Show ONLY Refunded Items */}
+    {isReturnDelivery ? (
+      // Filter items to only show those that are in refund_items
+      (() => {
+        // Get the checkout_ids from refund_items
+        const refundedCheckoutIds = new Set(
+          orderDetails.refund_items?.map((ri: any) => ri.checkout_id) || []
         );
-        if (refundItem) {
-          refundAmount = parseFloat(refundItem.amount);
-          console.log(`Found refund amount for ${item.product_name}: ${refundAmount}`);
-        } else {
-          console.log(`No refund item found for checkout_id: ${item.checkout_id}`);
+        
+        // Filter original items to only those being refunded
+        const refundedItems = orderDetails.items?.filter(
+          (item) => refundedCheckoutIds.has(item.checkout_id)
+        ) || [];
+        
+        if (refundedItems.length === 0) {
+          return (
+            <View style={{ padding: 20, alignItems: 'center' }}>
+              <Ionicons name="receipt-outline" size={40} color="#9CA3AF" />
+              <Text style={{ fontSize: 14, color: '#6B7280', marginTop: 8, textAlign: 'center' }}>
+                No refund items found
+              </Text>
+            </View>
+          );
         }
-      }
-      
-      return (
+        
+        return refundedItems.map((item, index) => {
+          // Find the refund amount for this specific item
+          const refundItem = orderDetails.refund_items?.find(
+            (ri: any) => ri.checkout_id === item.checkout_id
+          );
+          const refundAmount = refundItem ? parseFloat(refundItem.amount) : null;
+          
+          return (
+            <View key={item.checkout_id} style={{ marginBottom: index === refundedItems.length - 1 ? 0 : 16, paddingBottom: index === refundedItems.length - 1 ? 0 : 16, borderBottomWidth: index === refundedItems.length - 1 ? 0 : 1, borderBottomColor: '#F3F4F6' }}>
+              <View style={{ flexDirection: 'row' }}>
+                {/* Product Image */}
+                <View style={{ width: 70, height: 70, borderRadius: 8, backgroundColor: '#F3F4F6', marginRight: 12, overflow: 'hidden' }}>
+                  {item.product_image && !imageErrors[item.product_id] ? (
+                    <Image 
+                      source={{ uri: item.product_image }} 
+                      style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+                      onError={() => handleImageError(item.product_id)}
+                    />
+                  ) : (
+                    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                      <Ionicons name="image-outline" size={24} color="#9CA3AF" />
+                    </View>
+                  )}
+                </View>
+                
+                {/* Product Details */}
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#1F2937', marginBottom: 4 }}>{item.product_name}</Text>
+                  
+                  {item.variant_name && item.variant_name !== 'Default' && (
+                    <Text style={{ fontSize: 12, color: '#6B7280', marginBottom: 2 }}>
+                      Variant: {item.variant_name}
+                    </Text>
+                  )}
+                  
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                    <Text style={{ fontSize: 12, color: '#6B7280' }}>Quantity: {refundItem?.quantity || item.quantity}</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#10B981' }}>
+                      Refund: {formatCurrency(refundAmount || 0)}
+                    </Text>
+                  </View>
+                  
+                  {/* Show original price for comparison */}
+                  <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>
+                    Original: {formatCurrency(item.total)}
+                  </Text>
+                  
+                  {item.remarks && (
+                    <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>
+                      Note: {item.remarks}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            </View>
+          );
+        });
+      })()
+    ) : (
+      // For Normal Deliveries - Show All Items
+      orderDetails.items.map((item, index) => (
         <View key={item.checkout_id} style={{ marginBottom: index === orderDetails.items.length - 1 ? 0 : 16, paddingBottom: index === orderDetails.items.length - 1 ? 0 : 16, borderBottomWidth: index === orderDetails.items.length - 1 ? 0 : 1, borderBottomColor: '#F3F4F6' }}>
           <View style={{ flexDirection: 'row' }}>
             {/* Product Image */}
@@ -1392,24 +1478,10 @@ const getDefaultStatusMessage = (status: string) => {
               
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
                 <Text style={{ fontSize: 12, color: '#6B7280' }}>Quantity: {item.quantity}</Text>
-                {/* Show refund amount for return deliveries, regular price for normal deliveries */}
-                {isReturnDelivery && refundAmount !== null ? (
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#10B981' }}>
-                    Refund: {formatCurrency(refundAmount)}
-                  </Text>
-                ) : (
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: '#0e0a09' }}>
-                    {formatCurrency(item.total)}
-                  </Text>
-                )}
-              </View>
-              
-              {/* Show original price for comparison on return deliveries */}
-              {isReturnDelivery && refundAmount !== null && (
-                <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>
-                  Original: {formatCurrency(item.total)}
+                <Text style={{ fontSize: 14, fontWeight: '600', color: '#0e0a09' }}>
+                  {formatCurrency(item.total)}
                 </Text>
-              )}
+              </View>
               
               {item.remarks && (
                 <Text style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>
@@ -1419,8 +1491,8 @@ const getDefaultStatusMessage = (status: string) => {
             </View>
           </View>
         </View>
-      );
-    })}
+      ))
+    )}
   </View>
 </View>
       </ScrollView>

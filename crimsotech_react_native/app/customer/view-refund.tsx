@@ -398,8 +398,8 @@ const ApprovedStatus = ({ refund, onOpenTrackingDialog, formatCurrency, formatDa
             <Text style={[styles.returnDetailValue, { fontSize: 12, color: "#6B7280" }]}>
               1. Package the item securely{'\n'}
               2. Include all original packaging and accessories{'\n'}
-              3. Ship to the return address above{'\n'}
-              4. Provide tracking number once shipped
+              {/* 3. Ship to the return address above{'\n'}
+              4. Provide tracking number once shipped */}
             </Text>
           </View>
         </View>
@@ -1186,9 +1186,12 @@ const RiderAssignedForReturnStatus = ({ refund, formatCurrency }: { refund: any;
 };
 
 // ========== 18. RIDER ACCEPTED - READY FOR PICKUP STATUS ==========
+// ========== 18. RIDER ACCEPTED - READY FOR PICKUP STATUS ==========
 const RiderAcceptedForReturnStatus = ({ refund, formatCurrency }: { refund: any; formatCurrency: (amount: string | number) => string }) => {
   const delivery = refund.delivery_info || {};
   const returnRequest = refund.return_request || {};
+  const refundType = refund.refund_type || 'return';
+  const isReplacement = refundType === 'replace';
   
   // Get rider details from delivery_info
   const riderName = delivery.rider_name || 'Rider assigned';
@@ -1199,16 +1202,22 @@ const RiderAcceptedForReturnStatus = ({ refund, formatCurrency }: { refund: any;
   const estimatedMinutes = delivery.estimated_minutes || null;
   const deliveryFee = delivery.delivery_fee || 0;
   
+  // Dynamic title based on refund type
+  const titleText = isReplacement ? 'Replacement - Rider Accepted' : 'Return - Rider Accepted';
+  const subtitleText = isReplacement 
+    ? 'A rider has accepted your replacement pickup. Please mark your item as ready for pickup when you\'re ready.'
+    : 'A rider has accepted your return pickup. Please mark your item as ready for pickup when you\'re ready.';
+  
   return (
     <View style={styles.statusSection}>
       <View style={styles.statusRow}>
         <MaterialCommunityIcons name="motorbike" size={24} color="#10B981" />
         <View style={styles.statusTextContainer}>
           <Text style={[styles.statusTitle, { color: '#10B981' }]}>
-            Return - Rider Accepted
+            {titleText}
           </Text>
           <Text style={styles.statusSubtitle}>
-            A rider has accepted your return pickup. Please mark your item as ready for pickup when you're ready.
+            {subtitleText}
           </Text>
         </View>
       </View>
@@ -1278,7 +1287,7 @@ const RiderAcceptedForReturnStatus = ({ refund, formatCurrency }: { refund: any;
         <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 8 }}>
           <Ionicons name="alert-circle-outline" size={20} color="#B45309" />
           <Text style={{ fontSize: 13, color: '#92400E', flex: 1, lineHeight: 18 }}>
-            Please mark your item as ready for pickup when you're ready. The rider will come to your location to pick up the return item.
+            Please mark your item as ready for pickup when you're ready. The rider will come to your location to pick up the {isReplacement ? 'replacement' : 'return'} item.
           </Text>
         </View>
       </View>
@@ -2108,125 +2117,130 @@ const handleSubmitTrackingForm = async () => {
     const returnRequest = refund.return_request || {};
     const deliveryInfo = refund.delivery_info || {};
     
+    // Convert to lowercase for case-insensitive comparison
+    const rrStatusLower = String(returnRequest.status || '').toLowerCase();
+    const deliveryStatusLower = String(deliveryInfo.status || '').toLowerCase();
+    
+    // DEBUG LOGGING - Add these lines
+    console.log('=== RENDER REFUND STATUS DEBUG ===');
+    console.log('refund.status:', status);
+    console.log('return_request.status:', rrStatusLower);
+    console.log('delivery_info.status:', deliveryStatusLower);
+    console.log('delivery_info.delivery_type:', deliveryInfo.delivery_type);
+    console.log('full return_request:', JSON.stringify(returnRequest, null, 2));
+    console.log('full delivery_info:', JSON.stringify(deliveryInfo, null, 2));
+    
     // CRITICAL FIX: The return delivery needs to be fetched separately
     // For now, check if return_request.status is 'pickup_requested' - 
     // This indicates a rider has been assigned, even if delivery info is missing
-    const isRiderAssignedForReturn = returnRequest.status === 'pickup_requested';
+    const isRiderAssignedForReturn = rrStatusLower === 'pickup_requested';
 
-    if (returnRequest.status === 'pickup_accepted' && deliveryInfo.status === 'accepted') {
+    if (rrStatusLower === 'pickup_accepted') {
       console.log('Rendering RiderAcceptedForReturnStatus - Rider accepted the pickup');
       return <RiderAcceptedForReturnStatus refund={refund} formatCurrency={formatCurrency} />;
     }
-
-    if (returnRequest.status === 'ready_for_pickup' && deliveryInfo.status === 'accepted') {
+    
+    if (rrStatusLower === 'ready_for_pickup') {
       console.log('Rendering WaitingForRiderPickupStatus - Item ready, waiting for rider');
       return <WaitingForRiderPickupStatus refund={refund} formatCurrency={formatCurrency} />;
     }
 
-    if (isRiderAssignedForReturn) {
-      return <RiderAssignedForReturnStatus refund={refund} formatCurrency={formatCurrency} />;
-    }
-    
-    console.log('Rider condition check:');
-    console.log('- returnRequest.status:', returnRequest.status);
-    console.log('- isRiderAssignedForReturn:', isRiderAssignedForReturn);
-    
-    if (isRiderAssignedForReturn) {
-      console.log('Rendering RiderAssignedForReturnStatus');
-      return <RiderAssignedForReturnStatus refund={refund} formatCurrency={formatCurrency} />;
-    }
-    
-    // ... rest of your existing renderRefundStatus code continues here
-    const payStatusLog = String(refund.refund_payment_status || '').toLowerCase();
-    const refundTypeLog = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
-    const rrLog = refund.return_request || {};
-    
-    const getReturnItemsLog = () => {
-      if (Array.isArray(rrLog.items)) return rrLog.items;
+  if (isRiderAssignedForReturn) {
+    return <RiderAssignedForReturnStatus refund={refund} formatCurrency={formatCurrency} />;
+  }
+  
+  // ... rest of your existing renderRefundStatus code continues here
+  const payStatusLog = String(refund.refund_payment_status || '').toLowerCase();
+  const refundTypeLog = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
+  const rrLog = refund.return_request || {};
+  
+  const getReturnItemsLog = () => {
+    if (Array.isArray(rrLog.items)) return rrLog.items;
+    if (Array.isArray(refund.return_request_items)) return refund.return_request_items;
+    if (Array.isArray(refund.return_items)) return refund.return_items;
+    if (Array.isArray(rrLog.return_items)) return rrLog.return_items;
+    if (rrLog.items && typeof rrLog.items === 'object' && !Array.isArray(rrLog.items)) return Object.values(rrLog.items);
+    return [];
+  };
+  
+  const returnItemsLog = getReturnItemsLog();
+  const itemStatusesLog = Array.isArray(returnItemsLog) ? returnItemsLog.map((it: any) => String(it?.status || it?.item_status || it?.return_status || it?.status_display || it?.state || '').toLowerCase()) : [];
+
+  if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) return <PendingStatus refund={refund} />;
+  if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) return <NegotiationStatus refund={refund} formatCurrency={formatCurrency} />;
+  if (STATUS_CONDITIONS.showRejectedStatus(statusUpper)) return <RejectedStatus refund={refund} formatCurrency={formatCurrency} onDispute={handleDispute} />;
+  
+  // early inspection/received checks
+  {
+    const payStatusEarly = String(refund.refund_payment_status || '').toLowerCase();
+    const refundTypeEarly = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
+    const rrEarly = refund.return_request || {};
+    const getReturnItemsEarly = () => {
+      if (Array.isArray(rrEarly.items)) return rrEarly.items;
       if (Array.isArray(refund.return_request_items)) return refund.return_request_items;
       if (Array.isArray(refund.return_items)) return refund.return_items;
-      if (Array.isArray(rrLog.return_items)) return rrLog.return_items;
-      if (rrLog.items && typeof rrLog.items === 'object' && !Array.isArray(rrLog.items)) return Object.values(rrLog.items);
+      if (Array.isArray(rrEarly.return_items)) return rrEarly.return_items;
+      if (rrEarly.items && typeof rrEarly.items === 'object' && !Array.isArray(rrEarly.items)) return Object.values(rrEarly.items);
+      if (refund.return_items_map && typeof refund.return_items_map === 'object') return Object.values(refund.return_items_map);
       return [];
     };
-    
-    const returnItemsLog = getReturnItemsLog();
-    const itemStatusesLog = Array.isArray(returnItemsLog) ? returnItemsLog.map((it: any) => String(it?.status || it?.item_status || it?.return_status || it?.status_display || it?.state || '').toLowerCase()) : [];
+    const returnItemsEarly = getReturnItemsEarly();
+    const normalizeItemStatusEarly = (it: any) => String(it?.status || it?.item_status || it?.return_status || it?.status_display || it?.state || '').toLowerCase();
+    const itemStatusesEarly = Array.isArray(returnItemsEarly) ? returnItemsEarly.map((it: any) => normalizeItemStatusEarly(it)) : [];
+    const receivedVariantsEarly = ['received', 'item_received', 'received_by_seller', 'seller_received', 'received_by_warehouse'];
+    const inspectedVariantsEarly = ['inspected', 'item_inspected', 'inspected_by_seller', 'seller_inspected', 'item_verified'];
+    const rrStatusEarlyLower = String(rrEarly.status || rrEarly.state || '').toLowerCase();
+    const anyInspected = itemStatusesEarly.some(s => inspectedVariantsEarly.includes(s)) || rrStatusEarlyLower === 'inspected' || rrStatusEarlyLower.includes('inspect');
+    const anyStrictReceived = itemStatusesEarly.some(s => receivedVariantsEarly.includes(s)) || rrStatusEarlyLower === 'received' || rrStatusEarlyLower === 'item_received' || rrStatusEarlyLower.includes('received');
+    if (statusUpper === 'APPROVED' && (refundTypeEarly === 'return' || refundTypeEarly === 'return_item') && payStatusEarly === 'pending' && anyInspected) {
+      return <ToVerifyStatus />;
+    }
+    if (statusUpper === 'APPROVED' && (refundTypeEarly === 'return' || refundTypeEarly === 'return_item') && payStatusEarly === 'pending' && anyStrictReceived) {
+      return <ReceivedStatus />;
+    }
+  }
   
-    if (STATUS_CONDITIONS.showPendingStatus(statusUpper)) return <PendingStatus refund={refund} />;
-    if (STATUS_CONDITIONS.showNegotiationStatus(statusUpper)) return <NegotiationStatus refund={refund} formatCurrency={formatCurrency} />;
-    if (STATUS_CONDITIONS.showRejectedStatus(statusUpper)) return <RejectedStatus refund={refund} formatCurrency={formatCurrency} onDispute={handleDispute} />;
-    
-    // early inspection/received checks
-    {
-      const payStatusEarly = String(refund.refund_payment_status || '').toLowerCase();
-      const refundTypeEarly = String(refund.final_refund_type || refund.refund_type || '').toLowerCase();
-      const rrEarly = refund.return_request || {};
-      const getReturnItemsEarly = () => {
-        if (Array.isArray(rrEarly.items)) return rrEarly.items;
-        if (Array.isArray(refund.return_request_items)) return refund.return_request_items;
-        if (Array.isArray(refund.return_items)) return refund.return_items;
-        if (Array.isArray(rrEarly.return_items)) return rrEarly.return_items;
-        if (rrEarly.items && typeof rrEarly.items === 'object' && !Array.isArray(rrEarly.items)) return Object.values(rrEarly.items);
-        if (refund.return_items_map && typeof refund.return_items_map === 'object') return Object.values(refund.return_items_map);
-        return [];
-      };
-      const returnItemsEarly = getReturnItemsEarly();
-      const normalizeItemStatusEarly = (it: any) => String(it?.status || it?.item_status || it?.return_status || it?.status_display || it?.state || '').toLowerCase();
-      const itemStatusesEarly = Array.isArray(returnItemsEarly) ? returnItemsEarly.map((it: any) => normalizeItemStatusEarly(it)) : [];
-      const receivedVariantsEarly = ['received', 'item_received', 'received_by_seller', 'seller_received', 'received_by_warehouse'];
-      const inspectedVariantsEarly = ['inspected', 'item_inspected', 'inspected_by_seller', 'seller_inspected', 'item_verified'];
-      const rrStatusEarlyLower = String(rrEarly.status || rrEarly.state || '').toLowerCase();
-      const anyInspected = itemStatusesEarly.some(s => inspectedVariantsEarly.includes(s)) || rrStatusEarlyLower === 'inspected' || rrStatusEarlyLower.includes('inspect');
-      const anyStrictReceived = itemStatusesEarly.some(s => receivedVariantsEarly.includes(s)) || rrStatusEarlyLower === 'received' || rrStatusEarlyLower === 'item_received' || rrStatusEarlyLower.includes('received');
-      if (statusUpper === 'APPROVED' && (refundTypeEarly === 'return' || refundTypeEarly === 'return_item') && payStatusEarly === 'pending' && anyInspected) {
-        return <ToVerifyStatus />;
-      }
-      if (statusUpper === 'APPROVED' && (refundTypeEarly === 'return' || refundTypeEarly === 'return_item') && payStatusEarly === 'pending' && anyStrictReceived) {
-        return <ReceivedStatus />;
-      }
-    }
-    
-    if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus 
-      refund={refund} 
-      onOpenTrackingDialog={handleAddTracking} 
-      formatCurrency={formatCurrency} 
-      formatDate={formatDate}
-      shopReturnAddress={shopReturnAddress}
-      onOpenProofViewer={openProofViewerFromUrls}
-    /> 
-    if (STATUS_CONDITIONS.showWaitingStatus(statusUpper)) return <WaitingStatus refund={refund} onOpenTrackingDialog={handleAddTracking} formatDate={formatDate} onOpenProofViewer={openProofViewerFromUrls} />;
-    if (STATUS_CONDITIONS.showToVerifyStatus(statusUpper)) return <ToVerifyStatus />;
-    if (STATUS_CONDITIONS.showReturnAcceptedStatus(statusUpper)) return <ReturnAcceptedStatus />;
-    if (STATUS_CONDITIONS.showReturnRejectedStatus(statusUpper)) return <ReturnRejectedStatus onDispute={handleDispute} />;
-    if (STATUS_CONDITIONS.showShippedStatus(statusUpper)) return <ShippedStatus />;
-    if (STATUS_CONDITIONS.showReceivedStatus(statusUpper)) return <ReceivedStatus />;
-    
-    const drCheck = refund.dispute || refund.dispute_request || null;
-    if (statusUpper === 'DISPUTE' && drCheck && drCheck.status?.toLowerCase() === 'resolved' && String(refund.refund_payment_status || '').toLowerCase() === 'completed') {
-      return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
-    }
-    if (STATUS_CONDITIONS.showDisputeStatus(statusUpper)) return <DisputeStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} onAcknowledgeDispute={handleAcknowledgeDispute} />;
-    if (STATUS_CONDITIONS.showCompletedStatus(statusUpper)) return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
-    if (STATUS_CONDITIONS.showProcessingStatus(statusUpper)) return <ProcessingStatus refund={refund} formatCurrency={formatCurrency} />;
-    if (STATUS_CONDITIONS.showReturnShipStatus(statusUpper)) return <ReturnShipStatus />;
-    if (STATUS_CONDITIONS.showCancelledStatus(statusUpper)) return <CancelledStatus />;
-    
-    const orderInfo = refund.order_info || {};
-    const orderStatus = String(orderInfo.status || orderInfo.status_display || orderInfo.current_status || refund.order?.status || '').toLowerCase();
-    const paymentMethod = String(orderInfo.payment_method || refund.order?.payment_method || '').toLowerCase();
-    const deliveryMethod = String(orderInfo.delivery_method || refund.order?.delivery_method || '').toLowerCase();
-    const isPickupCashCompleted = orderStatus.includes('completed') && paymentMethod.includes('cash') && deliveryMethod.includes('pickup');
-    const isReturnType = refundTypeLog === 'return' || refundTypeLog === 'return_item';
-    if ((statusUpper === 'APPROVED' || STATUS_CONDITIONS.showWaitingStatus(statusUpper)) && isReturnType && isPickupCashCompleted) {
-      return <ApprovedPickupStatus />;
-    }
-    return <PendingStatus refund={refund} />;
-  };
+  if (STATUS_CONDITIONS.showApprovedStatus(statusUpper)) return <ApprovedStatus 
+    refund={refund} 
+    onOpenTrackingDialog={handleAddTracking} 
+    formatCurrency={formatCurrency} 
+    formatDate={formatDate}
+    shopReturnAddress={shopReturnAddress}
+    onOpenProofViewer={openProofViewerFromUrls}
+  /> 
+  if (STATUS_CONDITIONS.showWaitingStatus(statusUpper)) return <WaitingStatus refund={refund} onOpenTrackingDialog={handleAddTracking} formatDate={formatDate} onOpenProofViewer={openProofViewerFromUrls} />;
+  if (STATUS_CONDITIONS.showToVerifyStatus(statusUpper)) return <ToVerifyStatus />;
+  if (STATUS_CONDITIONS.showReturnAcceptedStatus(statusUpper)) return <ReturnAcceptedStatus />;
+  if (STATUS_CONDITIONS.showReturnRejectedStatus(statusUpper)) return <ReturnRejectedStatus onDispute={handleDispute} />;
+  if (STATUS_CONDITIONS.showShippedStatus(statusUpper)) return <ShippedStatus />;
+  if (STATUS_CONDITIONS.showReceivedStatus(statusUpper)) return <ReceivedStatus />;
+  
+  const drCheck = refund.dispute || refund.dispute_request || null;
+  if (statusUpper === 'DISPUTE' && drCheck && drCheck.status?.toLowerCase() === 'resolved' && String(refund.refund_payment_status || '').toLowerCase() === 'completed') {
+    return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
+  }
+  if (STATUS_CONDITIONS.showDisputeStatus(statusUpper)) return <DisputeStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} onAcknowledgeDispute={handleAcknowledgeDispute} />;
+  if (STATUS_CONDITIONS.showCompletedStatus(statusUpper)) return <CompletedStatus refund={refund} formatCurrency={formatCurrency} formatDate={formatDate} />;
+  if (STATUS_CONDITIONS.showProcessingStatus(statusUpper)) return <ProcessingStatus refund={refund} formatCurrency={formatCurrency} />;
+  if (STATUS_CONDITIONS.showReturnShipStatus(statusUpper)) return <ReturnShipStatus />;
+  if (STATUS_CONDITIONS.showCancelledStatus(statusUpper)) return <CancelledStatus />;
+  
+  const orderInfo = refund.order_info || {};
+  const orderStatus = String(orderInfo.status || orderInfo.status_display || orderInfo.current_status || refund.order?.status || '').toLowerCase();
+  const paymentMethod = String(orderInfo.payment_method || refund.order?.payment_method || '').toLowerCase();
+  const deliveryMethod = String(orderInfo.delivery_method || refund.order?.delivery_method || '').toLowerCase();
+  const isPickupCashCompleted = orderStatus.includes('completed') && paymentMethod.includes('cash') && deliveryMethod.includes('pickup');
+  const isReturnType = refundTypeLog === 'return' || refundTypeLog === 'return_item';
+  if ((statusUpper === 'APPROVED' || STATUS_CONDITIONS.showWaitingStatus(statusUpper)) && isReturnType && isPickupCashCompleted) {
+    return <ApprovedPickupStatus />;
+  }
+  return <PendingStatus refund={refund} />;
+};
 
   const renderActionButtons = () => {
     if (!refund) return null;
   
+    
     // Check if the refund is effectively completed
     const isCompleted = 
       refund.status?.toLowerCase() === 'completed' ||
@@ -2240,6 +2254,7 @@ const handleSubmitTrackingForm = async () => {
         </View>
       );
     }
+    
   
     const statusUpper = (refund.status || '').toUpperCase();
     const rrStatus = String(refund.return_request?.status || '').toLowerCase();
@@ -2257,32 +2272,41 @@ const handleSubmitTrackingForm = async () => {
         </View>
       );
     }
-  
-    // NEW: Check for rider accepted - show "Mark as Ready for Pickup" button
-    if (rrStatus === 'pickup_accepted' && deliveryStatus === 'accepted') {
+    // NEW: When ready_for_pickup - NO BUTTONS, only back button
+    if (rrStatus === 'ready_for_pickup') {
       return (
         <View style={styles.stickyButtonContainer}>
-          <TouchableOpacity 
-            style={[styles.primaryButton, { backgroundColor: '#10B981' }]} 
-            onPress={handleMarkAsReadyForPickup}
-            disabled={actionLoading}
-          >
-            {actionLoading ? (
-              <ActivityIndicator size="small" color="#FFF" />
-            ) : (
-              <>
-                <CheckCircle2 size={16} color="#FFF" />
-                <Text style={styles.primaryButtonText}>Mark as Ready for Pickup</Text>
-              </>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.secondaryButton, { marginTop: 12 }]} onPress={() => router.back()}>
-            <ArrowLeft size={16} color="#374151" />
-            <Text style={styles.secondaryButtonText}>Back to Requests</Text>
-          </TouchableOpacity>
+          <DefaultActions onBack={() => router.back()} />
         </View>
       );
     }
+    // NEW: Check for rider accepted - show "Mark as Ready for Pickup" button
+    // NEW: Check for rider accepted - show "Mark as Ready for Pickup" button
+if (rrStatus === 'pickup_accepted') {
+  console.log('✅ Showing Mark as Ready for Pickup button');
+  return (
+    <View style={styles.stickyButtonContainer}>
+      <TouchableOpacity 
+        style={[styles.primaryButton, { backgroundColor: '#10B981' }]} 
+        onPress={handleMarkAsReadyForPickup}
+        disabled={actionLoading}
+      >
+        {actionLoading ? (
+          <ActivityIndicator size="small" color="#FFF" />
+        ) : (
+          <>
+            <CheckCircle2 size={16} color="#FFF" />
+            <Text style={styles.primaryButtonText}>Mark as Ready for Pickup</Text>
+          </>
+        )}
+      </TouchableOpacity>
+      <TouchableOpacity style={[styles.secondaryButton, { marginTop: 12 }]} onPress={() => router.back()}>
+        <ArrowLeft size={16} color="#374151" />
+        <Text style={styles.secondaryButtonText}>Back to Requests</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
   
     // Update this condition - Include both 'return' and 'replace' types
     const isReturnOrReplace = refund.refund_type === 'return' || refund.refund_type === 'replace';
@@ -2514,7 +2538,9 @@ const handleSubmitTrackingForm = async () => {
         {/* Items with refund quantities */}
         {/* Items with refund quantities */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Items to Refund</Text>
+        <Text style={styles.sectionTitle}>
+  {refund.refund_type === 'replace' ? 'Items for Replacement' : 'Items to Refund'}
+</Text>
           {refundItemsWithDetails.map((item: any, idx: number) => {
             const variantName = item.product_variant || item.variant_title;
             return (
@@ -2524,13 +2550,15 @@ const handleSubmitTrackingForm = async () => {
                   <Text style={styles.productName}>{item.product_name}</Text>
                   {variantName ? <Text style={styles.variantName}>{variantName}</Text> : null}
                   <View style={styles.productMeta}>
-                    <Text style={styles.productQty}>Original Qty: {item.quantity}</Text>
-                    <Text style={styles.productPrice}>{formatCurrency(item.price)} each</Text>
-                  </View>
-                  <View style={styles.productMeta}>
-                    <Text style={styles.refundQty}>Refund Qty: {item.refundQuantity}</Text>
-                    <Text style={styles.refundAmount}>Refund Amount: {formatCurrency(item.refundAmount)}</Text>
-                  </View>
+                  <Text style={styles.refundQty}>
+  {refund.refund_type === 'replace' ? 'Replace Qty:' : 'Refund Qty:'} {item.refundQuantity}
+</Text>
+  {refund.refund_type === 'replace' ? (
+    <Text style={styles.replacementPrice}>{formatCurrency(item.refundAmount)}</Text>
+  ) : (
+    <Text style={styles.refundAmount}>Refund Amount: {formatCurrency(item.refundAmount)}</Text>
+  )}
+</View>
                 </View>
               </View>
             );
@@ -2664,9 +2692,13 @@ const handleSubmitTrackingForm = async () => {
           </View>
           <View style={styles.metaRow}><Text style={styles.metaLabel}>Request Date:</Text><View style={styles.metaRightSide}><Text style={styles.metaValue}>{formatDate(refund.created_at || refund.requested_at)}</Text></View></View>
           <View style={styles.metaRow}><Text style={styles.metaLabel}>Reason:</Text><View style={styles.metaRightSide}><Text style={styles.metaValue}>{refund.reason || refund.customer_note || 'Not specified'}</Text></View></View>
-          <View style={styles.metaRow}><Text style={styles.metaLabel}>Refund Type:</Text><View style={styles.metaRightSide}><Text style={styles.metaValue}>{friendlyLabel(refund.refund_type)}</Text></View></View>
+          <View style={styles.metaRow}><Text style={styles.metaLabel}>
+  {refund.refund_type === 'replace' ? 'Request Type:' : 'Refund Type:'}
+</Text><View style={styles.metaRightSide}><Text style={styles.metaValue}>{friendlyLabel(refund.refund_type)}</Text></View></View>
           <View style={styles.metaRow}><Text style={styles.metaLabel}>Preferred Method:</Text><View style={styles.metaRightSide}><Text style={styles.metaValue}>{friendlyLabel(refund.buyer_preferred_refund_method)}</Text></View></View>
-          <View style={styles.metaRow}><Text style={styles.metaLabel}>Total Refund Amount:</Text><View style={styles.metaRightSide}><Text style={[styles.metaValue, { color: '#10B981' }]}>{formatCurrency(refund.total_refund_amount || 0)}</Text></View></View>
+          <View style={styles.metaRow}><Text style={styles.metaLabel}>
+  {refund.refund_type === 'replace' ? 'Total Replacement Amount:' : 'Total Refund Amount:'}
+</Text><View style={styles.metaRightSide}><Text style={[styles.metaValue, { color: '#10B981' }]}>{formatCurrency(refund.total_refund_amount || 0)}</Text></View></View>
           {refund.admin_note && (
             <View style={styles.metaRow}><Text style={styles.metaLabel}>Admin Note:</Text><View style={styles.metaRightSide}><Text style={[styles.metaValue, { color: '#7C3AED' }]}>{refund.admin_note}</Text></View></View>
           )}
@@ -3419,5 +3451,20 @@ waitingForRiderInstructionCard: {
   borderRadius: 12,
   borderWidth: 1,
   borderColor: '#FDE68A',
+},
+replacementLabel: {
+  fontSize: 12,
+  color: '#3B82F6',
+  fontWeight: '600',
+  backgroundColor: '#EFF6FF',
+  paddingHorizontal: 8,
+  paddingVertical: 2,
+  borderRadius: 4,
+  overflow: 'hidden',
+},
+replacementPrice: {
+  fontSize: 14,
+  fontWeight: '600',
+  color: '#3B82F6',
 },
 });

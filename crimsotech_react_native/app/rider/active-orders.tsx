@@ -58,6 +58,10 @@ interface Delivery {
   time_elapsed: string;
   is_late: boolean;
   failed_reason?: string; 
+  delivery_type?: 'normal' | 'return';
+  refund_amount?: number;
+  refund_id?: string;
+  original_total?: number;
 }
 
 interface ActiveOrderMetrics {
@@ -69,7 +73,6 @@ interface ActiveOrderMetrics {
   declined_orders: number;
 }
 
-// Status badges configuration
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
   pending: { 
     label: 'Pending', 
@@ -113,7 +116,6 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: keyof 
   }
 };
 
-// Tabs configuration - Only Pending and To Process
 const STATUS_TABS: Array<{ id: 'pending' | 'to_process'; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
   { id: 'pending', label: 'Pending', icon: 'time-outline' },
   { id: 'to_process', label: 'To Process', icon: 'car-outline' }
@@ -123,7 +125,6 @@ export default function ActiveOrders() {
   const { user } = useAuth();
   const { width } = Dimensions.get('window');
   
-  // State for data
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [metrics, setMetrics] = useState<ActiveOrderMetrics>({
     total_active_orders: 0,
@@ -140,12 +141,8 @@ export default function ActiveOrders() {
   const [actionType, setActionType] = useState<'pickup' | 'deliver' | null>(null);
   const [activeTab, setActiveTab] = useState<'pending' | 'to_process'>('pending');
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
-
-  // Modal states
   const [showPickupDialog, setShowPickupDialog] = useState(false);
   const [showProofModal, setShowProofModal] = useState(false);
-  
-  // Media states
   const [proofMedia, setProofMedia] = useState<Array<{
     file: {
       uri: string;
@@ -155,25 +152,19 @@ export default function ActiveOrders() {
     preview: string;
     type: 'image' | 'video';
   }>>([]);
-  
   const [uploadingProofs, setUploadingProofs] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
-  // Fetch data function
   const fetchDeliveryData = async () => {
     try {
       setIsLoading(true);
 
       const [metricsResponse, deliveriesResponse] = await Promise.all([
         AxiosInstance.get('/rider-orders-active/get_metrics/', {
-          headers: {
-            'X-User-Id': user?.user_id
-          }
+          headers: { 'X-User-Id': user?.user_id }
         }),
         AxiosInstance.get('/rider-orders-active/get_deliveries/?page=1&page_size=50&status=all', {
-          headers: {
-            'X-User-Id': user?.user_id
-          }
+          headers: { 'X-User-Id': user?.user_id }
         })
       ]);
 
@@ -210,12 +201,10 @@ export default function ActiveOrders() {
     }
   };
 
-  // Handle image loading error
   const handleImageError = (deliveryId: string) => {
     setImageErrors(prev => ({ ...prev, [deliveryId]: true }));
   };
 
-  // Media handlers - Camera only
   const pickMedia = async () => {
     if (proofMedia.length >= 6) {
       Alert.alert('Limit Reached', 'Maximum 6 media files allowed');
@@ -253,12 +242,10 @@ export default function ActiveOrders() {
     }
   };
 
-  // Handle remove media
   const handleRemoveMedia = (index: number) => {
     setProofMedia(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Handle delivery action with proof of delivery
   const handleDeliverWithProof = async () => {
     if (!selectedDelivery) return;
 
@@ -271,7 +258,6 @@ export default function ActiveOrders() {
       setUploadingProofs(true);
       setUploadProgress(0);
 
-      // Upload each proof media
       for (let i = 0; i < proofMedia.length; i++) {
         const media = proofMedia[i];
         const formData = new FormData();
@@ -292,7 +278,6 @@ export default function ActiveOrders() {
         setUploadProgress(((i + 1) / proofMedia.length) * 100);
       }
 
-      // After all proofs are uploaded, mark as delivered
       const deliverFormData = new FormData();
       deliverFormData.append('delivery_id', selectedDelivery.id);
       if (selectedDelivery.order?.order_id) {
@@ -302,11 +287,7 @@ export default function ActiveOrders() {
       const deliverResponse = await AxiosInstance.post(
         '/rider-orders-active/deliver_order/',
         deliverFormData,
-        {
-          headers: {
-            'X-User-Id': user?.user_id,
-          }
-        }
+        { headers: { 'X-User-Id': user?.user_id } }
       );
 
       if (deliverResponse.data.success) {
@@ -328,7 +309,6 @@ export default function ActiveOrders() {
     }
   };
 
-  // Handle pickup confirmation
   const confirmPickup = async () => {
     if (!selectedDelivery) return;
 
@@ -342,9 +322,7 @@ export default function ActiveOrders() {
       }
 
       const response = await AxiosInstance.post('/rider-orders-active/pickup_order/', formData, {
-        headers: {
-          'X-User-Id': user?.user_id,
-        }
+        headers: { 'X-User-Id': user?.user_id }
       });
 
       if (response.data.success) {
@@ -364,7 +342,6 @@ export default function ActiveOrders() {
     }
   };
 
-  // Handle accept delivery
   const handleAcceptDelivery = async (delivery: Delivery) => {
     try {
       setIsActionLoading(true);
@@ -372,9 +349,7 @@ export default function ActiveOrders() {
       formData.append('order_id', delivery.id);
 
       const response = await AxiosInstance.post('/rider-orders-active/accept_order/', formData, {
-        headers: {
-          'X-User-Id': user?.user_id
-        }
+        headers: { 'X-User-Id': user?.user_id }
       });
 
       if (response.data.success) {
@@ -391,7 +366,6 @@ export default function ActiveOrders() {
     }
   };
 
-  // Handle decline delivery
   const handleDeclineDelivery = async (delivery: Delivery) => {
     Alert.alert(
       'Decline Delivery',
@@ -408,9 +382,7 @@ export default function ActiveOrders() {
               formData.append('order_id', delivery.id);
 
               const response = await AxiosInstance.post('/rider-orders-active/decline_order/', formData, {
-                headers: {
-                  'X-User-Id': user?.user_id
-                }
+                headers: { 'X-User-Id': user?.user_id }
               });
 
               if (!response.data?.success) {
@@ -442,8 +414,6 @@ export default function ActiveOrders() {
     });
   };
 
-  
-  // Handle mark as failed
   const handleMarkFailed = async (delivery: Delivery) => {
     Alert.alert(
       'Mark as Failed',
@@ -482,20 +452,15 @@ export default function ActiveOrders() {
     );
   };
 
-  // Prepare filtered data - Only pending and to process
-  // Prepare filtered data - Only pending and to process
   const pendingStatuses = ['pending', 'pending_offer'];
-  // Include failed orders with return_to_seller reason in To Process tab
   const toProcessStatuses = ['accepted', 'picked_up', 'failed'];
   
   const filteredDeliveries = useMemo(() => {
     return activeTab === 'pending' 
       ? deliveries.filter(d => pendingStatuses.includes(d.status))
-      : deliveries.filter(d => toProcessStatuses.includes(d.status));  // Now includes 'failed'
+      : deliveries.filter(d => toProcessStatuses.includes(d.status));
   }, [deliveries, activeTab]);
 
-
-  // Get status badge
   const getStatusBadge = (status: string) => {
     const config = STATUS_CONFIG[status] || STATUS_CONFIG.default;
     
@@ -507,7 +472,6 @@ export default function ActiveOrders() {
     );
   };
 
-  // Format date
   const formatDate = (dateString?: string) => {
     if (!dateString) return '';
     try {
@@ -522,33 +486,41 @@ export default function ActiveOrders() {
     }
   };
 
-  // Format currency
   const formatCurrency = (amount: number) => {
     return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
   };
 
-  // Get tab count
-// Get tab count
-const getTabCount = (tabId: string) => {
-  if (tabId === 'pending') {
-    return deliveries.filter(d => pendingStatuses.includes(d.status)).length;
-  } else {
-    return deliveries.filter(d => toProcessStatuses.includes(d.status)).length;  // Now includes 'failed'
-  }
-};
+  const getDisplayAmount = (delivery: Delivery) => {
+    if (delivery.delivery_type === 'return' && delivery.refund_amount) {
+      return delivery.refund_amount;
+    }
+    return delivery.order.total_amount;
+  };
 
-  // Initial data fetch
+  const getDisplayAmountLabel = (delivery: Delivery) => {
+    if (delivery.delivery_type === 'return') {
+      return 'Refund Amount';
+    }
+    return 'Order Total';
+  };
+
+  const getTabCount = (tabId: string) => {
+    if (tabId === 'pending') {
+      return deliveries.filter(d => pendingStatuses.includes(d.status)).length;
+    } else {
+      return deliveries.filter(d => toProcessStatuses.includes(d.status)).length;
+    }
+  };
+
   useEffect(() => {
     fetchDeliveryData();
   }, []);
 
-  // Refresh control
   const onRefresh = () => {
     setRefreshing(true);
     fetchDeliveryData();
   };
 
-  // Loading skeleton
   const LoadingSkeleton = () => (
     <View style={{ backgroundColor: '#F3F4F6', padding: 16, borderRadius: 8, marginBottom: 8 }}>
       <View style={{ height: 16, backgroundColor: '#E5E7EB', borderRadius: 4, width: '60%', marginBottom: 8 }} />
@@ -573,7 +545,6 @@ const getTabCount = (tabId: string) => {
         }
       >
         <View style={{ flex: 1 }}>
-          {/* Full Width Tabs */}
           <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}>
             {STATUS_TABS.map((tab) => {
               const count = getTabCount(tab.id);
@@ -621,7 +592,6 @@ const getTabCount = (tabId: string) => {
             })}
           </View>
 
-          {/* Deliveries List - Cards with small padding */}
           <View style={{ padding: 12 }}>
             {isLoading ? (
               <>
@@ -640,7 +610,10 @@ const getTabCount = (tabId: string) => {
               filteredDeliveries.map((delivery) => {
                 const customer = delivery.order.customer;
                 const address = delivery.order.shipping_address;
-
+                const displayAmount = getDisplayAmount(delivery);
+                const amountLabel = getDisplayAmountLabel(delivery);
+                const isReturnDelivery = delivery.delivery_type === 'return';
+              
                 const getFailedReasonDisplay = () => {
                   if (delivery.status !== 'failed') return null;
                   const reason = delivery.failed_reason;
@@ -668,9 +641,7 @@ const getTabCount = (tabId: string) => {
                         shadowRadius: 2,
                         elevation: 2,
                       }}>
-                      {/* Product Image and Header Row */}
                       <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-                        {/* Product Image */}
                         <View style={{ width: 60, height: 60, borderRadius: 8, backgroundColor: '#F3F4F6', marginRight: 12, overflow: 'hidden' }}>
                           {delivery.product_image && !imageErrors[delivery.id] ? (
                             <Image 
@@ -685,13 +656,23 @@ const getTabCount = (tabId: string) => {
                           )}
                         </View>
                         
-                        {/* Order Info */}
                         <View style={{ flex: 1 }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                             <Ionicons name="cube-outline" size={14} color="#6B7280" />
                             <Text style={{ fontSize: 13, fontWeight: '600', marginLeft: 6 }} numberOfLines={1}>
-                              Order #{delivery.order.order_id?.slice(-8)}
+                              {isReturnDelivery ? 'Return #' : 'Order #'}{delivery.order.order_id?.slice(-8)}
                             </Text>
+                            {isReturnDelivery && (
+                              <View style={{ 
+                                marginLeft: 6, 
+                                backgroundColor: '#8B5CF6', 
+                                paddingHorizontal: 6, 
+                                paddingVertical: 2, 
+                                borderRadius: 4 
+                              }}>
+                                <Text style={{ fontSize: 8, color: '#FFFFFF', fontWeight: '600' }}>RETURN</Text>
+                              </View>
+                            )}
                           </View>
                           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                             <Text style={{ fontSize: 11, color: '#6B7280' }} numberOfLines={1}>
@@ -702,9 +683,14 @@ const getTabCount = (tabId: string) => {
                           </View>
                           
                           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#EE4D2D' }}>
-                              {formatCurrency(delivery.order.total_amount)}
-                            </Text>
+                            <View>
+                              <Text style={{ fontSize: 10, color: '#6B7280', marginBottom: 2 }}>
+                                {amountLabel}
+                              </Text>
+                              <Text style={{ fontSize: 14, fontWeight: '700', color: isReturnDelivery ? '#8B5CF6' : '#EE4D2D' }}>
+                                {formatCurrency(displayAmount)}
+                              </Text>
+                            </View>
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                               {getStatusBadge(delivery.status)}
                               {delivery.is_late && (
@@ -716,8 +702,7 @@ const getTabCount = (tabId: string) => {
                           </View>
                         </View>
                       </View>
-
-                      {/* Address and Contact - Using shipping_address.recipient_phone */}
+              
                       <View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                           <Ionicons name="location-outline" size={12} color="#6B7280" />
@@ -732,7 +717,6 @@ const getTabCount = (tabId: string) => {
                           </Text>
                         </View>
                         
-                        {/* Add Failed Reason Display for failed orders */}
                         {failedReason && (
                           <View style={{ 
                             flexDirection: 'row', 
@@ -764,8 +748,7 @@ const getTabCount = (tabId: string) => {
                           </Text>
                         </View>
                       </View>
-
-                      {/* Time Elapsed */}
+              
                       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
                         <Ionicons name="time-outline" size={11} color="#9CA3AF" />
                         <Text style={{ fontSize: 10, color: '#9CA3AF', marginLeft: 4 }}>
@@ -781,7 +764,6 @@ const getTabCount = (tabId: string) => {
         </View>
       </ScrollView>
 
-      {/* Pickup Confirmation Modal */}
       <Modal
         visible={showPickupDialog}
         transparent
@@ -840,7 +822,6 @@ const getTabCount = (tabId: string) => {
         </View>
       </Modal>
 
-      {/* Proof of Delivery Modal */}
       <Modal
         visible={showProofModal}
         transparent
@@ -864,7 +845,6 @@ const getTabCount = (tabId: string) => {
             </Text>
 
             <ScrollView showsVerticalScrollIndicator={false}>
-              {/* Media Grid */}
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -4, marginBottom: 16 }}>
                 {proofMedia.map((media, index) => (
                   <View key={index} style={{ width: '33.33%', padding: 4 }}>
@@ -899,7 +879,6 @@ const getTabCount = (tabId: string) => {
                 )}
               </View>
 
-              {/* Progress Bar */}
               {uploadingProofs && (
                 <View style={{ marginBottom: 16 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -912,13 +891,11 @@ const getTabCount = (tabId: string) => {
                 </View>
               )}
 
-              {/* Info Text */}
               <Text style={{ fontSize: 11, color: '#9CA3AF', marginBottom: 16 }}>
                 {proofMedia.length}/6 media files captured. All files are uploaded in real-time.
               </Text>
             </ScrollView>
 
-            {/* Footer Buttons */}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingTop: 16, borderTopWidth: 1, borderTopColor: '#F3F4F6' }}>
               <TouchableOpacity
                 onPress={() => {
