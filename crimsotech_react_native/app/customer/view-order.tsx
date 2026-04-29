@@ -24,7 +24,8 @@ interface OrderItem {
   checkout_id: string;
   product_id: string;
   product_name: string;
-  item_status?: string; 
+  item_status?: string;
+  shop_status?: string;
   product_description: string;
   product_variant: string;
   quantity: number;
@@ -224,7 +225,7 @@ const groupItemsByShop = (items: OrderItem[]): ShopItemGroup[] => {
 
 export default function ViewTrackOrderPage() {
   const { user, userRole } = useAuth();
-  const { orderId } = useLocalSearchParams();
+  const { orderId, checkoutId } = useLocalSearchParams();
   const [loading, setLoading] = useState(true);
   const [orderData, setOrderData] = useState<OrderData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -248,7 +249,7 @@ export default function ViewTrackOrderPage() {
       _lastReviewedFetchKey.current = null;
       fetchOrderData();
     }
-  }, [user?.id, orderId]);
+  }, [user?.id, orderId, checkoutId]);
   
 
   const fetchOrderData = async (skipLoading = false) => {
@@ -284,6 +285,7 @@ export default function ViewTrackOrderPage() {
           subtotal: item.subtotal ?? '0',
           status: item.status ?? '',
           item_status: item.item_status || item.checkout_status || 'pending',
+          shop_status: item.shop_status || 'pending',
           purchased_at: item.purchased_at ?? null,
           product_images: Array.isArray(item.product_images) ? item.product_images : [],
           primary_image: item.primary_image || { url: null, file_type: null },
@@ -1266,7 +1268,66 @@ const CancelConfirmationModal = ({
   }
 
   const { order, shipping_info, delivery_address, items, order_summary, timeline, actions } = orderData;
-  const orderStatusLower = String(order?.status || '').toLowerCase();
+  
+  // Calculate overall order status from shop_status values and order status
+  const getDisplayStatus = () => {
+    const orderStatus = String(order?.status || 'pending').toLowerCase();
+    
+    // If order.status is completed, always show completed
+    if (orderStatus === 'completed') {
+      return 'completed';
+    }
+    
+    if (!items || items.length === 0) return orderStatus;
+    
+    // Get all unique shop statuses
+    const shopStatuses = items
+      .map(item => {
+        const status = item.shop_status?.toLowerCase();
+        // Only use shop_status if it's a valid value, otherwise skip
+        return status && ['pending', 'processing', 'rider_assigned', 'waiting_for_rider', 'shipped', 'delivered', 'completed'].includes(status) 
+          ? status 
+          : null;
+      })
+      .filter((s): s is string => s !== null);
+    
+    // If we have no valid shop statuses, fall back to order.status
+    if (shopStatuses.length === 0) {
+      return orderStatus;
+    }
+    
+    const uniqueStatuses = Array.from(new Set(shopStatuses));
+    
+    // Status priority: pending < processing < rider_assigned < waiting_for_rider < shipped < delivered < completed
+    const statusPriority: Record<string, number> = {
+      'pending': 1,
+      'processing': 2,
+      'rider_assigned': 3,
+      'waiting_for_rider': 4,
+      'shipped': 5,
+      'delivered': 6,
+      'completed': 7,
+    };
+    
+    // If all shops have the same status, use that
+    if (uniqueStatuses.length === 1) {
+      return uniqueStatuses[0];
+    }
+    
+    // If all shops are completed, show completed
+    if (uniqueStatuses.every(s => s === 'completed')) {
+      return 'completed';
+    }
+    
+    // Otherwise return the highest priority status
+    const sortedStatuses = uniqueStatuses.sort((a, b) => 
+      (statusPriority[a] || 0) - (statusPriority[b] || 0)
+    );
+    return sortedStatuses[sortedStatuses.length - 1];
+  };
+  
+  const displayStatus = getDisplayStatus();
+  const orderStatusLower = displayStatus.toLowerCase();
   const groupedItemsByShop = groupItemsByShop(items);
 
   const hasActions = () => {
@@ -1779,6 +1840,21 @@ const CancelConfirmationModal = ({
                         >
                           Quantity: {formatNumber(item.quantity)}
                         </Text>
+                        {item.shop_status && (
+                          <Text
+                            style={[
+                              styles.groupItemStatus,
+                              item.shop_status === 'completed' && { color: '#10B981' },
+                              item.shop_status === 'delivered' && { color: '#10B981' },
+                              item.shop_status === 'shipped' && { color: '#3B82F6' },
+                              item.shop_status === 'waiting_for_rider' && { color: '#F59E0B' },
+                              item.shop_status === 'rider_assigned' && { color: '#F59E0B' },
+                              item.shop_status === 'processing' && { color: '#F59E0B' },
+                            ]}
+                          >
+                            Status: {item.shop_status.charAt(0).toUpperCase() + item.shop_status.slice(1).replace(/_/g, ' ')}
+                          </Text>
+                        )}
                       </View>
                       <View style={styles.groupItemPriceContainer}>
                         <Text
@@ -2278,6 +2354,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6B7280',
     marginTop: 4,
+  },
+  groupItemStatus: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 6,
+    textTransform: 'capitalize',
   },
   groupItemPriceContainer: {
     alignItems: 'flex-end',
