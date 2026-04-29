@@ -1166,35 +1166,6 @@ class Order(models.Model):
         """Get shipping fees grouped by shop"""
         return self.shipping_fees_breakdown or {}
     
-class OrderShopStatus(models.Model):
-    """Track order status per shop for multi-shop orders"""
-    STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('confirmed', 'Confirmed'),
-        ('processing', 'Processing'),
-        ('ready', 'Ready'),
-        ('shipped', 'Shipped'),
-        ('delivered', 'Delivered'),
-        ('completed', 'Completed'),
-        ('cancelled', 'Cancelled'),
-    ]
-    
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='shop_statuses')
-    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='order_statuses')
-    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')
-    confirmed_at = models.DateTimeField(null=True, blank=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        unique_together = ['order', 'shop']
-        indexes = [
-            models.Index(fields=['order', 'shop']),
-            models.Index(fields=['status']),
-        ]
-    
-    def __str__(self):
-        return f"Order {self.order.order} - Shop {self.shop.name}: {self.status}"
 
 class Checkout(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)    
@@ -2677,3 +2648,35 @@ class RefundItem(models.Model):
 
     class Meta:
         unique_together = ['refund', 'checkout']
+
+class OrderShopStatus(models.Model):
+    """Track order status per shop for multi-shop orders"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('confirmed', 'Confirmed'),
+        ('processing', 'Processing'),
+        ('ready', 'Ready'),
+        ('shipped', 'Shipped'),
+        ('delivered', 'Delivered'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    # Remove the UUID id field - Django will use AutoField automatically
+    # DO NOT declare id field at all
+    
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='shop_statuses')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='order_statuses')
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['order', 'shop']
+        indexes = [
+            models.Index(fields=['order', 'shop']),
+            models.Index(fields=['status']),
+        ]
+    
+    def __str__(self):
+        return f"Order {self.order.order} - Shop {self.shop.name}: {self.status}"
