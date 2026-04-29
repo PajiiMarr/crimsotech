@@ -29632,7 +29632,9 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
                             'can_review': not has_reviewed and order.status == 'delivered',
-                            'is_refundable': is_refundable
+                            'is_refundable': is_refundable,
+                            'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
+                            'distance_km': getattr(checkout, 'distance_km', None),
                         }
                         order_data['items'].append(item_data)
                         
@@ -30233,10 +30235,19 @@ class PurchasesBuyer(viewsets.ViewSet):
                     }
                     items_data.append(item_data)
             
-            # Calculate order summary
+            total_shipping_fee = 0
+            shipping_fees_by_shop = {}
+
+            if hasattr(order, 'shipping_fees_breakdown') and order.shipping_fees_breakdown:
+                shipping_fees_by_shop = order.shipping_fees_breakdown
+                total_shipping_fee = sum(shipping_fees_by_shop.values())
+            elif hasattr(order, 'shipping_fee') and order.shipping_fee:
+                total_shipping_fee = float(order.shipping_fee)
+
             order_summary = {
                 'subtotal': str(subtotal),
-                'shipping_fee': str(float(order.shipping_fee) if order.shipping_fee else 0.00),
+                'shipping_fee': str(total_shipping_fee),
+                'shipping_fees_breakdown': shipping_fees_by_shop,  # Add per-shop breakdown
                 'tax': str(float(subtotal) * 0.12),
                 'discount': '0.00',
                 'total': str(order.total_amount),
@@ -30358,24 +30369,35 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'completed': True,
             })
         
-        # Order processed
+        # Get all shops involved in this order
+        shops_involved = set()
+        for checkout in order.checkout_set.all():
+            if checkout.cart_item and checkout.cart_item.product and checkout.cart_item.product.shop:
+                shops_involved.add(checkout.cart_item.product.shop.name)
+            elif hasattr(checkout, 'direct_shop_name') and checkout.direct_shop_name:
+                shops_involved.add(checkout.direct_shop_name)
+        
+        shop_count = len(shops_involved)
+        shop_names = ', '.join(list(shops_involved)) if shops_involved else 'Seller'
+        
+        # Order processed (per shop)
         if order.status in ['processing', 'shipped', 'delivered', 'completed']:
             timeline.append({
                 'event': 'Order Processed',
                 'date': order.updated_at.isoformat() if order.updated_at else order.created_at.isoformat(),
-                'description': 'Seller is preparing your order',
+                'description': f'{shop_count} seller(s) are preparing your order: {shop_names}',
                 'icon': 'package',
                 'color': '#10B981',
                 'completed': True,
             })
         
-        # Shipped
+        # Shipped (may have multiple shipments)
         if order.status in ['shipped', 'delivered', 'completed']:
             shipped_date = delivery.created_at if delivery else order.updated_at
             timeline.append({
                 'event': 'Shipped',
                 'date': shipped_date.isoformat() if shipped_date else None,
-                'description': 'Order has been shipped',
+                'description': f'Your order has been shipped from {shop_names}',
                 'icon': 'truck',
                 'color': '#10B981',
                 'completed': True,
@@ -30385,14 +30407,14 @@ class PurchasesBuyer(viewsets.ViewSet):
         if order.status in ['delivered', 'completed']:
             delivered_date = (
                 (getattr(delivery, 'delivery_date', None)
-                 or getattr(delivery, 'delivered_at', None)
-                 or getattr(delivery, 'updated_at', None))
+                or getattr(delivery, 'delivered_at', None)
+                or getattr(delivery, 'updated_at', None))
                 if delivery else order.updated_at
             )
             timeline.append({
                 'event': 'Delivered',
                 'date': delivered_date.isoformat() if delivered_date else None,
-                'description': 'Order has been delivered',
+                'description': f'Your order from {shop_names} has been delivered',
                 'icon': 'checkmark-done',
                 'color': '#10B981',
                 'completed': True,
@@ -30414,7 +30436,7 @@ class PurchasesBuyer(viewsets.ViewSet):
             timeline.append({
                 'event': 'Processing',
                 'date': None,
-                'description': 'Waiting for seller to process',
+                'description': f'Waiting for {shop_count} seller(s) to process',
                 'icon': 'time',
                 'color': '#F59E0B',
                 'completed': False,
@@ -30809,7 +30831,7 @@ class PurchasesBuyer(viewsets.ViewSet):
 
 class ReturnPurchaseBuyer(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
-    def get_return_products(self, request):
+    def get_return_products(order_summaryself, request):
         user_id = request.headers.get('X-User-Id')
 
 
@@ -31179,6 +31201,8 @@ class OrderSuccessful(viewsets.ViewSet):
                             "code": checkout.voucher.code,
                         } if checkout.voucher else None,
                         "remarks": checkout.remarks,
+                        'shipping_fee': str(getattr(checkout, 'shipping_fee', 0.00)),
+                        'distance_km': getattr(checkout, 'distance_km', None),
                     }
                     
                     # Add variant info if available
