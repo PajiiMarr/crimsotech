@@ -827,12 +827,7 @@ export default function Dashboard() {
                   <Text style={styles.statValue}>{summary.low_stock_count || 0}</Text>
                   <Text style={styles.statLabel}>Low Stock Items</Text>
                 </TouchableOpacity>
-              </View>
-
-              {/* Additional Financial Stats */}
-              <View style={styles.statsGrid}>
-
-
+              {/* Additional Financial Stats merged here */}
                 <TouchableOpacity 
                   style={styles.statCard} 
                   onPress={() => showBreakdown('Refunds', 'refunds')}
@@ -1135,8 +1130,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   statCard: {
-    flex: 1,
-    minWidth: '45%',
+    width: '48%',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
