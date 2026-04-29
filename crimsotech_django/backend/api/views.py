@@ -50580,14 +50580,14 @@ class UserWalletViewSet(viewsets.ModelViewSet):
         except UserWallet.DoesNotExist:
             wallet = UserWallet.objects.create(user=user)
 
-        # Auto-release expired pending transactions (older than 3 days)
+        # Auto-release expired pending transactions (older than 1 day)
         self._release_expired_pending_transactions(wallet)
 
         transactions_qs = WalletTransaction.objects.filter(wallet=wallet)
 
         total_credits = transactions_qs.filter(
             transaction_type='credit',
-            status='completed'
+            status__in=['completed', 'pending']
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
         total_debits = transactions_qs.filter(
@@ -50619,7 +50619,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
     def process_completed_order(self, request):
         """
         Process a completed order and add the amount to seller's pending balance.
-        Funds will be available for withdrawal only after 3 days with no refund.
+        Funds will be available for withdrawal only after 1 day with no refund.
         
         Body:
             - order_id: UUID of the completed order
@@ -50700,7 +50700,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                     # Get or create wallet for seller
                     wallet, _ = UserWallet.objects.get_or_create(user=seller_user)
                     
-                    # Add to pending_balance with 3-day hold
+                    # Add to pending_balance with 1-day hold
                     wallet.pending_balance += amount
                     wallet.save()
                     
@@ -50711,7 +50711,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                         amount=amount,
                         transaction_type='credit',
                         source_type='shop_sale',
-                        status='pending',  # Pending - will be released after 3 days
+                        status='pending',  # Pending - will be released after 1 day
                         shop=shop,
                         order=order,
                         created_at=timezone.now()
@@ -50725,7 +50725,7 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                         'seller_id': str(seller_user.id),
                         'seller_name': f"{seller_user.first_name} {seller_user.last_name}".strip() or seller_user.username,
                         'transaction_id': str(wallet_transaction.transaction_id),
-                        'release_date': (timezone.now() + timedelta(days=3)).isoformat()
+                        'release_date': (timezone.now() + timedelta(days=1)).isoformat()
                     })
                     
                     logger.info(f"Added ₱{amount} to pending balance for seller {seller_user.username} from completed order {order_id}")
@@ -50739,8 +50739,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
             'order_status': order.status,
             'total_credited': float(total_credited),
             'processed_items': processed_items,
-            'note': 'Funds will be available for withdrawal after 3 days with no refund.',
-            'release_date': (timezone.now() + timedelta(days=3)).isoformat()
+            'note': 'Funds will be available for withdrawal after 1 day with no refund.',
+            'release_date': (timezone.now() + timedelta(days=1)).isoformat()
         }, status=status.HTTP_200_OK)
 
     # ================================================================
@@ -50772,8 +50772,8 @@ class UserWalletViewSet(viewsets.ModelViewSet):
                 if today > pending_tx.order.refund_expire_date:
                     should_release = True
             elif pending_tx.order and pending_tx.order.completed_at:
-                # Fallback: release if completed_at is older than 3 days
-                if (today - pending_tx.order.completed_at).days >= 3:
+                # Fallback: release if completed_at is older than 1 day
+                if (today - pending_tx.order.completed_at).days >= 1:
                     should_release = True
             else:
                 # No order reference, don't release automatically
