@@ -477,12 +477,6 @@ const CancelConfirmationModal = ({
 };
 
   const handleSelectItemToRate = (item: OrderItem) => {
-    const isReviewed = !!reviewedMap[getReviewedMapKey(item.product_id)];
-    if (!item.can_review && !isReviewed) {
-      Alert.alert('Not Available Yet', 'This item is not ready for rating yet.');
-      return;
-    }
-
     setRateModalVisible(false);
     router.push({
       pathname: '/customer/rate',
@@ -544,7 +538,7 @@ const CancelConfirmationModal = ({
       if (visible && items && items.length > 0) {
         // compute product ids key
         const ids = items.map(i => i.product_id).filter(Boolean);
-        const key = ids.slice().sort().join(',');
+        const key = `${orderId || 'unknown-order'}:${ids.slice().sort().join(',')}`;
         if (_lastReviewedFetchKey.current !== key) {
           fetchReviewedStatusForItems(items);
         }
@@ -574,19 +568,16 @@ const CancelConfirmationModal = ({
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.rateModalList}
               renderItem={({ item }) => {
-                        const isReviewed = !!reviewedMap[getReviewedMapKey(item.product_id)];
-                        const isDisabled = !item.can_review && !isReviewed;
+                  const isReviewed = !!reviewedMap[getReviewedMapKey(item.product_id)];
                 const imageUrl = item.primary_image?.url || item.product_images?.[0]?.url || 'https://via.placeholder.com/72';
 
                 return (
                   <TouchableOpacity
                     style={[
                       styles.rateItemRow,
-                              isDisabled && styles.rateItemRowDisabled,
                     ]}
                     onPress={() => handleSelectItemToRate(item)}
                     activeOpacity={0.8}
-                    disabled={isDisabled}
                   >
                     <Image source={{ uri: imageUrl }} style={styles.rateItemImage} />
                     <View style={styles.rateItemInfo}>
@@ -607,12 +598,12 @@ const CancelConfirmationModal = ({
                                   <Text style={[styles.rateItemStatus, { color: '#10B981' }]}>Already rated</Text>
                                 </View>
                               ) : (
-                                <Text style={styles.rateItemStatus}>{item.can_review ? 'Rate' : 'Locked'}</Text>
+                                <Text style={styles.rateItemStatus}>Rate</Text>
                               )}
                       <MaterialIcons
                         name="chevron-right"
                                 size={20}
-                                color={isDisabled ? '#D1D5DB' : '#F97316'}
+                                color={'#F97316'}
                       />
                     </View>
                   </TouchableOpacity>
