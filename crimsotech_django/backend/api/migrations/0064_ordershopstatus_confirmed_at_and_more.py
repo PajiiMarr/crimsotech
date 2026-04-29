@@ -17,11 +17,12 @@ class Migration(migrations.Migration):
             name='confirmed_at',
             field=models.DateTimeField(blank=True, null=True),
         ),
-        migrations.AlterField(
-            model_name='ordershopstatus',
-            name='id',
-            field=models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False, unique=True),
-        ),
+        # REMOVE THIS SECTION - it's causing the error
+        # migrations.AlterField(
+        #     model_name='ordershopstatus',
+        #     name='id',
+        #     field=models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False, unique=True),
+        # ),
         migrations.AlterField(
             model_name='ordershopstatus',
             name='shop',
