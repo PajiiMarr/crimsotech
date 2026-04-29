@@ -14384,7 +14384,7 @@ class ModeratorProduct(viewsets.ViewSet):
             product_data["reviews"] = [
                 {
                     "id": str(review.id),
-                    "rating": review.rating,
+                    "rating": review.average_rating,
                     "comment": review.comment,
                     "customer": review.customer.customer.username if review.customer and review.customer.customer else None,
                     "created_at": review.created_at.isoformat(),
@@ -19928,7 +19928,7 @@ class SellerProducts(viewsets.ModelViewSet):
             for review in product.reviews.all():
                 reviews_data.append({
                     "id": str(review.id),
-                    "rating": review.rating,
+                    "rating": review.average_rating,
                     "comment": review.comment,
                     "customer": {
                         "id": str(review.customer.customer.id) if review.customer else None,
@@ -19939,7 +19939,7 @@ class SellerProducts(viewsets.ModelViewSet):
                     "created_at": review.created_at.isoformat() if review.created_at else None,
                     "updated_at": review.updated_at.isoformat() if review.updated_at else None,
                 })
-                total_rating += review.rating
+                total_rating += review.average_rating
 
             avg_rating = total_rating / len(reviews_data) if reviews_data else 0
 
@@ -29400,7 +29400,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                 'name': checkout.voucher.name,
                                 'code': checkout.voucher.code
                             } if checkout.voucher else None,
-                            'can_review': not has_reviewed and order.status == 'delivered',
+                            'can_review': not has_reviewed and order.status in ['delivered', 'completed'],
                             'is_refundable': is_refundable
                         }
                         order_data['items'].append(item_data)
@@ -29492,7 +29492,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                                     'name': checkout.voucher.name,
                                     'code': checkout.voucher.code
                                 } if checkout.voucher else None,
-                                'can_review': not has_reviewed and order.status == 'delivered',
+                                'can_review': not has_reviewed and order.status in ['delivered', 'completed'],
                                 'is_refundable': is_refundable
                             }
                             order_data['items'].append(item_data)
@@ -29764,7 +29764,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'name': checkout.voucher.name,
                         'code': checkout.voucher.code
                     } if checkout.voucher else None,
-                    'can_review': not has_reviewed and order.status == 'delivered'
+                    'can_review': not has_reviewed and order.status in ['delivered', 'completed']
                 }
                 items_data.append(item_data)
             else:
@@ -29995,7 +29995,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                         'product_images': product_images,
                         'primary_image': primary_image,
                         'shop_info': shop_info,
-                        'can_review': not has_reviewed and order.status == 'delivered',
+                        'can_review': not has_reviewed and order.status in ['delivered', 'completed'],
                         'can_return': order.status == 'delivered' and not has_reviewed,
                         'is_refundable': variant_is_refundable,
                         'return_deadline': (checkout.created_at + timedelta(days=14)).isoformat() if checkout.created_at else None,
@@ -30054,7 +30054,7 @@ class PurchasesBuyer(viewsets.ViewSet):
                 'actions': {
                     'can_cancel': order.status in ['pending', 'processing'],
                     'can_track': order.status in ['shipped', 'delivered', 'completed'],
-                    'can_review': order.status == 'delivered' and any(item['can_review'] for item in items_data),
+                    'can_review': order.status in ['delivered', 'completed'] and any(item['can_review'] for item in items_data),
                     'can_return': order.status == 'delivered' and any(item['can_return'] for item in items_data),
                     'can_contact_seller': True,
                     'can_buy_again': True,
@@ -43350,8 +43350,9 @@ class ReviewView(APIView):
                         }
                     }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Check for existing rider review
-            if rider_id:
+            # Check for existing rider review ONLY if this is a standalone rider review (no product)
+            # If product_id is provided, allow multiple product reviews with same rider
+            if rider_id and not product_id:
                 existing_rider_review = Review.objects.filter(
                     customer=customer,
                     rider_id=rider_id
@@ -43508,7 +43509,7 @@ class ReviewView(APIView):
                 }, status=status.HTTP_404_NOT_FOUND)
             
             # Check if customer owns this review
-            if str(review.customer.id) != str(customer.id):
+            if str(review.customer.customer_id) != str(customer.customer_id):
                 return Response({
                     'status': 'error',
                     'message': 'You do not have permission to update this review'
@@ -43555,6 +43556,42 @@ class ReviewView(APIView):
             
             # Save changes (average_rating will be calculated in serializer)
             review.save()
+
+            # Handle deleted media IDs
+            deleted_media_ids = data.get('deleted_media_ids')
+            if deleted_media_ids:
+                try:
+                    import json
+                    if isinstance(deleted_media_ids, str):
+                        deleted_ids = json.loads(deleted_media_ids)
+                    else:
+                        deleted_ids = deleted_media_ids
+                    
+                    # Only delete media that belongs to this review
+                    ReviewMedia.objects.filter(
+                        id__in=deleted_ids,
+                        review=review
+                    ).delete()
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.error(f"Error parsing deleted_media_ids: {str(e)}")
+
+            # Add any newly uploaded review media on update
+            media_files = request.FILES.getlist('media')
+            if media_files:
+                for media_file in media_files:
+                    file_name = media_file.name
+                    if file_name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')):
+                        file_type = 'image'
+                    elif file_name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv')):
+                        file_type = 'video'
+                    else:
+                        file_type = 'file'
+
+                    ReviewMedia.objects.create(
+                        review=review,
+                        file_data=media_file,
+                        file_type=file_type
+                    )
             
             return Response({
                 'status': 'success',
@@ -43568,7 +43605,8 @@ class ReviewView(APIView):
                     'value_rating': review.value_rating,
                     'delivery_rating': review.delivery_rating,
                     'comment': review.comment,
-                    'updated_at': review.updated_at.isoformat()
+                    'updated_at': review.updated_at.isoformat(),
+                    'media': ReviewMediaSerializer(review.medias.all(), many=True).data
                 }
             }, status=status.HTTP_200_OK)
             
@@ -43603,7 +43641,7 @@ class ReviewView(APIView):
                 }, status=status.HTTP_404_NOT_FOUND)
             
             # Check if customer owns this review
-            if str(review.customer.id) != str(customer.id):
+            if str(review.customer.customer_id) != str(customer.customer_id):
                 return Response({
                     'status': 'error',
                     'message': 'You do not have permission to delete this review'

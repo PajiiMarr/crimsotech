@@ -12,6 +12,7 @@ import {
   Alert,
   Animated,
   Modal,
+  FlatList,
   RefreshControl
 } from 'react-native';
 import { Ionicons, MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -183,6 +184,44 @@ const formatCurrency = (amount: string) => {
   return `₱${numAmount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+type ShopItemGroup = {
+  key: string;
+  shopId: string;
+  shopName: string;
+  shopPicture: string | null;
+  items: OrderItem[];
+  subtotal: number;
+};
+
+const groupItemsByShop = (items: OrderItem[]): ShopItemGroup[] => {
+  const grouped = new Map<string, ShopItemGroup>();
+
+  items.forEach((item) => {
+    const shopId = item.shop_info?.id || item.shop_info?.name || item.checkout_id || 'unknown-shop';
+    const shopName = item.shop_info?.name || 'Unknown Shop';
+    const shopPicture = item.shop_info?.picture || null;
+    const subtotal = parseFloat(item.subtotal || '0') || 0;
+
+    const existing = grouped.get(shopId);
+    if (existing) {
+      existing.items.push(item);
+      existing.subtotal += subtotal;
+      return;
+    }
+
+    grouped.set(shopId, {
+      key: shopId,
+      shopId,
+      shopName,
+      shopPicture,
+      items: [item],
+      subtotal,
+    });
+  });
+
+  return Array.from(grouped.values());
+};
+
 export default function ViewTrackOrderPage() {
   const { user, userRole } = useAuth();
   const { orderId } = useLocalSearchParams();
@@ -196,10 +235,17 @@ export default function ViewTrackOrderPage() {
   const [centerToastMessage, setCenterToastMessage] = useState("");
   const [cancelModalVisible, setCancelModalVisible] = useState(false);
   const [cancelItemsModalVisible, setCancelItemsModalVisible] = useState(false);
-const [cancellingItems, setCancellingItems] = useState(false);
+  const [rateModalVisible, setRateModalVisible] = useState(false);
+  const [reviewedMap, setReviewedMap] = useState<Record<string, boolean>>({});
+  const _lastReviewedFetchKey = useRef<string | null>(null);
+  const [cancellingItems, setCancellingItems] = useState(false);
+
+  const getReviewedMapKey = (productId: string) => `${orderId || 'unknown-order'}:${productId}`;
 
   useEffect(() => {
     if (user?.id && orderId) {
+      setReviewedMap({});
+      _lastReviewedFetchKey.current = null;
       fetchOrderData();
     }
   }, [user?.id, orderId]);
@@ -429,6 +475,162 @@ const CancelConfirmationModal = ({
     </Modal>
   );
 };
+
+  const handleSelectItemToRate = (item: OrderItem) => {
+    const isReviewed = !!reviewedMap[getReviewedMapKey(item.product_id)];
+    if (!item.can_review && !isReviewed) {
+      Alert.alert('Not Available Yet', 'This item is not ready for rating yet.');
+      return;
+    }
+
+    setRateModalVisible(false);
+    router.push({
+      pathname: '/customer/rate',
+      params: {
+        orderId: String(orderId),
+        productId: item.product_id,
+        productName: item.product_name,
+        variantTitle: item.product_variant || '',
+        shopId: item.shop_info?.id || '',
+        shopName: item.shop_info?.name || '',
+      },
+    });
+  };
+
+  const fetchReviewedStatusForItems = async (items: OrderItem[]) => {
+    if (!user?.id) return;
+
+    const toCheck = items.filter(i => !i.can_review).map(i => i.product_id);
+    if (toCheck.length === 0) return;
+
+    // avoid re-fetching for the same set of product ids
+    try {
+      const key = `${orderId || 'unknown-order'}:${toCheck.slice().sort().join(',')}`;
+      if (_lastReviewedFetchKey.current === key) return;
+      _lastReviewedFetchKey.current = key;
+    } catch (e) {
+      // fallback: continue
+    }
+
+    try {
+      const promises = toCheck.map(pid =>
+        AxiosInstance.get('/reviews/', {
+          params: { product_id: pid, customer_id: user.id },
+          headers: { 'X-User-Id': user.id }
+        }).then(res => ({ pid, has: !!(res.data?.data?.reviews?.length) })).catch(() => ({ pid, has: false }))
+      );
+
+      const results = await Promise.all(promises);
+      setReviewedMap(prev => {
+        const map: Record<string, boolean> = { ...prev };
+        results.forEach(r => { map[getReviewedMapKey(r.pid)] = r.has; });
+        return map;
+      });
+    } catch (err) {
+      console.log('Error checking reviewed status:', err);
+    }
+  };
+
+  const RateItemModal = ({
+    visible,
+    onClose,
+    items,
+  }: {
+    visible: boolean;
+    onClose: () => void;
+    items: OrderItem[];
+  }) => {
+    useEffect(() => {
+      if (visible && items && items.length > 0) {
+        // compute product ids key
+        const ids = items.map(i => i.product_id).filter(Boolean);
+        const key = ids.slice().sort().join(',');
+        if (_lastReviewedFetchKey.current !== key) {
+          fetchReviewedStatusForItems(items);
+        }
+      }
+    }, [visible]);
+    if (!visible) return null;
+
+    return (
+      <Modal
+        visible={visible}
+        transparent
+        animationType="fade"
+        onRequestClose={onClose}
+      >
+        <View style={styles.rateModalOverlay}>
+          <View style={styles.rateModalContainer}>
+            <View style={styles.rateModalHeader}>
+              <Text style={styles.rateModalTitle}>Select item to rate</Text>
+              <Text style={styles.rateModalSubtitle}>
+                Choose one product from this order. Each item is rated separately.
+              </Text>
+            </View>
+
+            <FlatList
+              data={items}
+              keyExtractor={(item) => item.checkout_id}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.rateModalList}
+              renderItem={({ item }) => {
+                        const isReviewed = !!reviewedMap[getReviewedMapKey(item.product_id)];
+                        const isDisabled = !item.can_review && !isReviewed;
+                const imageUrl = item.primary_image?.url || item.product_images?.[0]?.url || 'https://via.placeholder.com/72';
+
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.rateItemRow,
+                              isDisabled && styles.rateItemRowDisabled,
+                    ]}
+                    onPress={() => handleSelectItemToRate(item)}
+                    activeOpacity={0.8}
+                    disabled={isDisabled}
+                  >
+                    <Image source={{ uri: imageUrl }} style={styles.rateItemImage} />
+                    <View style={styles.rateItemInfo}>
+                      <Text style={styles.rateItemShop} numberOfLines={1}>
+                        {item.shop_info?.name || 'Unknown Shop'}
+                      </Text>
+                      <Text style={styles.rateItemName} numberOfLines={2}>
+                        {item.product_name}
+                      </Text>
+                      <Text style={styles.rateItemMeta} numberOfLines={1}>
+                        Qty: {item.quantity}
+                        {item.product_variant ? ` • ${item.product_variant}` : ''}
+                      </Text>
+                    </View>
+                    <View style={styles.rateItemRight}>
+                              {isReviewed ? (
+                                <View style={{ alignItems: 'flex-end' }}>
+                                  <Text style={[styles.rateItemStatus, { color: '#10B981' }]}>Already rated</Text>
+                                </View>
+                              ) : (
+                                <Text style={styles.rateItemStatus}>{item.can_review ? 'Rate' : 'Locked'}</Text>
+                              )}
+                      <MaterialIcons
+                        name="chevron-right"
+                                size={20}
+                                color={isDisabled ? '#D1D5DB' : '#F97316'}
+                      />
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={
+                <Text style={styles.rateModalEmptyText}>No items available for rating.</Text>
+              }
+            />
+
+            <TouchableOpacity style={styles.rateModalCloseButton} onPress={onClose}>
+              <Text style={styles.rateModalCloseButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
 
   const getStatusText = (orderObj: any) => {
     const s = String(orderObj?.status || '').toLowerCase();
@@ -1074,6 +1276,7 @@ const CancelConfirmationModal = ({
 
   const { order, shipping_info, delivery_address, items, order_summary, timeline, actions } = orderData;
   const orderStatusLower = String(order?.status || '').toLowerCase();
+  const groupedItemsByShop = groupItemsByShop(items);
 
   const hasActions = () => {
     return (
@@ -1500,131 +1703,118 @@ const CancelConfirmationModal = ({
           </View>
         )}
 
-        {/* Product Cards */}
-        {items.map((item, index) => (
-  <View key={item.checkout_id} style={[
-    styles.productCard,
-    item.item_status === 'cancelled' && styles.cancelledProductCard  // ← ADD THIS
-  ]}>
-    {item.shop_info && item.shop_info.name ? (
-      <TouchableOpacity 
-        style={styles.storeHeader}
-        activeOpacity={0.7}
-        onPress={() => router.push({
-          pathname: "/customer/view-shop",
-          params: { shopId: item.shop_info.id }
-        })}
-      >
-        {item.shop_info.picture ? (
-          <Image 
-            source={{ uri: item.shop_info.picture }} 
-            style={styles.storeLogo} 
-          />
-        ) : (
-          <View style={styles.storeLogo}>
-            <Text style={styles.logoText}>
-              {item.shop_info.name.substring(0, 2).toUpperCase()}
-            </Text>
-          </View>
-        )}
-        <View style={styles.storeInfo}>
-          <View style={styles.storeTitleRow}>
-            <Text style={[styles.storeName, item.item_status === 'cancelled' && styles.cancelledText]}>
-              {item.shop_info.name}
-            </Text>
-            {item.shop_info.is_choices && (
-              <View style={styles.choicesBadge}>
-                <Text style={styles.badgeText}>Choices</Text>
-              </View>
-            )}
-            <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
-          </View>
-          <Text style={[styles.followerText, item.item_status === 'cancelled' && styles.cancelledText]}>
-            {formatNumber(item.shop_info.items_count)} Items | {formatNumber(item.shop_info.followers_count || 0)} followers
-          </Text>
-        </View>
-      </TouchableOpacity>
-    ) : (
-      <TouchableOpacity 
-        style={styles.storeHeader}
-        activeOpacity={0.7}
-        onPress={order?.shop_id ? () => router.push({
-          pathname: "/customer/view-shop",
-          params: { shopId: order.shop_id }
-        }) : undefined}
-      >
-        <View style={styles.storeLogo}>
-          <Text style={styles.logoText}>SH</Text>
-        </View>
-        <View style={styles.storeInfo}>
-          <View style={styles.storeTitleRow}>
-            <Text style={[styles.storeName, item.item_status === 'cancelled' && styles.cancelledText]}>
-              {order?.shop_name || 'Shop'}
-            </Text>
-            <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
-          </View>
-        </View>
-      </TouchableOpacity>
-    )}
-    
-    {/* CANCELLED BADGE - ADD THIS */}
-    {item.item_status === 'cancelled' && (
-      <View style={styles.cancelledItemBadge}>
-        <MaterialIcons name="cancel" size={14} color="#EF4444" />
-        <Text style={styles.cancelledItemBadgeText}>Item Cancelled</Text>
-      </View>
-    )}
-    
-    <View style={styles.productBody}>
-      <Image 
-        source={{ 
-          uri: item.primary_image?.url || 'https://via.placeholder.com/80'
-        }} 
-        style={[
-          styles.productImage,
-          item.item_status === 'cancelled' && styles.cancelledImage  // ← ADD THIS
-        ]} 
-      />
-      <View style={styles.productDetails}>
-        <Text style={[
-          styles.productName,
-          item.item_status === 'cancelled' && styles.cancelledText  // ← ADD THIS
-        ]} numberOfLines={2}>
-          {item.product_name}
-        </Text>
-        <Text style={[
-          styles.productVariant,
-          item.item_status === 'cancelled' && styles.cancelledText  // ← ADD THIS
-        ]}>{item.product_variant}</Text>
-        <Text style={[
-          styles.productQuantity,
-          item.item_status === 'cancelled' && styles.cancelledText  // ← ADD THIS
-        ]}>Quantity: {formatNumber(item.quantity)}</Text>
-      </View>
-      <View style={styles.priceContainer}>
-        <View style={styles.priceRow}>
-          <Text style={[
-            styles.currentPrice,
-            item.item_status === 'cancelled' && styles.cancelledPrice  // ← ADD THIS
-          ]}>{formatCurrency(item.price)}</Text>
-          <Ionicons name="help-circle-outline" size={14} color="#9CA3AF" />
-        </View>
-        <Text style={[
-          styles.oldPrice,
-          item.item_status === 'cancelled' && styles.cancelledText  // ← ADD THIS
-        ]}>{formatCurrency(item.original_price)}</Text>
-        {/* <Text style={[
-          styles.subtotal,
-          item.item_status === 'cancelled' && styles.cancelledText  // ← ADD THIS
-        ]}>Subtotal: {formatCurrency(item.subtotal)}</Text> */}
-      </View>
-    </View>
+        {/* Product Cards grouped by shop */}
+        <View style={styles.shopGroupsContainer}>
+          <View style={styles.infoCard}>
+            <View style={styles.cardHeader}>
+              <MaterialIcons name="storefront" size={20} color="#111827" />
+              <Text style={styles.cardTitle}>
+                Shops in this order ({groupedItemsByShop.length})
+              </Text>
+            </View>
 
-    <View style={styles.productActions}>
-      {/* Action buttons - disabled for cancelled items */}
-    </View>
-  </View>
-))}
+            {groupedItemsByShop.map((group) => (
+              <View key={group.key} style={styles.shopGroupCard}>
+                <TouchableOpacity
+                  style={styles.storeHeader}
+                  activeOpacity={0.7}
+                  onPress={() => router.push({
+                    pathname: '/customer/view-shop',
+                    params: { shopId: group.shopId }
+                  })}
+                >
+                  {group.shopPicture ? (
+                    <Image source={{ uri: group.shopPicture }} style={styles.storeLogo} />
+                  ) : (
+                    <View style={styles.storeLogo}>
+                      <Text style={styles.logoText}>
+                        {group.shopName.substring(0, 2).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.storeInfo}>
+                    <View style={styles.storeTitleRow}>
+                      <Text style={styles.storeName} numberOfLines={1}>
+                        {group.shopName}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={16} color="#9CA3AF" />
+                    </View>
+                    <Text style={styles.followerText}>
+                      {group.items.length} item{group.items.length > 1 ? 's' : ''} • Shop total {formatCurrency(group.subtotal.toString())}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <View style={styles.groupItemsContainer}>
+                  {group.items.map((item) => (
+                    <View
+                      key={item.checkout_id}
+                      style={[
+                        styles.groupItemRow,
+                        item.item_status === 'cancelled' && styles.cancelledProductCard,
+                      ]}
+                    >
+                      <Image
+                        source={{ uri: item.primary_image?.url || 'https://via.placeholder.com/80' }}
+                        style={[
+                          styles.groupItemImage,
+                          item.item_status === 'cancelled' && styles.cancelledImage,
+                        ]}
+                      />
+                      <View style={styles.groupItemDetails}>
+                        <Text
+                          style={[
+                            styles.groupItemName,
+                            item.item_status === 'cancelled' && styles.cancelledText,
+                          ]}
+                          numberOfLines={2}
+                        >
+                          {item.product_name}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.groupItemMeta,
+                            item.item_status === 'cancelled' && styles.cancelledText,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {item.product_variant}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.groupItemMeta,
+                            item.item_status === 'cancelled' && styles.cancelledText,
+                          ]}
+                        >
+                          Quantity: {formatNumber(item.quantity)}
+                        </Text>
+                      </View>
+                      <View style={styles.groupItemPriceContainer}>
+                        <Text
+                          style={[
+                            styles.currentPrice,
+                            item.item_status === 'cancelled' && styles.cancelledPrice,
+                          ]}
+                        >
+                          {formatCurrency(item.price)}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.groupItemSubtotal,
+                            item.item_status === 'cancelled' && styles.cancelledText,
+                          ]}
+                        >
+                          Subtotal: {formatCurrency(item.subtotal)}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
 
         {/* Order Summary */}
         <View style={styles.summaryCard}>
@@ -1753,17 +1943,7 @@ const CancelConfirmationModal = ({
             {orderStatusLower === 'completed' && items.length > 0 && (
               <TouchableOpacity
                 style={styles.rateButton}
-                onPress={() => {
-                  const firstItem = items[0];
-                  router.push({
-                    pathname: '/customer/rate',
-                    params: {
-                      orderId: order.id,
-                      productId: firstItem.product_id,
-                      productName: firstItem.product_name
-                    }
-                  });
-                }}
+                onPress={() => setRateModalVisible(true)}
               >
                 <Text style={styles.rateButtonText}>Rate</Text>
               </TouchableOpacity>
@@ -1771,6 +1951,12 @@ const CancelConfirmationModal = ({
           </View>
         </View>
       )}
+
+      <RateItemModal
+        visible={rateModalVisible}
+        onClose={() => setRateModalVisible(false)}
+        items={items}
+      />
 
 {/* Cancel Items Modal */}
 {/* Cancel Items Modal */}
@@ -2001,6 +2187,15 @@ const styles = StyleSheet.create({
     padding: 16, 
     marginTop: 10 
   },
+  shopGroupsContainer: {
+    marginTop: 10,
+  },
+  shopGroupCard: {
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 12,
+    marginTop: 12,
+  },
   storeHeader: { 
     flexDirection: 'row', 
     alignItems: 'center', 
@@ -2061,6 +2256,49 @@ const styles = StyleSheet.create({
   followerText: { 
     fontSize: 12, 
     color: '#6B7280' 
+  },
+  groupItemsContainer: {
+    marginTop: 6,
+  },
+  groupItemRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  groupItemImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  groupItemDetails: {
+    flex: 1,
+    marginLeft: 10,
+    paddingRight: 8,
+  },
+  groupItemName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 18,
+  },
+  groupItemMeta: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  groupItemPriceContainer: {
+    alignItems: 'flex-end',
+    minWidth: 96,
+  },
+  groupItemSubtotal: {
+    fontSize: 11,
+    color: '#374151',
+    fontWeight: '600',
+    marginTop: 6,
+    textAlign: 'right',
   },
   productBody: { 
     flexDirection: 'row', 
@@ -2254,6 +2492,106 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: 16,
     gap: 12,
+  },
+  rateModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(17, 24, 39, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  rateModalContainer: {
+    width: '100%',
+    maxHeight: '80%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+  },
+  rateModalHeader: {
+    marginBottom: 12,
+  },
+  rateModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  rateModalSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+  },
+  rateModalList: {
+    paddingBottom: 12,
+  },
+  rateItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+    marginBottom: 10,
+  },
+  rateItemRowDisabled: {
+    opacity: 0.55,
+  },
+  rateItemImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    marginRight: 12,
+    backgroundColor: '#E5E7EB',
+  },
+  rateItemInfo: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  rateItemShop: {
+    fontSize: 12,
+    color: '#F97316',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  rateItemName: {
+    fontSize: 15,
+    color: '#111827',
+    fontWeight: '600',
+  },
+  rateItemMeta: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  rateItemRight: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rateItemStatus: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#F97316',
+    marginBottom: 4,
+  },
+  rateModalEmptyText: {
+    paddingVertical: 16,
+    textAlign: 'center',
+    color: '#6B7280',
+    fontSize: 14,
+  },
+  rateModalCloseButton: {
+    marginTop: 4,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  rateModalCloseButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
   },
   cancelOrderButton: {
     flex: 1,

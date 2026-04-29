@@ -167,7 +167,8 @@ urlpatterns = [
     path('api/cart/bulk-update/', CartBulkUpdateView.as_view(), name='cart-bulk-update'),
     path('api/cart/clear/', CartClearView.as_view(), name='cart-clear'),
 
-    path('api/reviews/', ReviewView.as_view(), name='review-list-create'),
+     path('api/reviews/', ReviewView.as_view(), name='review-list-create'),
+     path('api/reviews/<uuid:review_id>/', ReviewView.as_view(), name='review-detail'),
 
     path('api/register/', Register.as_view(), name='register'),
     path('api/login/', Login.as_view(), name='login'),
