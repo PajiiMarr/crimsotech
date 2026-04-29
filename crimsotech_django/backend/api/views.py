@@ -17886,6 +17886,7 @@ class CustomerShopsAddSeller(viewsets.ViewSet):
 class SellerDashboard(viewsets.ViewSet):
     """
     Seller dashboard viewset with comprehensive metrics and data
+    Uses CHECKOUT STATUS (not order status) for accurate per-shop sales tracking
     VAT is excluded from sales/earnings calculations but still available from variants
     """
     
@@ -17961,11 +17962,10 @@ class SellerDashboard(viewsets.ViewSet):
                 is_removed=False
             ).count()
 
-            # Only count orders for this specific shop
-            orders_count = Order.objects.filter(
-                checkout__cart_item__product__shop=shop,
-                status__in=['pending', 'processing', 'shipped', 'delivered']
-            ).distinct().count()
+            # Only count orders for this specific shop (using checkout status, not order status)
+            orders_count = Checkout.objects.filter(
+                Q(cart_item__product__shop=shop) | Q(direct_shop_id=str(shop.id))
+            ).values('order').distinct().count()
 
             # Only count gifts for this specific shop
             gifts_count = AppliedGift.objects.filter(
@@ -18013,32 +18013,46 @@ class SellerDashboard(viewsets.ViewSet):
     
     def _get_summary_data(self, shop, start_date=None, end_date=None):
         """
-        Get summary statistics for the dashboard cards - OVERALL sales breakdown
-        Sales and earnings EXCLUDE VAT (use price_without_vat from checkout items)
+        Get summary statistics for the dashboard cards - using CHECKOUT STATUS
+        
+        Sales are counted when checkout.status = 'completed' (delivered)
+        This accurately tracks per-shop sales regardless of global order status
         """
         
-        # Get all checkout items for this shop with delivered orders (no date filter)
-        current_checkout_items = Checkout.objects.filter(
-            order__checkout__cart_item__product__shop=shop,
-            order__status='delivered'
-        ).exclude(
-            order__status__in=['cancelled', 'refunded']
+        # Base filter for this shop's checkouts
+        base_filter = Q(cart_item__product__shop=shop) | Q(direct_shop_id=str(shop.id))
+        
+        # Get completed checkouts (delivered) for this shop
+        completed_checkouts = Checkout.objects.filter(
+            base_filter,
+            status='completed'  # 👈 Use checkout status, not order status
         ).select_related('order')
         
-        # Calculate total sales WITHOUT VAT
+        # Calculate total sales WITHOUT VAT using the actual product/variant prices
         total_sales = Decimal('0.00')
-        for checkout_item in current_checkout_items:
-            if checkout_item.direct_product_price:
-                total_sales += checkout_item.direct_product_price * checkout_item.quantity
-            elif checkout_item.cart_item and checkout_item.cart_item.variant:
-                variant_price = checkout_item.cart_item.variant.price or Decimal('0.00')
-                total_sales += variant_price * checkout_item.quantity
-            elif checkout_item.cart_item and checkout_item.cart_item.product:
-                product_price = Decimal(str(checkout_item.cart_item.product.price)) if hasattr(checkout_item.cart_item.product, 'price') else Decimal('0.00')
-                total_sales += product_price * checkout_item.quantity
+        total_earnings = Decimal('0.00')
         
-        total_earnings = total_sales
-        total_orders = current_checkout_items.values('order').distinct().count()
+        for checkout_item in completed_checkouts:
+            if checkout_item.direct_product_price:
+                # Direct checkout (no cart item)
+                item_total = checkout_item.direct_product_price * checkout_item.quantity
+                total_sales += item_total
+                total_earnings += item_total
+            elif checkout_item.cart_item and checkout_item.cart_item.variant:
+                # Has variant - use variant price
+                variant_price = checkout_item.cart_item.variant.price or Decimal('0.00')
+                item_total = variant_price * checkout_item.quantity
+                total_sales += item_total
+                total_earnings += item_total
+            elif checkout_item.cart_item and checkout_item.cart_item.product:
+                # Legacy product without variant
+                product_price = Decimal(str(checkout_item.cart_item.product.price)) if hasattr(checkout_item.cart_item.product, 'price') else Decimal('0.00')
+                item_total = product_price * checkout_item.quantity
+                total_sales += item_total
+                total_earnings += item_total
+        
+        # Total unique orders that have at least one completed checkout from this shop
+        total_orders = completed_checkouts.values('order').distinct().count()
         
         # Low stock variants count - only for this specific shop
         low_stock_variants = Variants.objects.filter(
@@ -18073,15 +18087,13 @@ class SellerDashboard(viewsets.ViewSet):
             start_datetime = timezone.make_aware(datetime.combine(start_date, time.min))
             end_datetime = timezone.make_aware(datetime.combine(end_date, time.max))
             
-            period_checkout_items = Checkout.objects.filter(
-                order__checkout__cart_item__product__shop=shop,
-                order__created_at__range=[start_datetime, end_datetime],
-                order__status='delivered'
-            ).exclude(
-                order__status__in=['cancelled', 'refunded']
+            period_checkouts = Checkout.objects.filter(
+                base_filter,
+                status='completed',
+                created_at__range=[start_datetime, end_datetime]
             ).select_related('order')
             
-            for checkout_item in period_checkout_items:
+            for checkout_item in period_checkouts:
                 if checkout_item.direct_product_price:
                     period_sales += float(checkout_item.direct_product_price) * checkout_item.quantity
                 elif checkout_item.cart_item and checkout_item.cart_item.variant:
@@ -18091,10 +18103,29 @@ class SellerDashboard(viewsets.ViewSet):
                     product_price = float(getattr(checkout_item.cart_item.product, 'price', 0))
                     period_sales += product_price * checkout_item.quantity
         
+        # Optional: Get pending earnings (checkouts that are shipped but not yet completed)
+        pending_checkouts = Checkout.objects.filter(
+            base_filter,
+            status='pending'  # 👈 Still pending/delivery in progress
+        ).select_related('order')
+        
+        pending_earnings = Decimal('0.00')
+        for checkout_item in pending_checkouts:
+            if checkout_item.direct_product_price:
+                pending_earnings += checkout_item.direct_product_price * checkout_item.quantity
+            elif checkout_item.cart_item and checkout_item.cart_item.variant:
+                variant_price = checkout_item.cart_item.variant.price or Decimal('0.00')
+                pending_earnings += variant_price * checkout_item.quantity
+            elif checkout_item.cart_item and checkout_item.cart_item.product:
+                product_price = Decimal(str(checkout_item.cart_item.product.price)) if hasattr(checkout_item.cart_item.product, 'price') else Decimal('0.00')
+                pending_earnings += product_price * checkout_item.quantity
+        
         return {
             'total_sales': float(total_sales),
             'total_earnings': float(total_earnings),
             'total_orders': total_orders,
+            'pending_earnings': float(pending_earnings),
+            'pending_orders': pending_checkouts.values('order').distinct().count(),
             'low_stock_count': low_stock_count,
             'refund_requests': refund_requests,
             'draft_count': draft_count,
@@ -18102,26 +18133,50 @@ class SellerDashboard(viewsets.ViewSet):
         }
     
     def _get_latest_orders(self, shop, limit=5):
-        """Get latest 5 orders for the shop - FILTERED BY SPECIFIC SHOP"""
+        """Get latest 5 orders for the shop with per-shop status - FILTERED BY SPECIFIC SHOP"""
         try:
+            # Get unique orders that have checkouts from this shop
             orders = Order.objects.filter(
                 checkout__cart_item__product__shop=shop
-            ).select_related(
-                'shipping_address__user'
             ).distinct().order_by('-created_at')[:limit]
             
-            return [
-                {
+            order_list = []
+            for order in orders:
+                # Get this shop's specific checkout status for this order
+                shop_checkouts = Checkout.objects.filter(
+                    Q(cart_item__product__shop=shop) | Q(direct_shop_id=str(shop.id)),
+                    order=order
+                )
+                
+                # Determine shop's status based on checkouts
+                if shop_checkouts.filter(status='completed').exists():
+                    shop_status = 'completed'
+                elif shop_checkouts.filter(status='pending').exists():
+                    shop_status = 'pending'
+                else:
+                    shop_status = 'processing'
+                
+                # Calculate shop's total from checkouts
+                shop_total = Decimal('0.00')
+                for checkout in shop_checkouts:
+                    if checkout.direct_product_price:
+                        shop_total += checkout.direct_product_price * checkout.quantity
+                    elif checkout.cart_item and checkout.cart_item.variant:
+                        shop_total += (checkout.cart_item.variant.price or Decimal('0.00')) * checkout.quantity
+                    elif checkout.cart_item and checkout.cart_item.product:
+                        shop_total += Decimal(str(getattr(checkout.cart_item.product, 'price', 0))) * checkout.quantity
+                
+                order_list.append({
                     'id': str(order.order),
                     'order_id': str(order.order),
                     'customer_name': order.shipping_address.recipient_name if order.shipping_address else 'Unknown',
                     'customer_email': order.shipping_address.user.email if order.shipping_address and order.shipping_address.user else 'N/A',
-                    'status': order.status,
-                    'total_amount': float(order.total_amount),
+                    'status': shop_status,  # 👈 Per-shop status, not global order status
+                    'total_amount': float(shop_total),
                     'created_at': order.created_at.isoformat(),
-                }
-                for order in orders
-            ]
+                })
+            
+            return order_list
         except Exception as e:
             print(f"Error in _get_latest_orders: {str(e)}")
             return []
@@ -18242,6 +18297,12 @@ class SellerDashboard(viewsets.ViewSet):
                 total_vat=Sum('value_added_tax_amount')
             )['total_vat'] or Decimal('0.00')
             
+            # Completed orders count for this shop
+            completed_orders_count = Checkout.objects.filter(
+                Q(cart_item__product__shop=shop) | Q(direct_shop_id=str(shop.id)),
+                status='completed'
+            ).values('order').distinct().count()
+            
             return {
                 'average_rating': round(float(average_rating), 1),
                 'total_reviews': reviews.count(),
@@ -18250,6 +18311,7 @@ class SellerDashboard(viewsets.ViewSet):
                 'active_products': active_products,
                 'draft_products': draft_products,
                 'total_vat_collected': float(total_vat_collected),
+                'completed_orders': completed_orders_count,
             }
         except Exception as e:
             print(f"Error in _get_shop_performance_data: {str(e)}")
@@ -18261,6 +18323,7 @@ class SellerDashboard(viewsets.ViewSet):
                 'active_products': 0,
                 'draft_products': 0,
                 'total_vat_collected': 0,
+                'completed_orders': 0,
             }
     
     def _get_report_data(self, shop):
@@ -18430,6 +18493,128 @@ class SellerDashboard(viewsets.ViewSet):
                 {'error': str(e), 'success': False},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    @action(detail=False, methods=['get'])
+    def get_sales_chart_data(self, request):
+        """Get sales chart data for dashboard - by day/month - USING CHECKOUT STATUS"""
+        try:
+            shop_id = request.query_params.get('shop_id')
+            range_type = request.query_params.get('range_type', 'monthly')
+            
+            if not shop_id:
+                return Response(
+                    {'error': 'shop_id is required', 'success': False},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                shop = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                return Response(
+                    {'error': 'Shop not found', 'success': False},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            base_filter = Q(cart_item__product__shop=shop) | Q(direct_shop_id=str(shop.id))
+            
+            # Get data based on range type
+            sales_data = []
+            labels = []
+            
+            if range_type == 'weekly':
+                # Last 7 days
+                for i in range(6, -1, -1):
+                    date = timezone.now().date() - timedelta(days=i)
+                    start = timezone.make_aware(datetime.combine(date, time.min))
+                    end = timezone.make_aware(datetime.combine(date, time.max))
+                    
+                    daily_sales = Checkout.objects.filter(
+                        base_filter,
+                        status='completed',
+                        created_at__range=[start, end]
+                    )
+                    
+                    total = Decimal('0.00')
+                    for checkout in daily_sales:
+                        if checkout.direct_product_price:
+                            total += checkout.direct_product_price * checkout.quantity
+                        elif checkout.cart_item and checkout.cart_item.variant:
+                            total += (checkout.cart_item.variant.price or Decimal('0.00')) * checkout.quantity
+                        elif checkout.cart_item and checkout.cart_item.product:
+                            total += Decimal(str(getattr(checkout.cart_item.product, 'price', 0))) * checkout.quantity
+                    
+                    sales_data.append(float(total))
+                    labels.append(date.strftime('%a'))
+            
+            elif range_type == 'monthly':
+                # Last 30 days (grouped by day)
+                for i in range(29, -1, -1):
+                    date = timezone.now().date() - timedelta(days=i)
+                    start = timezone.make_aware(datetime.combine(date, time.min))
+                    end = timezone.make_aware(datetime.combine(date, time.max))
+                    
+                    daily_sales = Checkout.objects.filter(
+                        base_filter,
+                        status='completed',
+                        created_at__range=[start, end]
+                    )
+                    
+                    total = Decimal('0.00')
+                    for checkout in daily_sales:
+                        if checkout.direct_product_price:
+                            total += checkout.direct_product_price * checkout.quantity
+                        elif checkout.cart_item and checkout.cart_item.variant:
+                            total += (checkout.cart_item.variant.price or Decimal('0.00')) * checkout.quantity
+                        elif checkout.cart_item and checkout.cart_item.product:
+                            total += Decimal(str(getattr(checkout.cart_item.product, 'price', 0))) * checkout.quantity
+                    
+                    sales_data.append(float(total))
+                    labels.append(date.strftime('%d'))
+            
+            elif range_type == 'yearly':
+                # Last 12 months
+                for i in range(11, -1, -1):
+                    month_date = timezone.now().date().replace(day=1) - timedelta(days=30*i)
+                    month_start = timezone.make_aware(datetime.combine(month_date.replace(day=1), time.min))
+                    if month_date.month == 12:
+                        next_month = month_date.replace(year=month_date.year + 1, month=1, day=1)
+                    else:
+                        next_month = month_date.replace(month=month_date.month + 1, day=1)
+                    month_end = timezone.make_aware(datetime.combine(next_month - timedelta(days=1), time.max))
+                    
+                    monthly_sales = Checkout.objects.filter(
+                        base_filter,
+                        status='completed',
+                        created_at__range=[month_start, month_end]
+                    )
+                    
+                    total = Decimal('0.00')
+                    for checkout in monthly_sales:
+                        if checkout.direct_product_price:
+                            total += checkout.direct_product_price * checkout.quantity
+                        elif checkout.cart_item and checkout.cart_item.variant:
+                            total += (checkout.cart_item.variant.price or Decimal('0.00')) * checkout.quantity
+                        elif checkout.cart_item and checkout.cart_item.product:
+                            total += Decimal(str(getattr(checkout.cart_item.product, 'price', 0))) * checkout.quantity
+                    
+                    sales_data.append(float(total))
+                    labels.append(month_date.strftime('%b'))
+            
+            return Response({
+                'success': True,
+                'labels': labels,
+                'sales_data': sales_data,
+                'range_type': range_type,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in get_sales_chart_data: {str(e)}")
+            traceback.print_exc()
+            return Response(
+                {'error': str(e), 'success': False},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 class SellerProducts(viewsets.ModelViewSet):
     serializer_class = ProductSerializer

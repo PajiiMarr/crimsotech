@@ -29,6 +29,9 @@ interface DashboardSummary {
   draft_count?: number;
   pending_sales?: number;
   available_balance?: number;
+  pending_earnings?: number;
+  pending_orders?: number;
+  period_sales?: number;
 }
 
 interface ShopPerformance {
@@ -40,6 +43,7 @@ interface ShopPerformance {
   active_products?: number;
   draft_products?: number;
   total_vat_collected?: number;
+  completed_orders?: number;
 }
 
 interface StoreManagementCounts {
@@ -51,13 +55,50 @@ interface StoreManagementCounts {
   product_voucher?: number;
 }
 
+interface RefundsData {
+  pending_count?: number;
+  disputes_count?: number;
+  total_count?: number;
+  latest?: any[];
+}
+
+interface ReportsData {
+  active_count?: number;
+  total_count?: number;
+  latest_notifications?: any[];
+}
+
+interface LatestOrder {
+  id: string;
+  order_id: string;
+  customer_name: string;
+  customer_email: string;
+  status: string;
+  total_amount: number;
+  created_at: string;
+}
+
+interface LowStockItem {
+  id: string;
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  critical_stock: number;
+  sku_code: string;
+  variant_title: string;
+  price: number;
+  value_added_tax: number;
+  value_added_tax_amount: number;
+  price_with_vat: number;
+}
+
 interface DashboardData {
   summary: DashboardSummary;
   shop_performance: ShopPerformance;
-  latest_orders?: any[];
-  low_stock?: any[];
-  refunds?: any;
-  reports?: any;
+  latest_orders?: LatestOrder[];
+  low_stock?: LowStockItem[];
+  refunds?: RefundsData;
+  reports?: ReportsData;
   store_management_counts?: StoreManagementCounts;
 }
 
@@ -89,6 +130,8 @@ function BreakdownModal({ visible, onClose, title, data }: BreakdownModalProps) 
             {renderBreakdownItem('Total Sales (Lifetime)', `₱${(data.total_sales || 0).toLocaleString('en-PH')}`, 'cash-outline')}
             {renderBreakdownItem('Total Earnings', `₱${(data.total_earnings || 0).toLocaleString('en-PH')}`, 'trending-up-outline')}
             {renderBreakdownItem('Total Orders', data.total_orders || 0, 'cart-outline')}
+            {renderBreakdownItem('Pending Earnings', `₱${(data.pending_earnings || 0).toLocaleString('en-PH')}`, 'hourglass-outline')}
+            {renderBreakdownItem('Pending Orders', data.pending_orders || 0, 'time-outline')}
             {renderBreakdownItem('Refund Requests', data.refund_requests || 0, 'refresh-outline')}
             {renderBreakdownItem('Draft Count', data.draft_count || 0, 'create-outline')}
           </>
@@ -165,6 +208,7 @@ function BreakdownModal({ visible, onClose, title, data }: BreakdownModalProps) 
           <>
             {renderBreakdownItem('Average Rating', `${(data.average_rating || 0).toFixed(1)} / 5.0`, 'star-outline')}
             {renderBreakdownItem('Total Reviews', data.total_reviews || 0, 'chatbubble-outline')}
+            {renderBreakdownItem('Completed Orders', data.completed_orders || 0, 'checkmark-circle-outline')}
           </>
         );
       
@@ -300,7 +344,7 @@ export default function Dashboard() {
             ...response.data.summary,
             pending_sales: pendingBalance,
             available_balance: availableBalance,
-            total_sales: totalSales,
+            total_sales: totalSales || response.data.summary.total_sales,
             deductions: deductions,
           },
           shop_performance: response.data.shop_performance || {},
@@ -325,7 +369,7 @@ export default function Dashboard() {
   };
 
   const formatCurrency = (amount?: number) => {
-    if (!amount) return '₱0';
+    if (!amount && amount !== 0) return '₱0';
     return `₱${amount.toLocaleString('en-PH')}`;
   };
 
@@ -501,19 +545,24 @@ export default function Dashboard() {
             </div>
           </div>
           <div class="stats-grid">
-
-          
-
+            <div class="stat-card">
+              <div class="stat-label">Pending Earnings</div>
+              <div class="stat-value">${formatCurrency(summary.pending_earnings)}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Pending Orders</div>
+              <div class="stat-value">${summary.pending_orders || 0}</div>
+            </div>
             <div class="stat-card">
               <div class="stat-label">Refund Requests</div>
               <div class="stat-value">${summary.refund_requests || 0}</div>
             </div>
+          </div>
+          <div class="stats-grid">
             <div class="stat-card">
               <div class="stat-label">Draft Count</div>
               <div class="stat-value">${summary.draft_count || 0}</div>
             </div>
-          </div>
-          <div class="stats-grid">
             <div class="stat-card">
               <div class="stat-label">Available Balance</div>
               <div class="stat-value">${formatCurrency(summary.available_balance)}</div>
@@ -556,6 +605,10 @@ export default function Dashboard() {
             </div>
           </div>
           <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">Completed Orders</div>
+              <div class="stat-value">${performance.completed_orders || 0}</div>
+            </div>
             <div class="stat-card">
               <div class="stat-label">Total VAT Collected</div>
               <div class="stat-value">${formatCurrency(performance.total_vat_collected)}</div>
@@ -776,7 +829,7 @@ export default function Dashboard() {
                   <View style={[styles.statIcon, { backgroundColor: '#D1FAE5' }]}>
                     <Ionicons name="trending-up" size={20} color="#059669" />
                   </View>
-                  <Text style={styles.statValue}>{formatCurrency(summary.total_sales || 0)}</Text>
+                  <Text style={styles.statValue}>{formatCurrency(summary.total_sales)}</Text>
                   <Text style={styles.statLabel}>Total Sales</Text>
                 </TouchableOpacity>
 
@@ -800,7 +853,7 @@ export default function Dashboard() {
                   <View style={[styles.statIcon, { backgroundColor: '#E0E7FF' }]}>
                     <Ionicons name="wallet-outline" size={20} color="#4F46E5" />
                   </View>
-                  <Text style={styles.statValue}>{formatCurrency(summary.available_balance || 0)}</Text>
+                  <Text style={styles.statValue}>{formatCurrency(summary.available_balance)}</Text>
                   <Text style={styles.statLabel}>Available Balance</Text>
                 </TouchableOpacity>
 
@@ -812,7 +865,7 @@ export default function Dashboard() {
                   <View style={[styles.statIcon, { backgroundColor: '#FEF3C7' }]}>
                     <Ionicons name="hourglass-outline" size={20} color="#D97706" />
                   </View>
-                  <Text style={styles.statValue}>{formatCurrency(summary.pending_sales || 0)}</Text>
+                  <Text style={styles.statValue}>{formatCurrency(summary.pending_sales)}</Text>
                   <Text style={styles.statLabel}>Pending Sales</Text>
                 </TouchableOpacity>
 
@@ -827,7 +880,7 @@ export default function Dashboard() {
                   <Text style={styles.statValue}>{summary.low_stock_count || 0}</Text>
                   <Text style={styles.statLabel}>Low Stock Items</Text>
                 </TouchableOpacity>
-              {/* Additional Financial Stats merged here */}
+
                 <TouchableOpacity 
                   style={styles.statCard} 
                   onPress={() => showBreakdown('Refunds', 'refunds')}
@@ -860,8 +913,36 @@ export default function Dashboard() {
                   <View style={[styles.statIcon, { backgroundColor: '#D1FAE5' }]}>
                     <Ionicons name="calculator-outline" size={20} color="#059669" />
                   </View>
-                  <Text style={styles.statValue}>{formatCurrency(performance.total_vat_collected || 0)}</Text>
+                  <Text style={styles.statValue}>{formatCurrency(performance.total_vat_collected)}</Text>
                   <Text style={styles.statLabel}>VAT Collected</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Pending Orders Stat */}
+              <Text style={[styles.sectionLabel, styles.sectionMargin]}>Pending Orders</Text>
+              <View style={styles.statsGrid}>
+                <TouchableOpacity 
+                  style={styles.statCard} 
+                  onPress={() => showBreakdown('Total Sales', 'summary')}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.statIcon, { backgroundColor: '#FEF3C7' }]}>
+                    <Ionicons name="time-outline" size={20} color="#D97706" />
+                  </View>
+                  <Text style={styles.statValue}>{summary.pending_orders || 0}</Text>
+                  <Text style={styles.statLabel}>Pending Orders</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.statCard} 
+                  onPress={() => showBreakdown('Total Sales', 'summary')}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.statIcon, { backgroundColor: '#D1FAE5' }]}>
+                    <Ionicons name="cash-outline" size={20} color="#059669" />
+                  </View>
+                  <Text style={styles.statValue}>{formatCurrency(summary.pending_earnings)}</Text>
+                  <Text style={styles.statLabel}>Pending Earnings</Text>
                 </TouchableOpacity>
               </View>
 
@@ -943,7 +1024,6 @@ export default function Dashboard() {
                   <Text style={styles.statValue}>{storeManagement.gifts || 0}</Text>
                   <Text style={styles.statLabel}>Gifts</Text>
                 </TouchableOpacity>
-
               </View>
 
               {/* Reports & Notifications */}
@@ -1048,6 +1128,10 @@ export default function Dashboard() {
                     <View style={styles.productStat}>
                       <Text style={styles.productNumber}>{performance.draft_products || 0}</Text>
                       <Text style={styles.productLabel}>Draft</Text>
+                    </View>
+                    <View style={styles.productStat}>
+                      <Text style={styles.productNumber}>{performance.completed_orders || 0}</Text>
+                      <Text style={styles.productLabel}>Completed Orders</Text>
                     </View>
                   </View>
                 </TouchableOpacity>
