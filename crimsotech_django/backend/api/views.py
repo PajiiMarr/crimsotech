@@ -27719,7 +27719,6 @@ class CheckoutOrder(viewsets.ViewSet):
                         minimum_spend__lte=subtotal
                     )
                     
-                    # Check if user has already used this voucher
                     user_has_used = UserVoucherUsage.objects.filter(user=user, voucher=voucher).exists()
                     if user_has_used:
                         return Response(
@@ -27727,7 +27726,6 @@ class CheckoutOrder(viewsets.ViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
                     
-                    # Check global usage count before applying
                     total_usage_count = UserVoucherUsage.objects.filter(voucher=voucher).count()
                     
                     if voucher.maximum_usage > 0 and total_usage_count >= voucher.maximum_usage:
@@ -27746,7 +27744,6 @@ class CheckoutOrder(viewsets.ViewSet):
             # Calculate delivery fee based on distance (if Standard Delivery)
             delivery_fee = Decimal('0')
             if shipping_method.lower() == "standard delivery" and shipping_address:
-                # Get customer coordinates from shipping address
                 customer_lat, customer_lng, _ = self._get_customer_coordinates(user_id, shipping_address_id)
                 
                 max_distance = 0
@@ -27775,7 +27772,11 @@ class CheckoutOrder(viewsets.ViewSet):
                                         max_distance = distance
                 delivery_fee = Decimal(str(self._calculate_delivery_fee(max_distance)))
             
-            # Calculate base total (subtotal + delivery fee - discount)
+            # Shipping fee IS the delivery fee (distance-based, ₱40/km capped at ₱300)
+            # This is the fee paid to the rider for delivery
+            shipping_fee = delivery_fee
+            
+            # Calculate base total (subtotal + delivery_fee - discount_amount)
             base_total = subtotal + delivery_fee - discount_amount
             
             # Calculate transaction fee for ALL payment methods (5% capped at ₱50)
@@ -27786,12 +27787,6 @@ class CheckoutOrder(viewsets.ViewSet):
 
             initial_status = 'pending'
             
-            # Calculate shipping fee: 5% of subtotal, capped at ₱50, only for standard delivery
-            shipping_fee = Decimal('0')
-            if shipping_method.lower() == "standard delivery":
-                shipping_fee = min(subtotal * Decimal('0.05'), Decimal('50'))
-                shipping_fee = shipping_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            
             order = Order.objects.create(
                 user=user,
                 shipping_address=shipping_address,
@@ -27801,7 +27796,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 delivery_method=shipping_method,
                 delivery_address_text=delivery_address_text,
                 transaction_fee=float(transaction_fee),
-                shipping_fee=float(shipping_fee)
+                shipping_fee=float(shipping_fee)  # Stores the delivery fee (distance-based)
             )
             
             # Store transaction fee in metadata for reference
@@ -27811,6 +27806,13 @@ class CheckoutOrder(viewsets.ViewSet):
                 order.metadata['transaction_fee_percentage'] = 5
                 order.metadata['transaction_fee_cap'] = 50
                 order.metadata['transaction_fee_note'] = f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment"
+                order.save(update_fields=['metadata'])
+            
+            # Store delivery fee info in metadata
+            if delivery_fee > 0:
+                order.metadata = order.metadata or {}
+                order.metadata['delivery_fee'] = float(delivery_fee)
+                order.metadata['delivery_fee_note'] = f"Delivery fee of ₱{float(delivery_fee):.2f} (₱40/km capped at ₱300)"
                 order.save(update_fields=['metadata'])
             
             if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() and pickup_date:
@@ -27937,6 +27939,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 "total_amount": float(total_amount),
                 "subtotal": float(subtotal),
                 "delivery_fee": float(delivery_fee),
+                "shipping_fee": float(shipping_fee),
                 "discount_applied": float(discount_amount),
                 "transaction_fee": float(transaction_fee),
                 "voucher_used": voucher.code if voucher else None,
@@ -27944,7 +27947,8 @@ class CheckoutOrder(viewsets.ViewSet):
                 "payment_method": payment_method,
                 "shipping_method": shipping_method,
                 "pickup_date": pickup_date if shipping_method.lower() == "pickup" and 'cash' in payment_method.lower() else None,
-                "transaction_fee_note": f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment"
+                "transaction_fee_note": f"Transaction fee of ₱{float(transaction_fee):.2f} (5% capped at ₱50) applied for {payment_method} payment",
+                "delivery_fee_note": f"Delivery fee of ₱{float(delivery_fee):.2f} (₱40/km capped at ₱300)" if delivery_fee > 0 else None
             }
             
             return Response(response_data)
@@ -27957,6 +27961,7 @@ class CheckoutOrder(viewsets.ViewSet):
                 {"error": "Failed to create order", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
     
     @action(detail=False, methods=['GET'], url_path='get_order_details/(?P<order_id>[^/.]+)')
     def get_order_details(self, request, order_id=None):
